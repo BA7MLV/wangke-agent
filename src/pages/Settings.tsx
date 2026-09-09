@@ -371,6 +371,31 @@ export default function Settings() {
           )}
         </Card>
 
+        <Card title="哔哩哔哩导入" style={{ marginBottom: 16 }}>
+          <Form layout="vertical">
+            <Form.Item
+              label="代理地址"
+              extra="自建 Cloudflare Worker 地址，用于绕过 B 站 CORS 与防盗链。留空则无法导入 B 站视频"
+            >
+              <Input
+                value={settings.bilibiliProxy}
+                onChange={(e) => settings.update({ bilibiliProxy: e.target.value.trim() })}
+                placeholder="https://bili-proxy.yourname.workers.dev"
+              />
+            </Form.Item>
+            <Form.Item
+              label="B 站 Cookie（可选）"
+              extra="粘贴自己账号的 Cookie 可解锁更高清晰度；不上传任何服务器，仅存本机 localStorage"
+            >
+              <Input.Password
+                value={settings.bilibiliCookie}
+                onChange={(e) => settings.update({ bilibiliCookie: e.target.value.trim() })}
+                placeholder="SESSDATA=...; bili_jct=..."
+              />
+            </Form.Item>
+          </Form>
+        </Card>
+
         <StorageCard />
 
         <SkillsCard />

@@ -25,6 +25,10 @@ export interface Settings {
   captionScale: number;
   /** 问答 agent 检索轮次上限（达到上限后强制收尾作答；轮次多=材料全但更慢更费 token） */
   agentRounds: number;
+  /** 哔哩哔哩导入代理地址（Cloudflare Worker），用于绕过 CORS/防盗链 */
+  bilibiliProxy: string;
+  /** 用户自己的 B 站 Cookie（可选，含 SESSDATA 时解锁更高清晰度） */
+  bilibiliCookie: string;
   /** 思考题弹幕飘屏开关（控制栏可切，持久化） */
   danmakuEnabled: boolean;
 }
@@ -54,6 +58,8 @@ export const useSettings = create<SettingsStore>()(
       thinkingEffort: 'high',
       captionScale: 1,
       agentRounds: 6,
+      bilibiliProxy: '',
+      bilibiliCookie: '',
       danmakuEnabled: true,
       update: (patch) => set(patch),
     }),
@@ -88,6 +94,8 @@ export function getSettings(): Settings {
     thinkingEffort: s.thinkingEffort,
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
+    bilibiliProxy: s.bilibiliProxy,
+    bilibiliCookie: s.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled,
   };
 }

@@ -10,6 +10,7 @@ import {
   FolderOutlined,
   HolderOutlined,
   InboxOutlined,
+  LinkOutlined,
   MoreOutlined,
   PlayCircleOutlined,
   RightOutlined,
@@ -21,6 +22,8 @@ import { deleteVideoFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
+import { importBiliVideo } from '../bilibili';
+import { getSettings } from '../store/settings';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -165,6 +168,11 @@ export default function Library() {
   // 顺序导入链：多个文件排队逐个写入，避免并发写存储互相拖慢
   const chainRef = useRef<Promise<void>>(Promise.resolve());
   const nativeInputRef = useRef<HTMLInputElement>(null);
+  // 哔哩哔哩导入弹窗
+  const [biliOpen, setBiliOpen] = useState(false);
+  const [biliUrl, setBiliUrl] = useState('');
+  const [biliImporting, setBiliImporting] = useState(false);
+  const [biliProgress, setBiliProgress] = useState(0);
 
   const reload = async () => {
     const [rows, folderRows] = await Promise.all([
@@ -257,6 +265,37 @@ export default function Library() {
     const key = uuid();
     setTasks((prev) => [...prev, { key, name: file.name, status: 'queued', percent: 0 }]);
     chainRef.current = chainRef.current.then(() => importOne(file, key));
+  };
+
+  /** 哔哩哔哩导入：先经代理下载+重封装成 File，再走现有本地导入链 */
+  const handleBiliImport = async () => {
+    const { bilibiliProxy, bilibiliCookie } = getSettings();
+    if (!bilibiliProxy) {
+      message.warning('请先在「设置」页填写哔哩哔哩代理地址');
+      return;
+    }
+    const raw = biliUrl.trim();
+    if (!raw) {
+      message.warning('请粘贴 B 站视频链接或 BV 号');
+      return;
+    }
+    setBiliImporting(true);
+    setBiliProgress(0);
+    try {
+      const file = await importBiliVideo(raw, { proxy: bilibiliProxy, cookie: bilibiliCookie }, (r) =>
+        setBiliProgress(Math.round(r * 100)),
+      );
+      setBiliOpen(false);
+      setBiliUrl('');
+      message.success(`已解析《${file.name}》，开始写入本地存储`);
+      enqueue(file);
+    } catch (e) {
+      const text = e instanceof Error ? e.message : String(e);
+      message.error(`B 站导入失败：${text}`);
+    } finally {
+      setBiliImporting(false);
+      setBiliProgress(0);
+    }
   };
 
   /**
@@ -645,6 +684,9 @@ export default function Library() {
       <div className="page-header">
         <div className="title">网课学习助手</div>
         <div style={{ display: 'flex', gap: 8 }}>
+          <Button icon={<LinkOutlined />} onClick={() => setBiliOpen(true)}>
+            导入 B 站
+          </Button>
           <Button icon={<FolderAddOutlined />} onClick={() => openFolderModal('create')}>
             新建文件夹
           </Button>
@@ -845,6 +887,37 @@ export default function Library() {
             新建并选中
           </Button>
         </div>
+      </Modal>
+      <Modal
+        open={biliOpen}
+        title="导入哔哩哔哩视频"
+        okText="开始导入"
+        cancelText="取消"
+        confirmLoading={biliImporting}
+        onOk={handleBiliImport}
+        onCancel={() => {
+          if (!biliImporting) {
+            setBiliOpen(false);
+            setBiliUrl('');
+          }
+        }}
+        destroyOnHidden
+      >
+        <Input.TextArea
+          value={biliUrl}
+          onChange={(e) => setBiliUrl(e.target.value)}
+          placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
+          autoSize={{ minRows: 2, maxRows: 4 }}
+          disabled={biliImporting}
+        />
+        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--ant-color-text-secondary)' }}>
+          需先在「设置」页配置自建代理地址；未登录只能导入 360P，登录 Cookie 可解锁更高清晰度。
+        </div>
+        {biliImporting && (
+          <div style={{ marginTop: 12 }}>
+            <Progress percent={biliProgress} size="small" />
+          </div>
+        )}
       </Modal>
     </div>
   );
