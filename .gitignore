@@ -10,3 +10,4 @@ scripts/.cache
 scripts/out
 .playwright-browsers
 e2e-shots
+scripts/.tmp-*

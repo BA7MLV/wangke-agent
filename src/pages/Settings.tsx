@@ -10,6 +10,7 @@ import { db } from '../store/db';
 import { SuccessCheck, ms } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
+import MigrationCard from '../components/MigrationCard';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 const EMBED_MODEL_RE = /embed|bge|gte/i;
@@ -397,6 +398,8 @@ export default function Settings() {
         </Card>
 
         <StorageCard />
+
+        <MigrationCard />
 
         <SkillsCard />
       </div>
