@@ -1,0 +1,48 @@
+{
+  "name": "wangke-agent",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host"
+  },
+  "dependencies": {
+    "@ant-design/icons": "^5.6.1",
+    "@ant-design/x": "^2.9.0",
+    "@ant-design/x-markdown": "^2.9.0",
+    "@ffmpeg/core": "^0.12.10",
+    "@ffmpeg/ffmpeg": "^0.12.15",
+    "@ricky0123/vad-web": "^0.0.30",
+    "@vidstack/react": "^1.15.6",
+    "antd": "^6.6.2",
+    "dayjs": "^1.11.23",
+    "dexie": "^4.4.5",
+    "docx": "^8.5.0",
+    "docx-preview": "^0.4.0",
+    "fflate": "^0.8.3",
+    "mediabunny": "^1.55.7",
+    "onnxruntime-web": "^1.29.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.6",
+    "sql.js": "^1.14.2",
+    "zustand": "^5.0.15"
+  },
+  "devDependencies": {
+    "@types/node": "^20.19.43",
+    "@types/react": "^18.3.31",
+    "@types/react-dom": "^18.3.7",
+    "@types/sql.js": "^1.4.11",
+    "@vitejs/plugin-react": "^4.7.0",
+    "playwright": "^1.63.0",
+    "typescript": "^5.9.3",
+    "vite": "^5.4.21",
+    "vite-plugin-pwa": "^0.20.5"
+  },
+  "allowScripts": {
+    "esbuild@0.21.5": true,
+    "protobufjs@7.6.6": true
+  }
+}

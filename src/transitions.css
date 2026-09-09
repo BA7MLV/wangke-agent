@@ -1,0 +1,363 @@
+/* transitions-dev — universal install block (copied from _root.css once).
+   Every transition snippet reads from these semantic names. */
+:root {
+  /* ── Motion tokens — shared scale ────────────────────────────── */
+  /* Durations */
+  --duration-stagger: 40ms;  /* per-item stagger offset */
+  --duration-micro: 80ms;  /* tooltip/path delay, shake segment, large stagger */
+  --duration-quick: 150ms;  /* modal/dropdown close, text swap, tooltip appear */
+  --duration-fast: 250ms;  /* icon swap, dropdown/modal open, tabs sliding, page slide */
+  --duration-medium: 350ms;  /* panel close, toast close */
+  --duration-slow: 400ms;  /* panel open, skeleton content reveal, input clear */
+  --duration-very-slow: 500ms;  /* emphasis moments, badge appear, text reveal, success check */
+  /* Easings */
+  --ease-smooth-out: cubic-bezier(0.22, 1, 0.36, 1);  /* modal/dropdown/panel open + close, page slide, resize, position change */
+  --ease-in-out: ease-in-out;  /* icon swap, text swap, text reveal, skeleton reveal */
+  --ease-out: ease-out;  /* tooltip open / close */
+  --ease-linear: linear;  /* shimmer, skeleton pulse, spinner */
+  --ease-bounce: cubic-bezier(0.34, 1.36, 0.64, 1);  /* badge pop open */
+  --ease-bounce-strong: cubic-bezier(0.34, 3.85, 0.64, 1);  /* bouncy hover-out (avatar return) */
+  /* Distances */
+  --distance-micro: 4px;  /* text swap */
+  --distance-small: 6px;  /* error shake (small segment) */
+  --distance-base: 8px;  /* badge diagonal reveal, page slide, error shake (large segment) */
+  --distance-medium: 12px;  /* text reveal */
+  --distance-large: 30px;  /* check badge appear */
+  /* Scales */
+  --scale-large: 0.96;  /* modal open / close */
+  --scale-medium: 0.97;  /* dropdown open */
+  --scale-small: 0.98;  /* tooltip open */
+  --scale-tiny: 0.99;  /* dropdown close */
+  /* Blur */
+  --blur-small: 2px;  /* panel reveal, icon swap, text swap, skeleton reveal, number pop-in */
+  --blur-medium: 3px;  /* page slide, text reveal */
+  --blur-large: 8px;  /* success check open */
+
+  /* Text states swap */
+  --text-swap-dur: 150ms;
+  --text-swap-translate-y: 4px;
+  --text-swap-blur: 2px;
+  --text-swap-ease: ease-in-out;
+  /* Error state shake */
+  --shake-distance: 6px;
+  --shake-overshoot: 4px;
+  --shake-dur-a: 80ms;
+  --shake-dur-b: 60ms;
+  --shake-ease: cubic-bezier(0.22, 1, 0.36, 1);
+  --revert-hold: 3000ms;
+  --revert-dur: 280ms;
+  /* Skeleton loader and reveal */
+  --pulse-dur: 1000ms;
+  --pulse-count: 1;
+  --pulse-min: 0.5;
+  --reveal-dur: 400ms;
+  --reveal-blur: 2px;
+  --reveal-ease: ease-in-out;
+  /* Success check */
+  --check-opacity-dur: 500ms;
+  --check-rotate-dur: 500ms;
+  --check-rotate-from: 80deg;
+  --check-bob-dur: 500ms;
+  --check-y-amount: 40px;
+  --check-blur-dur: 500ms;
+  --check-blur-from: 10px;
+  --check-path-dur: 500ms;
+  --check-path-delay: 80ms;
+  --check-ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-opacity: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-rotate: cubic-bezier(0.22, 1, 0.36, 1);
+  --check-ease-bob: cubic-bezier(0.34, 1.35, 0.64, 1);
+  --check-ease-path: cubic-bezier(0.22, 1, 0.36, 1);
+  /* Thinking states */
+  --think-hold: 2000ms;
+  --think-swap: 150ms;
+  --think-gap: 50ms;
+  --think-distance: 8px;
+  --think-blur: 2px;
+  --think-shimmer: 2000ms;
+  --think-base: #7c7c7c;
+  --think-highlight: #0d0d0d;
+  --think-ease: ease-in-out;
+  /* Streaming text */
+  --stream-gap: 60ms;
+  --stream-fade: 350ms;
+  --stream-blur: 1px;
+  --stream-ease: cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* ── 04 Text states swap ───────────────────────────────────────── */
+.t-text-swap {
+  display: inline-block;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--text-swap-dur) var(--text-swap-ease),
+    filter    var(--text-swap-dur) var(--text-swap-ease),
+    opacity   var(--text-swap-dur) var(--text-swap-ease);
+  will-change: transform, filter, opacity;
+}
+.t-text-swap.is-exit {
+  transform: translateY(calc(var(--text-swap-translate-y) * -1));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+}
+.t-text-swap.is-enter-start {
+  transform: translateY(var(--text-swap-translate-y));
+  filter: blur(var(--text-swap-blur));
+  opacity: 0;
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-text-swap { transition: none !important; }
+}
+
+/* ── 12 Error state shake ──────────────────────────────────────── */
+/* Border-color tween. Define your input's default / focused
+   / error border-color in your own component CSS — this rule
+   only owns the interpolation. Use a constant border-width
+   across states so the tween never shifts inner content. */
+.t-input {
+  transition: border-color 150ms ease-out;
+  will-change: transform;
+}
+.t-input.is-error {
+  /* Error border auto-reverts on the hold timer, so the
+     fade-out uses the slower revert duration (matches the
+     message fade). */
+  transition: border-color var(--revert-dur, 280ms) ease-out;
+}
+
+/* Error message reveal. Visibility is delayed by --revert-dur
+   on hide so the message stays painted for the full opacity
+   fade-out. Entering .is-error drops the delay to 0 so the
+   message becomes visible immediately. */
+.t-error-msg {
+  opacity: 0;
+  visibility: hidden;
+  transition:
+    opacity    var(--revert-dur, 280ms) ease-out,
+    visibility 0s linear var(--revert-dur, 280ms);
+}
+.t-input-wrap.is-error .t-error-msg {
+  opacity: 1;
+  visibility: visible;
+  transition:
+    opacity    var(--revert-dur, 280ms) ease-out,
+    visibility 0s linear 0s;
+}
+
+/* Multi-segment keyframe with per-stop easing so each leg
+   of the shake follows its own cubic-bezier independently.
+   %-stops are cumulative durations as a fraction of the
+   total (80, 60, 80, 60 = 280ms): 28.57%, 57.14%, 78.57%,
+   100%. Recompute if any segment duration changes. */
+.t-input.is-shaking {
+  animation: t-input-shake calc(
+      var(--shake-dur-a) * 2 + var(--shake-dur-b) * 2
+    ) linear;
+}
+@keyframes t-input-shake {
+  0%      { transform: translateX(0);                                 animation-timing-function: var(--shake-ease); }
+  28.57%  { transform: translateX(var(--shake-distance));             animation-timing-function: var(--shake-ease); }
+  57.14%  { transform: translateX(calc(var(--shake-distance) * -1)); animation-timing-function: var(--shake-ease); }
+  78.57%  { transform: translateX(var(--shake-overshoot));            animation-timing-function: var(--shake-ease); }
+  100%    { transform: translateX(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-input { animation: none !important; transform: none !important; }
+}
+
+/* ── 14 Skeleton loader and reveal ─────────────────────────────── */
+/* The wrap stacks two layers on the same coordinates. The
+   skeleton owns the cold pulse + the fade-out side of the
+   reveal; the content owns the fade-in side. They share the
+   same duration / ease so the swap reads as one motion. */
+.t-skel { position: relative; }
+.t-skel-skeleton,
+.t-skel-content {
+  position: absolute;
+  inset: 0;
+}
+
+.t-skel-skeleton {
+  z-index: 1;
+  opacity: 1;
+  filter: blur(0);
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel-content {
+  z-index: 2;
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+  transition:
+    opacity var(--reveal-dur) var(--reveal-ease),
+    filter  var(--reveal-dur) var(--reveal-ease);
+}
+.t-skel.is-revealed .t-skel-skeleton {
+  opacity: 0;
+  filter: blur(var(--reveal-blur));
+}
+.t-skel.is-revealed .t-skel-content {
+  opacity: 1;
+  filter: blur(0);
+}
+/* Snap-back when replaying: kill transitions so the reverse
+   (revealed → skeleton) is instant. Drop `.is-resetting`
+   after a forced reflow and the next reveal animates again. */
+.t-skel.is-resetting .t-skel-skeleton,
+.t-skel.is-resetting .t-skel-content {
+  transition: none !important;
+}
+
+/* Pulse: place the animation on the bar/avatar children, not
+   on the skeleton itself, so the skeleton's opacity / filter
+   stay free for the cross-fade transition above. */
+.t-skel-skeleton.is-pulsing > * {
+  animation: t-skel-pulse var(--pulse-dur) ease-in-out var(--pulse-count);
+}
+@keyframes t-skel-pulse {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: var(--pulse-min); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-skel-skeleton, .t-skel-content {
+    transition: none !important;
+  }
+  .t-skel-skeleton.is-pulsing > * { animation: none !important; }
+}
+
+/* ── 10 Success check ──────────────────────────────────────────── */
+/* Wrapper drives the appear animation; it doesn't own any
+   sizing or color so you can drop in any icon. */
+.t-success-check {
+  display: inline-block;
+  transform-origin: center;
+  opacity: 0;
+  will-change: transform, opacity, filter;
+}
+/* overflow: visible keeps the stroke from clipping while it
+   draws; display: block kills the inline whitespace under SVGs. */
+.t-success-check svg { display: block; overflow: visible; }
+/* Stroke-draw setup. Replace 20 with the result of
+   path.getTotalLength() for your path; round caps mean any
+   sub-pixel overshoot is invisible. */
+.t-success-check svg path {
+  stroke-dasharray: 20;
+  stroke-dashoffset: 20;
+}
+
+.t-success-check[data-state="in"] {
+  animation:
+    t-check-fade   var(--check-opacity-dur) var(--check-ease-opacity) forwards,
+    t-check-rotate var(--check-rotate-dur)  var(--check-ease-rotate)  forwards,
+    t-check-blur   var(--check-blur-dur)    var(--check-ease-out)     forwards,
+    t-check-bob    var(--check-bob-dur)     var(--check-ease-bob)     forwards;
+}
+.t-success-check[data-state="in"] svg path {
+  animation: t-check-draw var(--check-path-dur) var(--check-ease-path) var(--check-path-delay, 0ms) forwards;
+}
+
+@keyframes t-check-fade { from { opacity: 0; } to { opacity: 1; } }
+@keyframes t-check-rotate {
+  from { transform: rotate(var(--check-rotate-from)); }
+  to   { transform: rotate(0deg); }
+}
+@keyframes t-check-blur {
+  from { filter: blur(var(--check-blur-from)); }
+  to   { filter: blur(0); }
+}
+@keyframes t-check-bob {
+  from { translate: 0 var(--check-y-amount); }
+  to   { translate: 0 0; }
+}
+@keyframes t-check-draw { to { stroke-dashoffset: 0; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .t-success-check { animation: none !important; opacity: 1; }
+  .t-success-check svg path { animation: none !important; stroke-dashoffset: 0 !important; }
+}
+
+/* ── 28 Thinking states ────────────────────────────────────────── */
+/* Set your type on .t-think: the sizer only reports the right
+   width if it is set in the same font as the line. */
+.t-think { position: relative; display: inline-block; text-align: center; }
+.t-think-sizer { display: block; visibility: hidden; white-space: nowrap; }
+.t-think-text {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  display: block;
+  color: var(--think-base);
+  white-space: nowrap;
+  transform: translateY(0);
+  filter: blur(0);
+  opacity: 1;
+  transition:
+    transform var(--think-swap) var(--think-ease),
+    filter var(--think-swap) var(--think-ease),
+    opacity var(--think-swap) var(--think-ease);
+  will-change: transform, filter, opacity;
+}
+/* Shimmer sweeps the glyphs only (background-clip: text). */
+.t-think-text::before {
+  content: attr(data-text);
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(90deg,
+    transparent 0%, transparent 40%,
+    var(--think-highlight) 50%,
+    transparent 60%, transparent 100%);
+  background-size: 400% 100%;
+  background-repeat: no-repeat;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+  animation: t-think-shimmer var(--think-shimmer) linear infinite;
+}
+@keyframes t-think-shimmer {
+  0%   { background-position: 100% 0; }
+  100% { background-position: 0% 0; }
+}
+/* The outgoing line floats over the box so both halves animate. */
+.t-think-text.is-exit {
+  transform: translateY(calc(var(--think-distance) * -1));
+  filter: blur(var(--think-blur));
+  opacity: 0;
+}
+.t-think-text.is-enter-start {
+  transition: none;
+  transform: translateY(var(--think-distance));
+  filter: blur(var(--think-blur));
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-think-text { transition: none !important; transform: none !important; filter: none !important; }
+  .t-think-text::before { display: none !important; }
+}
+
+/* ── 30 Streaming text ─────────────────────────────────────────── */
+.t-stream-w {
+  opacity: 0;
+  filter: blur(var(--stream-blur));
+  transition:
+    opacity var(--stream-fade) var(--stream-ease),
+    filter var(--stream-fade) var(--stream-ease);
+}
+.t-stream-w.is-in {
+  opacity: 1;
+  filter: blur(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-stream-w { transition: none !important; filter: none !important; opacity: 1 !important; }
+}

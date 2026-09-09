@@ -1,0 +1,223 @@
+/* 播放器增强：倍速快捷按钮 / 字幕字号按钮 / 双击 ±10s 涟漪反馈
+   （叠加在 Vidstack 默认布局之上，:where() 零特异性，普通类选择器即可覆盖） */
+
+/* ── 倍速快捷按钮 ───────────────────────────────────────────── */
+.rate-buttons {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 文本按钮：覆盖 .vds-button 的固定 38px 方形 */
+.vds-video-layout .rate-btn {
+  width: auto;
+  min-width: 34px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 500;
+  transition: background-color var(--duration-quick, 150ms) ease-out;
+}
+
+.vds-video-layout .rate-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.vds-video-layout .rate-btn[data-active] {
+  background: rgba(255, 255, 255, 0.22);
+  font-weight: 700;
+}
+
+/* 窄屏（小布局）折叠为单个循环按钮，避免挤占顶栏 */
+.vds-video-layout .rate-btn-cycle {
+  display: none;
+}
+.vds-video-layout[data-sm] .rate-btn-full {
+  display: none;
+}
+.vds-video-layout[data-sm] .rate-btn-cycle {
+  display: inline-flex;
+}
+
+/* ── 字幕字号按钮 ───────────────────────────────────────────── */
+/* antd 图标尺寸跟随 font-size */
+.vds-video-layout .caption-size-btn {
+  font-size: 19px;
+}
+
+/* ── 思考题弹幕：开关按钮 ───────────────────────────────────── */
+/* 与倍速按钮同款文本按钮（「弹」字，B 站风格） */
+.vds-video-layout .dm-toggle-btn {
+  width: auto;
+  min-width: 34px;
+  padding: 0 8px;
+  border-radius: 6px;
+  font-size: 14px;
+  font-weight: 600;
+  transition: background-color var(--duration-quick, 150ms) ease-out;
+}
+
+.vds-video-layout .dm-toggle-btn:hover {
+  background: rgba(255, 255, 255, 0.12);
+}
+
+.vds-video-layout .dm-toggle-btn[data-active] {
+  background: rgba(255, 255, 255, 0.22);
+}
+
+.vds-video-layout .dm-toggle-btn:not([data-active]) {
+  opacity: 0.55;
+}
+
+/* ── 思考题弹幕：渲染层 ─────────────────────────────────────── */
+.danmaku-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 15; /* 字幕(10)之上、控制栏(50)之下，与涟漪同层 */
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.dm-item {
+  position: absolute;
+  top: 12%;
+  left: 0;
+  right: 0;
+  width: fit-content;
+  max-width: 86%;
+  margin: 0 auto;
+  padding: 8px 16px;
+  border-radius: 18px;
+  background: rgba(0, 0, 0, 0.62);
+  color: #fff;
+  font-size: 16px;
+  line-height: 1.55;
+  text-align: center;
+  animation: dm-pop 7s var(--ease-smooth-out, ease-out) forwards;
+}
+
+.dm-tag {
+  display: inline-block;
+  margin-right: 8px;
+  padding: 0 7px;
+  border-radius: 4px;
+  background: #1677ff;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+  vertical-align: 2px;
+}
+
+/* 暂停时弹幕动画一并暂停（onAnimationEnd 在恢复后才触发，state 清理正常） */
+[data-media-player][data-paused] .dm-item {
+  animation-play-state: paused;
+}
+
+@keyframes dm-pop {
+  0% {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+  6% {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 保留淡入淡出（onAnimationEnd 仍触发），去掉位移 */
+  .dm-item {
+    animation-name: dm-pop-fade;
+  }
+}
+
+@keyframes dm-pop-fade {
+  0% {
+    opacity: 0;
+  }
+  8% {
+    opacity: 1;
+  }
+  88% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+  }
+}
+
+/* ── 双击 ±10s 涟漪反馈 ─────────────────────────────────────── */
+.seek-feedback {
+  position: absolute;
+  inset: 0;
+  z-index: 15; /* 字幕(10)之上、控制栏(50)之下，区域在两侧互不重叠 */
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.seek-pulse {
+  position: absolute;
+  top: 50%;
+  width: 88px;
+  height: 88px;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.65);
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  animation: seek-pulse var(--duration-very-slow, 500ms) var(--ease-smooth-out, ease-out) forwards;
+}
+
+.seek-pulse-left {
+  left: 10%;
+}
+
+.seek-pulse-right {
+  right: 10%;
+}
+
+@keyframes seek-pulse {
+  0% {
+    opacity: 0;
+    transform: translateY(-50%) scale(0.7);
+  }
+  25% {
+    opacity: 1;
+    transform: translateY(-50%) scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%) scale(1.12);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 保留淡出反馈（onAnimationEnd 仍触发，state 能正常清理），仅去掉缩放 */
+  .seek-pulse {
+    animation: seek-pulse-fade var(--duration-medium, 350ms) ease-out forwards;
+  }
+}
+
+@keyframes seek-pulse-fade {
+  0% {
+    opacity: 1;
+    transform: translateY(-50%);
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-50%);
+  }
+}

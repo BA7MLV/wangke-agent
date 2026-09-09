@@ -1,0 +1,313 @@
+/* 讲义结构化预览：公文风格（仿宋正文/黑体标题/三线表），字体名与 DOCX 对齐，
+   公文字体缺失设备由 previewFonts.ts 的 local() 别名 + 朱雀仿宋分包兜底。 */
+
+.hd-scroll {
+  height: 100%;
+  overflow: auto;
+  background: #f5f5f5;
+}
+
+.hd-doc {
+  max-width: 720px;
+  margin: 0 auto;
+  background: #fff;
+  padding: 24px 28px 40px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.08);
+  min-height: 100%;
+}
+
+@media (max-width: 640px) {
+  .hd-doc {
+    padding: 16px 14px 32px;
+    box-shadow: none;
+  }
+}
+
+.hd-save-state {
+  min-height: 18px;
+  font-size: 12px;
+  color: #999;
+  text-align: right;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+}
+
+.hd-title {
+  font-family: '方正小标宋简体', '宋体', 'Songti SC', serif;
+  font-size: 24px;
+  line-height: 1.4;
+  text-align: center;
+  margin: 4px 0 12px;
+}
+
+.hd-meta {
+  font-family: '楷体_GB2312', 'Kaiti SC', '楷体', serif;
+  font-size: 14px;
+  text-align: center;
+  color: #333;
+  margin-bottom: 20px;
+}
+
+.hd-h1 {
+  font-family: '黑体', 'SimHei', 'Heiti SC', sans-serif;
+  font-size: 18px;
+  font-weight: normal;
+  line-height: 1.75;
+  margin: 14px 0 6px;
+}
+
+.hd-h2 {
+  font-family: '楷体_GB2312', 'Kaiti SC', '楷体', serif;
+  font-size: 16px;
+  line-height: 1.75;
+  text-indent: 2em;
+  margin: 6px 0 2px;
+}
+
+.hd-para {
+  font-family: '仿宋_GB2312', 'FangSong', '仿宋', serif;
+  font-size: 16px;
+  line-height: 1.75;
+  text-indent: 2em;
+  margin: 0 0 2px;
+}
+
+.hd-note {
+  font-family: '楷体_GB2312', 'Kaiti SC', '楷体', serif;
+  font-size: 16px;
+  line-height: 1.75;
+  text-indent: 2em;
+  margin: 4px 0;
+}
+
+.hd-li-marker {
+  font-weight: bold;
+}
+
+.hd-table-wrap {
+  margin: 10px 0;
+  overflow-x: auto;
+}
+
+.hd-table-title {
+  font-family: '黑体', 'SimHei', 'Heiti SC', sans-serif;
+  font-size: 14px;
+  text-align: center;
+  margin-bottom: 4px;
+}
+
+/* 三线表：顶/底粗线 + 栏目细线，无竖线（与 DOCX 渲染器一致） */
+.hd-table {
+  width: 100%;
+  border-collapse: collapse;
+  border-top: 1.5px solid #000;
+  border-bottom: 1.5px solid #000;
+}
+
+.hd-table th {
+  font-family: '黑体', 'SimHei', 'Heiti SC', sans-serif;
+  font-weight: normal;
+  font-size: 14px;
+  text-align: center;
+  padding: 4px 6px;
+  border-bottom: 0.5px solid #000;
+}
+
+.hd-table td {
+  font-family: '仿宋_GB2312', 'FangSong', '仿宋', serif;
+  font-size: 14px;
+  padding: 4px 6px;
+}
+
+.hd-table-edit th,
+.hd-table-edit td {
+  border: 1px solid #f0f0f0;
+  padding: 2px 4px;
+}
+
+.hd-figure {
+  margin: 12px 0;
+  text-align: center;
+}
+
+.hd-figure img {
+  max-width: 100%;
+  border: 1px solid #eee;
+}
+
+.hd-figure-missing {
+  display: inline-block;
+  width: 70%;
+  padding: 40px 0;
+  background: #f5f5f5;
+  color: #bbb;
+  font-size: 13px;
+}
+
+.hd-figcaption {
+  font-family: '楷体_GB2312', 'Kaiti SC', '楷体', serif;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.hd-date {
+  font-family: '仿宋_GB2312', 'FangSong', '仿宋', serif;
+  font-size: 16px;
+  text-align: right;
+  margin-top: 24px;
+}
+
+.hd-tip {
+  font-size: 11px;
+  color: #aaa;
+  text-align: center;
+  margin-top: 24px;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+}
+
+/* ── 块级滑动操作 ───────────────────────────────── */
+
+.hd-swipe {
+  position: relative;
+  overflow: hidden;
+}
+
+.hd-swipe-actions {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  display: flex;
+}
+
+.hd-act {
+  flex: 1;
+  border: 0;
+  padding: 0;
+  min-width: 64px;
+  font-size: 13px;
+  cursor: pointer;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+}
+
+.hd-act-ai {
+  background: #1677ff;
+  color: #fff;
+}
+
+.hd-act-edit {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.hd-swipe-content {
+  position: relative;
+  z-index: 1;
+  background: #fff;
+  transition: transform var(--duration-fast, 250ms) var(--ease-smooth-out, ease);
+}
+
+.hd-swipe-content.is-dragging {
+  transition: none;
+}
+
+/* 桌面端：hover 块显示浮动操作按钮（触摸设备隐藏，走左滑手势） */
+.hd-hover-actions {
+  position: absolute;
+  top: 2px;
+  right: 4px;
+  z-index: 2;
+  display: flex;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity var(--duration-quick, 150ms) ease;
+}
+
+.hd-swipe:hover .hd-hover-actions {
+  opacity: 1;
+}
+
+.hd-swipe:hover .hd-swipe-content {
+  background: #fafafa;
+}
+
+@media (hover: none), (pointer: coarse) {
+  .hd-hover-actions {
+    display: none;
+  }
+  .hd-swipe:hover .hd-swipe-content {
+    background: #fff;
+  }
+}
+
+/* ── AI 改写 / 编辑器 ───────────────────────────── */
+
+.hd-ai-panel {
+  border: 1px solid rgba(22, 119, 255, 0.25);
+  background: #f8fbff;
+  border-radius: 6px;
+  padding: 8px;
+  margin: 4px 0 8px;
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+}
+
+.hd-chips {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 6px;
+}
+
+.hd-chip {
+  border: 1px solid #d9d9d9;
+  border-radius: 999px;
+  padding: 2px 10px;
+  font-size: 12px;
+  background: #fff;
+  cursor: pointer;
+  min-height: 28px;
+}
+
+.hd-chip:active {
+  background: #f0f0f0;
+}
+
+/* iOS 防聚焦缩放：输入框字号 ≥16px */
+.hd-ai-panel input {
+  font-size: 16px;
+}
+
+.hd-ai-old {
+  opacity: 0.55;
+  border-left: 3px solid #d9d9d9;
+  padding-left: 8px;
+  margin-bottom: 4px;
+}
+
+.hd-ai-new {
+  border-left: 3px solid #52c41a;
+  background: #f6ffed;
+  padding: 4px 0 4px 8px;
+}
+
+.hd-ai-bar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin: 6px 0 8px;
+}
+
+.hd-editor {
+  margin: 4px 0 8px;
+}
+
+.hd-editor textarea,
+.hd-editor input {
+  font-size: 16px;
+}
+
+.hd-editor-bar {
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  margin-top: 6px;
+}

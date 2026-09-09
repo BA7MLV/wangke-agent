@@ -1,0 +1,12 @@
+node_modules
+dist
+dist-ssr
+*.local
+.DS_Store
+data
+.env
+.env.*
+scripts/.cache
+scripts/out
+.playwright-browsers
+e2e-shots
