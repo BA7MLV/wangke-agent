@@ -40,6 +40,21 @@ const charsOf = (units: string[]) => units.reduce((n, u) => n + u.length, 0);
 const round3 = (t: number) => Math.round(t * 1000) / 1000;
 
 /**
+ * 由内容算出的稳定 cue 标识（FNV-1a 32 位）。
+ * 播放器字幕轨按 id 幂等灌 cue：内容没变 → id 相同 → 重复灌入是空操作；重新转写后内容变了 →
+ * id 变了 → 会作为新 cue 加入，同时旧的被推离时间轴失效。这样整轨不需要重建。
+ */
+export function cueKey(start: number, end: number, text: string): string {
+  const s = `${start}|${end}|${text}`;
+  let h = 2166136261;
+  for (let i = 0; i < s.length; i++) {
+    h ^= s.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return (h >>> 0).toString(36);
+}
+
+/**
  * 把一条过长的字幕按阅读节奏切成多条 cue：
  * 按标点切成完整句子（语意不断），再按字数占比在 [start, end] 内线性分配时间。
  * 讲课语速近似均匀，估算误差通常 <1s；本身已合规的条目原样返回。

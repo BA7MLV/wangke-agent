@@ -19,12 +19,12 @@ await page.addInitScript((key) => {
 
 await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
-await page.waitForSelector('.ant-list-item', { timeout: 15000 });
-await page.click('button:has-text("学习")');
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 15000 });
+await page.click('[data-testid="btn-play"]');
 await page.waitForSelector('video', { timeout: 15000 });
 
 console.log('1. 生成字幕');
-await page.click('button:has-text("生成字幕")');
+await page.click('[data-testid="subs-generate"]');
 let deadline = Date.now() + 240000;
 while (Date.now() < deadline) {
   await page.waitForTimeout(3000);
@@ -33,8 +33,8 @@ while (Date.now() < deadline) {
 }
 
 console.log('2. 切到讲义页，生成讲义');
-await page.click('.ant-tabs-tab:has-text("讲义")');
-await page.click('button:has-text("生成讲义")');
+await page.click('[data-testid="panel-tab-handout"]');
+await page.click('[data-testid="handout-generate"]');
 deadline = Date.now() + 300000;
 let done = false;
 while (Date.now() < deadline) {

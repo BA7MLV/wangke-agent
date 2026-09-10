@@ -85,5 +85,63 @@ test('qaSystem 技能与画面规则可共存且编号连续', () => {
   assert.match(p, /8\. .*list_frames/);
 });
 
+// —— 2026-09-10 新增：代码块内的标记不得被改写（否则 mermaid / 普通代码源码被破坏） ——
+
+test('linkifyTimestamps 跳过围栏代码块', () => {
+  const md = '说明 [03:25] 见下：\n\n```mermaid\ngraph TD\n  A[03:25] --> B[结束]\n```\n\n结束 [04:10]';
+  const out = linkifyTimestamps(md);
+  assert.ok(out.includes('[[03:25]](#seek-205)'), `正文时间戳应被转换：${out}`);
+  assert.ok(out.includes('A[03:25] --> B[结束]'), `围栏内应原样保留：${out}`);
+  assert.ok(out.includes('[[04:10]](#seek-250)'), `围栏后的正文应恢复转换：${out}`);
+});
+
+test('linkifyFrames 跳过围栏代码块（~~~ 亦可）', () => {
+  const md = '正文 [图@01:00]\n~~~js\nconst t = "[图@02:00]";\n~~~\n';
+  const out = linkifyFrames(md);
+  assert.ok(out.includes('![课程画面 01:00](#frame-60)'), `正文应被转换：${out}`);
+  assert.ok(out.includes('"[图@02:00]"'), `代码内应原样保留：${out}`);
+});
+
+test('linkify 跳过未闭合围栏（流式半截代码）', () => {
+  const md = '正文 [01:00]\n```mermaid\ngraph TD\n  A[02:00] --> B';
+  const out = linkifyTimestamps(md);
+  assert.ok(out.includes('[[01:00]](#seek-60)'), `围栏前正文应转换：${out}`);
+  assert.ok(out.includes('A[02:00] --> B'), `未闭合围栏内应原样保留：${out}`);
+});
+
+test('linkify 跳过行内 code', () => {
+  const out = linkifyTimestamps('正文 [01:00]，行内 `[02:00]` 不算');
+  assert.ok(out.includes('[[01:00]](#seek-60)'));
+  assert.ok(out.includes('`[02:00]`'), `行内代码应保留：${out}`);
+});
+
+// —— 2026-09-10 新增：带截图提问时「以图为准」 ——
+
+test('qaSystem shotCount>0 时注入「以截图为准」规则', () => {
+  const p = PROMPTS.qaSystem('测试课程', undefined, false, 2);
+  assert.match(p, /本轮用户附带了 2 张截图/);
+  assert.match(p, /以截图为准/);
+});
+
+test('qaSystem 无截图时不注入该规则', () => {
+  const p = PROMPTS.qaSystem('测试课程');
+  assert.ok(!p.includes('以截图为准'), '不应出现截图规则');
+});
+
+test('qaSystem 截图规则与画面引用规则编号连续', () => {
+  const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true, 1);
+  assert.match(p, /4\. 本轮用户附带了 1 张截图/);
+  assert.match(p, /9\. .*list_frames/);
+});
+
+test('shotDescribe 带上下文时声明「以画面为准」，不带上下文也可用', () => {
+  const withCtx = PROMPTS.shotDescribe('这个公式怎么来的', '[01:00] 讲到了欧姆定律');
+  assert.match(withCtx, /以画面为准/);
+  assert.match(withCtx, /\[01:00\] 讲到了欧姆定律/);
+  const noCtx = PROMPTS.shotDescribe('');
+  assert.match(noCtx, /以画面为准/);
+  assert.ok(!noCtx.includes('该时刻前后的课程字幕'), '无上下文时不应留空小节');
+});
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exit(1);

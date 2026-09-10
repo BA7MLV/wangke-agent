@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useState } from 'react';
-import { App, Button, Card, Form, Input, List, Modal, Popconfirm, Space, Switch, Tag, Typography, Upload } from 'antd';
-import { DeleteOutlined, EditOutlined, PlusOutlined, ReloadOutlined, UploadOutlined } from '@ant-design/icons';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { SectionCard, Field, toast, confirmDialog, useMduiEvent } from '../ui';
 import { db, type SkillRow } from '../store/db';
 import { ensureBuiltinSkills, importSkillFile } from '../skills/store';
 import { BUILTIN_SKILLS } from '../skills/builtin';
@@ -15,10 +14,13 @@ interface Draft {
 
 /** 设置页「写作技能」卡片：管理可注入讲义生成与问答的 skill（SKILL.md 单文件或含 references/ 的 zip 包） */
 export default function SkillsCard() {
-  const { message } = App.useApp();
   const [skills, setSkills] = useState<SkillRow[]>([]);
   const [refCounts, setRefCounts] = useState<Record<number, number>>({});
   const [draft, setDraft] = useState<Draft | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  // dialog 自己处理 Esc / 点遮罩关闭时只把 open 拿掉，React 不知道，必须同步回 state
+  const dlgRef = useMduiEvent('mdui-dialog', 'closed', () => setDraft(null));
 
   const reload = useCallback(async () => {
     await ensureBuiltinSkills();
@@ -43,13 +45,19 @@ export default function SkillsCard() {
     for (const f of files) {
       try {
         const { name, refCount } = await importSkillFile(f);
-        message.success(`已导入「${name}」${refCount > 0 ? `（含 ${refCount} 篇参考文档）` : ''}`);
+        toast.success(`已导入「${name}」${refCount > 0 ? `（含 ${refCount} 篇参考文档）` : ''}`);
         ok++;
       } catch (e) {
-        message.error(`导入 ${f.name} 失败：${e instanceof Error ? e.message : String(e)}`);
+        toast.error(`导入 ${f.name} 失败：${e instanceof Error ? e.message : String(e)}`);
       }
     }
     if (ok > 0) void reload();
+  };
+
+  const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ''; // 允许重复选同一文件
+    if (files.length) void importFiles(files);
   };
 
   const saveDraft = async () => {
@@ -57,7 +65,7 @@ export default function SkillsCard() {
     const name = draft.name.trim();
     const body = draft.body.trim();
     if (!name || !body) {
-      message.warning('名称和正文不能为空');
+      toast.warning('名称和正文不能为空');
       return;
     }
     const row = { name, description: draft.description.trim(), body, updatedAt: Date.now() };
@@ -68,7 +76,7 @@ export default function SkillsCard() {
       await db.skills.add({ ...row, enabled: 1, builtin: 0 });
     }
     setDraft(null);
-    message.success('已保存');
+    toast.success('已保存');
     void reload();
   };
 
@@ -88,128 +96,204 @@ export default function SkillsCard() {
       body: src.body,
       updatedAt: Date.now(),
     });
-    message.success('已重置为内置版本');
+    toast.success('已重置为内置版本');
     void reload();
   };
 
   return (
-    <Card
+    <SectionCard
       title="写作技能"
-      extra={
-        <Space>
-          <Upload
-            accept=".md,.markdown,.zip"
-            multiple
-            showUploadList={false}
-            beforeUpload={(_, list) => {
-              void importFiles(list as File[]);
-              return false;
-            }}
+      testId="card-skills"
+      actions={
+        <>
+          <mdui-button
+            variant="tonal"
+            data-testid="btn-skill-import"
+            onClick={() => fileRef.current?.click()}
           >
-            <Button icon={<UploadOutlined />}>导入</Button>
-          </Upload>
-          <Button
-            type="primary"
-            icon={<PlusOutlined />}
+            <mdui-sym-upload slot="icon" />
+            导入
+          </mdui-button>
+          <mdui-button
+            variant="filled"
+            data-testid="btn-skill-new"
             onClick={() => setDraft({ builtin: false, name: '', description: '', body: '' })}
           >
+            <mdui-sym-add slot="icon" />
             新建
-          </Button>
-        </Space>
+          </mdui-button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".md,.markdown,.zip"
+            multiple
+            hidden
+            onChange={onPickFiles}
+          />
+        </>
       }
     >
-      <Typography.Paragraph type="secondary" style={{ marginBottom: 12 }}>
+      <div className="text-secondary" style={{ marginBottom: 12 }}>
         启用的技能按相关性自动注入讲义生成与课程问答。支持 SKILL.md 单文件（.md）或含 references/
         参考文档的 zip 包；技能正文会注入提示词，请只导入可信来源。
-      </Typography.Paragraph>
-      <List
-        dataSource={skills}
-        locale={{ emptyText: '暂无技能' }}
-        renderItem={(skill) => (
-          <List.Item
-            actions={[
-              <Button
-                key="edit"
-                size="small"
-                icon={<EditOutlined />}
-                onClick={() =>
-                  setDraft({
-                    id: skill.id,
-                    builtin: !!skill.builtin,
-                    name: skill.name,
-                    description: skill.description,
-                    body: skill.body,
-                  })
-                }
-              >
-                {skill.builtin ? '查看' : '编辑'}
-              </Button>,
-              skill.builtin ? (
-                <Popconfirm key="reset" title="重置为内置版本？" onConfirm={() => void resetBuiltin(skill)}>
-                  <Button size="small" icon={<ReloadOutlined />} />
-                </Popconfirm>
-              ) : (
-                <Popconfirm
-                  key="del"
-                  title={`删除技能「${skill.name}」？`}
-                  onConfirm={() => void removeSkill(skill)}
-                >
-                  <Button size="small" danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              ),
-            ]}
-          >
-            <List.Item.Meta
-              title={
-                <Space size={8}>
-                  {skill.name}
-                  {!!skill.builtin && <Tag>内置</Tag>}
-                  {(refCounts[skill.id!] ?? 0) > 0 && <Tag>{refCounts[skill.id!]} 篇参考文档</Tag>}
-                </Space>
-              }
-              description={skill.description || '（无描述）'}
-            />
-            <Switch checked={!!skill.enabled} onChange={(v) => void toggle(skill, v)} />
-          </List.Item>
-        )}
-      />
+      </div>
 
-      <Modal
+      {skills.length === 0 ? (
+        <div data-testid="skill-empty">暂无技能</div>
+      ) : (
+        <div className="skill-list">
+          {skills.map((skill) => (
+            <SkillItem
+              key={skill.id}
+              skill={skill}
+              refCount={refCounts[skill.id!] ?? 0}
+              onToggle={(enabled) => void toggle(skill, enabled)}
+              onEdit={() =>
+                setDraft({
+                  id: skill.id,
+                  builtin: !!skill.builtin,
+                  name: skill.name,
+                  description: skill.description,
+                  body: skill.body,
+                })
+              }
+              onReset={async () => {
+                if (await confirmDialog({ headline: '重置为内置版本？', confirmText: '重置' })) {
+                  void resetBuiltin(skill);
+                }
+              }}
+              onDelete={async () => {
+                if (
+                  await confirmDialog({
+                    headline: `删除技能「${skill.name}」？`,
+                    confirmText: '删除',
+                  })
+                ) {
+                  void removeSkill(skill);
+                }
+              }}
+            />
+          ))}
+        </div>
+      )}
+
+      <mdui-dialog
+        ref={dlgRef}
         open={draft != null}
-        title={draft?.id == null ? '新建技能' : draft.builtin ? `查看「${draft.name}」` : `编辑「${draft.name}」`}
-        width={720}
-        onCancel={() => setDraft(null)}
-        onOk={() => void saveDraft()}
-        okText={draft?.builtin ? '存为副本' : '保存'}
+        headline={
+          draft?.id == null
+            ? '新建技能'
+            : draft.builtin
+            ? `查看「${draft.name}」`
+            : `编辑「${draft.name}」`
+        }
+        data-testid="skill-dialog"
+        /* mdui 的 dialog 默认**不**响应 Esc 与点遮罩（两个属性默认 false），而 antd 的 Modal 默认都响应 ——
+           显式打开以保持迁移前后的行为一致，也让上面的 closed 同步真正生效。 */
+        close-on-esc
+        close-on-overlay-click
       >
         {draft && (
-          <Form layout="vertical">
+          <>
             {draft.builtin && (
-              <Typography.Paragraph type="secondary">
+              <div className="text-secondary">
                 内置技能不可直接修改，保存时将创建副本，原版可随时重置恢复。
-              </Typography.Paragraph>
+              </div>
             )}
-            <Form.Item label="名称" required>
-              <Input value={draft.name} onChange={(e) => setDraft({ ...draft, name: e.target.value })} />
-            </Form.Item>
-            <Form.Item label="描述">
-              <Input
+            <Field label="名称">
+              <mdui-text-field
+                value={draft.name}
+                data-testid="skill-name"
+                onInput={(e) => setDraft({ ...draft, name: e.currentTarget.value })}
+              />
+            </Field>
+            <Field label="描述">
+              <mdui-text-field
                 value={draft.description}
                 placeholder="一句话说明这个技能的用途"
-                onChange={(e) => setDraft({ ...draft, description: e.target.value })}
+                data-testid="skill-desc"
+                onInput={(e) => setDraft({ ...draft, description: e.currentTarget.value })}
               />
-            </Form.Item>
-            <Form.Item label="正文（Markdown，将作为写作规范注入讲义生成）" required>
-              <Input.TextArea
-                value={draft.body}
+            </Field>
+            <Field label="正文（Markdown，将作为写作规范注入讲义生成）">
+              <mdui-text-field
                 rows={14}
+                value={draft.body}
                 style={{ fontFamily: 'monospace' }}
-                onChange={(e) => setDraft({ ...draft, body: e.target.value })}
+                data-testid="skill-body"
+                onInput={(e) => setDraft({ ...draft, body: e.currentTarget.value })}
               />
-            </Form.Item>
-          </Form>
+            </Field>
+          </>
         )}
-      </Modal>
-    </Card>
+        <mdui-button slot="action" variant="text" data-testid="skill-cancel" onClick={() => setDraft(null)}>
+          取消
+        </mdui-button>
+        <mdui-button
+          slot="action"
+          variant="filled"
+          data-testid="skill-save"
+          onClick={() => void saveDraft()}
+        >
+          {draft?.builtin ? '存为副本' : '保存'}
+        </mdui-button>
+      </mdui-dialog>
+    </SectionCard>
+  );
+}
+
+/**
+ * 单个技能行。
+ *
+ * 为什么不用 `mdui-list-item`：它的 `custom` 插槽是**覆盖式**的 —— 源码里
+ * `<slot name="custom">…预设内容…</slot>`，只要放一个 `slot="custom"` 的子元素，
+ * 标题 / 描述 / end-icon 三个插槽的内容就全部不再渲染（实测踩到：整行只剩两个按钮）。
+ * 而这一行需要「标题 + 描述 + 开关 + 两个操作按钮」四组内容，预设布局塞不下
+ * （end-icon 只有一个槽位，且 headline 默认单行截断会切掉按钮），
+ * 所以直接把这一行用 div + 设计令牌搭出来，行为与视觉都完全可控。
+ *
+ * 开关走 mdui-switch 的 `change`（自定义事件，用 useMduiEvent 拿 el.checked）。
+ */
+function SkillItem({
+  skill,
+  refCount,
+  onToggle,
+  onEdit,
+  onReset,
+  onDelete,
+}: {
+  skill: SkillRow;
+  refCount: number;
+  onToggle: (enabled: boolean) => void;
+  onEdit: () => void;
+  onReset: () => void;
+  onDelete: () => void;
+}) {
+  const swRef = useMduiEvent('mdui-switch', 'change', (_e, el) => onToggle(el.checked));
+  return (
+    <div className="skill-row" data-testid="skill-row" data-skill-id={skill.id}>
+      <div className="skill-row__main">
+        <div className="skill-row__name">
+          <span className="skill-row__title">{skill.name}</span>
+          {!!skill.builtin && <span className="tag-mini">内置</span>}
+          {refCount > 0 && <span className="tag-mini">{refCount} 篇参考文档</span>}
+        </div>
+        <div className="skill-row__desc text-secondary">{skill.description || '（无描述）'}</div>
+      </div>
+      <mdui-switch ref={swRef} checked={!!skill.enabled} data-testid="skill-toggle" />
+      <mdui-button variant="text" data-testid="skill-edit" onClick={onEdit}>
+        <mdui-sym-edit slot="icon" />
+        {skill.builtin ? '查看' : '编辑'}
+      </mdui-button>
+      {skill.builtin ? (
+        <mdui-button-icon data-testid="skill-reset" aria-label="重置为内置版本" onClick={onReset}>
+          <mdui-sym-refresh />
+        </mdui-button-icon>
+      ) : (
+        <mdui-button-icon data-testid="skill-delete" aria-label="删除技能" onClick={onDelete}>
+          <mdui-sym-delete />
+        </mdui-button-icon>
+      )}
+    </div>
   );
 }

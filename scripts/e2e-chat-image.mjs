@@ -19,12 +19,12 @@ await page.addInitScript((key) => {
 
 await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
-await page.waitForSelector('.ant-list-item', { timeout: 15000 });
-await page.click('button:has-text("学习")');
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 15000 });
+await page.click('[data-testid="btn-play"]');
 await page.waitForSelector('video', { timeout: 15000 });
 
 console.log('1. 生成字幕');
-await page.click('button:has-text("生成字幕")');
+await page.click('[data-testid="subs-generate"]');
 let deadline = Date.now() + 240000;
 while (Date.now() < deadline) {
   await page.waitForTimeout(3000);
@@ -33,7 +33,7 @@ while (Date.now() < deadline) {
 }
 
 console.log('2. 切到问答页，等待索引自动建立');
-await page.click('.ant-tabs-tab:has-text("问答")');
+await page.click('[data-testid="panel-tab-chat"]');
 deadline = Date.now() + 120000;
 let indexOk = false;
 while (Date.now() < deadline) {
@@ -65,10 +65,10 @@ if (indexOk) {
     console.log('4. 点击截图按钮');
     await page.click('[data-testid="shot-btn"]');
     // Sender 的 header 内容直接渲染、无包装 class（ant-sender-header 仅属于 opt-in 的 Sender.Header
-    // 子组件，ChatPanel 未使用）；.ant-sender 内只有 chip 是 img（prefix/提交按钮均为 svg 图标）
-    await page.waitForSelector('.ant-sender img', { timeout: 5000 });
+    // 子组件，ChatPanel 未使用）；[data-testid="chat-composer"] 内只有 chip 是 img（prefix/提交按钮均为 svg 图标）
+    await page.waitForSelector('[data-testid="chat-composer"] img', { timeout: 5000 });
     // 角标与 img 同在 chip 容器 span 内，取父节点文本校验
-    const chipBadge = await page.locator('.ant-sender img').first().locator('..').innerText();
+    const chipBadge = await page.locator('[data-testid="chat-composer"] img').first().locator('..').innerText();
     const chipOk = /\d{1,3}:\d{2}/.test(chipBadge);
     console.log('  截图 chip 已出现，时间戳角标:', chipOk ? chipBadge.trim() : '缺失');
     await page.screenshot({ path: 'e2e-shots/9-chat-shot-chip.png', fullPage: true });
@@ -89,8 +89,8 @@ if (indexOk) {
     await page.press('.side-pane textarea', 'Enter');
 
     // 用户气泡应带截图缩略图
-    await page.waitForSelector('.ant-bubble-end img', { timeout: 10000 }).catch(() => null);
-    const userImgCount = await page.locator('.ant-bubble-end img').count();
+    await page.waitForSelector('[data-testid="chat-msg-user"] img', { timeout: 10000 }).catch(() => null);
+    const userImgCount = await page.locator('[data-testid="chat-msg-user"] img').count();
     console.log('  用户气泡缩略图数:', userImgCount);
 
     deadline = Date.now() + 180000;

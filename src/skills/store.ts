@@ -14,41 +14,68 @@ export interface SkillMeta {
 }
 
 /**
- * 首次启动写入 + 版本升级：内置 skill 在 UI 中只读（编辑存为副本、可重置），
- * 因此按名 upsert——同名内置行直接升级为最新内容，用户副本不受影响；references 同步落库。
+ * 进行中的「补齐内置 skill」任务（并发闸门）。
+ *
+ * 为什么必须有：本函数是「先按名查、查不到就插」，而调用点有好几个且互不感知
+ * （设置页 SkillsCard 的 effect、HandoutPanel、ChatPanel、skills/router）。
+ * React StrictMode 在 dev 下会把 effect 跑两次，于是两个调用并发进入循环、
+ * **都在任何一次插入落库之前查完**，6 个内置技能被插成 12 行
+ * （实测：dev 12 行 / 生产构建 6 行；生产不触发 StrictMode 双调用所以看不出来）。
+ *
+ * 用模块级 in-flight promise 把并发调用收敛成同一次执行；完成后清空，
+ * 这样用户删掉内置技能后再次调用仍会重新补齐。
  */
-export async function ensureBuiltinSkills(): Promise<void> {
+let builtinInflight: Promise<void> | null = null;
+
+/** 首次启动写入 + 版本升级：内置 skill 在 UI 中只读（编辑存为副本、可重置），
+ *  因此按名 upsert——同名内置行直接升级为最新内容，用户副本不受影响；references 同步落库。 */
+export function ensureBuiltinSkills(): Promise<void> {
+  builtinInflight ??= doEnsureBuiltinSkills().finally(() => {
+    builtinInflight = null;
+  });
+  return builtinInflight;
+}
+
+async function doEnsureBuiltinSkills(): Promise<void> {
   const now = Date.now();
-  for (const s of BUILTIN_SKILLS) {
-    let row = await db.skills.filter((r) => r.name === s.name && !!r.builtin).first();
-    if (row?.id != null) {
-      if (row.body !== s.body || row.description !== s.description) {
-        await db.skills.update(row.id, { description: s.description, body: s.body, updatedAt: now });
-      }
-    } else {
-      const id = (await db.skills.add({
-        name: s.name,
-        description: s.description,
-        body: s.body,
-        enabled: 1,
-        builtin: 1,
-        updatedAt: now,
-      })) as number;
-      row = { id } as SkillRow;
-    }
-    for (const r of s.refs ?? []) {
-      const exist = await db.skillRefs
-        .where('skillId')
-        .equals(row.id!)
-        .filter((x) => x.path === r.path)
-        .first();
-      if (exist?.id != null) {
-        if (exist.body !== r.body) await db.skillRefs.update(exist.id, { body: r.body });
+  // 整体放进一个 rw 事务：IndexedDB 会把同库的 rw 事务串行化，
+  // 于是「查—插」不会被另一个并发调用穿插（上面的闸门管同页并发，这层管跨调用/跨标签页）。
+  await db.transaction('rw', [db.skills, db.skillRefs], async () => {
+    for (const s of BUILTIN_SKILLS) {
+      let row = await db.skills.filter((r) => r.name === s.name && !!r.builtin).first();
+      if (row?.id != null) {
+        if (row.body !== s.body || row.description !== s.description) {
+          await db.skills.update(row.id, {
+            description: s.description,
+            body: s.body,
+            updatedAt: now,
+          });
+        }
       } else {
-        await db.skillRefs.add({ skillId: row.id!, path: r.path, body: r.body });
+        const id = (await db.skills.add({
+          name: s.name,
+          description: s.description,
+          body: s.body,
+          enabled: 1,
+          builtin: 1,
+          updatedAt: now,
+        })) as number;
+        row = { id } as SkillRow;
+      }
+      for (const r of s.refs ?? []) {
+        const exist = await db.skillRefs
+          .where('skillId')
+          .equals(row.id!)
+          .filter((x) => x.path === r.path)
+          .first();
+        if (exist?.id != null) {
+          if (exist.body !== r.body) await db.skillRefs.update(exist.id, { body: r.body });
+        } else {
+          await db.skillRefs.add({ skillId: row.id!, path: r.path, body: r.body });
+        }
       }
     }
-  }
+  });
 }
 
 /** Level 1：加载所有启用中技能的元数据（供路由器 / 问答 agent 发现技能） */

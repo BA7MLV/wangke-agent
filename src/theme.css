@@ -1,22 +1,53 @@
+/* 应用外壳的字体与底色。
+   字体：Roboto（拉丁/数字，@fontsource 自托管）+ 中文走系统字体。
+   mdui **不设** font-family（也没有 --mdui-font-* 变量），组件全部继承这里 —— 所以这一条覆盖整套 UI。
+   底色：走 MD3 的 background 面层令牌而不是写死 #f5f5f5，深色模式因此自动成立。 */
 html,
 body,
 #root {
   height: 100%;
   margin: 0;
-  background: #f5f5f5;
+  font-family:
+    Roboto,
+    -apple-system,
+    BlinkMacSystemFont,
+    'PingFang SC',
+    'Hiragino Sans GB',
+    'Microsoft YaHei',
+    sans-serif;
+  background: rgb(var(--mdui-color-background));
+  color: rgb(var(--mdui-color-on-background));
 }
 
-/* antd <App> 会渲染一层 .ant-app 包装 div，默认 height:auto 会打断高度链，
-   导致 .page 的 height:100% 失效、整页随内容滚动。接通它，页面才固定在视口内 */
-.ant-app {
-  height: 100%;
+/* ── 应用自补的语义色 ────────────────────────────────────────────────────────
+   MD3 的语义色**只有 error 一种**（success / warning / info 都不在规范里），
+   所以「答对/成功」这类绿色必须由应用自己补。这里按 MD3 的色板结构补一对：
+   一个用于文字/描边（success），一个用于容器底色（success-container）+ 其上的文字。
+   深浅两套都给出，并挂在 mdui 的主题类上，跟主题一起切换——
+   深色下必须换成浅绿，否则原来的深绿在深底上对比度不够。
+   值同样是 `R,G,B` 三元组（与 mdui 的颜色令牌写法一致），用的时候包 `rgb()`。 */
+:root {
+  --app-color-success: 20, 108, 46;
+  --app-color-success-container: 215, 242, 221;
+  --app-color-on-success-container: 7, 45, 18;
+  /* 实心绿底上的文字/图标色（浅色主题下是白，深色主题下绿变浅、它就得变深） */
+  --app-color-on-success: 255, 255, 255;
 }
 
-/* antd6 的 Upload.Dragger 自带 height:100%，而其父级 .ant-upload-wrapper 是 inline 元素，
-   百分比高度会跳过它、直接命中定高的 .page-body，导致拖拽区撑满整个内容区。
-   改回内容高度（注意：Dragger 的 style/height prop 会被 antd 内部合并覆盖，只能走 CSS） */
-.page-body > .ant-upload-wrapper .ant-upload-drag {
-  height: auto;
+html.mdui-theme-dark {
+  --app-color-success: 109, 213, 140;
+  --app-color-success-container: 10, 56, 24;
+  --app-color-on-success-container: 200, 245, 212;
+  --app-color-on-success: 10, 56, 24;
+}
+
+@media (prefers-color-scheme: dark) {
+  html.mdui-theme-auto {
+    --app-color-success: 109, 213, 140;
+    --app-color-success-container: 10, 56, 24;
+    --app-color-on-success-container: 200, 245, 212;
+    --app-color-on-success: 10, 56, 24;
+  }
 }
 
 .page {
@@ -28,31 +59,17 @@ body,
   overflow: hidden;
 }
 
-.page-header {
-  display: flex;
+/* 播放页的非正常态（加载中 / 记录不存在 / 视频文件已删）：
+   这三种情况都不进 player-layout，各自用一个居中的容器兜住。 */
+.player-loading,
+.player-fallback {
   align-items: center;
-  gap: 12px;
-  padding: 10px 16px;
-  /* PWA 全屏时避开刘海/灵动岛；不支持 env() 的浏览器忽略此声明，回退上方简写的 10px */
-  padding-top: calc(10px + env(safe-area-inset-top));
-  background: #fff;
-  border-bottom: 1px solid #f0f0f0;
-  flex-shrink: 0;
+  justify-content: center;
+  padding: 24px;
 }
 
-.page-header .title {
-  font-size: 17px;
-  font-weight: 600;
-  flex: 1;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.page-body {
-  flex: 1;
-  overflow: auto;
-  padding: 16px;
+.player-layout .video-pane__missing {
+  margin: auto;
 }
 
 /* 播放页：宽屏左右分栏，窄屏上下堆叠 */
@@ -75,27 +92,21 @@ body,
 .player-layout .side-pane {
   flex: 1;
   min-width: 0;
-  background: #fff;
-  border-radius: 8px;
+  background: rgb(var(--mdui-color-surface-container-low));
+  border-radius: var(--mdui-shape-corner-medium);
   display: flex;
   flex-direction: column;
   overflow: hidden;
 }
 
 /* 侧边栏 UX：面板区域尺寸固定，内容在区域内滚动，整页不滚动。
-   antd Tabs 的高度链默认由内容撑开，这里把它接通到 side-pane 的固定高度，
-   使各面板内部的 overflow:auto 滚动区生效 */
-.player-layout .side-pane .ant-tabs-body-holder {
-  overflow: hidden;
-}
-
-.player-layout .side-pane .ant-tabs-body {
-  height: 100%;
-}
-
-.player-layout .side-pane .ant-tabs-content {
-  height: 100%;
-  overflow: hidden;
+   高度链：.side-pane（flex column）→ mdui-tabs（flex:1）→ mdui-tab-panel（mdui 自己给了
+   `flex:1 1 auto; overflow-y:auto`）→ 面板内的 .panel-body。
+   antd 时代这里要写三条 `.ant-tabs-*` 覆盖才能接通高度，mdui 的组件自己就是 flex item，
+   只剩 mdui-tabs 这一层需要给 `flex:1`（它的 `:host` 是 `display:flex`，但默认不伸展）。 */
+.player-layout .side-pane .panel-tabs {
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 @media (max-width: 900px) {
@@ -123,25 +134,29 @@ body,
   display: flex;
   gap: 8px;
   padding: 6px 8px;
-  border-radius: 6px;
+  border-radius: var(--mdui-shape-corner-small);
   cursor: pointer;
 }
 
-/* ── 手机端（≤640px）：底部 Tab 布局 + 触控放大 + 防聚焦缩放 ────────────── */
-@media (max-width: 640px) {
-  /* 播放页骨架：视频撑满（900px 的 45vh 反推在手机上本就等于 100%，显式声明）、
-     面板区占满剩余高度、底部 Tab 栏贴底 */
+/* ── 手机（竖屏窄宽 / 横屏矮高）共同样式：触控放大 + 防聚焦缩放 ──────────
+   横屏那条用「高度」判据（理由见 utils/useMobile.ts 的 SHORT_LANDSCAPE_QUERY）：
+   手机横屏宽度普遍 >640px，只按宽度判会漏到 900px 的平板堆叠档去。
+   注：面板切换条现在是 `mdui-navigation-bar`（MD3 应用外壳），由 PageShell 渲染，
+   所以这里只管内容区的排布。 */
+@media (max-width: 640px), (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  /* 播放页骨架：视频撑满（900px 档那条 45vh 反推在手机上本就等于 100%，这里显式声明） */
   .player-layout .video-pane [data-media-player] {
     width: 100%;
   }
 
+  /* 面板区：占满视频下方的剩余高度，面板内部各自滚动 */
   .panel-host {
     flex: 1;
     min-height: 0;
     display: flex;
     flex-direction: column;
-    background: #fff;
-    border-radius: 8px;
+    background: rgb(var(--mdui-color-surface-container-low));
+    border-radius: var(--mdui-shape-corner-medium);
     padding: 0 12px;
     overflow: hidden;
   }
@@ -157,77 +172,50 @@ body,
     display: none;
   }
 
-  .mobile-tabbar {
-    flex: none;
-    display: flex;
-    background: #fff;
-    border-top: 1px solid #f0f0f0;
-    border-radius: 0 0 8px 8px;
-    overflow: hidden;
-    padding-bottom: env(safe-area-inset-bottom);
-  }
-  .mobile-tabbar button {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 2px;
-    height: 52px;
-    border: none;
-    background: none;
-    padding: 0;
-    font-size: 11px;
-    color: #666;
-    cursor: pointer;
-    -webkit-tap-highlight-color: transparent;
-  }
-  .mobile-tabbar button .anticon {
-    font-size: 19px;
-  }
-  .mobile-tabbar button.active {
-    color: #1677ff;
-    font-weight: 500;
-  }
-
-  /* 触控目标：页头按钮 ≥40px，小号按钮 ≥32px */
-  .page-header .ant-btn {
-    min-width: 40px;
-    min-height: 40px;
-  }
-  .ant-btn-sm {
-    min-height: 32px;
-  }
-
-  /* iOS Safari 对 <16px 的输入框聚焦时会自动放大页面，统一提到 16px 防缩放 */
+  /* iOS Safari 对 <16px 的输入框聚焦时会自动放大页面，统一提到 16px 防缩放。
+     这条只覆盖**文档树里的** input/textarea；mdui 的输入框在 shadow DOM 内，
+     由组件自己保证 16px（MD3 的 body-large 就是 16px），不需要也无法从这里兜。 */
   input,
   textarea {
     font-size: 16px !important;
   }
 
-  /* 字幕条目行距加大，整行更好点 */
-  .sub-item {
-    padding: 10px 12px;
-  }
-
-  /* 库页导入任务行：文件名窄屏收缩基准改小，给进度条留空间 */
+  /* 库页导入任务行：文件名窄屏收缩基准改小，给进度条留空间
+     （基准值在 src/ui/layout.css 的 .import-task-name，这里是窄屏覆盖） */
   .import-task-name {
     flex-basis: 120px !important;
     min-width: 0;
   }
+}
 
-  /* Dragger 提示在长文案下收紧 */
-  .page-body .ant-upload-drag {
-    padding: 12px 0;
-  }
-  .page-body .ant-upload-hint {
-    font-size: 13px;
+/* ── 手机横屏：左视频 / 右面板 ───────────────────────────────────────────
+   flex 5:4 → 852px 宽下视频约 460×259、右栏约 320。切换条落在右栏**顶部**的
+   `mdui-tabs`（横向 5 个短标签放得下）：与桌面侧栏同构、多给会话宽度，
+   也不撞横屏底部的 home indicator 区。 */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  .player-layout {
+    flex-direction: row;
+    gap: 8px;
+    padding: 8px calc(8px + env(safe-area-inset-right)) calc(8px + env(safe-area-inset-bottom))
+      calc(8px + env(safe-area-inset-left));
   }
 
-  /* 设置页卡片头部：标题与右上角按钮允许换行 */
-  .ant-card-head,
-  .ant-card-head .ant-card-head-wrapper {
-    flex-wrap: wrap;
-    row-gap: 8px;
+  .player-layout .video-pane {
+    flex: 5 1 0;
+    min-width: 0;
+    min-height: 0;
+    align-items: center;
+    justify-content: center;
+  }
+
+  /* 宽度同时受「左栏宽度」与「可用高度 × 16:9」约束：键盘弹出时 --vvh 缩小 → 视频跟着缩，
+     不会把控制栏顶出可视区。64px ≈ 标题栏 64 - 容器上下 padding 16（回退 60vh 只求量级） */
+  .player-layout .video-pane [data-media-player] {
+    width: min(100%, calc((var(--vvh, 60vh) - 64px) * 16 / 9));
+  }
+
+  .player-layout .side-pane {
+    flex: 4 1 0;
+    min-width: 0;
   }
 }

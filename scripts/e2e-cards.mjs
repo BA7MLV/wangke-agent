@@ -74,19 +74,19 @@ const topText = (page) =>
   await seed(page);
   console.log('1. 进入卡片面板（桌面 Tabs）');
   await page.goto(`${BASE}/#/player/${VIDEO_ID}`, { waitUntil: 'networkidle' });
-  await page.click('.ant-tabs-tab:has-text("卡片")');
+  await page.click('[data-testid="panel-tab-cards"]');
   await page.waitForSelector('.deck-card.is-top', { timeout: 10000 });
 
   const t0 = await (await topText(page)).jsonValue();
   if (t0.includes('候选卡甲')) ok('卡栈顶卡为第一张待审卡');
   else fail(`顶卡不符：${t0}`);
 
-  const exportBtn = page.locator('button:has-text("导出 .apkg")');
+  const exportBtn = page.locator('[data-testid="cards-export"]');
   if ((await exportBtn.textContent())?.includes('（1）')) ok('导出按钮带保留计数（1）');
   else fail(`导出按钮计数不符：${await exportBtn.textContent()}`);
 
   console.log('2. 点「保留」→ 顶卡切到第二张，计数变 2');
-  await page.click('button:has-text("保留")');
+  await page.click('[data-testid="swipe-keep"]');
   await page.waitForFunction(
     () => document.querySelector('.deck-card.is-top .deck-face.front .face-text')?.textContent?.includes('候选卡乙'),
     { timeout: 8000 },
@@ -96,31 +96,31 @@ const topText = (page) =>
   else fail(`导出计数未更新：${await exportBtn.textContent()}`);
 
   console.log('3. 点「翻面」→ 显示答案与来源时间戳');
-  await page.click('button:has-text("翻面")');
+  await page.click('[data-testid="swipe-swap"]');
   await page.waitForSelector('.deck-inner.flipped', { timeout: 5000 });
   const back = await page.locator('.deck-card.is-top .deck-face.back').textContent();
   if (back?.includes('细胞供能') && back?.includes('[2:05]')) ok('背面含答案与 [2:05] 来源');
   else fail(`背面内容不符：${back}`);
 
   console.log('4. 点「丢弃」→ 待审清空，出现审核汇总');
-  await page.click('button:has-text("丢弃")');
+  await page.click('[data-testid="swipe-drop"]');
   await page.waitForFunction(() => document.body.textContent?.includes('审核完成：保留 2 · 丢弃 1'), { timeout: 8000 });
   ok('汇总：保留 2 · 丢弃 1');
 
   console.log('5. 撤销 → 候选卡乙回到待审；再保留 → 汇总 保留 3 · 丢弃 0');
-  await page.click('button[title="撤销上一张"]');
+  await page.click('[data-testid="cards-undo"]');
   await page.waitForFunction(
     () => document.querySelector('.deck-card.is-top .deck-face.front .face-text')?.textContent?.includes('候选卡乙'),
     { timeout: 8000 },
   );
-  await page.click('button:has-text("保留")');
+  await page.click('[data-testid="swipe-keep"]');
   await page.waitForFunction(() => document.body.textContent?.includes('审核完成：保留 3 · 丢弃 0'), { timeout: 8000 });
   ok('撤销 + 重新保留成功');
 
   console.log('6. 已保留列表「移除」候选卡乙 → 汇总 保留 2 · 丢弃 1');
   await page
     .locator('.sub-item', { hasText: '候选卡乙' })
-    .locator('button:has-text("移除")')
+    .locator('[aria-label="移除"]')
     .click();
   await page.waitForFunction(() => document.body.textContent?.includes('审核完成：保留 2 · 丢弃 1'), { timeout: 8000 });
   ok('移除生效');
@@ -146,9 +146,12 @@ const topText = (page) =>
   } else fail(`apkg 内容不符：count=${noteCount}`);
 
   console.log('8. 「重新生成卡片」弹确认框，取消后数据不变');
-  await page.click('button:has-text("重新生成卡片")');
-  await page.waitForSelector('.ant-modal-confirm', { timeout: 5000 });
-  await page.locator('.ant-modal-confirm button', { hasText: /取\s*消/ }).click();
+  // mdui 的 dialog() 自己 new 组件挂到 body、插不进属性 —— 用 confirmDialog 注入的标记元素定位；
+  // 按钮顺序固定为「先取消、后确认」，取消永远是第一个 action
+  await page.click('[data-testid="cards-generate"]');
+  const regenDlg = page.locator('mdui-dialog:has([data-testid="confirm-dialog-danger"])');
+  await regenDlg.waitFor({ state: 'attached', timeout: 5000 });
+  await regenDlg.locator('mdui-button[slot="action"]').first().click();
   await page.waitForFunction(() => document.body.textContent?.includes('审核完成：保留 2 · 丢弃 1'), { timeout: 5000 });
   ok('确认弹窗取消后数据不变');
   await ctx.close();
@@ -162,7 +165,7 @@ const topText = (page) =>
   page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 400)));
   await seed(page);
   await page.goto(`${BASE}/#/player/${VIDEO_ID}`, { waitUntil: 'networkidle' });
-  await page.click('.mobile-tabbar button:has-text("卡片")');
+  await page.click('[data-testid="panel-tab-cards"]');
   await page.waitForSelector('.deck-card.is-top', { timeout: 10000 });
   ok('移动端卡栈渲染');
 
@@ -179,7 +182,7 @@ const topText = (page) =>
     () => document.querySelector('.deck-card.is-top .deck-face.front .face-text')?.textContent?.includes('候选卡乙'),
     { timeout: 8000 },
   );
-  const label = await page.locator('button:has-text("导出 .apkg")').textContent();
+  const label = await page.locator('[data-testid="cards-export"]').textContent();
   if (label?.includes('（2）')) ok('触摸右滑保留成功，计数（2）');
   else fail(`右滑后计数不符：${label}`);
   await ctx.close();

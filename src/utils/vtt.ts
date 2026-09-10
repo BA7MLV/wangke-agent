@@ -2,6 +2,8 @@ export interface Cue {
   start: number;
   end: number;
   text: string;
+  /** 稳定标识（`段idx:段内序号`），供播放器字幕轨按 id 幂等灌入 cue；导出 VTT/SRT 时忽略 */
+  id?: string;
 }
 
 function pad(n: number, len = 2): string {

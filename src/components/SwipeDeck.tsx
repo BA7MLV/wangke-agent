@@ -1,6 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
-import { Button, Space } from 'antd';
-import { CheckOutlined, CloseOutlined, SwapOutlined, UndoOutlined } from '@ant-design/icons';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { CardRow } from '../store/db';
 import { fmtTime } from '../utils/vtt';
 import { ms } from './motion';
@@ -79,6 +77,7 @@ export default function SwipeDeck({ pending, keptCount, judgedCount, onJudge, on
     <>
       <div
         className="deck"
+        data-testid="swipe-deck"
         tabIndex={0}
         role="group"
         aria-label="卡片审核：右箭头保留，左箭头丢弃，空格翻面，退格撤销"
@@ -181,25 +180,48 @@ export default function SwipeDeck({ pending, keptCount, judgedCount, onJudge, on
         </div>
       </div>
 
-      <Space className="deck-actions" size={10}>
-        <Button icon={<UndoOutlined />} disabled={!canUndo || leaving !== null} onClick={onUndo} title="撤销上一张" />
-        <Button danger icon={<CloseOutlined />} disabled={leaving !== null} onClick={() => commit('left')}>
+      <div className="deck-actions">
+        <mdui-tooltip content="撤销上一张">
+          <mdui-button-icon data-testid="swipe-undo" aria-label="撤销上一张" disabled={!canUndo || leaving !== null} onClick={onUndo}>
+            <mdui-sym-undo />
+          </mdui-button-icon>
+        </mdui-tooltip>
+        {/* 「丢弃」是危险语义但 MD3 的按钮没有危险色变体，靠覆盖主色令牌上错误色。
+            语义不能只靠颜色，按钮文案仍然写清动作。 */}
+        <mdui-button
+          data-testid="swipe-drop"
+          variant="outlined"
+          disabled={leaving !== null}
+          onClick={() => commit('left')}
+          style={{ '--mdui-color-primary': 'var(--mdui-color-error)' } as CSSProperties}
+        >
+          <mdui-sym-close slot="icon" />
           丢弃
-        </Button>
-        <Button icon={<SwapOutlined />} disabled={leaving !== null} onClick={flip}>
+        </mdui-button>
+        <mdui-button data-testid="swipe-swap" variant="outlined" disabled={leaving !== null} onClick={flip}>
+          <mdui-sym-swap-horiz slot="icon" />
           翻面
-        </Button>
-        <Button
-          type="primary"
-          icon={<CheckOutlined />}
+        </mdui-button>
+        {/* 「保留」沿用原来的绿色语义（MD3 规范里没有 success 色，用应用自补的令牌）。
+            filled 变体的底色取 --mdui-color-primary、文字取 --mdui-color-on-primary，
+            所以两个都要覆盖成绿色系。 */}
+        <mdui-button
+          data-testid="swipe-keep"
+          variant="filled"
           disabled={leaving !== null}
           onClick={() => commit('right')}
-          style={{ background: '#52c41a', borderColor: '#52c41a' }}
+          style={
+            {
+              '--mdui-color-primary': 'var(--app-color-success)',
+              '--mdui-color-on-primary': 'var(--app-color-on-success)',
+            } as CSSProperties
+          }
         >
+          <mdui-sym-check slot="icon" />
           保留
-        </Button>
-      </Space>
-      <div style={{ textAlign: 'center', fontSize: 12, color: '#999', flexShrink: 0, paddingBottom: 6 }}>
+        </mdui-button>
+      </div>
+      <div className="deck-status" data-testid="swipe-status">
         已审 {judgedCount} · 待审 {pending.length} · 已保留 {keptCount}
       </div>
     </>

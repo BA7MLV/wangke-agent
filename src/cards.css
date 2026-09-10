@@ -1,4 +1,8 @@
 /* ── Anki 滑动制卡（CardsPanel / SwipeDeck） ─────────────────────── */
+/* 颜色全部走 MD3 令牌：面层用 rgb(var(--mdui-color-surface-*))，文字用
+   --mdui-color-on-*，主色/错误用 primary / error；深色模式随主题自动成立。
+   绿色语义色走应用自补的 --app-color-success*（MD3 规范里只有 error，没有 success，
+   由 theme.css 自己补了一对深浅值）。**所有颜色令牌都是 R,G,B 三元组，必须包在 rgb() 里。** */
 
 /* 卡栈容器：顶卡可拖，底下两张缩放堆叠；tabIndex 聚焦后可用键盘（←弃/→留/空格翻面/⌫撤销） */
 .deck {
@@ -9,7 +13,7 @@
   outline: none;
 }
 .deck:focus-visible {
-  outline: 2px solid rgba(22, 119, 255, 0.35);
+  outline: 2px solid rgb(var(--mdui-color-primary) / 0.35);
   outline-offset: 2px;
   border-radius: 12px;
 }
@@ -18,8 +22,8 @@
   position: absolute;
   inset: 0;
   border-radius: 12px;
-  background: #fff;
-  border: 1px solid #f0f0f0;
+  background: rgb(var(--mdui-color-surface-container-low));
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
   box-shadow: 0 2px 16px rgba(0, 0, 0, 0.08);
   user-select: none;
   -webkit-user-select: none;
@@ -66,18 +70,18 @@
   opacity: 0;
   transition: opacity var(--duration-quick) var(--ease-out);
   pointer-events: none;
-  background: rgba(255, 255, 255, 0.85);
+  background: rgb(var(--mdui-color-surface-container-highest) / 0.9);
 }
 .deck-hint.keep {
   right: 14px;
-  color: #52c41a;
-  border-color: #52c41a;
+  color: rgb(var(--app-color-success));
+  border-color: rgb(var(--app-color-success));
   transform: rotate(10deg);
 }
 .deck-hint.drop {
   left: 14px;
-  color: #ff4d4f;
-  border-color: #ff4d4f;
+  color: rgb(var(--mdui-color-error));
+  border-color: rgb(var(--mdui-color-error));
   transform: rotate(-10deg);
 }
 
@@ -110,37 +114,38 @@
   font-size: 11px;
   font-weight: 700;
   letter-spacing: 1px;
-  color: #fff;
-  background: #1677ff;
+  color: rgb(var(--mdui-color-on-primary));
+  background: rgb(var(--mdui-color-primary));
   border-radius: 10px;
   padding: 2px 10px;
   flex-shrink: 0;
 }
 .face-tag.a {
-  background: #52c41a;
+  background: rgb(var(--app-color-success-container));
+  color: rgb(var(--app-color-on-success-container));
 }
 .face-text {
   font-size: 17px;
   line-height: 1.7;
-  color: #2d3436;
+  color: rgb(var(--mdui-color-on-surface));
   white-space: pre-wrap;
   word-break: break-word;
 }
 .face-tip {
   margin-top: auto;
   text-align: center;
-  color: #bbb;
+  color: rgb(var(--mdui-color-on-surface-variant));
   font-size: 12px;
   flex-shrink: 0;
 }
 .face-src {
   margin-top: auto;
   font-size: 12px;
-  color: #999;
+  color: rgb(var(--mdui-color-on-surface-variant));
   flex-shrink: 0;
 }
 .face-src a {
-  color: #1677ff;
+  color: rgb(var(--mdui-color-primary));
   cursor: pointer;
 }
 
@@ -153,12 +158,168 @@
   padding-bottom: 4px;
 }
 
+/* 已审 / 待审 / 已保留 的计数行 */
+.deck-status {
+  flex-shrink: 0;
+  padding-bottom: 6px;
+  text-align: center;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 审核完成后的汇总行 + 已保留卡列表（替原来的 antd 内联样式） ───────────
+   配色一律走 MD3 令牌；列表行复用 ui/panel.css 的 .sub-item 基类，
+   这里只补这一处特有的横向布局。 */
+.cards-summary {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 0 8px;
+  font-size: 13px;
+}
+
+.cards-list {
+  display: flex;
+  flex-direction: column;
+}
+
+.cards-list__caption {
+  padding: 4px 8px 2px;
+  font-size: 12px;
+}
+
+.cards-row .sub-item__text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 思考题答题卡（QuizCard） ────────────────────────────────────────────
+   容器是「面上的一个内嵌区块」，用 surface-container + outline-variant；
+   答对/答错走应用自补的 success 语义色与 MD3 的 error。 */
+.quiz-card {
+  margin-top: 8px;
+  padding: 12px;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface-container));
+}
+
+.quiz-q + .quiz-q {
+  margin-top: 16px;
+}
+
+.quiz-stem {
+  margin-bottom: 8px;
+  font-weight: 500;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.quiz-options {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.quiz-option {
+  display: flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 8px 12px;
+  border: 1px solid rgb(var(--mdui-color-outline));
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-surface-container-lowest));
+  color: rgb(var(--mdui-color-on-surface));
+  font-family: inherit;
+  font-size: 14px;
+  line-height: 1.5;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--mdui-motion-duration-short2) var(--mdui-motion-easing-linear);
+}
+
+.quiz-option:not(:disabled):hover {
+  background: rgb(var(--mdui-color-surface-container-highest));
+}
+
+.quiz-option--correct {
+  border-color: rgb(var(--app-color-success));
+  background: rgb(var(--app-color-success-container));
+  color: rgb(var(--app-color-on-success-container));
+}
+
+.quiz-option--wrong {
+  border-color: rgb(var(--mdui-color-error));
+  background: rgb(var(--mdui-color-error-container));
+  color: rgb(var(--mdui-color-on-error-container));
+}
+
+.quiz-option--muted {
+  opacity: 0.55;
+}
+
+.quiz-option__letter {
+  margin-right: 6px;
+}
+
+.quiz-option__mark {
+  margin-left: 6px;
+}
+
+.quiz-option__mark--ok {
+  color: rgb(var(--app-color-success));
+}
+
+.quiz-option__mark--bad {
+  color: rgb(var(--mdui-color-error));
+}
+
+.quiz-explain {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.quiz-result--ok {
+  color: rgb(var(--app-color-success));
+  font-weight: 500;
+}
+
+.quiz-result--bad {
+  color: rgb(var(--mdui-color-error));
+  font-weight: 500;
+}
+
+.quiz-ts {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.quiz-ts--stem {
+  margin-left: 6px;
+  font-size: 12px;
+  font-weight: 400;
+}
+
+.quiz-score {
+  margin-top: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed rgb(var(--mdui-color-outline-variant));
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
 @media (max-width: 640px) {
   .deck {
     height: 260px;
   }
-  /* 触控目标 ≥40px */
-  .deck-actions .ant-btn {
+  /* 触控目标 ≥40px（原来是 antd 的 .ant-btn，现在量的是 mdui 的宿主） */
+  .deck-actions mdui-button,
+  .deck-actions mdui-button-icon {
     min-width: 40px;
     min-height: 40px;
   }

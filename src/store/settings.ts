@@ -4,6 +4,12 @@ import type { ReasoningEffort } from '../api/siliconflow';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr' | 'embed';
 
+/**
+ * 界面主题。`auto` = 跟随系统（MD3 / Material You 的默认行为）。
+ * 取值直接对应 mdui `setTheme()` 的参数，见 `src/ui/theme.ts`。
+ */
+export type AppTheme = 'auto' | 'light' | 'dark';
+
 export interface Settings {
   apiKey: string;
   baseUrl: string;
@@ -31,6 +37,12 @@ export interface Settings {
   bilibiliCookie: string;
   /** 思考题弹幕飘屏开关（控制栏可切，持久化） */
   danmakuEnabled: boolean;
+  /** 用户自定义的倍速档位（0.25–4，按控制栏「自定义」录入；与内置档位一起去重升序展示） */
+  customRates: number[];
+  /** 界面主题：跟随系统 / 强制浅色 / 强制深色（MD3 令牌体系下深浅两套色板都已就位） */
+  theme: AppTheme;
+  /** Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化 */
+  dynamicColor: boolean;
 }
 
 export const DEFAULT_MODELS = {
@@ -61,6 +73,9 @@ export const useSettings = create<SettingsStore>()(
       bilibiliProxy: '',
       bilibiliCookie: '',
       danmakuEnabled: true,
+      customRates: [],
+      theme: 'auto',
+      dynamicColor: true,
       update: (patch) => set(patch),
     }),
     {
@@ -97,5 +112,8 @@ export function getSettings(): Settings {
     bilibiliProxy: s.bilibiliProxy,
     bilibiliCookie: s.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled,
+    customRates: [...s.customRates],
+    theme: s.theme,
+    dynamicColor: s.dynamicColor,
   };
 }

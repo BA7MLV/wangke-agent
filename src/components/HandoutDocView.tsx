@@ -2,16 +2,18 @@
  * 讲义结构化视图：按 IR 块渲染公文风格 HTML（替代 docx-preview 只读预览）。
  * 每个文字块支持：触摸端左滑 / 桌面端 hover → 「AI 改写」（预设+自由输入，预览后接受）或「手动编辑」；
  * 修改经 persistHandoutEdit 重建 DOCX 写回同一行，下载的 DOCX 与预览始终一致。
+ *
+ * 阶段 3 迁移：antd Button/Input/Modal 换为 mdui-button/mdui-text-field/mdui-dialog；
+ * 手动编辑从块内联改为受控对话框（handout-edit-dialog），逻辑与 .hd-* 结构逐行保留。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { App, Button, Input, Modal } from 'antd';
-import { DeleteOutlined, PlusOutlined } from '@ant-design/icons';
 import { db, type HandoutRow } from '../store/db';
 import type { Block } from '../handout/ir';
 import type { HandoutSection } from '../handout/docx';
 import { h1Num, h2Num } from '../handout/styles';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
 import { blockToText, persistHandoutEdit, rewriteBlockWithLLM } from '../pipelines/handoutEdit';
+import { toast, useMduiEvent } from '../ui';
 
 /** 编辑目标：课程概述段 / 章节标题 / 节内某个内容块 */
 type Target = { kind: 'summary' } | { kind: 'heading'; sec: number } | { kind: 'block'; sec: number; idx: number };
@@ -23,7 +25,6 @@ const keyOf = (t: Target): string =>
 const SWIPE_W = 136;
 
 export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
-  const { message } = App.useApp();
   const [doc, setDoc] = useState<{ summary: string; sections: HandoutSection[] } | null>(null);
   const [videoName, setVideoName] = useState('');
   const [frameUrls, setFrameUrls] = useState<Map<number, string>>(new Map());
@@ -34,6 +35,9 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
   const [aiDraft, setAiDraft] = useState<{ key: string; block: Block } | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const savingRef = useRef(0);
+
+  // 编辑对话框：Esc / 点遮罩关闭时同步回 React state，避免「关掉又自己弹回」
+  const editDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setEditTarget(null));
 
   useEffect(() => ensureHandoutPreviewFonts(), []);
 
@@ -101,7 +105,7 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
     savingRef.current += 1;
     setSaveState('saving');
     persistHandoutEdit(handout.id!, next.sections, next.summary)
-      .catch((e) => message.error(`讲义保存失败：${e instanceof Error ? e.message : String(e)}`))
+      .catch((e) => toast.error(`讲义保存失败：${e instanceof Error ? e.message : String(e)}`))
       .finally(() => {
         savingRef.current -= 1;
         if (savingRef.current === 0) setSaveState('saved');
@@ -141,7 +145,7 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
       const rewritten = await rewriteBlockWithLLM(block, instruction, { title: handout.title, heading, prev, next });
       setAiDraft({ key: keyOf(t), block: rewritten });
     } catch (e) {
-      message.error(`AI 改写失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`AI 改写失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setAiBusy(false);
     }
@@ -149,8 +153,10 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
 
   if (!doc) {
     return (
-      <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-        讲义内容解析失败，请重新生成讲义
+      <div className="hd-scroll" data-testid="handout-doc">
+        <div style={{ color: 'rgb(var(--mdui-color-on-surface-variant))', padding: 16, textAlign: 'center' }}>
+          讲义内容解析失败，请重新生成讲义
+        </div>
       </div>
     );
   }
@@ -193,69 +199,55 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
               }
         }
       >
-        {editTarget && keyOf(editTarget) === k ? (
-          <BlockEditor
-            block={block}
-            onSave={(b) => {
-              applyEdit(t, b);
-              setEditTarget(null);
-            }}
-            onCancel={() => setEditTarget(null)}
-          />
+        {draft && (
+          <div className="hd-ai-old">
+            <BlockBody block={show(block)} label={label} frameUrls={frameUrls} />
+          </div>
+        )}
+        <div className={draft ? 'hd-ai-new' : undefined}>
+          <BlockBody block={show(draft ?? block)} label={label} frameUrls={frameUrls} />
+        </div>
+        {draft ? (
+          <div className="hd-ai-bar">
+            <mdui-button
+              variant="text"
+              onClick={() => {
+                setAiDraft(null);
+                setAiTarget(null);
+              }}
+            >
+              放弃
+            </mdui-button>
+            <mdui-button
+              variant="filled"
+              onClick={() => {
+                applyEdit(t, draft);
+                setAiDraft(null);
+                setAiTarget(null);
+              }}
+            >
+              接受
+            </mdui-button>
+          </div>
         ) : (
-          <>
-            {draft && (
-              <div className="hd-ai-old">
-                <BlockBody block={show(block)} label={label} frameUrls={frameUrls} />
-              </div>
-            )}
-            <div className={draft ? 'hd-ai-new' : undefined}>
-              <BlockBody block={show(draft ?? block)} label={label} frameUrls={frameUrls} />
-            </div>
-            {draft ? (
-              <div className="hd-ai-bar">
-                <Button
-                  size="small"
-                  onClick={() => {
-                    setAiDraft(null);
-                    setAiTarget(null);
-                  }}
-                >
-                  放弃
-                </Button>
-                <Button
-                  size="small"
-                  type="primary"
-                  onClick={() => {
-                    applyEdit(t, draft);
-                    setAiDraft(null);
-                    setAiTarget(null);
-                  }}
-                >
-                  接受
-                </Button>
-              </div>
-            ) : (
-              aiTarget &&
-              keyOf(aiTarget) === k && (
-                <AiPanel
-                  busy={aiBusy}
-                  onSubmit={(instruction) => void submitAi(t, instruction)}
-                  onClose={() => setAiTarget(null)}
-                />
-              )
-            )}
-          </>
+          aiTarget &&
+          keyOf(aiTarget) === k && (
+            <AiPanel
+              busy={aiBusy}
+              onSubmit={(instruction) => void submitAi(t, instruction)}
+              onClose={() => setAiTarget(null)}
+            />
+          )
         )}
       </EditableBlock>
     );
   };
 
   return (
-    <div className="hd-scroll" onScroll={() => openKey && setOpenKey(null)}>
+    <div className="hd-scroll" data-testid="handout-doc" onScroll={() => openKey && setOpenKey(null)}>
       <div className="hd-doc">
         <div className="hd-save-state">
-          {saveState === 'saving' ? '正在保存修改…' : saveState === 'saved' ? '修改已保存' : ' '}
+          {saveState === 'saving' ? '正在保存修改…' : saveState === 'saved' ? '修改已保存' : ' '}
         </div>
         <div className="hd-title">{handout.title}</div>
         <div className="hd-meta">
@@ -289,8 +281,39 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
         <div className="hd-date">{dateStr}　　</div>
         <div className="hd-tip">左滑文字块可 AI 改写或手动修改；最终以导出的 DOCX 版式为准</div>
       </div>
+
+      {/* 手动编辑对话框：原块内联编辑器抽成受控 mdui-dialog，块在下方正常显示，编辑在弹层进行 */}
+      {editTarget && (
+        <mdui-dialog
+          ref={editDlgRef}
+          open
+          close-on-esc
+          close-on-overlay-click
+          headline={editHeadline(editTarget, getBlock(editTarget))}
+          data-testid="handout-edit-dialog"
+        >
+          <EditForm
+            block={getBlock(editTarget)}
+            onSave={(b) => {
+              applyEdit(editTarget, b);
+              setEditTarget(null);
+            }}
+            onCancel={() => setEditTarget(null)}
+          />
+        </mdui-dialog>
+      )}
     </div>
   );
+}
+
+/** 编辑对话框标题：按目标类型给一句提示 */
+function editHeadline(t: Target, block: Block | null): string {
+  if (t.kind === 'summary') return '编辑课程概述';
+  if (t.kind === 'heading') return '编辑章节标题';
+  if (block?.type === 'figure') return '编辑图注';
+  if (block?.type === 'list') return '编辑列表';
+  if (block?.type === 'table') return '编辑表格（仅文字，结构不变）';
+  return '编辑段落';
 }
 
 /** 单块容器：触摸左滑露操作按钮（pan-y 保证垂直滚动优先），桌面 hover 浮按钮 */
@@ -399,13 +422,13 @@ function EditableBlock({
       {!locked && (
         <span className="hd-hover-actions">
           {hasAi && (
-            <Button size="small" onClick={onStartAi}>
+            <button type="button" className="hd-act hd-act-ai" onClick={onStartAi}>
               AI 改写
-            </Button>
+            </button>
           )}
-          <Button size="small" onClick={onStartEdit}>
+          <button type="button" className="hd-act hd-act-edit" onClick={onStartEdit}>
             编辑
-          </Button>
+          </button>
         </span>
       )}
     </div>
@@ -501,7 +524,7 @@ function BlockBody({
 
 const AI_PRESETS = ['更精简', '更详细', '更口语化', '换个说法'];
 
-/** AI 改写输入面板：预设快捷项 + 自由输入 */
+/** AI 改写输入面板：预设快捷项 + 自由输入（多行 text-field） */
 function AiPanel({
   busy,
   onSubmit,
@@ -525,30 +548,44 @@ function AiPanel({
           </button>
         ))}
       </div>
-      <div style={{ display: 'flex', gap: 6 }}>
-        <Input
+      <div className="hd-ai-input">
+        <mdui-text-field
           value={text}
-          onChange={(e) => setText(e.target.value)}
-          placeholder="描述想要的改法，如：补一个例子"
-          onPressEnter={(e) => {
-            e.preventDefault();
-            submit(text);
-          }}
+          rows={3}
           disabled={busy}
+          placeholder="描述想要的改法，如：补一个例子"
+          onInput={(e) => setText(e.currentTarget.value)}
         />
-        <Button type="primary" loading={busy} disabled={!text.trim()} onClick={() => submit(text)}>
+        <mdui-button variant="filled" loading={busy} disabled={!text.trim()} onClick={() => submit(text)}>
           生成
-        </Button>
-        <Button type="text" onClick={onClose} disabled={busy}>
+        </mdui-button>
+        <mdui-button variant="text" disabled={busy} onClick={onClose}>
           收起
-        </Button>
+        </mdui-button>
       </div>
     </div>
   );
 }
 
-/** 手动编辑器：文本类原地 TextArea；列表逐条编辑；表格弹窗改文字（结构不变） */
-function BlockEditor({
+/** 手动编辑器：按块类型分发到文本 / 列表 / 表格表单。
+ *  每个表单自带「取消 / 保存」按钮（slot="action" 落入对话框底部），保存时做与原来一致的空值校验。 */
+function EditForm({
+  block,
+  onSave,
+  onCancel,
+}: {
+  block: Block | null;
+  onSave: (b: Block) => void;
+  onCancel: () => void;
+}) {
+  if (!block) return null;
+  if (block.type === 'table') return <TableForm block={block} onSave={onSave} onCancel={onCancel} />;
+  if (block.type === 'list') return <ListForm block={block} onSave={onSave} onCancel={onCancel} />;
+  return <TextForm block={block} onSave={onSave} onCancel={onCancel} />;
+}
+
+/** 文本 / 图注块编辑（handout-edit-input 指向这唯一的文本框） */
+function TextForm({
   block,
   onSave,
   onCancel,
@@ -557,73 +594,41 @@ function BlockEditor({
   onSave: (b: Block) => void;
   onCancel: () => void;
 }) {
-  const { message } = App.useApp();
-
-  if (block.type === 'table') return <TableEditor block={block} onSave={onSave} onCancel={onCancel} />;
-
-  if (block.type === 'list') {
-    return <ListEditor block={block} onSave={onSave} onCancel={onCancel} />;
-  }
-
-  const single = block.type === 'figure';
-  const initial = block.type === 'figure' ? (block.caption ?? '') : block.text;
-  return (
-    <TextEditor
-      initial={initial}
-      single={single}
-      placeholder={single ? '图注' : ''}
-      onSave={(text) => {
-        const t = text.trim();
-        if (!t) {
-          message.warning('内容不能为空');
-          return;
-        }
-        onSave(block.type === 'figure' ? { ...block, caption: t } : { ...block, text: t });
-      }}
-      onCancel={onCancel}
-    />
+  const [text, setText] = useState(
+    block.type === 'figure' ? block.caption ?? '' : 'text' in block ? block.text : '',
   );
-}
-
-function TextEditor({
-  initial,
-  single,
-  placeholder,
-  onSave,
-  onCancel,
-}: {
-  initial: string;
-  single?: boolean;
-  placeholder?: string;
-  onSave: (text: string) => void;
-  onCancel: () => void;
-}) {
-  const [text, setText] = useState(initial);
+  const save = () => {
+    const t = text.trim();
+    if (!t) {
+      toast.warning('内容不能为空');
+      return;
+    }
+    onSave(
+      block.type === 'figure' ? { ...block, caption: t } : 'text' in block ? { ...block, text: t } : block,
+    );
+  };
   return (
-    <div className="hd-editor">
-      {single ? (
-        <Input value={text} onChange={(e) => setText(e.target.value)} placeholder={placeholder} />
-      ) : (
-        <Input.TextArea
-          value={text}
-          onChange={(e) => setText(e.target.value)}
-          autoSize={{ minRows: 2 }}
-          placeholder={placeholder}
-        />
-      )}
+    <>
+      <mdui-text-field
+        value={text}
+        rows={block.type === 'figure' ? 2 : 6}
+        data-testid="handout-edit-input"
+        onInput={(e) => setText(e.currentTarget.value)}
+        placeholder={block.type === 'figure' ? '图注' : ''}
+      />
       <div className="hd-editor-bar">
-        <Button size="small" onClick={onCancel}>
+        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
           取消
-        </Button>
-        <Button size="small" type="primary" onClick={() => onSave(text)}>
+        </mdui-button>
+        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
           保存
-        </Button>
+        </mdui-button>
       </div>
-    </div>
+    </>
   );
 }
 
-function ListEditor({
+function ListForm({
   block,
   onSave,
   onCancel,
@@ -632,53 +637,52 @@ function ListEditor({
   onSave: (b: Block) => void;
   onCancel: () => void;
 }) {
-  const { message } = App.useApp();
   const [items, setItems] = useState<string[]>(block.items);
+  const save = () => {
+    const next = items.map((s) => s.trim()).filter(Boolean);
+    if (next.length === 0) {
+      toast.warning('至少保留一条内容');
+      return;
+    }
+    onSave({ ...block, items: next });
+  };
   return (
     <div className="hd-editor">
       {items.map((it, i) => (
-        <div key={i} style={{ display: 'flex', gap: 6, marginBottom: 6, alignItems: 'flex-start' }}>
-          <Input.TextArea
+        <div key={i} className="hd-list-row">
+          <mdui-text-field
+            rows={1}
             value={it}
-            autoSize={{ minRows: 1 }}
-            onChange={(e) => setItems(items.map((x, j) => (j === i ? e.target.value : x)))}
+            onInput={(e) =>
+              setItems(items.map((x, j) => (j === i ? e.currentTarget.value : x)))
+            }
           />
-          <Button
-            size="small"
-            type="text"
-            danger
-            icon={<DeleteOutlined />}
+          <mdui-button-icon
+            aria-label="删除条目"
+            disabled={items.length <= 1}
             onClick={() => setItems(items.filter((_, j) => j !== i))}
-          />
+          >
+            <mdui-sym-delete />
+          </mdui-button-icon>
         </div>
       ))}
-      <Button size="small" type="dashed" icon={<PlusOutlined />} onClick={() => setItems([...items, ''])}>
+      <mdui-button variant="outlined" onClick={() => setItems([...items, ''])}>
+        <mdui-sym-add slot="icon" />
         添加条目
-      </Button>
+      </mdui-button>
       <div className="hd-editor-bar">
-        <Button size="small" onClick={onCancel}>
+        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
           取消
-        </Button>
-        <Button
-          size="small"
-          type="primary"
-          onClick={() => {
-            const next = items.map((s) => s.trim()).filter(Boolean);
-            if (next.length === 0) {
-              message.warning('至少保留一条内容');
-              return;
-            }
-            onSave({ ...block, items: next });
-          }}
-        >
+        </mdui-button>
+        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
           保存
-        </Button>
+        </mdui-button>
       </div>
     </div>
   );
 }
 
-function TableEditor({
+function TableForm({
   block,
   onSave,
   onCancel,
@@ -687,45 +691,39 @@ function TableEditor({
   onSave: (b: Block) => void;
   onCancel: () => void;
 }) {
-  const { message } = App.useApp();
   const [caption, setCaption] = useState(block.caption ?? '');
   const [header, setHeader] = useState<string[]>(block.header);
   const [rows, setRows] = useState<string[][]>(block.rows);
+  const save = () => {
+    const h = header.map((s) => s.trim());
+    if (h.some((s) => !s)) {
+      toast.warning('表头不能为空');
+      return;
+    }
+    onSave({
+      ...block,
+      caption: caption.trim() || undefined,
+      header: h,
+      rows: rows.map((r) => r.map((c) => c.trim())),
+    });
+  };
   return (
-    <Modal
-      title="编辑表格（仅文字，结构不变）"
-      open
-      onCancel={onCancel}
-      onOk={() => {
-        const h = header.map((s) => s.trim());
-        if (h.some((s) => !s)) {
-          message.warning('表头不能为空');
-          return;
-        }
-        onSave({
-          ...block,
-          caption: caption.trim() || undefined,
-          header: h,
-          rows: rows.map((r) => r.map((c) => c.trim())),
-        });
-      }}
-      okText="保存"
-      cancelText="取消"
-      width="min(560px, calc(100vw - 32px))"
-    >
-      <div style={{ marginBottom: 8 }}>
-        <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>表名</div>
-        <Input value={caption} onChange={(e) => setCaption(e.target.value)} placeholder="表名（可留空）" />
-      </div>
+    <div className="hd-editor">
+      <div className="hd-field-label">表名</div>
+      <mdui-text-field
+        value={caption}
+        placeholder="表名（可留空）"
+        onInput={(e) => setCaption(e.currentTarget.value)}
+      />
       <table className="hd-table hd-table-edit">
         <thead>
           <tr>
             {header.map((h, i) => (
               <th key={i}>
-                <Input
-                  size="small"
+                <mdui-text-field
+                  rows={1}
                   value={h}
-                  onChange={(e) => setHeader(header.map((x, j) => (j === i ? e.target.value : x)))}
+                  onInput={(e) => setHeader(header.map((x, j) => (j === i ? e.currentTarget.value : x)))}
                 />
               </th>
             ))}
@@ -736,12 +734,13 @@ function TableEditor({
             <tr key={i}>
               {r.map((c, j) => (
                 <td key={j}>
-                  <Input.TextArea
-                    size="small"
-                    autoSize={{ minRows: 1 }}
+                  <mdui-text-field
+                    rows={1}
                     value={c}
-                    onChange={(e) =>
-                      setRows(rows.map((row, ri) => (ri === i ? row.map((x, cj) => (cj === j ? e.target.value : x)) : row)))
+                    onInput={(e) =>
+                      setRows(
+                        rows.map((row, ri) => (ri === i ? row.map((x, cj) => (cj === j ? e.currentTarget.value : x)) : row)),
+                      )
                     }
                   />
                 </td>
@@ -750,6 +749,14 @@ function TableEditor({
           ))}
         </tbody>
       </table>
-    </Modal>
+      <div className="hd-editor-bar">
+        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
+          取消
+        </mdui-button>
+        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
+          保存
+        </mdui-button>
+      </div>
+    </div>
   );
 }

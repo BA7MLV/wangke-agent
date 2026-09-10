@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { App, Button, Progress, Space, Typography } from 'antd';
-import { DownloadOutlined, IdcardOutlined, UndoOutlined } from '@ant-design/icons';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type CardRow } from '../store/db';
 import { runCards, type CardsProgress } from '../pipelines/cards';
@@ -10,6 +8,16 @@ import ModelPicker from './ModelPicker';
 import SwipeDeck from './SwipeDeck';
 import PersistentError from './PersistentError';
 import { formatCaughtError } from '../utils/errorText';
+import {
+  Panel,
+  PanelBar,
+  PanelProgress,
+  PanelPlaceholder,
+  PanelBody,
+  toast,
+  confirmDialog,
+  alertDialog,
+} from '../ui';
 import '../cards.css';
 
 interface Props {
@@ -29,7 +37,6 @@ function apkgFileName(videoName: string): string {
 }
 
 export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles }: Props) {
-  const { message, modal } = App.useApp();
   const [rows, setRows] = useState<CardRow[]>([]);
   /** 已判定卡片 id 栈（审核顺序），撤销用 */
   const [history, setHistory] = useState<number[]>([]);
@@ -77,21 +84,16 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
     setProgress({ done: 0, total: 1, message: '准备中…' });
     try {
       const count = await runCards(videoId, setProgress);
-      message.success(count > 0 ? `制卡完成，共 ${count} 张候选卡，滑动审核吧` : '生成完成：这段课程没有挖出合适的卡片');
+      toast.success(count > 0 ? `制卡完成，共 ${count} 张候选卡，滑动审核吧` : '生成完成：这段课程没有挖出合适的卡片');
     } catch (e) {
       const errText = formatCaughtError(e);
       setErrorText(errText);
-      modal.error({
-        title: '制卡失败',
-        width: 560,
-        content: (
-          <Typography.Paragraph
-            copyable={{ text: errText }}
-            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
-          >
-            {errText}
-          </Typography.Paragraph>
-        ),
+      // 原 antd Modal.error 带可复制的错误详情；mdui 用 alertDialog + copyText 复制
+      await alertDialog({
+        headline: '制卡失败',
+        description: errText,
+        copyText: errText,
+        confirmText: '知道了',
       });
     } finally {
       setProgress(null);
@@ -99,20 +101,20 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
     }
   };
 
-  const start = () => {
+  const start = async () => {
     if (rows.length === 0) {
       void doGenerate();
       return;
     }
     // 重新生成会清空已有卡片与审核结果，需确认（弹幕无需审核故无此步）
-    modal.confirm({
-      title: '重新生成卡片',
-      content: `将清空现有 ${rows.length} 张卡片及全部审核结果，确定继续？`,
-      okText: '重新生成',
-      okButtonProps: { danger: true },
+    const ok = await confirmDialog({
+      headline: '重新生成卡片',
+      description: `将清空现有 ${rows.length} 张卡片及全部审核结果，确定继续？`,
+      confirmText: '重新生成',
       cancelText: '取消',
-      onOk: () => doGenerate(),
+      danger: true,
     });
+    if (ok) void doGenerate();
   };
 
   const exportApkg = async () => {
@@ -129,9 +131,9 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
       a.download = apkgFileName(videoName);
       a.click();
       URL.revokeObjectURL(url);
-      message.success(`已导出 ${kept.length} 张卡片，用 Anki 打开即可开始复习`);
+      toast.success(`已导出 ${kept.length} 张卡片，用 Anki 打开即可开始复习`);
     } catch (e) {
-      message.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`导出失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setExporting(false);
     }
@@ -144,49 +146,47 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
   const discarded = rows.length - pending.length - kept.length;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <Space style={{ padding: '8px 0', flexShrink: 0 }} wrap>
-        <Button
-          type="primary"
-          icon={<IdcardOutlined />}
-          loading={running}
-          onClick={start}
-          disabled={!hasSubtitles}
-          title={hasSubtitles ? undefined : '请先在「字幕」页生成字幕'}
-        >
-          {rows.length > 0 ? '重新生成卡片' : '生成卡片'}
-        </Button>
-        <Button
-          size="small"
-          icon={<DownloadOutlined />}
-          disabled={kept.length === 0 || running}
-          loading={exporting}
-          onClick={exportApkg}
-          title={kept.length > 0 ? '导出保留的卡片（Anki 全平台可导入）' : '先右滑保留一些卡片'}
-        >
-          导出 .apkg{kept.length > 0 ? `（${kept.length}）` : ''}
-        </Button>
+    <Panel testId="panel-cards">
+      <PanelBar>
+        <mdui-tooltip content={hasSubtitles ? '' : '请先在「字幕」页生成字幕'}>
+          <mdui-button
+            variant="filled"
+            data-testid="cards-generate"
+            loading={running}
+            disabled={!hasSubtitles}
+            onClick={start}
+          >
+            <mdui-sym-style slot="icon" />
+            {rows.length > 0 ? '重新生成卡片' : '生成卡片'}
+          </mdui-button>
+        </mdui-tooltip>
+        <mdui-tooltip content={kept.length > 0 ? '导出保留的卡片（Anki 全平台可导入）' : '先右滑保留一些卡片'}>
+          <mdui-button
+            data-testid="cards-export"
+            disabled={kept.length === 0 || running}
+            loading={exporting}
+            onClick={exportApkg}
+          >
+            <mdui-sym-download slot="icon" />
+            导出 .apkg{kept.length > 0 ? `（${kept.length}）` : ''}
+          </mdui-button>
+        </mdui-tooltip>
         <ModelPicker slot="chat" field="llmModel" />
-      </Space>
+      </PanelBar>
 
       {running && progress && (
-        <div style={{ padding: '4px 0 12px', flexShrink: 0 }}>
-          <Progress percent={pct} size="small" status="active" />
-          <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
-        </div>
+        <PanelProgress testId="cards-progress" percent={pct} text={<TextSwap text={progress.message} />} />
       )}
 
       <PersistentError title="制卡失败" text={errorText} onClose={() => setErrorText(null)} />
 
       {!hasSubtitles && rows.length === 0 && !running && (
-        <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-          卡片基于字幕内容生成，请先在「字幕」页生成字幕
-        </div>
+        <PanelPlaceholder>卡片基于字幕内容生成，请先在「字幕」页生成字幕</PanelPlaceholder>
       )}
       {hasSubtitles && rows.length === 0 && !running && (
-        <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
+        <PanelPlaceholder testId="cards-empty">
           点击「生成卡片」，AI 将从字幕提炼知识点做成问答卡；右滑保留、左滑丢弃，保留的可导出到 Anki 复习
-        </div>
+        </PanelPlaceholder>
       )}
 
       {pending.length > 0 && !running && (
@@ -202,47 +202,47 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
       )}
 
       {pending.length === 0 && rows.length > 0 && !running && (
-        <div style={{ flexShrink: 0, padding: '4px 0 8px', fontSize: 13, color: '#666' }}>
-          审核完成：保留 {kept.length} · 丢弃 {discarded}
-          {kept.length > 0 ? '，点「导出 .apkg」导入 Anki' : ''}
+        <div className="cards-summary">
+          <span className="text-secondary">
+            审核完成：保留 {kept.length} · 丢弃 {discarded}
+            {kept.length > 0 ? '，点「导出 .apkg」导入 Anki' : ''}
+          </span>
           {/* 最后一张滑错也要能反悔：审完状态撤销入口放在汇总行 */}
-          <Button
-            size="small"
-            type="text"
-            icon={<UndoOutlined />}
+          <mdui-button-icon
+            data-testid="cards-undo"
+            aria-label="撤销上一张"
             disabled={history.length === 0}
             onClick={undo}
-            title="撤销上一张"
-            style={{ marginLeft: 8 }}
-          />
+          >
+            <mdui-sym-undo />
+          </mdui-button-icon>
         </div>
       )}
 
       {kept.length > 0 && (
-        <div style={{ flex: 1, overflow: 'auto' }}>
-          <div style={{ fontSize: 12, color: '#999', padding: '2px 0 6px' }}>已保留（点时间戳回看视频）</div>
-          {kept.map((c) => (
-            <div key={c.id} className="sub-item" onClick={() => seekTo(c.time)}>
-              <span style={{ color: '#1677ff', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-                {fmtTime(c.time)}
-              </span>
-              <span style={{ flex: 1, minWidth: 0 }}>{c.q}</span>
-              <Button
-                size="small"
-                type="text"
-                danger
-                style={{ flexShrink: 0 }}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  judge(c, false);
-                }}
-              >
-                移除
-              </Button>
-            </div>
-          ))}
-        </div>
+        <PanelBody testId="cards-list-body">
+          <div className="cards-list" data-testid="cards-list">
+            <div className="text-secondary cards-list__caption">已保留（点时间戳回看视频）</div>
+            {kept.map((c) => (
+              <div key={c.id} className="sub-item cards-row" data-testid="cards-row" onClick={() => seekTo(c.time)}>
+                <span className="sub-item__time">{fmtTime(c.time)}</span>
+                <span className="sub-item__text" style={{ flex: '1 1 auto' }}>
+                  {c.q}
+                </span>
+                <mdui-button-icon
+                  aria-label="移除"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    judge(c, false);
+                  }}
+                >
+                  <mdui-sym-close />
+                </mdui-button-icon>
+              </div>
+            ))}
+          </div>
+        </PanelBody>
       )}
-    </div>
+    </Panel>
   );
 }

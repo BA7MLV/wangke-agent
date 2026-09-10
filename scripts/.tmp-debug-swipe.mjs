@@ -59,7 +59,7 @@ await page.evaluate(async (videoId) => {
 }, VIDEO_ID);
 
 await page.goto(`${BASE}/#/player/${VIDEO_ID}`, { waitUntil: 'networkidle' });
-await page.click('.ant-tabs-nav >> text=讲义');
+await page.click('[data-testid="panel-tab-handout"]');
 await page.waitForSelector('.hd-doc', { timeout: 10000 });
 
 // 在目标元素上监听触摸事件

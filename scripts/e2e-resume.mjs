@@ -30,10 +30,10 @@ const readLastPosition = () => page.evaluate(async () => {
 console.log('1. 打开首页并导入测试视频');
 await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
-await page.waitForSelector('.ant-list-item', { timeout: 30000 });
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 
 console.log('2. 进入播放页，等待视频就绪');
-await page.click('button:has-text("学习")');
+await page.click('[data-testid="btn-play"]');
 await page.waitForSelector('video', { timeout: 15000 });
 await page.waitForFunction(
   () => { const v = document.querySelector('video'); return v && v.readyState >= 2 && v.duration > 0; },

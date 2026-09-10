@@ -22,8 +22,8 @@ console.log('1. randomUUID 已抹除:', stubbed === 'undefined');
 
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 try {
-  await page.waitForSelector('.ant-list-item', { timeout: 30000 });
-  const t = await page.locator('.ant-list-item').first().innerText();
+  await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
+  const t = await page.locator('[data-testid="video-item"]').first().innerText();
   console.log('✅ 非安全上下文模拟下导入成功:', t.replace(/\n/g, ' | ').slice(0, 100));
 } catch {
   const body = await page.locator('body').innerText();

@@ -1,16 +1,16 @@
 import { useEffect, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App, AutoComplete, Button, Card, Checkbox, Form, Input, InputNumber, Segmented, Space, Tabs, Tag, Typography } from 'antd';
-import { ArrowLeftOutlined, CloseCircleOutlined } from '@ant-design/icons';
-import { useSettings, type ModelSlot } from '../store/settings';
+import { useSettings, type AppTheme, type ModelSlot } from '../store/settings';
 import { listModels } from '../api/siliconflow';
 import { guessContextWindow, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
 import { db } from '../store/db';
+import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
 import { SuccessCheck, ms } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
 import MigrationCard from '../components/MigrationCard';
+import { Field, PageShell, SectionCard, confirmDialog, toast, useMduiEvent } from '../ui';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 const EMBED_MODEL_RE = /embed|bge|gte/i;
@@ -30,13 +30,146 @@ const SLOT_TABS: { key: ModelSlot; label: string }[] = [
   { key: 'embed', label: 'Embedding' },
 ];
 
+type ModelFieldName = 'asrModel' | 'llmModel' | 'embedModel' | 'visionModel';
+
+/**
+ * 模型输入行。
+ *
+ * 为什么不是 antd 的 `AutoComplete`：mdui 没有等价组件（设计文档 §2.5 就把它列为「需要自建」）。
+ * 这里没有硬凑一个 combobox，而是做成「自由输入 + 按需展开的可筛选列表」：
+ *   - 输入框仍是唯一的值来源，粘贴任意模型 id 的行为完全不变；
+ *   - 列表只在用户主动点「选择」时展开，且用 `mdui-list` 而不是绝对定位的弹层 ——
+ *     手机上不必担心 popover 被软键盘顶飞或定位漂移，也不会和播放器/面板的键盘拦截打架。
+ * 这是有意的取舍（换来的是稳），如果将来要更像桌面端的 combobox，再基于 `mdui-dropdown` 重做。
+ */
+function ModelField({
+  label,
+  value,
+  options,
+  checkState,
+  onValueChange,
+  onPick,
+  testId,
+}: {
+  label: string;
+  value: string;
+  options: string[];
+  /** undefined = 还没检查过；true/false = 检查结果 */
+  checkState: boolean | undefined;
+  onValueChange: (v: string) => void;
+  onPick: (v: string) => void;
+  testId: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [kw, setKw] = useState('');
+
+  const fieldRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => onValueChange(el.value));
+  const filterRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => setKw(el.value));
+
+  const list = options
+    .filter((id) => !kw.trim() || id.toLowerCase().includes(kw.trim().toLowerCase()))
+    .sort((a, b) => Number(SLOT_RELEVANT.asr(a)) - Number(SLOT_RELEVANT.asr(b)));
+
+  return (
+    <Field
+      label={
+        <>
+          <span>{label}</span>
+          {checkState === true && <SuccessCheck />}
+          {checkState === false && (
+            <mdui-sym-error
+              data-testid={`${testId}-bad`}
+              style={{ color: 'rgb(var(--mdui-color-error))', fontSize: '16px' }}
+            />
+          )}
+        </>
+      }
+      testId={`${testId}-field`}
+    >
+      <div className="row row--nowrap">
+        <mdui-text-field
+          ref={fieldRef}
+          data-testid={testId}
+          value={value}
+          clearable
+          style={{ flex: '1 1 auto', minWidth: 0 }}
+        />
+        {options.length > 0 && (
+          <mdui-button
+            variant="text"
+            data-testid={`${testId}-pick`}
+            onClick={() => setOpen((o) => !o)}
+          >
+            选择
+          </mdui-button>
+        )}
+      </div>
+      {open && options.length > 0 && (
+        <div className="model-picker">
+          <mdui-text-field
+            ref={filterRef}
+            data-testid={`${testId}-filter`}
+            placeholder="筛选模型"
+            clearable
+          />
+          <mdui-list>
+            {list.map((id) => (
+              <mdui-list-item
+                key={id}
+                headline={id}
+                data-testid={`${testId}-option`}
+                onClick={() => {
+                  onPick(id);
+                  setOpen(false);
+                }}
+              />
+            ))}
+          </mdui-list>
+        </div>
+      )}
+    </Field>
+  );
+}
+
+/** 收藏夹里的一个勾选项：需要独立 hook，所以拆成子组件 */
+function FavRow({
+  id,
+  checked,
+  onToggle,
+}: {
+  id: string;
+  checked: boolean;
+  onToggle: (next: boolean) => void;
+}) {
+  const ref = useMduiEvent('mdui-checkbox', 'change', (_e, el) => onToggle(el.checked));
+  return (
+    <mdui-checkbox ref={ref} checked={checked} data-testid={`fav-${id}`} style={{ display: 'flex' }}>
+      <span className="fav-label">
+        <span className="fav-label__id">{id}</span>
+        {isVisionModel(id) && <span className="tag-mini">多模态</span>}
+        {supportsThinking(id) && <span className="tag-mini">可思考</span>}
+      </span>
+    </mdui-checkbox>
+  );
+}
+
+/** 自定义倍速的一个档位：可删除 chip，同样需要独立 hook */
+function RateChip({ rate, onDelete }: { rate: number; onDelete: () => void }) {
+  const ref = useMduiEvent('mdui-chip', 'delete', () => onDelete());
+  return (
+    <mdui-chip ref={ref} deletable data-testid={`rate-chip-${formatRate(rate)}`}>
+      {formatRate(rate)}
+    </mdui-chip>
+  );
+}
+
 export default function Settings() {
   const navigate = useNavigate();
-  const { message, modal } = App.useApp();
   const settings = useSettings();
   const [checking, setChecking] = useState(false);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
   const [checkResult, setCheckResult] = useState<Record<string, boolean> | null>(null);
+  const [favTab, setFavTab] = useState<ModelSlot>('chat');
   const [favSearch, setFavSearch] = useState<Record<ModelSlot, string>>({
     chat: '',
     vision: '',
@@ -46,6 +179,8 @@ export default function Settings() {
   // embedModel 走本地草稿：逐键输入只改草稿不弹确认，下拉选择 / 失焦提交时才确认
   const [embedDraft, setEmbedDraft] = useState(settings.embedModel);
   const embedConfirmRef = useRef(false);
+  /** 自定义倍速的输入草稿（null = 输入框为空，「添加」按钮置灰） */
+  const [rateDraft, setRateDraft] = useState<number | null>(null);
 
   // 已提交值外部变化（确认写回 / 面板 ModelPicker 切换）时同步草稿
   useEffect(() => {
@@ -79,9 +214,9 @@ export default function Settings() {
       setMetaInfo(modelMetaInfo());
       const meta = getModelMeta(settings.llmModel);
       if (meta) settings.update({ contextWindow: meta.context });
-      message.success(`已更新 ${count} 个模型的能力数据`);
+      toast.success(`已更新 ${count} 个模型的能力数据`);
     } catch (e) {
-      message.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setMetaRefreshing(false);
     }
@@ -138,12 +273,12 @@ export default function Settings() {
       setCheckResult(result);
       const missing = Object.entries(result).filter(([, ok]) => !ok);
       if (missing.length === 0) {
-        message.success('所有模型均可用');
+        toast.success('所有模型均可用');
       } else {
-        message.warning(`有 ${missing.length} 个模型未上架，请从下拉列表选择替代模型`);
+        toast.warning(`有 ${missing.length} 个模型未上架，请从下拉列表选择替代模型`);
       }
     } catch (e) {
-      message.error(`检查失败：${e instanceof Error ? e.message : String(e)}`);
+      toast.error(`检查失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setChecking(false);
     }
@@ -153,256 +288,412 @@ export default function Settings() {
   const commitEmbedModel = (draft: string) => {
     if (draft === settings.embedModel || embedConfirmRef.current) return;
     embedConfirmRef.current = true;
-    modal.confirm({
-      title: '更换向量模型需要重建问答索引',
-      content: '将清除所有视频已建立的向量索引，下次提问时自动重建。确定更换？',
-      onOk: async () => {
-        try {
+    void confirmDialog({
+      headline: '更换向量模型需要重建问答索引',
+      description: '将清除所有视频已建立的向量索引，下次提问时自动重建。确定更换？',
+      confirmText: '更换',
+    }).then(async (ok) => {
+      try {
+        if (ok) {
           await db.embeddings.clear();
           settings.update({ embedModel: draft });
-        } finally {
-          embedConfirmRef.current = false;
+        } else {
+          setEmbedDraft(settings.embedModel);
         }
-      },
-      onCancel: () => {
-        setEmbedDraft(settings.embedModel);
+      } finally {
         embedConfirmRef.current = false;
-      },
+      }
     });
   };
 
-  const modelField = (
-    name: 'asrModel' | 'llmModel' | 'embedModel' | 'visionModel',
-    label: string,
-  ) => {
-    const isEmbed = name === 'embedModel';
-    return (
-      <Form.Item
-        label={
-          <Space size={4}>
-            {label}
-            {checkResult &&
-              (checkResult[name] ? (
-                <SuccessCheck />
-              ) : (
-                <Tag icon={<CloseCircleOutlined />} color="error" />
-              ))}
-          </Space>
-        }
-      >
-        <AutoComplete
-          value={isEmbed ? embedDraft : settings[name]}
-          onChange={(v) => {
-            if (isEmbed) {
-              setEmbedDraft(v);
-            } else if (name === 'llmModel') {
-              // 切文本模型时按内置表回填上下文窗口默认值（仍可手改）
-              settings.update({ llmModel: v, contextWindow: guessContextWindow(v) });
-            } else {
-              settings.update({ [name]: v });
-            }
-          }}
-          onSelect={isEmbed ? (v: string) => commitEmbedModel(v) : undefined}
-          onBlur={isEmbed ? () => commitEmbedModel(embedDraft) : undefined}
-          options={modelOptions.map((id) => ({ value: id }))}
-          filterOption={(input, opt) => opt!.value.toLowerCase().includes(input.toLowerCase())}
-          style={{ width: '100%' }}
-        />
-      </Form.Item>
-    );
+  /** 播放器倍速：内置档位之外再补几个常用档（0.25–4，存 settings.customRates） */
+  const addCustomRate = () => {
+    if (rateDraft == null || !Number.isFinite(rateDraft)) return;
+    const next = normalizeRate(rateDraft);
+    if ([...PRESET_RATES, ...settings.customRates].some((r) => sameRate(r, next))) {
+      toast.info(`${formatRate(next)} 已经在档位里了`);
+    } else {
+      settings.update({ customRates: [...settings.customRates, next].sort((a, b) => a - b) });
+    }
+    setRateDraft(null);
   };
 
-  /** 收藏夹单个 tab：搜索筛选 + 相关模型置顶的复选列表 */
+  const removeCustomRate = (r: number) => {
+    settings.update({ customRates: settings.customRates.filter((x) => !sameRate(x, r)) });
+  };
+
+  /** 各槽位的模型值读写：embed 走草稿，其余直接落库 */
+  const modelValue = (name: ModelFieldName) => (name === 'embedModel' ? embedDraft : settings[name]);
+  const setModelValue = (name: ModelFieldName, v: string) => {
+    if (name === 'embedModel') {
+      setEmbedDraft(v);
+    } else if (name === 'llmModel') {
+      // 切文本模型时按内置表回填上下文窗口默认值（仍可手改）
+      settings.update({ llmModel: v, contextWindow: guessContextWindow(v) });
+    } else {
+      settings.update({ [name]: v });
+    }
+  };
+  const pickModel = (name: ModelFieldName, v: string) => {
+    if (name === 'embedModel') commitEmbedModel(v);
+    else setModelValue(name, v);
+  };
+
+  const modelField = (name: ModelFieldName, label: string) => (
+    <ModelField
+      key={name}
+      label={label}
+      value={modelValue(name)}
+      options={modelOptions}
+      checkState={checkResult ? checkResult[name] : undefined}
+      onValueChange={(v) => setModelValue(name, v)}
+      onPick={(v) => pickModel(name, v)}
+      testId={`model-${name}`}
+    />
+  );
+
+  const favKeywordRef = useMduiEvent('mdui-text-field', 'input', (_e, el) =>
+    setFavSearch((s) => ({ ...s, [favTab]: el.value })),
+  );
+  const tabsRef = useMduiEvent('mdui-tabs', 'change', (_e, el) =>
+    setFavTab(el.value as ModelSlot),
+  );
+  const concurrencyRef = useMduiEvent('mdui-slider', 'change', (_e, el) =>
+    settings.update({ asrConcurrency: el.value || 4 }),
+  );
+  const roundsRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
+    settings.update({ agentRounds: Number(el.value) || 12 }),
+  );
+  const themeRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
+    settings.update({ theme: el.value as AppTheme }),
+  );
+  const dynamicColorRef = useMduiEvent('mdui-switch', 'change', (_e, el) =>
+    settings.update({ dynamicColor: el.checked }),
+  );
+  const rateDraftRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => {
+    const n = Number(el.value);
+    setRateDraft(el.value.trim() === '' || !Number.isFinite(n) ? null : n);
+  });
+
+  /** 收藏夹单个 tab：搜索筛选 + 相关模型置顶的勾选列表 */
   const favTabContent = (slot: ModelSlot) => {
     const kw = favSearch[slot].trim().toLowerCase();
     const relevant = SLOT_RELEVANT[slot];
     const list = modelOptions
       .filter((id) => !kw || id.toLowerCase().includes(kw))
       .sort((a, b) => Number(relevant(b)) - Number(relevant(a)));
+    const selected = settings.favorites[slot];
     return (
       <>
-        <Input
-          allowClear
+        <mdui-text-field
+          ref={favKeywordRef}
+          data-testid="fav-filter"
           placeholder="筛选模型"
+          clearable
           value={favSearch[slot]}
-          onChange={(e) => setFavSearch((s) => ({ ...s, [slot]: e.target.value }))}
-          style={{ marginBottom: 8 }}
         />
-        <Checkbox.Group
-          value={settings.favorites[slot]}
-          onChange={(vals) =>
-            settings.update({ favorites: { ...settings.favorites, [slot]: vals.map(String) } })
-          }
-          options={list.map((id) => ({
-            value: id,
-            label: (
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
-                {id}
-                {isVisionModel(id) && (
-                  <Tag color="geekblue" style={{ marginInlineEnd: 0 }}>
-                    多模态
-                  </Tag>
-                )}
-                {supportsThinking(id) && (
-                  <Tag color="purple" style={{ marginInlineEnd: 0 }}>
-                    可思考
-                  </Tag>
-                )}
-              </span>
-            ),
-          }))}
-          style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 320, overflow: 'auto' }}
-        />
+        <div className="fav-list" data-testid="fav-list">
+          {list.map((id) => (
+            <FavRow
+              key={id}
+              id={id}
+              checked={selected.includes(id)}
+              onToggle={(next) =>
+                settings.update({
+                  favorites: {
+                    ...settings.favorites,
+                    [slot]: next ? [...selected, id] : selected.filter((x) => x !== id),
+                  },
+                })
+              }
+            />
+          ))}
+        </div>
       </>
     );
   };
 
-  return (
-    <div className="page">
-      <div className="page-header">
-        <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
-        <div className="title">设置</div>
-      </div>
-      <div className="page-body" style={{ maxWidth: 640, margin: '0 auto', width: '100%' }}>
-        <Card title="硅基流动 API" style={{ marginBottom: 16 }}>
-          <Form layout="vertical">
-            <Form.Item label="API Key" extra="仅保存在本机浏览器 localStorage 中">
-              <div className={keyError ? 't-input-wrap is-error' : 't-input-wrap'}>
-                <div ref={keyInputRef} className={keyError ? 't-input is-error' : 't-input'}>
-                  <Input.Password
-                    value={settings.apiKey}
-                    status={keyError ? 'error' : ''}
-                    onChange={(e) => {
-                      clearKeyError();
-                      settings.update({ apiKey: e.target.value.trim() });
-                    }}
-                    placeholder="sk-..."
-                  />
-                </div>
-                <p className="t-error-msg" style={{ margin: '4px 0 0', fontSize: 12, color: '#ff4d4f' }}>
-                  请先填写 API Key
-                </p>
-              </div>
-            </Form.Item>
-            <Form.Item label="API 地址">
-              <Input
-                value={settings.baseUrl}
-                onChange={(e) => settings.update({ baseUrl: e.target.value.trim() })}
-              />
-            </Form.Item>
-            <Form.Item
-              label="字幕转写并发"
-              extra="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
-            >
-              <InputNumber
-                min={1}
-                max={12}
-                value={settings.asrConcurrency}
-                onChange={(v) => settings.update({ asrConcurrency: v ?? 4 })}
-              />
-            </Form.Item>
-          </Form>
-        </Card>
-
-        <Card
-          title="模型配置"
-          style={{ marginBottom: 16 }}
-          extra={
-            <Button type="primary" loading={checking} onClick={handleCheck}>
-              检查模型可用性
-            </Button>
-          }
-        >
-          <Form layout="vertical">
-            {modelField('asrModel', '语音识别（ASR）')}
-            {modelField('llmModel', '文本生成（讲义 / 问答）')}
-            {modelField('embedModel', '向量（Embedding）')}
-            {modelField('visionModel', '视觉（截图理解）')}
-            <Form.Item
-              label="上下文窗口（tokens）"
-              extra={
-                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-                  <span>
-                    {metaInfo
-                      ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）`
-                      : '能力数据未拉取，暂用内置启发式兜底'}
-                    ；切换文本模型自动填入，可手改
-                  </span>
-                  <Button size="small" loading={metaRefreshing} onClick={handleRefreshMeta}>
-                    刷新能力数据
-                  </Button>
-                </div>
-              }
-            >
-              <InputNumber
-                min={8192}
-                step={1024}
-                value={settings.contextWindow}
-                onChange={(v) => settings.update({ contextWindow: v || 131072 })}
-                style={{ width: '100%' }}
-              />
-            </Form.Item>
-            <Form.Item
-              label="问答检索轮次上限"
-              extra="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token；大窗口模型下 12~20 轮安全。达到上限后会强制收尾作答，不会没有回答"
-            >
-              <Segmented
-                value={settings.agentRounds}
-                options={[3, 6, 12, 20]}
-                onChange={(v) => settings.update({ agentRounds: v as number })}
-              />
-            </Form.Item>
-          </Form>
-        </Card>
-
-        <Card title="模型收藏夹" style={{ marginBottom: 16 }}>
-          {modelOptions.length === 0 ? (
-            <Typography.Text type="secondary">
-              先点击上方「检查模型可用性」拉取模型列表
-            </Typography.Text>
-          ) : (
-            <Tabs
-              size="small"
-              items={SLOT_TABS.map(({ key, label }) => ({
-                key,
-                label,
-                children: favTabContent(key),
-              }))}
-            />
-          )}
-        </Card>
-
-        <Card title="哔哩哔哩导入" style={{ marginBottom: 16 }}>
-          <Form layout="vertical">
-            <Form.Item
-              label="代理地址"
-              extra="自建 Cloudflare Worker 地址，用于绕过 B 站 CORS 与防盗链。留空则无法导入 B 站视频"
-            >
-              <Input
-                value={settings.bilibiliProxy}
-                onChange={(e) => settings.update({ bilibiliProxy: e.target.value.trim() })}
-                placeholder="https://bili-proxy.yourname.workers.dev"
-              />
-            </Form.Item>
-            <Form.Item
-              label="B 站 Cookie（可选）"
-              extra="粘贴自己账号的 Cookie 可解锁更高清晰度；不上传任何服务器，仅存本机 localStorage"
-            >
-              <Input.Password
-                value={settings.bilibiliCookie}
-                onChange={(e) => settings.update({ bilibiliCookie: e.target.value.trim() })}
-                placeholder="SESSDATA=...; bili_jct=..."
-              />
-            </Form.Item>
-          </Form>
-        </Card>
-
-        <StorageCard />
-
-        <MigrationCard />
-
-        <SkillsCard />
-      </div>
+  const metaHint = (
+    <div className="row row--between">
+      <span>
+        {metaInfo
+          ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）`
+          : '能力数据未拉取，暂用内置启发式兜底'}
+        ；切换文本模型自动填入，可手改
+      </span>
+      <mdui-button
+        variant="text"
+        loading={metaRefreshing}
+        data-testid="btn-refresh-meta"
+        onClick={() => void handleRefreshMeta()}
+      >
+        刷新能力数据
+      </mdui-button>
     </div>
+  );
+
+  return (
+    <PageShell
+      title="设置"
+      onBack={() => navigate('/')}
+      narrow
+      bottomNav={{
+        value: 'settings',
+        items: [
+          {
+            value: 'home',
+            label: '首页',
+            icon: <mdui-sym-home />,
+            activeIcon: <mdui-sym-home filled />,
+            onClick: () => navigate('/'),
+            testId: 'nav-bottom-home',
+          },
+          {
+            value: 'settings',
+            label: '设置',
+            icon: <mdui-sym-settings />,
+            activeIcon: <mdui-sym-settings filled />,
+            onClick: () => {},
+            testId: 'nav-bottom-settings',
+          },
+        ],
+      }}
+    >
+      <SectionCard title="硅基流动 API" testId="card-api">
+        <Field
+          label="API Key"
+          hint="仅保存在本机浏览器 localStorage 中"
+          className={keyError ? 't-input-wrap is-error' : 't-input-wrap'}
+          testId="field-api-key"
+        >
+          <div ref={keyInputRef} className={keyError ? 't-input is-error' : 't-input'}>
+            <mdui-text-field
+              data-testid="api-key"
+              type="password"
+              toggle-password
+              clearable
+              placeholder="sk-..."
+              value={settings.apiKey}
+              onInput={(e) => {
+                clearKeyError();
+                settings.update({ apiKey: (e.target as HTMLElement & { value: string }).value.trim() });
+              }}
+            />
+          </div>
+          <p className="t-error-msg" data-testid="key-error">
+            请先填写 API Key
+          </p>
+        </Field>
+        <Field label="API 地址" testId="field-base-url">
+          <mdui-text-field
+            data-testid="base-url"
+            value={settings.baseUrl}
+            clearable
+            onInput={(e) =>
+              settings.update({ baseUrl: (e.target as HTMLElement & { value: string }).value.trim() })
+            }
+          />
+        </Field>
+        <Field
+          label={`字幕转写并发（当前 ${settings.asrConcurrency}）`}
+          hint="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
+          testId="field-asr-concurrency"
+        >
+          <mdui-slider
+            ref={concurrencyRef}
+            data-testid="asr-concurrency"
+            min={1}
+            max={12}
+            step={1}
+            value={settings.asrConcurrency}
+          />
+        </Field>
+      </SectionCard>
+
+      <SectionCard
+        title="模型配置"
+        testId="card-models"
+        actions={
+          <mdui-button
+            variant="filled"
+            loading={checking}
+            data-testid="btn-check-models"
+            onClick={() => void handleCheck()}
+          >
+            检查模型可用性
+          </mdui-button>
+        }
+      >
+        {modelField('asrModel', '语音识别（ASR）')}
+        {modelField('llmModel', '文本生成（讲义 / 问答）')}
+        {modelField('embedModel', '向量（Embedding）')}
+        {modelField('visionModel', '视觉（截图理解）')}
+        <Field label="上下文窗口（tokens）" hint={metaHint} testId="field-context-window">
+          <mdui-text-field
+            data-testid="context-window"
+            type="number"
+            min={8192}
+            step={1024}
+            value={String(settings.contextWindow)}
+            onInput={(e) => {
+              const n = Number((e.target as HTMLElement & { value: string }).value);
+              settings.update({ contextWindow: n || 131072 });
+            }}
+          />
+        </Field>
+        <Field
+          label="问答检索轮次上限"
+          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token；大窗口模型下 12~20 轮安全。达到上限后会强制收尾作答，不会没有回答"
+          testId="field-agent-rounds"
+        >
+          <mdui-segmented-button-group
+            ref={roundsRef}
+            data-testid="agent-rounds"
+            selects="single"
+            value={String(settings.agentRounds)}
+          >
+            {[3, 6, 12, 20].map((n) => (
+              <mdui-segmented-button key={n} value={String(n)}>
+                {n}
+              </mdui-segmented-button>
+            ))}
+          </mdui-segmented-button-group>
+        </Field>
+      </SectionCard>
+
+      <SectionCard title="模型收藏夹" testId="card-favorites">
+        {modelOptions.length === 0 ? (
+          <div className="text-secondary">先点击上方「检查模型可用性」拉取模型列表</div>
+        ) : (
+          <mdui-tabs ref={tabsRef} data-testid="fav-tabs" value={favTab}>
+            {SLOT_TABS.map(({ key, label }) => (
+              <mdui-tab key={key} value={key} data-testid={`fav-tab-${key}`}>
+                {label}
+              </mdui-tab>
+            ))}
+            {SLOT_TABS.map(({ key }) => (
+              <mdui-tab-panel key={key} slot="panel" value={key} data-testid={`fav-panel-${key}`}>
+                {favTabContent(key)}
+              </mdui-tab-panel>
+            ))}
+          </mdui-tabs>
+        )}
+      </SectionCard>
+
+      <SectionCard
+        title="外观"
+        subtitle="深浅两套色板都来自 MD3 设计令牌，「跟随系统」会随系统的深浅色实时切换"
+        testId="card-appearance"
+      >
+        <Field label="主题" testId="field-theme">
+          <mdui-segmented-button-group
+            ref={themeRef}
+            data-testid="theme-select"
+            selects="single"
+            value={settings.theme}
+          >
+            <mdui-segmented-button value="auto">跟随系统</mdui-segmented-button>
+            <mdui-segmented-button value="light">浅色</mdui-segmented-button>
+            <mdui-segmented-button value="dark">深色</mdui-segmented-button>
+          </mdui-segmented-button-group>
+        </Field>
+        <Field
+          label="动态取色"
+          hint="Material You 的动态配色：从课程封面（抽帧里的幻灯片帧）提取主色，让播放页的配色随课程变化。取不到封面时自动用默认配色"
+          testId="field-dynamic-color"
+        >
+          <mdui-switch
+            ref={dynamicColorRef}
+            data-testid="dynamic-color"
+            checked={settings.dynamicColor}
+          />
+        </Field>
+      </SectionCard>
+
+      <SectionCard title="哔哩哔哩导入" testId="card-bilibili">
+        <Field
+          label="代理地址"
+          hint="自建 Cloudflare Worker 地址，用于绕过 B 站 CORS 与防盗链。留空则无法导入 B 站视频"
+          testId="field-bili-proxy"
+        >
+          <mdui-text-field
+            data-testid="bili-proxy"
+            value={settings.bilibiliProxy}
+            clearable
+            placeholder="https://bili-proxy.yourname.workers.dev"
+            onInput={(e) =>
+              settings.update({
+                bilibiliProxy: (e.target as HTMLElement & { value: string }).value.trim(),
+              })
+            }
+          />
+        </Field>
+        <Field
+          label="B 站 Cookie（可选）"
+          hint="粘贴自己账号的 Cookie 可解锁更高清晰度；不上传任何服务器，仅存本机 localStorage"
+          testId="field-bili-cookie"
+        >
+          <mdui-text-field
+            data-testid="bili-cookie"
+            type="password"
+            toggle-password
+            clearable
+            placeholder="SESSDATA=...; bili_jct=..."
+            value={settings.bilibiliCookie}
+            onInput={(e) =>
+              settings.update({
+                bilibiliCookie: (e.target as HTMLElement & { value: string }).value.trim(),
+              })
+            }
+          />
+        </Field>
+      </SectionCard>
+
+      <SectionCard
+        title="播放"
+        testId="card-rates"
+        subtitle={`播放器控制栏除内置的 ${PRESET_RATES.map(formatRate).join(' / ')} 外，还会平铺这里添加的档位（${MIN_RATE}–${MAX_RATE}），可逐条删除`}
+      >
+        <Field label="自定义倍速" testId="field-custom-rates">
+          <div className="stack">
+            <div className="row" data-testid="rate-chips">
+              {settings.customRates.length === 0 ? (
+                <span className="text-secondary">暂未添加</span>
+              ) : (
+                settings.customRates.map((r) => (
+                  <RateChip key={r} rate={r} onDelete={() => removeCustomRate(r)} />
+                ))
+              )}
+            </div>
+            <div className="row row--nowrap">
+              <mdui-text-field
+                ref={rateDraftRef}
+                data-testid="rate-input"
+                type="number"
+                min={MIN_RATE}
+                max={MAX_RATE}
+                step={0.25}
+                placeholder="1.25"
+                style={{ flex: '0 1 140px' }}
+              />
+              <mdui-button
+                variant="tonal"
+                data-testid="rate-add"
+                disabled={rateDraft == null}
+                onClick={addCustomRate}
+              >
+                添加
+              </mdui-button>
+            </div>
+          </div>
+        </Field>
+      </SectionCard>
+
+      <StorageCard />
+
+      <MigrationCard />
+
+      <SkillsCard />
+    </PageShell>
   );
 }

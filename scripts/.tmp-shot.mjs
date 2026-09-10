@@ -70,7 +70,7 @@ const ctx = await browser.newContext({ viewport: { width: 1280, height: 900 }, d
 const page = await ctx.newPage();
 await seed(page);
 await page.goto(`${BASE}/#/player/e2e-hd-edit-vid`, { waitUntil: 'networkidle' });
-await page.click('.ant-tabs-nav >> text=讲义');
+await page.click('[data-testid="panel-tab-handout"]');
 await page.waitForSelector('.hd-figure img', { timeout: 10000 });
 const para = page.locator('.hd-swipe', { hasText: '极限是描述函数' });
 await para.hover();

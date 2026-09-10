@@ -1,4 +1,3 @@
-import { FontSizeOutlined } from '@ant-design/icons';
 import { DefaultTooltip } from '@vidstack/react/player/layouts/default';
 import { useSettings } from '../store/settings';
 
@@ -28,7 +27,9 @@ export default function CaptionSizeButton() {
         aria-label={`字幕大小：${cur.label}，点击切换为${next.label}`}
         onClick={() => update({ captionScale: next.value })}
       >
-        <FontSizeOutlined className="vds-icon" />
+        {/* Material Symbols 图标元素是 1em 见方并继承 font-size，
+            所以 .caption-size-btn 的 font-size:19px 一样能定它的尺寸 */}
+        <mdui-sym-format-size className="vds-icon" />
       </button>
     </DefaultTooltip>
   );

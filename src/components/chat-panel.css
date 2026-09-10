@@ -1,0 +1,220 @@
+/**
+ * 问答面板的样式（配 ChatPanel.tsx）。
+ *
+ * 颜色一律走 MD3 令牌（`rgb(var(--mdui-color-*))`，令牌值是 R,G,B 三元组必须包 rgb()）。
+ * 气泡形状差是 MD3 聊天的标志：靠对话侧收小圆角、另一侧全圆角 —— 这不是装饰，
+ * 是「谁在说话」的第二条视觉线索，深浅色主题都成立。
+ */
+
+/* ── 会话工具条 ─────────────────────────────────────────────────────────── */
+.chat-session-select {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 260px;
+}
+
+/* ── 消息流 ─────────────────────────────────────────────────────────────── */
+/* PanelBody 已负责滚动，这里只管消息的纵向节奏 */
+.chat-list-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 4px 0 8px;
+}
+
+.chat-msg {
+  display: flex;
+  min-width: 0;
+}
+
+.chat-msg--ai {
+  justify-content: flex-start;
+}
+
+.chat-msg--user {
+  justify-content: flex-end;
+}
+
+.chat-bubble {
+  max-width: 86%;
+  padding: 10px 14px;
+  font-size: var(--mdui-typescale-body-medium-size);
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+
+.chat-bubble--ai {
+  border-radius: var(--mdui-shape-corner-large);
+  border-top-left-radius: var(--mdui-shape-corner-extra-small);
+  background: rgb(var(--mdui-color-surface-container-high));
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.chat-bubble--user {
+  border-radius: var(--mdui-shape-corner-large);
+  border-bottom-right-radius: var(--mdui-shape-corner-extra-small);
+  background: rgb(var(--mdui-color-primary));
+  color: rgb(var(--mdui-color-on-primary));
+}
+
+/* 回答中断的消息：整体降为错误容器色，让「失败」一眼可见 */
+.chat-msg[data-error='true'] .chat-bubble--ai {
+  background: rgb(var(--mdui-color-error-container));
+  color: rgb(var(--mdui-color-on-error-container));
+}
+
+/* ── 思考过程（可折叠） ─────────────────────────────────────────────────── */
+.chat-reason {
+  margin-bottom: 6px;
+  font-size: 12px;
+}
+
+.chat-reason__toggle {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  opacity: 0.65;
+  user-select: none;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.chat-reason__chevron {
+  font-size: 1rem;
+  transition: transform var(--mdui-motion-duration-short2) var(--mdui-motion-easing-standard);
+}
+
+.chat-reason__chevron--open {
+  transform: rotate(90deg);
+}
+
+.chat-reason__body {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid rgb(var(--mdui-color-outline-variant));
+  max-height: 240px;
+  overflow: auto;
+  white-space: pre-wrap;
+  opacity: 0.8;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 课程画面引用（AI 回答里的 [图@mm:ss]） ─────────────────────────────── */
+.chat-ts {
+  cursor: pointer;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.chat-frame-wrap {
+  position: relative;
+  display: inline-block;
+  margin: 4px 0;
+  vertical-align: top;
+}
+
+.chat-frame-img {
+  display: block;
+  max-height: 140px;
+  max-width: 100%;
+  border-radius: var(--mdui-shape-corner-small);
+  cursor: pointer;
+}
+
+.chat-frame-img--pending {
+  width: 200px;
+  height: 112px;
+  background: rgb(var(--mdui-color-surface-container-highest));
+}
+
+/* 画面左下角的时间戳小签：反白的悬浮签，深浅主题下都用深底白字（叠在画面上） */
+.chat-ts-chip {
+  position: absolute;
+  left: 2px;
+  bottom: 2px;
+  padding: 0 3px;
+  border-radius: 2px;
+  font-size: 10px;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+}
+
+/* ── 截图缩略图（用户消息里 / 输入区待发送） ────────────────────────────── */
+.chat-shots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 6px;
+}
+
+.chat-shots--pending {
+  margin-bottom: 8px;
+}
+
+.chat-shot {
+  position: relative;
+  display: inline-block;
+}
+
+.chat-shot__img {
+  display: block;
+  height: 56px;
+  border-radius: var(--mdui-shape-corner-small);
+  cursor: pointer;
+}
+
+.chat-shot__img--sm {
+  height: 48px;
+}
+
+/* 待发送截图的移除按钮：骑在缩略图右上角 */
+.chat-shot__remove {
+  position: absolute;
+  top: -10px;
+  right: -10px;
+  --mdui-color-primary: var(--mdui-color-on-surface);
+  background: rgb(var(--mdui-color-surface-container-highest));
+  border-radius: var(--mdui-shape-corner-full);
+  font-size: 0;
+}
+
+/* ── 输入区 ─────────────────────────────────────────────────────────────── */
+.chat-composer {
+  flex: none;
+  padding-top: 8px;
+}
+
+.chat-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 4px;
+}
+
+/* 输入框占满中段；outlined 变体在深浅两套主题里都是「描边 + 透明底」，
+   与两侧图标按钮放在一起不会出现三层色阶打架 */
+.chat-input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.chat-send {
+  flex: none;
+}
+
+/* 上下文用量提示（≈x.xk / yk）：三档告警色走 MD3 语义令牌 */
+.chat-ctx {
+  padding-top: 2px;
+  text-align: right;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.chat-ctx--warn {
+  color: rgb(var(--mdui-color-tertiary));
+}
+
+.chat-ctx--bad {
+  color: rgb(var(--mdui-color-error));
+}

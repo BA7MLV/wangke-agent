@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, App, Button, Popover, Progress, Segmented, Space, Tooltip, Typography } from 'antd';
-import { ControlOutlined, DownloadOutlined, FileWordOutlined, SettingOutlined } from '@ant-design/icons';
 import { renderAsync } from 'docx-preview';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
 import { db, type HandoutRow } from '../store/db';
@@ -12,6 +10,19 @@ import ModelPicker from './ModelPicker';
 import HandoutDocView from './HandoutDocView';
 import PersistentError from './PersistentError';
 import { formatCaughtError } from '../utils/errorText';
+import './handout-panel.css';
+import {
+  Panel,
+  PanelBar,
+  PanelProgress,
+  PanelPlaceholder,
+  EmptyState,
+  Banner,
+  Field,
+  toast,
+  alertDialog,
+  useMduiEvent,
+} from '../ui';
 
 interface Props {
   videoId: string;
@@ -21,12 +32,12 @@ interface Props {
 type SkillMode = 'auto' | 'pin' | 'drop';
 
 export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
-  const { message, modal } = App.useApp();
   const [handout, setHandout] = useState<HandoutRow | null>(null);
   const [progress, setProgress] = useState<HandoutProgress | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [skillModes, setSkillModes] = useState<Record<number, SkillMode>>({});
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const skelRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const isMobile = useIsMobile();
@@ -127,21 +138,16 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
     setProgress({ phase: 'frames', done: 0, total: 1, message: '准备中…' });
     try {
       await runHandout(videoId, setProgress);
-      message.success('讲义生成完成');
+      toast.success('讲义生成完成');
     } catch (e) {
       const errText = formatCaughtError(e);
       setErrorText(errText);
-      modal.error({
-        title: '讲义生成失败',
-        width: 560,
-        content: (
-          <Typography.Paragraph
-            copyable={{ text: errText }}
-            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
-          >
-            {errText}
-          </Typography.Paragraph>
-        ),
+      // 原 antd Modal.error 带可复制的错误详情；mdui 用 alertDialog + copyText 复制
+      await alertDialog({
+        headline: '讲义生成失败',
+        description: errText,
+        copyText: errText,
+        confirmText: '知道了',
       });
     } finally {
       setProgress(null);
@@ -165,149 +171,77 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
   const running = progress !== null;
   const pct = progress && progress.total > 1 ? Math.round((progress.done / progress.total) * 100) : undefined;
 
+  // 生成参数对话框：Esc / 点遮罩关闭时同步回 React state，避免「关掉又自己弹回」
+  const settingsDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setSettingsOpen(false));
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <Space style={{ padding: '8px 0', flexShrink: 0 }} wrap>
-        <Button
-          type="primary"
-          icon={<FileWordOutlined />}
-          loading={running}
-          onClick={start}
-          disabled={!hasSubtitles}
-          title={hasSubtitles ? undefined : '请先在「字幕」页生成字幕'}
-        >
-          {handout ? '重新生成讲义' : '生成讲义'}
-        </Button>
+    <Panel testId="panel-handout">
+      <PanelBar>
+        <mdui-tooltip content={!hasSubtitles ? '请先在「字幕」页生成字幕' : ''}>
+          <mdui-button
+            variant="filled"
+            data-testid="handout-generate"
+            loading={running}
+            disabled={!hasSubtitles}
+            onClick={start}
+          >
+            <mdui-sym-article slot="icon" />
+            {handout ? '重新生成讲义' : '生成讲义'}
+          </mdui-button>
+        </mdui-tooltip>
         {handout && (
-          <Button size="small" icon={<DownloadOutlined />} onClick={() => void downloadDocx()}>
+          <mdui-button data-testid="handout-export" onClick={() => void downloadDocx()}>
+            <mdui-sym-download slot="icon" />
             下载 DOCX
-          </Button>
+          </mdui-button>
         )}
-        <Popover
-          trigger="click"
-          placement="bottomLeft"
-          onOpenChange={(open) => open && void loadSkillState()}
-          content={
-            // 手机屏宽有限，Popover 内容宽取 340 与屏宽安全值的较小者
-            <div style={{ width: 'min(340px, calc(100vw - 64px))' }}>
-              <div style={{ fontSize: 12, color: '#888', marginBottom: 8 }}>
-                「自动」由路由器按课程内容选用；「必用 / 排除」为本视频的手动覆盖。
-              </div>
-              {skills.length === 0 && <div style={{ color: '#999' }}>暂无启用的技能，请到「设置 → 写作技能」添加</div>}
-              {skills.map((s) => (
-                <div
-                  key={s.id}
-                  style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8, gap: 8 }}
-                >
-                  <Tooltip title={s.description || '（无描述）'} placement="left">
-                    <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{s.name}</span>
-                  </Tooltip>
-                  <Segmented
-                    size="small"
-                    options={[
-                      { label: '自动', value: 'auto' },
-                      { label: '必用', value: 'pin' },
-                      { label: '排除', value: 'drop' },
-                    ]}
-                    value={skillModes[s.id] ?? 'auto'}
-                    onChange={(v) => void setSkillMode(s.id, v as SkillMode)}
-                  />
-                </div>
-              ))}
-              {handout?.usedSkills && handout.usedSkills.length > 0 && (
-                <div style={{ fontSize: 12, color: '#888', borderTop: '1px solid #f0f0f0', paddingTop: 8 }}>
-                  上次生成选用：{handout.usedSkills.join('、')}
-                </div>
-              )}
-            </div>
-          }
+        <mdui-button
+          data-testid="handout-settings"
+          onClick={() => {
+            void loadSkillState();
+            setSettingsOpen(true);
+          }}
         >
-          <Button size="small" icon={<ControlOutlined />}>
-            技能
-          </Button>
-        </Popover>
-        <Popover
-          content={
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-              <div>
-                <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>抽帧筛选 / 截图描述（视觉）</div>
-                <ModelPicker slot="vision" field="visionModel" />
-              </div>
-              <div>
-                <div style={{ fontSize: 12, color: '#888', marginBottom: 2 }}>讲义写作（文本）</div>
-                <ModelPicker slot="chat" field="llmModel" />
-              </div>
-            </div>
-          }
-          trigger="click"
-          placement="bottomRight"
-        >
-          <Button size="small" type="text" icon={<SettingOutlined />}>模型</Button>
-        </Popover>
-      </Space>
+          <mdui-sym-tune slot="icon" />
+          参数设置
+        </mdui-button>
+      </PanelBar>
 
       {!hasSubtitles && !running && (
-        <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-          讲义基于字幕内容生成，请先在「字幕」页生成字幕
-        </div>
+        <PanelPlaceholder>讲义基于字幕内容生成，请先在「字幕」页生成字幕</PanelPlaceholder>
       )}
 
       {running && progress && (
-        <div style={{ padding: '4px 0 12px', flexShrink: 0 }}>
-          <Progress percent={pct} size="small" status="active" />
-          <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
-        </div>
+        <PanelProgress testId="handout-progress" percent={pct} text={<TextSwap text={progress.message} />} />
       )}
 
       <PersistentError title="讲义生成失败" text={errorText} onClose={() => setErrorText(null)} />
 
-      <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
+      <div className="hp-body">
         {handout ? (
           handout.sectionsJson ? (
             // 结构化视图：块级左滑 / hover → AI 改写、手动编辑；DOCX 由 IR 实时重建
             <HandoutDocView handout={handout} />
           ) : (
             // 旧版生成的讲义（无 IR）：只读 docx-preview 预览
-            <div style={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
-              <Alert
-                type="info"
-                showIcon
-                style={{ marginBottom: 8, flexShrink: 0 }}
-                message="该讲义由旧版生成，仅支持只读预览；重新生成后可逐段 AI 改写 / 手动编辑"
-              />
-              <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
-                <div ref={skelRef} className="t-skel" style={{ height: '100%' }}>
-                  <div className="t-skel-skeleton" style={{ padding: '8px 4px', overflow: 'hidden' }}>
-                    <div style={{ height: 22, width: '45%', margin: '8px auto 20px', borderRadius: 4, background: '#ececec' }} />
-                    <div style={{ height: 12, width: '92%', margin: '10px 0', borderRadius: 4, background: '#f0f0f0' }} />
-                    <div style={{ height: 12, width: '97%', margin: '10px 0', borderRadius: 4, background: '#f0f0f0' }} />
-                    <div style={{ height: 12, width: '78%', margin: '10px 0', borderRadius: 4, background: '#f0f0f0' }} />
-                    <div style={{ height: 120, width: '70%', margin: '18px auto', borderRadius: 6, background: '#ececec' }} />
-                    <div style={{ height: 12, width: '88%', margin: '10px 0', borderRadius: 4, background: '#f0f0f0' }} />
-                    <div style={{ height: 12, width: '64%', margin: '10px 0', borderRadius: 4, background: '#f0f0f0' }} />
+            <div className="hp-legacy">
+              <Banner variant="info" title="该讲义由旧版生成，仅支持只读预览；重新生成后可逐段 AI 改写 / 手动编辑" />
+              <div className="hp-legacy__scroll">
+                <div ref={skelRef} className="t-skel hp-legacy__skel">
+                  <div className="t-skel-skeleton hp-skel">
+                    <div className="hp-skel__bar hp-skel__bar--title" />
+                    <div className="hp-skel__bar" />
+                    <div className="hp-skel__bar" />
+                    <div className="hp-skel__bar hp-skel__bar--short" />
+                    <div className="hp-skel__img" />
+                    <div className="hp-skel__bar" />
+                    <div className="hp-skel__bar hp-skel__bar--short" />
                   </div>
                   <div
                     ref={previewRef}
-                    className="t-skel-content docx-preview-container"
-                    style={{ overflow: 'auto' }}
+                    className="t-skel-content docx-preview-container hp-legacy__preview"
                   />
-                  <div
-                    style={{
-                      position: 'absolute',
-                      left: 0,
-                      right: 0,
-                      bottom: 0,
-                      zIndex: 3,
-                      pointerEvents: 'none',
-                      textAlign: 'center',
-                      fontSize: 11,
-                      color: '#aaa',
-                      padding: '14px 0 4px',
-                      background: 'linear-gradient(transparent, #fff 55%)',
-                    }}
-                  >
-                    目录页码将在 Word / WPS 中打开文档后自动生成
-                  </div>
+                  <div className="hp-legacy__fade">目录页码将在 Word / WPS 中打开文档后自动生成</div>
                 </div>
               </div>
             </div>
@@ -315,12 +249,86 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
         ) : (
           !running &&
           hasSubtitles && (
-            <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-              点击「生成讲义」，将自动抽取课程画面、提炼大纲并排版为公文格式 DOCX
-            </div>
+            <EmptyState
+              testId="handout-empty"
+              icon={<mdui-sym-article />}
+              title="还没有讲义"
+              description="点击「生成讲义」，将自动抽取课程画面、提炼大纲并排版为公文格式 DOCX"
+            />
           )
         )}
       </div>
+
+      {/* 生成参数（模型 + 技能覆盖）：原两个 antd Popover 合并为一个受控对话框。
+          内容含模型下拉与每个技能的「自动/必用/排除」分段控件，不是「点一下就关」的单选项，
+          用对话框比 dropdown 菜单更合适（菜单项点击即关、放不下多组交互控件）。 */}
+      <mdui-dialog
+        ref={settingsDlgRef}
+        open={settingsOpen}
+        close-on-esc
+        close-on-overlay-click
+        headline="生成参数"
+        data-testid="handout-settings-dialog"
+      >
+        <div className="hp-settings">
+          <Field label="抽帧筛选 / 截图描述（视觉）">
+            <ModelPicker slot="vision" field="visionModel" />
+          </Field>
+          <Field label="讲义写作（文本）">
+            <ModelPicker slot="chat" field="llmModel" />
+          </Field>
+          <div className="hp-settings__hint">
+            「自动」由路由器按课程内容选用；「必用 / 排除」为本视频的手动覆盖。
+          </div>
+          {skills.length === 0 ? (
+            <div className="hp-settings__empty">暂无启用的技能，请到「设置 → 写作技能」添加</div>
+          ) : (
+            skills.map((s) => (
+              <SkillModeRow
+                key={s.id}
+                skill={s}
+                mode={skillModes[s.id] ?? 'auto'}
+                onMode={(v) => void setSkillMode(s.id, v)}
+              />
+            ))
+          )}
+          {handout?.usedSkills && handout.usedSkills.length > 0 && (
+            <div className="hp-settings__used">上次生成选用：{handout.usedSkills.join('、')}</div>
+          )}
+        </div>
+        <mdui-button slot="action" variant="text" onClick={() => setSettingsOpen(false)}>
+          关闭
+        </mdui-button>
+      </mdui-dialog>
+    </Panel>
+  );
+}
+
+/** 单个技能的「自动 / 必用 / 排除」分段控件行。
+ *  不用 mdui-list-item（custom 插槽覆盖式，塞不下标题 + 控件两组内容）；
+ *  分段控件值从元素上读，change 事件走 useMduiEvent（mdui 自定义事件 React 不自动绑定）。 */
+function SkillModeRow({
+  skill,
+  mode,
+  onMode,
+}: {
+  skill: SkillMeta;
+  mode: SkillMode;
+  onMode: (mode: SkillMode) => void;
+}) {
+  const ref = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
+    onMode(el.value as SkillMode),
+  );
+  return (
+    <div className="hp-skill-row">
+      <mdui-tooltip content={skill.description || '（无描述）'}>
+        <span className="hp-skill-row__name">{skill.name}</span>
+      </mdui-tooltip>
+      <mdui-segmented-button-group ref={ref} value={mode}>
+        <mdui-segmented-button value="auto">自动</mdui-segmented-button>
+        <mdui-segmented-button value="pin">必用</mdui-segmented-button>
+        <mdui-segmented-button value="drop">排除</mdui-segmented-button>
+      </mdui-segmented-button-group>
     </div>
   );
 }

@@ -1,6 +1,4 @@
 import { useCallback, useEffect, useState } from 'react';
-import { App, Button, Progress, Space, Typography } from 'antd';
-import { CommentOutlined } from '@ant-design/icons';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type DanmakuRow } from '../store/db';
 import { runDanmaku, type DanmakuProgress } from '../pipelines/danmaku';
@@ -9,6 +7,8 @@ import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
 import { formatCaughtError } from '../utils/errorText';
+import { Panel, PanelBar, PanelBody, PanelProgress, PanelPlaceholder, CueRow, toast, alertDialog } from '../ui';
+import './subtitle-danmaku.css';
 
 interface Props {
   videoId: string;
@@ -17,7 +17,6 @@ interface Props {
 }
 
 export default function DanmakuPanel({ videoId, playerRef, hasSubtitles }: Props) {
-  const { message, modal } = App.useApp();
   const [items, setItems] = useState<DanmakuRow[]>([]);
   const [progress, setProgress] = useState<DanmakuProgress | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
@@ -36,22 +35,11 @@ export default function DanmakuPanel({ videoId, playerRef, hasSubtitles }: Props
     setProgress({ done: 0, total: 1, message: '准备中…' });
     try {
       const count = await runDanmaku(videoId, setProgress);
-      message.success(count > 0 ? `弹幕生成完成，共 ${count} 条思考题` : '生成完成：这段课程没有挖出合适的思考题');
+      toast.success(count > 0 ? `弹幕生成完成，共 ${count} 条思考题` : '生成完成：这段课程没有挖出合适的思考题');
     } catch (e) {
       const errText = formatCaughtError(e);
       setErrorText(errText);
-      modal.error({
-        title: '弹幕生成失败',
-        width: 560,
-        content: (
-          <Typography.Paragraph
-            copyable={{ text: errText }}
-            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
-          >
-            {errText}
-          </Typography.Paragraph>
-        ),
-      });
+      void alertDialog({ headline: '弹幕生成失败', description: errText, copyText: errText });
     } finally {
       setProgress(null);
       await reload();
@@ -62,56 +50,50 @@ export default function DanmakuPanel({ videoId, playerRef, hasSubtitles }: Props
   const pct = progress && progress.total > 1 ? Math.round((progress.done / progress.total) * 100) : undefined;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <Space style={{ padding: '8px 0', flexShrink: 0 }} wrap>
-        <Button
-          type="primary"
-          icon={<CommentOutlined />}
+    <Panel testId="panel-dm">
+      <PanelBar>
+        <mdui-button
+          variant="filled"
           loading={running}
-          onClick={start}
           disabled={!hasSubtitles}
+          onClick={start}
+          data-testid="dm-generate"
           title={hasSubtitles ? undefined : '请先在「字幕」页生成字幕'}
         >
+          <mdui-sym-comment slot="icon" />
           {items.length > 0 ? '重新生成弹幕' : '生成弹幕'}
-        </Button>
+        </mdui-button>
         <ModelPicker slot="chat" field="llmModel" />
-      </Space>
+      </PanelBar>
 
       {running && progress && (
-        <div style={{ padding: '4px 0 12px', flexShrink: 0 }}>
-          <Progress percent={pct} size="small" status="active" />
-          <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
-        </div>
+        <PanelProgress testId="dm-progress" percent={pct} text={<TextSwap text={progress.message} />} />
       )}
 
       <PersistentError title="弹幕生成失败" text={errorText} onClose={() => setErrorText(null)} />
 
-      <div style={{ flex: 1, overflow: 'auto' }}>
+      <PanelBody testId="dm-list">
         {!hasSubtitles && !running && (
-          <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-            弹幕基于字幕内容生成，请先在「字幕」页生成字幕
-          </div>
+          <PanelPlaceholder testId="dm-empty">弹幕基于字幕内容生成，请先在「字幕」页生成字幕</PanelPlaceholder>
         )}
         {hasSubtitles && items.length === 0 && !running && (
-          <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
+          <PanelPlaceholder testId="dm-empty">
             点击「生成弹幕」，AI 将按课程内容设计思考题，播放到对应时间点时弹在画面顶部
-          </div>
+          </PanelPlaceholder>
         )}
         {items.map((d) => (
-          <div
+          <CueRow
             key={d.id}
-            className="sub-item"
+            time={fmtTime(d.time)}
+            testId="dm-row"
             onClick={() => {
               if (playerRef.current) playerRef.current.currentTime = d.time + 0.01;
             }}
           >
-            <span style={{ color: '#1677ff', fontVariantNumeric: 'tabular-nums', flexShrink: 0 }}>
-              {fmtTime(d.time)}
-            </span>
-            <span>{d.text}</span>
-          </div>
+            {d.text}
+          </CueRow>
         ))}
-      </div>
-    </div>
+      </PanelBody>
+    </Panel>
   );
 }

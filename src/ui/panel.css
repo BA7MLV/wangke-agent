@@ -1,0 +1,119 @@
+/**
+ * 播放页面板的共享样式（配 src/ui/panel.tsx）。
+ *
+ * 三条约定：
+ * 1. 颜色一律走 MD3 令牌（`rgb(var(--mdui-color-*))`）—— 阶段 2 的令牌化只覆盖了页面外壳，
+ *    面板里的 `#888` / `#999` / `#1677ff` / `#e6f4ff` 是这次一起清的，深色模式才真正完整。
+ * 2. 面板内部**只允许 `.panel-body` 滚动**，其余部分固定高度（`.panel` 是 `overflow:hidden`）。
+ * 3. `.sub-item` 是「面板条目行」的既有类名，被 e2e-live-subs / e2e-danmaku / e2e-cards
+ *    当作行选择器用，只做视觉升级、不改名。
+ */
+
+/* ── 面板骨架 ───────────────────────────────────────────────────────────── */
+.panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.panel-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.panel-bar--wrap {
+  flex-wrap: wrap;
+}
+
+.panel-bar__spacer {
+  flex: 1 1 auto;
+}
+
+/* ── 进度 ───────────────────────────────────────────────────────────────── */
+.panel-progress {
+  flex: none;
+  padding: 4px 0 12px;
+}
+
+.panel-progress mdui-linear-progress {
+  /* 宿主默认不是 block，不铺开的话进度条只有内容宽 */
+  display: block;
+}
+
+.panel-progress__text {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 内容区 / 空态 / 加载态 ─────────────────────────────────────────────── */
+.panel-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  padding-bottom: 8px;
+}
+
+.panel-placeholder {
+  padding: 16px;
+  text-align: center;
+  font-size: 13px;
+  line-height: 1.7;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.panel-spinner {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 32px;
+}
+
+/* ── 条目行（字幕 / 弹幕 / 卡片共用） ───────────────────────────────────── */
+.sub-item {
+  display: flex;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: var(--mdui-shape-corner-small);
+  cursor: pointer;
+  /* 悬停/聚焦的状态层由 MD3 的 surface 层级表达，不用分隔线（那是 MD2/antd 的惯性） */
+  transition: background-color var(--mdui-motion-duration-short2) var(--mdui-motion-easing-linear);
+}
+
+.sub-item:hover {
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+.sub-item--active,
+.sub-item--active:hover {
+  background: rgb(var(--mdui-color-primary-container));
+  color: rgb(var(--mdui-color-on-primary-container));
+}
+
+.sub-item__time {
+  flex: none;
+  color: rgb(var(--mdui-color-primary));
+  font-variant-numeric: tabular-nums;
+}
+
+.sub-item--active .sub-item__time {
+  /* 高亮行整行都是 primary-container 上的前景色，时间戳再单独上主色会看不清 */
+  color: inherit;
+}
+
+.sub-item__text {
+  min-width: 0;
+}
+
+/* 手机端：整行更好点 */
+@media (max-width: 640px) {
+  .sub-item {
+    padding: 10px 12px;
+  }
+}

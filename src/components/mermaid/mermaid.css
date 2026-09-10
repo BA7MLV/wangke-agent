@@ -1,0 +1,193 @@
+/* Mermaid 图表块：替代 ```mermaid 围栏的代码块外观，跟随 MD3 令牌（深色自动成立）。
+   mdui 令牌值是 R,G,B 三元组，必须用 rgb(var(--mdui-color-*)) 包裹。
+   注：mermaid 渲染出的 SVG 图谱本体自带颜色，这里一律不动。 */
+
+.xmd-mermaid {
+  margin: 8px 0;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: 8px;
+  background: rgb(var(--mdui-color-surface-container-low));
+  overflow: hidden;
+}
+
+.xmd-mermaid-head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 2px 6px 2px 10px;
+  background: rgb(var(--mdui-color-surface-container));
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+}
+
+.xmd-mermaid-tag {
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  letter-spacing: 0.02em;
+  user-select: none;
+}
+
+.xmd-mermaid-spacer {
+  flex: 1;
+}
+
+/* —— 渲染中 —— */
+.xmd-mermaid-placeholder {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 14px 12px;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.xmd-mermaid-dots {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: rgb(var(--mdui-color-primary));
+  animation: xmd-mermaid-pulse 1s ease-in-out infinite;
+}
+
+@keyframes xmd-mermaid-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+/* —— 渲染成功 —— */
+.xmd-mermaid-canvas {
+  padding: 12px;
+  overflow-x: auto;
+  text-align: center;
+}
+
+/* mermaid 的图自带 inline max-width；统一交给容器宽度控制，窄屏可横向滚动 */
+.xmd-mermaid-canvas svg {
+  max-width: 100% !important;
+  height: auto !important;
+  display: inline-block;
+  vertical-align: top;
+}
+
+/* foreignObject 内的 HTML 标签继承图内字体，避免落回浏览器默认字体 */
+.xmd-mermaid-canvas foreignObject,
+.xmd-mermaid-zoom-inner foreignObject {
+  font-family: inherit;
+}
+
+/* —— 渲染失败 —— */
+.xmd-mermaid-error {
+  padding: 10px 12px;
+  background: rgb(var(--mdui-color-error-container));
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+}
+
+.xmd-mermaid-error-title {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-error));
+  margin-bottom: 4px;
+}
+
+.xmd-mermaid-error-msg {
+  font-size: 12px;
+  color: rgb(var(--mdui-color-error));
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 120px;
+  overflow: auto;
+  margin-bottom: 8px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+/* —— 源码 —— */
+.xmd-mermaid-source {
+  margin: 0 !important;
+  padding: 10px 12px !important;
+  background: rgb(var(--mdui-color-surface-container)) !important;
+  border: none !important;
+  border-top: 1px dashed rgb(var(--mdui-color-outline-variant)) !important;
+  border-radius: 0 !important;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface));
+  max-height: 260px;
+  overflow: auto;
+  white-space: pre;
+}
+
+/* —— 大图查看 —— */
+.xmd-mermaid-zoom {
+  display: flex;
+  flex-direction: column;
+  max-height: 82vh;
+}
+
+.xmd-mermaid-zoom-bar {
+  padding: 8px 12px;
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+}
+
+.xmd-mermaid-zoom-label {
+  display: inline-block;
+  min-width: 44px;
+  text-align: center;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-variant-numeric: tabular-nums;
+}
+
+.xmd-mermaid-zoom-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+  background: rgb(var(--mdui-color-surface-container-low));
+  /* 触摸设备上允许双指缩放查看 */
+  touch-action: pinch-zoom;
+}
+
+.xmd-mermaid-zoom-inner {
+  margin: 0 auto;
+}
+
+.xmd-mermaid-zoom-inner svg {
+  max-width: 100% !important;
+  height: auto !important;
+  display: block;
+}
+
+/* —— 工具条（原来是 antd 的 Space + 小号 text 按钮） —— */
+.xmd-mermaid-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+}
+
+/* 「源码已展开」的激活态：文档树规则覆盖 mdui-button-icon 的 :host 颜色，
+   图标 fill:currentColor 跟随文字色 */
+.xmd-mermaid-tools .is-on {
+  color: rgb(var(--mdui-color-primary));
+}
+
+/* —— 大图弹窗 ——
+   mdui-dialog 的可视面板在 shadow DOM 里（.panel{max-width:35rem}），改不到；
+   但它暴露了 part="panel"，用 ::part() 正当改写 —— 保持原 antd Modal 的 92vw / 上限 1400px 观感。 */
+.mermaid-zoom-dialog::part(panel) {
+  width: 92vw;
+  max-width: 1400px;
+  height: 86vh;
+}
+
+/* 弹窗正文不再需要 mdui 自带的最大宽度约束（::part 已接管整块面板） */
+.mermaid-zoom-dialog .xmd-mermaid-zoom {
+  max-height: none;
+  height: 100%;
+}

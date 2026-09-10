@@ -18,8 +18,8 @@ await page.addInitScript((key) => {
 
 await page.goto('http://localhost:5173', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
-await page.waitForSelector('.ant-list-item', { timeout: 15000 });
-await page.click("button:has-text(\"学习\")");
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 15000 });
+await page.click('[data-testid="btn-play"]');
 await page.waitForTimeout(5000);
 await page.screenshot({ path: 'e2e-shots/debug-player.png', fullPage: true });
 

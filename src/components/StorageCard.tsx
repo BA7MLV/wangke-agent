@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Button, Card, List, Progress, Space, Tag, Typography } from 'antd';
-import { ReloadOutlined } from '@ant-design/icons';
+import { SectionCard } from '../ui';
 import { getStorageStats, type StorageStats } from '../store/storageStats';
 import { formatSize } from '../utils/format';
 
@@ -25,56 +24,69 @@ export default function StorageCard() {
   const percent = stats && stats.quota > 0 ? Math.min(100, (stats.usage / stats.quota) * 100) : 0;
 
   return (
-    <Card
+    <SectionCard
       title="存储占用"
-      style={{ marginBottom: 16 }}
-      extra={
-        <Button icon={<ReloadOutlined />} loading={loading} onClick={() => void reload()}>
+      testId="card-storage"
+      actions={
+        <mdui-button
+          variant="tonal"
+          loading={loading}
+          data-testid="storage-refresh"
+          onClick={() => void reload()}
+        >
+          <mdui-sym-refresh slot="icon" />
           刷新
-        </Button>
+        </mdui-button>
       }
     >
       {stats && (
         <>
-          <Progress
-            percent={percent}
-            size="small"
-            status={percent > 90 ? 'exception' : 'normal'}
-            format={() =>
-              stats.quota > 0
-                ? `已用 ${formatSize(stats.usage)} / 配额 ${formatSize(stats.quota)}`
-                : `已用 ${formatSize(stats.usage)}`
-            }
+          <mdui-linear-progress
+            value={percent}
+            max={100}
+            data-testid="storage-progress"
           />
+          <div className="storage-progress-text">
+            {stats.quota > 0
+              ? `已用 ${formatSize(stats.usage)} / 配额 ${formatSize(stats.quota)}`
+              : `已用 ${formatSize(stats.usage)}`}
+          </div>
           <div style={{ margin: '4px 0 12px' }}>
             {stats.persisted ? (
-              <Tag color="success">已持久化，系统不会自动清理</Tag>
+              <mdui-chip variant="assist" data-testid="storage-persist-tag">
+                已持久化，系统不会自动清理
+              </mdui-chip>
             ) : (
-              <Tag color="warning">未持久化，系统空间紧张时可能清理数据</Tag>
+              <mdui-chip
+                variant="assist"
+                data-testid="storage-persist-tag"
+                title="未持久化，系统空间紧张时可能清理数据"
+                style={{ color: 'rgb(var(--mdui-color-error))' }}
+              >
+                未持久化，系统空间紧张时可能清理数据
+              </mdui-chip>
             )}
           </div>
-          <List
-            size="small"
-            dataSource={stats.categories}
-            renderItem={(c) => (
-              <List.Item>
-                <Space size={8}>
-                  <Typography.Text>{c.label}</Typography.Text>
-                  {stats.usage > 0 && (
-                    <Typography.Text type="secondary" style={{ fontSize: 12 }}>
-                      {((c.bytes / stats.usage) * 100).toFixed(0)}%
-                    </Typography.Text>
-                  )}
-                </Space>
-                <Typography.Text>{formatSize(c.bytes)}</Typography.Text>
-              </List.Item>
-            )}
-          />
-          <Typography.Paragraph type="secondary" style={{ marginBottom: 0, fontSize: 12 }}>
+          {/* ⚠️ 分类名走的是 list-item 的**默认插槽**。
+              mdui 官方 JSX 注释写「也可以通过 slot="headline" 设置」，但实现里没有这个命名插槽
+              （renderInner 只有 description / end-icon 两个命名插槽，headline 只是 <slot> 的 part 名）——
+              写 slot="headline" 的内容会被静默丢弃、整列不渲染（实测踩到，已在 e2e 里加了回归断言）。 */}
+          <mdui-list>
+            {stats.categories.map((c) => (
+              <mdui-list-item key={c.label} data-testid="storage-row">
+                <span>{c.label}</span>
+                <span slot="description">
+                  {stats.usage > 0 ? `${((c.bytes / stats.usage) * 100).toFixed(0)}%` : ''}
+                </span>
+                <span slot="end-icon">{formatSize(c.bytes)}</span>
+              </mdui-list-item>
+            ))}
+          </mdui-list>
+          <div className="text-secondary" data-testid="storage-note" style={{ fontSize: 12 }}>
             视频文件存于浏览器 OPFS，字幕/讲义等存于 IndexedDB，仅保存在本机；清除站点数据会全部丢失。
-          </Typography.Paragraph>
+          </div>
         </>
       )}
-    </Card>
+    </SectionCard>
   );
 }

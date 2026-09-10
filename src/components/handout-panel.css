@@ -1,0 +1,161 @@
+/* 讲义面板（HandoutPanel / HandoutDocView）的 chrome 样式。
+ * 配色一律走 MD3 令牌 rgb(var(--mdui-color-*))，深色模式自动成立。
+ * 注意：公文「纸」（handout-doc.css 里的 .hd-doc）内部排版色不在此文件动 ——
+ * 那张纸在深色模式下就是一张白纸浮在深色背景上（同 PDF 阅读器）。 */
+
+/* ── 面板内容区（替代原 antd Space 的 flex 列容器） ─────────────────────── */
+.hp-body {
+  flex: 1 1 auto;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ── 旧版无 IR 讲义：只读 docx 预览（骨架脉冲 + 内容淡入） ───────────────── */
+.hp-legacy {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+
+.hp-legacy__scroll {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: auto;
+  background: rgb(var(--mdui-color-surface-container));
+}
+
+.hp-legacy__skel {
+  height: 100%;
+}
+
+.hp-legacy__preview {
+  overflow: auto;
+}
+
+/* 底部「目录页码将自动生成」的渐隐提示，渐变收口到容器底色 */
+.hp-legacy__fade {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 3;
+  pointer-events: none;
+  text-align: center;
+  font-size: 11px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  padding: 14px 0 4px;
+  background: linear-gradient(transparent, rgb(var(--mdui-color-surface-container)) 55%);
+}
+
+/* 骨架占位条（替原内联 #ececec / #f0f0f0，令牌化后深浅色自适配） */
+.hp-skel__bar {
+  height: 12px;
+  width: 92%;
+  margin: 10px 0;
+  border-radius: 4px;
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+.hp-skel__bar--title {
+  height: 22px;
+  width: 45%;
+  margin: 8px auto 20px;
+}
+
+.hp-skel__bar--short {
+  width: 64%;
+}
+
+.hp-skel__img {
+  height: 120px;
+  width: 70%;
+  margin: 18px auto;
+  border-radius: 6px;
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+/* ── 生成参数对话框 ─────────────────────────────────────────────────────── */
+.hp-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.hp-settings__hint {
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  margin: 4px 0;
+}
+
+.hp-settings__empty {
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.hp-settings__used {
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
+  padding-top: 8px;
+  margin-top: 4px;
+}
+
+/* 单个技能的「自动 / 必用 / 排除」行（标题 + 分段控件，不用 mdui-list-item） */
+.hp-skill-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.hp-skill-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 14px;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+/* ── 块级 hover 浮动操作（替原 antd Button；复用 .hd-act 配色，收成自适应宽度） ── */
+.hd-hover-actions .hd-act {
+  flex: none;
+  min-width: 56px;
+  padding: 0 10px;
+  border-radius: var(--mdui-shape-corner-small);
+}
+
+/* ── AI 改写输入行 / 列表编辑行 / 表格字段标签 ─────────────────────────── */
+.hd-ai-input {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+}
+
+.hd-ai-input mdui-text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* handout-doc.css 已定义 .hd-editor / .hd-editor-bar；列表行与字段标签补在此处 */
+.hd-list-row {
+  display: flex;
+  gap: 6px;
+  margin-bottom: 6px;
+  align-items: flex-start;
+}
+
+.hd-list-row mdui-text-field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.hd-field-label {
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  margin-bottom: 2px;
+}

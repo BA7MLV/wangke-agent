@@ -56,7 +56,7 @@ console.log('1. 种子数据写入 OK');
 
 // 4. 打开播放页 → 讲义 Tab → 等预览渲染
 await page.goto('http://localhost:5173/#/player/e2e-font-demo', { waitUntil: 'domcontentloaded' });
-await page.click('.ant-tabs-tab:has-text("讲义")');
+await page.click('[data-testid="panel-tab-handout"]');
 await page.waitForSelector('.docx-preview-container section.docx', { timeout: 20000 });
 console.log('2. 讲义预览渲染 OK');
 

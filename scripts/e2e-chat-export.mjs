@@ -94,7 +94,7 @@ async function seed(page) {
 /** 进入问答页并等待面板就绪（复制按钮出现且可用） */
 async function openChat(page) {
   await page.goto(`${BASE}/#/player/${VIDEO_ID}`, { waitUntil: 'networkidle' });
-  await page.click('.ant-tabs-tab:has-text("问答")');
+  await page.click('[data-testid="panel-tab-chat"]');
   const btn = page.locator('[data-testid="copy-session-btn"]');
   await btn.waitFor({ state: 'visible', timeout: 15000 });
   await page.waitForFunction(() => {
@@ -114,7 +114,7 @@ await openChat(page);
 
 console.log('2. 点击「复制整个会话」，读取剪贴板');
 await page.click('[data-testid="copy-session-btn"]');
-await page.waitForSelector('.ant-message-success', { timeout: 5000 });
+await page.waitForSelector('mdui-snackbar', { timeout: 5000 }); // toast 已换 mdui snackbar
 const clip = await page.evaluate(() => navigator.clipboard.readText());
 const checks = [
   ['标题', '# 极限的定义'],
@@ -146,7 +146,7 @@ if (content === clip) ok('导出内容与剪贴板一致');
 else fail('导出内容与剪贴板不一致');
 
 console.log('4. 新开会话（空会话）时复制/导出按钮禁用');
-await page.click('button:has(.anticon-plus)');
+await page.click('[data-testid="chat-new-session"]');
 await page.waitForFunction(() => {
   const el = document.querySelector('[data-testid="copy-session-btn"]');
   return el && el.disabled;
@@ -174,7 +174,7 @@ page2.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 400))
 await seed(page2);
 await openChat(page2);
 await page2.click('[data-testid="copy-session-btn"]');
-await page2.waitForSelector('.ant-message-success', { timeout: 5000 });
+await page2.waitForSelector('mdui-snackbar', { timeout: 5000 }); // toast 已换 mdui snackbar
 const copied = await page2.evaluate(() => window.__copied ?? '');
 if (copied.includes('# 极限的定义') && copied.includes('## 助手')) ok('execCommand 降级复制成功');
 else fail(`execCommand 降级失败：${JSON.stringify(copied.slice(0, 200))}`);

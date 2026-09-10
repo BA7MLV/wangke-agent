@@ -1,0 +1,723 @@
+/**
+ * mdui 布局原语的样式。
+ *
+ * ## 一个已实测的关键规则：文档树规则优先于 shadow DOM 里的 `:host` 规则
+ *
+ * 实测（Playwright 在真实页面里验证）：
+ *   - `mdui-card` 的 `:host{display:inline-block}` 被外部 `.section-card{display:block}` **覆盖成功**；
+ *   - `mdui-top-app-bar` 的 `:host{position:fixed}` 被外部 `.probe{position:relative}` **覆盖成功**；
+ *   - 同属性（display / position / max-width）覆盖同样生效，不需要 `!important`。
+ *
+ * 所以本文件可以放心调整宿主的布局属性。反过来：**shadow DOM 内部**的样式依然改不到，
+ * 那部分只能走 CSS 自定义属性与 `::part()`。
+ *
+ * 另一个实测结论：`mdui-card` 的默认变体**没有背景色**（computed 为 rgba(0,0,0,0)），
+ * 必须显式给 `variant`（elevated / filled / outlined），见 layout.tsx。
+ */
+
+/* ── 页面骨架 ───────────────────────────────────────────────────────────── */
+
+/* 已迁移页面自己铺 MD3 的 background 面层。
+   不能改 theme.css 里 #root 的 #f5f5f5 —— 那个是还没迁移的页面（Library / Player）在用的，
+   改了会让它们也跟着变色。这里只给「已迁移」的页面外壳上色，作用域可控。
+   色阶：page(background 254,247,255) < card(surface-container-low 247,242,250) < 输入框(surface-container-highest 230,224,233) */
+.page-mdui {
+  background: rgb(var(--mdui-color-background));
+}
+
+/* ⚠️ 内边距**不能**加在 mdui-layout-main 上：mdui 的布局助手会用内联样式写它的
+   paddingTop/Right/Bottom/Left（避让 mdui-layout-item 所占的空间），内联样式优先级更高，
+   写在类里的 padding 会被整个抹成 0。所以内容内边距放在里面这层。 */
+.page-inner {
+  width: 100%;
+  padding: 16px;
+}
+
+/* 640 = 内容宽；因为 .page-inner 自带 16px 内边距，外层要给到 672 才能让内容正好 640
+   （项目全局 box-sizing: border-box，max-width 含 padding）。 */
+.page-inner--narrow {
+  max-width: 672px;
+  margin: 0 auto;
+}
+
+/* 列表页（Library）用 860 内容宽 → 892 */
+.page-inner--wide {
+  max-width: 892px;
+  margin: 0 auto;
+}
+
+/* 播放页（PageShell 的 fill 模式）：整块铺满，由页面内部的面板各自滚动。
+   默认的 mdui-layout-main 是 `overflow:auto`（整块内容一起滚），播放页要反过来 ——
+   视频与侧栏固定在视口内、只有面板内容区滚，所以这两条覆盖是必须的。 */
+.page-main--fill {
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.page-inner--fill {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+  padding: 0;
+}
+
+/* TopAppBar：mdui 默认给它是 `position: fixed`，但这里必须留在文档流里 —— 两个原因：
+     1. mdui 的布局助手靠 `mdui-layout-item.offsetHeight` 量出标题栏占位、再给 main 补内边距；
+        里面塞一个 fixed 元素会让 item 高度为 0，偏移就全算成 0（实测：main 拿到 padding: 0）；
+     2. .page 本身已经是「视口高度 + 内部滚动」的外壳，标题栏再 fixed 会多出一截文档滚动
+        （实测：document.scrollHeight 比视口多 64px）。
+   已实测文档树规则优先于 shadow DOM 的 :host，所以这条覆盖是可靠的。
+   另外必须给 width: 100%：mdui-top-app-bar 的 :host 是 `flex: 0 0 auto`，而它的父级
+   mdui-layout-item 是 display:flex —— 不撑开的话标题栏只有内容那么宽（实测 116px），
+   背景色/阴影都盖不满整行。 */
+.app-bar {
+  position: relative;
+  width: 100%;
+  padding-top: env(safe-area-inset-top);
+}
+
+.app-bar__spacer {
+  flex: 1 1 auto;
+}
+
+/* ── 底部导航（窄屏专属） ─────────────────────────────────────────────────
+   MD3 的导航栏只在窄屏用；宽屏应当换成 NavigationRail，本项目宽屏仍走
+   TopAppBar 的「设置」图标按钮，所以这里直接隐藏。
+   用 CSS 而不是 JS 判断视口：mdui 的布局助手用 ResizeObserver 观察
+   mdui-layout-item，display:none 时量到的高度是 0，内容区的 padding-bottom 会自动归零。
+   （mdui-navigation-bar 不自带 safe-area 内边距，PWA 全屏时需自己补。） */
+.bottom-nav {
+  display: none;
+}
+
+@media (max-width: 640px) {
+  .bottom-nav {
+    display: block;
+    width: 100%;
+  }
+  .bottom-nav mdui-navigation-bar {
+    /* ⚠️ 和 mdui-top-app-bar 是同一个坑：`:host{position:fixed}` 会让父级 mdui-layout-item
+       量到高度 0，于是布局助手给内容区补的 padding-bottom 也是 0 —— 列表最后一段被导航栏盖住。
+       实测（390px 视口）：不覆盖时 item.offsetHeight=0、main padding 只有 "64px 0 0 0"。
+       文档树规则优先于 :host，覆盖可靠。 */
+    position: relative;
+    width: 100%;
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* 图标外面包了一层 span（为了挂 slot 属性），而 shadow 里的 `::slotted([slot=icon])`
+     会给它 `font-size: inherit`（= 页面基准 16px）—— 不补回来的话图标是 16px 而不是 MD3 的 24px。
+     外层文档树的规则优先于 `::slotted()`，所以这条能生效。 */
+  .bottom-nav [slot='icon'],
+  .bottom-nav [slot='active-icon'] {
+    display: flex;
+    font-size: 1.5rem;
+  }
+
+  /* 窄屏下「设置」已经在底部导航里，标题栏再放一个图标按钮就是重复入口 */
+  .app-bar__action-mobile-hidden {
+    display: none;
+  }
+}
+
+/* ── 内容分区（替 antd Card） ───────────────────────────────────────────── */
+.section-card {
+  display: block; /* 覆盖 mdui 的 :host{display:inline-block}，否则卡片按内容宽度收缩 */
+  margin-bottom: 16px;
+  padding: 16px;
+}
+
+.section-card__head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 32px;
+}
+
+.section-card__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  font-size: var(--mdui-typescale-title-medium-size);
+  font-weight: var(--mdui-typescale-title-medium-weight);
+  letter-spacing: var(--mdui-typescale-title-medium-tracking);
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.section-card__actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+
+.section-card__subtitle {
+  margin-top: 4px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.section-card__body {
+  margin-top: 12px;
+}
+
+/* ── 表单行（替 antd Form.Item 的纵向布局） ─────────────────────────────── */
+.field {
+  margin-bottom: 16px;
+}
+
+.field:last-child {
+  margin-bottom: 0;
+}
+
+.field__label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 6px;
+  font-size: 13px;
+  line-height: 1.4;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.field__hint {
+  margin-top: 6px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 小工具类 ───────────────────────────────────────────────────────────── */
+.stack {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* 输入框 + 按钮这种「不能换行」的行：换行会把按钮挤到下一行、失去配对关系 */
+.row--nowrap {
+  flex-wrap: nowrap;
+}
+
+.row--between {
+  justify-content: space-between;
+  flex-wrap: nowrap;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+/* 次要文字（替 antd Typography.Text type="secondary" / Paragraph） */
+.text-secondary {
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* 小号语义标签。刻意不用 mdui-chip：它会带涟漪与可交互语义，
+   而这里只是勾选项标签里的一枚静态标记，放进 checkbox 的 label 里会变成嵌套可交互元素。 */
+.tag-mini {
+  display: inline-block;
+  flex: none;
+  padding: 0 6px;
+  border-radius: var(--mdui-shape-corner-extra-small);
+  background: rgb(var(--mdui-color-surface-container-highest));
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 11px;
+  line-height: 18px;
+}
+
+/* ── 错误态：给「业务侧自己实现错误态」的 mdui 表单控件上色 ──────────────────
+   transitions.css 的 .t-input 只负责插值与抖动，注释里明确写了
+   「Define your input's default / focused / error border-color in your own component CSS」，
+   颜色因此归这里管（原来是 antd Input 的 status="error" 提供的）。
+
+   为什么不用 mdui 的 invalidStyle / error 属性：它们在 mdui 的 .d.ts 里是 private，
+   官方注释写着「该属性仅供 mdui 内部使用，当前 select 组件使用了该属性」—— 那是内部 API，不该依赖。
+   而 text-field 的边框 / 标签 / 占位符颜色都取自 --mdui-color-* 设计令牌，
+   覆盖令牌是官方支持的定制方式（令牌在宿主上解析，shadow 内的 var() 读到的是继承值，必然生效）。 */
+.t-input.is-error {
+  --mdui-color-primary: var(--mdui-color-error);
+  --mdui-color-on-surface-variant: var(--mdui-color-error);
+}
+
+.t-error-msg {
+  margin: 4px 0 0;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-error));
+}
+
+/* ── 设置页的模型选择器 / 收藏夹列表 ──────────────────────────────────────── */
+.model-picker {
+  margin-top: 8px;
+  padding: 8px;
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-surface-container-low));
+}
+
+.model-picker mdui-text-field {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.model-picker mdui-list {
+  display: block;
+  max-height: 260px;
+  overflow: auto;
+}
+
+.fav-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  max-height: 320px;
+  overflow: auto;
+  margin-top: 8px;
+}
+
+/* mdui-checkbox 是 inline-flex，宽度不收满会导致整行点击区域只有文字那么长 */
+.fav-list mdui-checkbox {
+  width: 100%;
+}
+
+.fav-label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.fav-label__id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ── 写作技能列表行 ────────────────────────────────────────────────────────
+   自建而非用 mdui-list-item：后者的 custom 插槽是覆盖式的（见 SkillsCard.tsx 的注释），
+   塞不下「标题 + 描述 + 开关 + 两个按钮」这四组内容。 */
+.skill-list {
+  display: flex;
+  flex-direction: column;
+}
+
+/* MD3 的列表**不用分隔线**分隔条目：靠留白 + 悬停时的 state layer 区分。
+   （1px 分隔线是 MD2 / antd List 的视觉惯性 —— 本项目最初就是这么写的，已改回 MD3 做法。）
+   行高也按 MD3 的单行列表项放大到 12px 纵向内边距，让「一行」自己立得住。 */
+.skill-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+  border-radius: var(--mdui-shape-corner-small);
+  transition: background-color var(--mdui-motion-duration-short3) var(--mdui-motion-easing-standard);
+}
+
+.skill-row:hover {
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+.skill-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.skill-row__name {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.skill-row__title {
+  font-size: var(--mdui-typescale-body-large-size);
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.skill-row__desc {
+  margin-top: 2px;
+  font-size: 12px;
+  line-height: 1.5;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-row mdui-switch,
+.skill-row mdui-button,
+.skill-row mdui-button-icon {
+  flex: none;
+}
+
+/* mdui-linear-progress 本身不显示数值文字，配额说明另起一行 */
+.storage-progress-text {
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 页面内提示条（替 antd Alert） ───────────────────────────────────────── */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 16px;
+  padding: 12px 16px;
+  border-radius: var(--mdui-shape-corner-medium);
+}
+
+.banner--info {
+  background: rgb(var(--mdui-color-secondary-container));
+  color: rgb(var(--mdui-color-on-secondary-container));
+}
+
+.banner--warning {
+  background: rgb(var(--mdui-color-tertiary-container));
+  color: rgb(var(--mdui-color-on-tertiary-container));
+}
+
+.banner--error {
+  background: rgb(var(--mdui-color-error-container));
+  color: rgb(var(--mdui-color-on-error-container));
+}
+
+.banner__icon {
+  flex: none;
+  font-size: 20px;
+}
+
+.banner__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.banner__title {
+  font-size: var(--mdui-typescale-body-medium-size);
+  font-weight: 500;
+  line-height: 1.5;
+}
+
+.banner__desc {
+  margin-top: 2px;
+  font-size: 13px;
+  line-height: 1.6;
+  opacity: 0.85;
+}
+
+.banner__action {
+  flex: none;
+  align-self: center;
+}
+
+/* ── 空状态（替 antd Empty；mdui 没有 Empty 组件） ───────────────────────── */
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 48px 16px;
+  text-align: center;
+}
+
+.empty-state__icon {
+  font-size: 56px;
+  line-height: 1;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  opacity: 0.7;
+}
+
+.empty-state__title {
+  margin-top: 8px;
+  font-size: var(--mdui-typescale-title-medium-size);
+  font-weight: var(--mdui-typescale-title-medium-weight);
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.empty-state__desc {
+  max-width: 420px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.empty-state__action {
+  margin-top: 12px;
+}
+
+/* ── 库页：导入投放区（替 antd Upload.Dragger；mdui 没有上传组件） ───────────
+   MD3 里没有 dropzone 这种组件，用 dashed outline 表达「可投放」是通行做法。 */
+.drop-zone {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  padding: 28px 20px;
+  border: 1px dashed rgb(var(--mdui-color-outline));
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface-container-low));
+  text-align: center;
+  cursor: pointer;
+  transition:
+    background-color var(--mdui-motion-duration-short3) var(--mdui-motion-easing-linear),
+    border-color var(--mdui-motion-duration-short3) var(--mdui-motion-easing-linear);
+}
+
+/* 拖拽悬停：MD3 用 primary-container 表示「可以放这里」 */
+.drop-zone--over {
+  border-color: rgb(var(--mdui-color-primary));
+  background: rgb(var(--mdui-color-primary-container));
+}
+
+.drop-zone__icon {
+  font-size: 40px;
+  line-height: 1;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.drop-zone__title {
+  margin-top: 8px;
+  font-size: var(--mdui-typescale-title-small-size);
+  font-weight: var(--mdui-typescale-title-small-weight);
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.drop-zone__hint {
+  max-width: 520px;
+  font-size: 12px;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.drop-zone__actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+/* ── 库页：导入任务行 ───────────────────────────────────────────────────── */
+.import-task {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 0;
+}
+
+/* 注意：theme.css 在 ≤640px 下用 `.import-task-name { flex-basis: 120px !important }` 收窄它，
+   所以这里的基准值要保持可被覆盖（那条规则的 !important 说了算）。 */
+.import-task-name {
+  flex: 0 1 220px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.import-task mdui-linear-progress {
+  display: block; /* 宿主默认不是 block，不铺开的话进度条只有内容宽 */
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.import-task__status {
+  flex: none;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.import-task__status--error {
+  color: rgb(var(--mdui-color-error));
+}
+
+/* ── 库页：工具条 / 分组头 / 视频行 ─────────────────────────────────────── */
+.library-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 24px 0 4px;
+}
+
+.library-toolbar__spacer {
+  flex: 1 1 auto;
+}
+
+.group-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 12px 0 2px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: var(--mdui-shape-corner-small);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 拖拽时组头是可投放目标：虚线提示 + 悬停高亮 */
+.group-header--dragging {
+  border-style: dashed;
+  border-color: rgb(var(--mdui-color-outline));
+}
+
+.group-header--over {
+  border-color: rgb(var(--mdui-color-primary));
+  background: rgb(var(--mdui-color-primary-container));
+}
+
+.group-header__name {
+  font-weight: 600;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.group-header__count {
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.group-header__icon {
+  font-size: 20px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+/* 视频行自建而非用 mdui-list-item：一行里有「拖拽手柄 + 标题/元信息 + 标签 + 最多 3 个按钮」四组内容，
+   而 mdui-list-item 的 custom 插槽是**覆盖式**的（塞了自定义内容，预设的标题/描述/end-icon 全不渲染），
+   与 SkillsCard 的行是同一条理由（见那里的注释）。
+   同 .skill-row：MD3 列表不用分隔线，用留白 + 悬停态层。 */
+.video-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 8px;
+  border-radius: var(--mdui-shape-corner-small);
+  transition: background-color var(--mdui-motion-duration-short3) var(--mdui-motion-easing-standard);
+}
+
+.video-row:hover {
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+.video-row--dragging {
+  opacity: 0.4;
+}
+
+.video-row__handle {
+  display: flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  min-width: 32px;
+  min-height: 32px;
+  border-radius: var(--mdui-shape-corner-full);
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 20px;
+  cursor: grab;
+  /* 触屏从手柄起手拖动时不触发页面滚动 */
+  touch-action: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.video-row__main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.video-row__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: var(--mdui-typescale-body-large-size);
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.video-row__meta {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.video-row__tags,
+.video-row__actions {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 静态语义标记：刻意不用 mdui-chip —— 它会带涟漪与可交互语义，
+   且标签文字颜色在 shadow DOM 里，无法按状态分别上色（同 SkillsCard 的 .tag-mini 注释）。
+   配色沿用 MD3 的语义色板：primary / error。 */
+.tag-mini--primary {
+  color: rgb(var(--mdui-color-primary));
+}
+
+.tag-mini--error {
+  color: rgb(var(--mdui-color-error));
+}
+
+/* ── 库页：拖拽悬浮卡片 ─────────────────────────────────────────────────── */
+.drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 240px;
+  padding: 8px 12px;
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-surface-container-high));
+  color: rgb(var(--mdui-color-on-surface));
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
+  font-size: 14px;
+  /* 跟随指针，且不参与命中检测（否则会挡住组头的 getBoundingClientRect 判定） */
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.drag-ghost__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.drag-ghost__icon {
+  flex: none;
+  font-size: 18px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* ── 危险操作的确认按钮：mdui 的 dialog() 自己生成对话框、插不进类名，
+   只能靠注入的标记元素用 :has() 选中「确认」按钮（它是最后一个 mdui-button）。
+   MD3 的对话框按钮统一是 text 变体，危险色只能自己给。 ──────────────────── */
+mdui-dialog:has([data-testid='confirm-dialog-danger']) mdui-button[slot='action']:last-of-type {
+  --mdui-color-primary: var(--mdui-color-error);
+}
+
+/* 窄屏：投放区收一点，别把列表挤到首屏之外 */
+@media (max-width: 640px) {
+  .drop-zone {
+    padding: 20px 16px;
+  }
+  .drop-zone__icon {
+    font-size: 32px;
+  }
+}
+
+/* 横屏时刘海在左右边缘上，标题栏要往内让位（竖屏的刘海由 padding-top 兜住） */
+@media (orientation: landscape) {
+  .app-bar {
+    padding-left: env(safe-area-inset-left);
+    padding-right: env(safe-area-inset-right);
+  }
+}

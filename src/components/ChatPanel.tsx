@@ -1,7 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { App, Button, Popconfirm, Progress, Segmented, Select, Space, Tooltip } from 'antd';
-import { BulbOutlined, CameraOutlined, CloseOutlined, CopyOutlined, DeleteOutlined, DownloadOutlined, FormOutlined, PlusOutlined, RightOutlined } from '@ant-design/icons';
-import { Bubble, Sender } from '@ant-design/x';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
@@ -20,9 +17,12 @@ import { linkifyFrames, linkifyTimestamps } from '../utils/linkify';
 import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
+import { Panel, PanelBar, PanelSpacer, PanelProgress, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
 import { ThinkLine, StreamParagraph } from './motion';
+import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import ModelPicker from './ModelPicker';
 import QuizCard from './QuizCard';
+import './chat-panel.css';
 
 interface Props {
   videoId: string;
@@ -105,36 +105,25 @@ function FrameThumb({
           e.preventDefault();
           onSeek(secs);
         }}
-        style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}
+        className="chat-ts"
       >
         {alt || `[图@${fmtTime(secs)}]`}
       </a>
     );
   }
   return (
-    <span style={{ position: 'relative', display: 'inline-block', margin: '4px 0', verticalAlign: 'top' }}>
+    <span className="chat-frame-wrap">
       {url ? (
         <img
           src={url}
           alt={alt ?? ''}
           onClick={() => onSeek(frame.ts)}
-          style={{ maxHeight: 140, maxWidth: '100%', borderRadius: 4, display: 'block', cursor: 'pointer' }}
+          className="chat-frame-img"
         />
       ) : (
-        <span style={{ display: 'inline-block', width: 200, height: 112, borderRadius: 4, background: 'rgba(0,0,0,.06)' }} />
+        <span className="chat-frame-img chat-frame-img--pending" />
       )}
-      <span
-        style={{
-          position: 'absolute',
-          left: 2,
-          bottom: 2,
-          fontSize: 10,
-          color: '#fff',
-          background: 'rgba(0,0,0,.55)',
-          borderRadius: 2,
-          padding: '0 2px',
-        }}
-      >
+      <span className="chat-ts-chip">
         {fmtTime(frame.ts)}
       </span>
     </span>
@@ -152,37 +141,17 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
     if (!active) setOpen(false);
   }, [active]);
   return (
-    <div style={{ marginBottom: 6, fontSize: 12 }}>
-      <div
-        onClick={() => setOpen((v) => !v)}
-        style={{ cursor: 'pointer', opacity: 0.6, userSelect: 'none', display: 'flex', alignItems: 'center', gap: 4 }}
-      >
-        <RightOutlined
-          style={{ fontSize: 10, transform: open ? 'rotate(90deg)' : 'none', transition: 'transform .15s' }}
-        />
+    <div className="chat-reason">
+      <div className="chat-reason__toggle" onClick={() => setOpen((v) => !v)}>
+        <mdui-sym-chevron-right className={open ? 'chat-reason__chevron chat-reason__chevron--open' : 'chat-reason__chevron'} />
         {active ? '思考中…' : '思考过程'}
       </div>
-      {open && (
-        <div
-          style={{
-            whiteSpace: 'pre-wrap',
-            opacity: 0.75,
-            borderLeft: '2px solid #ddd',
-            paddingLeft: 8,
-            marginTop: 4,
-            maxHeight: 240,
-            overflow: 'auto',
-          }}
-        >
-          {reasoning}
-        </div>
-      )}
+      {open && <div className="chat-reason__body">{reasoning}</div>}
     </div>
   );
 }
 
 export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
-  const { message } = App.useApp();
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
@@ -199,7 +168,8 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
   const updateSettings = useSettings((s) => s.update);
-  const listRef = useRef<{ scrollTo: (o: { top: 'bottom'; behavior?: ScrollBehavior }) => void } | null>(null);
+  // 消息流滚动容器（原 Bubble.List 的 ref 只暴露 scrollTo，现在自己持有真实元素）
+  const listRef = useRef<HTMLDivElement | null>(null);
   // 手机端：思考开关上移到会话行，第二行只留 ModelPicker（+思考深度），省一行高度
   const isMobile = useIsMobile();
 
@@ -207,10 +177,10 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
   const addShot = () => {
     const video = resolveVideoEl(playerRef);
     const t = playerRef.current?.currentTime ?? 0;
-    if (!video) return message.warning('视频未就绪');
+    if (!video) return toast.warning('视频未就绪');
     const snap = captureFrame(video, t);
-    if (!snap) return message.warning('截图失败，请稍候重试');
-    if (shots.length >= 4) return message.info('最多附带 4 张截图');
+    if (!snap) return toast.warning('截图失败，请稍候重试');
+    if (shots.length >= 4) return toast.info('最多附带 4 张截图');
     setShots((prev) => [...prev, snap]);
   };
 
@@ -247,7 +217,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
               e.preventDefault();
               seekTo(secs);
             }}
-            style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}
+            className="chat-ts"
           >
             {children}
           </a>
@@ -264,14 +234,15 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
   // 上下文用量估算（system + 历史 + 当前输入/截图），仅作 UI 提示
   const ctxEst = useMemo(() => {
-    const sys = estimateTokens(PROMPTS.qaSystem(videoName));
+    const sys = estimateTokens(PROMPTS.qaSystem(videoName, undefined, undefined, shots.length));
     // 历史只发送 content，reasoning 不计入
     const hist = msgs.reduce((s, m) => s + estimateTokens(m.content), 0);
     const cur = estimateTokens(input) + shots.length * 1200; // 每张图约 1.2k tokens
     return sys + hist + cur;
   }, [msgs, input, shots, videoName]);
   const ratio = ctxEst / ctxWin;
-  const ctxColor = ratio > 0.9 ? '#ff4d4f' : ratio > 0.7 ? '#fa8c16' : '#bbb';
+  // 用量告警分三档（>90% 危险 / >70% 注意），色走 MD3 语义令牌
+  const ctxLevel = ratio > 0.9 ? 'bad' : ratio > 0.7 ? 'warn' : '';
 
   /** 自定义图片渲染：#frame-秒 渲染课程画面缩略图（点击跳转），其余按原样 */
   const FrameImage = useCallback(
@@ -331,7 +302,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         });
         if (!cancelled) setIndexReady(true);
       } catch (e) {
-        if (!cancelled) message.error(`建立问答索引失败：${e instanceof Error ? e.message : String(e)}`);
+        if (!cancelled) toast.error(`建立问答索引失败：${e instanceof Error ? e.message : String(e)}`);
       } finally {
         if (!cancelled) setIndexProgress(null);
       }
@@ -389,22 +360,22 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
   /** 一键复制整个会话（Markdown 源码；流式进行中禁用，避免复制到半截回答） */
   const copySession = async () => {
-    if (msgs.length === 0) return void message.info('当前会话还没有内容');
+    if (msgs.length === 0) return void toast.info('当前会话还没有内容');
     const ok = await copyText(sessionMarkdown());
-    if (ok) message.success(`已复制整个会话（Markdown，${msgs.length} 条消息）`);
-    else message.error('复制失败：剪贴板不可用，可改用「导出 .md」');
+    if (ok) toast.success(`已复制整个会话（Markdown，${msgs.length} 条消息）`);
+    else toast.error('复制失败：剪贴板不可用，可改用「导出 .md」');
   };
 
   /** 导出整个会话为 .md 文件（归档/跨设备带走） */
   const downloadSession = () => {
-    if (msgs.length === 0) return void message.info('当前会话还没有内容');
+    if (msgs.length === 0) return void toast.info('当前会话还没有内容');
     const url = URL.createObjectURL(new Blob([sessionMarkdown()], { type: 'text/markdown;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = exportFileName(videoName, activeTitle);
     a.click();
     URL.revokeObjectURL(url);
-    message.success('已导出 Markdown 文件');
+    toast.success('已导出 Markdown 文件');
   };
 
   /** 新开会话 */
@@ -432,14 +403,14 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
       setSessions(rest);
       setActiveId(rest[rest.length - 1].id!);
     }
-    message.success('已删除会话');
+    toast.success('已删除会话');
   };
 
   const send = async (question: string) => {
     const q = question.trim();
     if ((!q && shots.length === 0) || loading || activeId == null) return;
     if (!indexReady) {
-      message.warning('问答索引尚未就绪');
+      toast.warning('问答索引尚未就绪');
       return;
     }
     const sessionId = activeId;
@@ -448,7 +419,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
     // 降级链 tier 3 前置检查：模型无图能力且未配视觉模型时直接拦截，不清空输入与截图，保留草稿
     if (curShots.length > 0 && !isVisionModel(settings.llmModel) && !settings.visionModel) {
-      message.error('当前模型不支持图片，请在设置中配置视觉模型或切换多模态模型');
+      toast.error('当前模型不支持图片，请在设置中配置视觉模型或切换多模态模型');
       return;
     }
 
@@ -498,7 +469,35 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title } : s)));
       }
 
+      // 截图时刻前后的字幕窗口（多时刻窗口按段去重合并）。
+      // 先于看图描述计算：tier 2 的视觉模型也要带着该时刻的上下文认图，否则容易把画面里的小字认错。
+      const shotWindows = new Map<number, string>();
+      let subBlock = '';
+      if (curShots.length > 0) {
+        const segs = await db.segments
+          .where('videoId')
+          .equals(videoId)
+          .filter((r) => r.status === 1 && !!r.text)
+          .sortBy('idx');
+        const byIdx = new Map<number, SegmentRow>();
+        for (const s of curShots) {
+          const win = subtitleWindow(segs, s.ts);
+          shotWindows.set(s.ts, win.map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`).join('\n'));
+          for (const seg of win) byIdx.set(seg.idx, seg);
+        }
+        subBlock = [...byIdx.values()]
+          .sort((a, b) => a.idx - b.idx)
+          .map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`)
+          .join('\n');
+      }
+
       // 截图进上下文的降级链：tier 1 多模态模型直接看图；tier 2 视觉模型先描述成文字
+      const shotLead =
+        curShots.length === 0
+          ? ''
+          : isVisionModel(settings.llmModel)
+            ? `本轮附带 ${curShots.length} 张截图：正文中 [截图@mm:ss] 标记后紧跟的就是该时刻的画面。截图是最高优先级证据，请先按画面实际内容作答，字幕只作背景；两者冲突时以截图为准。`
+            : `本轮提问附带了 ${curShots.length} 张截图，下面「[截图@mm:ss] 画面：…」是视觉模型对每张图的逐字转述，忠实于画面、为最高优先级证据；与字幕冲突时以画面为准。`;
       let imageParts: ContentPart[] | null = null;
       let descBlock = '';
       let descFailed = false;
@@ -512,7 +511,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
             ],
           );
         } else {
-          // 前置检查已保证 visionModel 非空
+          // 前置检查已保证 visionModel 非空；描述提示词带上该时刻字幕，并声明以画面为准
           const results = await Promise.allSettled(
             curShots.map((s) =>
               chatOnce(settings, {
@@ -522,7 +521,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
                     role: 'user',
                     content: [
                       { type: 'image_url', image_url: { url: s.dataUrl } },
-                      { type: 'text', text: PROMPTS.shotDescribe(q) },
+                      { type: 'text', text: PROMPTS.shotDescribe(q, shotWindows.get(s.ts)) },
                     ],
                   },
                 ],
@@ -542,24 +541,6 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         }
       }
 
-      // 截图时刻前后的字幕窗口（多时刻窗口按段去重合并）
-      let subBlock = '';
-      if (curShots.length > 0) {
-        const segs = await db.segments
-          .where('videoId')
-          .equals(videoId)
-          .filter((r) => r.status === 1 && !!r.text)
-          .sortBy('idx');
-        const byIdx = new Map<number, SegmentRow>();
-        for (const s of curShots) {
-          for (const seg of subtitleWindow(segs, s.ts)) byIdx.set(seg.idx, seg);
-        }
-        subBlock = [...byIdx.values()]
-          .sort((a, b) => a.idx - b.idx)
-          .map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`)
-          .join('\n');
-      }
-
       // 构造上下文：system + 按 token 预算截取的历史 + 当前问题
       // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文
       const skillMetas = await loadEnabledSkillMeta();
@@ -570,11 +551,13 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         videoName,
         skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined,
         hasFrames,
+        curShots.length,
       );
       const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
       // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
       // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀
       const currentText =
+        (shotLead ? `${shotLead}\n` : '') +
         q +
         (descBlock ? `\n${descBlock}` : '') +
         (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');
@@ -662,7 +645,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
       }
       // tier 2 有截图描述失败时，回答完成后一次性提示
       if (descFailed) {
-        message.warning('部分截图描述失败，回答仅参考了时间戳与字幕');
+        toast.warning('部分截图描述失败，回答仅参考了时间戳与字幕');
       }
     } catch (e) {
       const errMsg = e instanceof Error ? e.message : String(e);
@@ -678,302 +661,265 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
     }
   };
 
-  // 新消息滚动到底部
+  // 会话下拉：mdui-select 的值是字符串，会话 id 是数字 —— 两端都要转换
+  const sessionSelectRef = useMduiEvent('mdui-select', 'change', (_e, el) => {
+    const n = Number(el.value);
+    if (Number.isFinite(n)) setActiveId(n);
+  });
+  // 输入框：mdui-text-field 的 input 事件没有 payload，值要从元素上读
+  const composerInput = useMduiEvent('mdui-text-field', 'input', (_e, el) => setInput(el.value));
+  // 思考深度：低 / 高 / 最大
+  const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
+    updateSettings({ thinkingEffort: el.value as ReasoningEffort }),
+  );
+
+  // 新消息滚动到底部。
+  // 必须延后一帧：markdown 流式渲染的 DOM 高度在本帧还没算完，首帧滚动会停在半路。
+  // 历史注：原来 Bubble.List 的滚动容器是「回调 ref → useState」注册的，首帧调 scrollTo
+  // 时它内部还是 undefined（`const { scrollHeight } = undefined` 直接抛 TypeError），那次
+  // 异常发生在挂载期、React 会把整棵页面树卸掉重挂 —— 现在自己持有真实元素，`?.` 已足够，
+  // 但延后一帧仍然是必要的（否则滚不到底）。
   useEffect(() => {
-    listRef.current?.scrollTo({ top: 'bottom' });
+    const id = requestAnimationFrame(() => {
+      const el = listRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(id);
   }, [msgs]);
 
   if (!hasSubtitles) {
     return (
-      <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-        请先在「字幕」页生成字幕，然后才能针对课程内容提问
-      </div>
+      <Panel testId="panel-chat">
+        <PanelPlaceholder testId="chat-empty">请先在「字幕」页生成字幕，然后才能针对课程内容提问</PanelPlaceholder>
+      </Panel>
     );
   }
 
+  /** 删除当前会话前确认（危险操作：确认按钮上错误色，文案写清动作） */
+  const confirmDeleteSession = async () => {
+    const ok = await confirmDialog({
+      headline: '删除当前会话？',
+      description: '会话里的全部问答记录都会被删除，无法恢复。',
+      confirmText: '删除',
+      cancelText: '取消',
+      danger: true,
+    });
+    if (ok) void deleteSession();
+  };
+
+  /** 顶部一排小图标按钮（新开 / 复制 / 导出 / 删除 / 思考开关） */
+  const iconBtn = (
+    testId: string,
+    label: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+    disabled?: boolean,
+  ) => (
+    <mdui-tooltip content={label}>
+      <mdui-button-icon data-testid={testId} aria-label={label} disabled={disabled} onClick={onClick}>
+        {icon}
+      </mdui-button-icon>
+    </mdui-tooltip>
+  );
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0, paddingBottom: 8 }}>
-        <Select
-          size="small"
-          style={{ flex: 1, minWidth: 0 }}
-          value={activeId ?? undefined}
-          onChange={(sid) => setActiveId(sid)}
+    <Panel testId="panel-chat">
+      <PanelBar wrap={false} testId="chat-toolbar">
+        <mdui-select
+          ref={sessionSelectRef}
+          className="chat-session-select"
+          value={activeId != null ? String(activeId) : undefined}
           disabled={loading}
-          options={sessions.map((s) => ({ value: s.id!, label: s.title }))}
-        />
-        <Tooltip title="新开会话">
-          <Button size="small" icon={<PlusOutlined />} onClick={createSession} disabled={loading} />
-        </Tooltip>
-        <Tooltip title="复制整个会话（Markdown）">
-          <Button
-            size="small"
-            icon={<CopyOutlined />}
-            onClick={copySession}
-            disabled={loading || msgs.length === 0}
-            data-testid="copy-session-btn"
-          />
-        </Tooltip>
-        <Tooltip title="导出 .md 文件">
-          <Button
-            size="small"
-            icon={<DownloadOutlined />}
-            onClick={downloadSession}
-            disabled={loading || msgs.length === 0}
-            data-testid="export-session-btn"
-          />
-        </Tooltip>
-        <Popconfirm title="删除当前会话？" okText="删除" cancelText="取消" onConfirm={deleteSession}>
-          <Button size="small" danger icon={<DeleteOutlined />} disabled={loading} />
-        </Popconfirm>
+          data-testid="chat-session"
+        >
+          {sessions.map((s) => (
+            <mdui-menu-item key={s.id} value={String(s.id)}>
+              {s.title}
+            </mdui-menu-item>
+          ))}
+        </mdui-select>
+        {iconBtn('chat-new-session', '新开会话', <mdui-sym-add />, createSession, loading)}
+        {iconBtn('copy-session-btn', '复制整个会话（Markdown）', <mdui-sym-content-copy />, copySession, loading || msgs.length === 0)}
+        {iconBtn('export-session-btn', '导出 .md 文件', <mdui-sym-download />, downloadSession, loading || msgs.length === 0)}
+        {iconBtn('chat-delete-session', '删除当前会话', <mdui-sym-delete />, confirmDeleteSession, loading)}
         {isMobile && supportsThinking(llmModel) && (
-          <Tooltip title="开启思考">
-            <Button
-              size="small"
-              type={thinking ? 'primary' : 'text'}
-              icon={<BulbOutlined />}
+          <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
+            <mdui-button-icon
+              data-testid="chat-thinking-toggle"
+              aria-label={thinking ? '关闭思考' : '开启思考'}
+              variant={thinking ? 'filled' : 'standard'}
               onClick={() => updateSettings({ thinkingEnabled: !thinking })}
-            />
-          </Tooltip>
+            >
+              <mdui-sym-lightbulb />
+            </mdui-button-icon>
+          </mdui-tooltip>
         )}
-      </div>
+      </PanelBar>
 
       {indexProgress && (
-        <div style={{ padding: '4px 0 12px', flexShrink: 0 }}>
-          <Progress
-            percent={Math.round((indexProgress.done / Math.max(1, indexProgress.total)) * 100)}
-            size="small"
-            status="active"
-          />
-          <div style={{ fontSize: 12, color: '#888' }}>{indexProgress.message}</div>
-        </div>
+        <PanelProgress
+          testId="chat-index-progress"
+          percent={Math.round((indexProgress.done / Math.max(1, indexProgress.total)) * 100)}
+          text={indexProgress.message}
+        />
       )}
 
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '4px 0 8px', flexShrink: 0 }}>
+      <PanelBar wrap={false} testId="chat-model-bar">
         <ModelPicker slot="chat" field="llmModel" />
+        <PanelSpacer />
         {supportsThinking(llmModel) && !isMobile && (
-          <Space size={4}>
-            <Tooltip title="开启思考">
-              <Button
-                size="small"
-                type={thinking ? 'primary' : 'text'}
-                icon={<BulbOutlined />}
-                onClick={() => updateSettings({ thinkingEnabled: !thinking })}
-              />
-            </Tooltip>
-            {thinking && (
-              <Segmented
-                size="small"
-                value={effort}
-                options={[
-                  { label: '低', value: 'low' },
-                  { label: '高', value: 'high' },
-                  { label: '最大', value: 'max' },
-                ]}
-                onChange={(v) => updateSettings({ thinkingEffort: v as ReasoningEffort })}
-              />
-            )}
-          </Space>
+          <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
+            <mdui-button-icon
+              data-testid="chat-thinking-toggle"
+              aria-label={thinking ? '关闭思考' : '开启思考'}
+              variant={thinking ? 'filled' : 'standard'}
+              onClick={() => updateSettings({ thinkingEnabled: !thinking })}
+            >
+              <mdui-sym-lightbulb />
+            </mdui-button-icon>
+          </mdui-tooltip>
         )}
-        {supportsThinking(llmModel) && isMobile && thinking && (
-          <Segmented
-            size="small"
-            value={effort}
-            options={[
-              { label: '低', value: 'low' },
-              { label: '高', value: 'high' },
-              { label: '最大', value: 'max' },
-            ]}
-            onChange={(v) => updateSettings({ thinkingEffort: v as ReasoningEffort })}
-          />
+        {supportsThinking(llmModel) && thinking && (
+          <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} data-testid="chat-effort">
+            <mdui-segmented-button value="low">低</mdui-segmented-button>
+            <mdui-segmented-button value="high">高</mdui-segmented-button>
+            <mdui-segmented-button value="max">最大</mdui-segmented-button>
+          </mdui-segmented-button-group>
         )}
-      </div>
+      </PanelBar>
 
-      <div style={{ flex: 1, overflow: 'hidden', padding: '4px 0' }}>
-        <Bubble.List
-          ref={listRef as React.RefObject<never>}
-          style={{ height: '100%' }}
-          items={msgs.map((m) => ({
-            key: m.key,
-            role: m.role,
-            content: m.error ? m.content : m.hint && !m.content ? m.hint : m.content,
-            // 思考流出时立即上屏思考块，而非 loading 占位
-            loading: m.streaming && !m.content && !m.hint && !m.reasoning,
-            status: m.streaming ? 'updating' : m.error ? 'error' : undefined,
-            extraInfo:
-              (m.images && m.images.length > 0) || m.reasoning
-                ? { images: m.images, reasoning: m.reasoning }
-                : undefined,
-          }))}
-          role={{
-            ai: {
-              placement: 'start',
-              variant: 'borderless',
-              contentRender: (content, info) => {
-                // 工具调用期间的状态行（"正在检索…"）：thinking-states  shimmer + 交换
-                const msg = msgs.find((x) => x.key === info.key);
-                if (msg?.hint && !msg.content) {
-                  return <ThinkLine text={String(content ?? '')} />;
-                }
-                // 思考过程（经 extraInfo 透传，与用户气泡截图同机制）
-                const reasoning = (info.extraInfo as { reasoning?: string } | undefined)?.reasoning;
-                return (
-                  <div>
-                    {reasoning && (
-                      <ReasoningBlock reasoning={reasoning} active={info.status === 'updating' && !msg?.content} />
-                    )}
-                    <XMarkdown
-                      content={linkifyTimestamps(linkifyFrames(String(content ?? '')))}
-                      components={{ a: SeekLink, p: StreamParagraph, img: FrameImage }}
-                      streaming={{
-                        hasNextChunk: info.status === 'updating',
-                        tail: info.status === 'updating',
-                      }}
-                    />
-                    {msg?.quiz && (
-                      <QuizCard
-                        quiz={msg.quiz.data}
-                        picks={msg.quiz.picks}
-                        onAnswer={(qi, oi) => handleAnswer(String(info.key), qi, oi)}
-                        onSeek={seekTo}
-                      />
-                    )}
-                  </div>
-                );
-              },
-            },
-            user: {
-              placement: 'end',
-              contentRender: (content, info) => {
-                // 截图缩略图行（经 extraInfo 透传），点击跳转到对应画面
-                const images = (info.extraInfo as { images?: ChatImage[] } | undefined)?.images;
-                return (
-                  <div>
-                    {images && images.length > 0 && (
-                      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 6 }}>
-                        {images.map((img, i) => (
-                          <span key={i} style={{ position: 'relative', display: 'inline-block' }}>
-                            <img
-                              src={img.thumb}
-                              alt=""
-                              onClick={() => seekTo(img.ts)}
-                              style={{ height: 56, borderRadius: 4, display: 'block', cursor: 'pointer' }}
-                            />
-                            <span
-                              style={{
-                                position: 'absolute',
-                                left: 2,
-                                bottom: 2,
-                                fontSize: 10,
-                                color: '#fff',
-                                background: 'rgba(0,0,0,.55)',
-                                borderRadius: 2,
-                                padding: '0 2px',
-                              }}
-                            >
-                              {fmtTime(img.ts)}
-                            </span>
-                          </span>
-                        ))}
-                      </div>
-                    )}
-                    {content}
-                  </div>
-                );
-              },
-            },
-          }}
-        />
+      {/* 消息流：AI 靠左、用户靠右。两种气泡的形状差是 MD3 聊天的标志 ——
+          靠对话侧收小圆角、另一侧全圆角。流式 markdown / 思考块 / 题卡都留在 AI 气泡内。 */}
+      <PanelBody bodyRef={listRef} className="chat-list-wrap" testId="chat-list">
         {msgs.length === 0 && (
-          <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>
-            针对课程内容提问，回答中的时间戳可点击跳转
+          <PanelPlaceholder testId="chat-empty">针对课程内容提问，回答中的时间戳可点击跳转</PanelPlaceholder>
+        )}
+        {msgs.map((m) => {
+          const isUser = m.role === 'user';
+          return (
+            <div
+              key={m.key}
+              className={isUser ? 'chat-msg chat-msg--user' : 'chat-msg chat-msg--ai'}
+              data-testid={isUser ? 'chat-msg-user' : 'chat-msg-ai'}
+              data-streaming={m.streaming ? 'true' : undefined}
+              data-error={m.error ? 'true' : undefined}
+            >
+              {isUser ? (
+                <>
+                  {m.images && m.images.length > 0 && (
+                    <div className="chat-shots">
+                      {m.images.map((img, i) => (
+                        <span key={i} className="chat-shot">
+                          <img src={img.thumb} alt="" onClick={() => seekTo(img.ts)} className="chat-shot__img" />
+                          <span className="chat-ts-chip">{fmtTime(img.ts)}</span>
+                        </span>
+                      ))}
+                    </div>
+                  )}
+                  <div className="chat-bubble chat-bubble--user">{m.content}</div>
+                </>
+              ) : (
+                <div className="chat-bubble chat-bubble--ai">
+                  {m.hint && !m.content ? (
+                    <ThinkLine text={m.hint} />
+                  ) : (
+                    <>
+                      {m.reasoning && (
+                        <ReasoningBlock reasoning={m.reasoning} active={!!m.streaming && !m.content} />
+                      )}
+                      <XMarkdown
+                        content={linkifyTimestamps(linkifyFrames(m.content))}
+                        components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre }}
+                        streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
+                      />
+                      {m.quiz && (
+                        <QuizCard quiz={m.quiz.data} picks={m.quiz.picks} onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)} onSeek={seekTo} />
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </PanelBody>
+
+      {/* 输入区：截图/出题在左，输入框居中，发送在右。
+          Enter 发送、Shift+Enter 换行；isComposing 时放行（中文输入法选词的回车不是提交意图）。 */}
+      <div className="chat-composer" data-testid="chat-composer">
+        {shots.length > 0 && (
+          <div className="chat-shots chat-shots--pending">
+            {shots.map((s, i) => (
+              <span key={i} className="chat-shot">
+                <img src={s.thumb} alt="" className="chat-shot__img chat-shot__img--sm" />
+                <span className="chat-ts-chip">{fmtTime(s.ts)}</span>
+                <mdui-button-icon
+                  className="chat-shot__remove"
+                  aria-label="移除截图"
+                  onClick={() => setShots((prev) => prev.filter((_, j) => j !== i))}
+                >
+                  <mdui-sym-close />
+                </mdui-button-icon>
+              </span>
+            ))}
           </div>
         )}
-      </div>
-
-      <div style={{ flexShrink: 0, paddingTop: 8 }}>
-        <Sender
-          value={input}
-          onChange={setInput}
-          onSubmit={send}
-          loading={loading}
-          disabled={!indexReady}
-          placeholder={indexReady ? '输入问题，回车发送' : '等待索引就绪…'}
-          prefix={
-            <>
-              <Button
-                type="text"
-                size="small"
-                icon={<CameraOutlined />}
-                disabled={!indexReady || shots.length >= 4 || loading}
-                onClick={addShot}
-                title="截取当前画面（最多 4 张）"
-                data-testid="shot-btn"
-              />
-              <Button
-                type="text"
-                size="small"
-                icon={<FormOutlined />}
-                disabled={!indexReady || loading}
-                onClick={() => send('根据课程内容出 3 道单选题考考我，选项要有干扰性')}
-                title="出题考我"
-                data-testid="quiz-btn"
-              />
-            </>
-          }
-          header={
-            shots.length > 0 ? (
-              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', padding: '4px 0' }}>
-                {shots.map((s, i) => (
-                  <span key={i} style={{ position: 'relative', display: 'inline-block' }}>
-                    <img src={s.thumb} alt="" style={{ height: 48, borderRadius: 4, display: 'block' }} />
-                    <span
-                      style={{
-                        position: 'absolute',
-                        left: 2,
-                        bottom: 2,
-                        fontSize: 10,
-                        color: '#fff',
-                        background: 'rgba(0,0,0,.55)',
-                        borderRadius: 2,
-                        padding: '0 2px',
-                      }}
-                    >
-                      {fmtTime(s.ts)}
-                    </span>
-                    <CloseOutlined
-                      onClick={() => setShots((prev) => prev.filter((_, j) => j !== i))}
-                      style={{
-                        position: 'absolute',
-                        top: -6,
-                        right: -6,
-                        fontSize: 10,
-                        background: '#fff',
-                        borderRadius: '50%',
-                        padding: 2,
-                        boxShadow: '0 0 2px rgba(0,0,0,.3)',
-                        cursor: 'pointer',
-                      }}
-                    />
-                  </span>
-                ))}
-              </div>
-            ) : undefined
-          }
-        />
-        <div
-          style={{
-            textAlign: 'right',
-            fontSize: 11,
-            color: ctxColor,
-            paddingTop: 2,
-            fontVariantNumeric: 'tabular-nums',
-          }}
-        >
+        <div className="chat-composer__row">
+          <mdui-tooltip content="截取当前画面（最多 4 张）">
+            <mdui-button-icon
+              data-testid="shot-btn"
+              aria-label="截取当前画面"
+              disabled={!indexReady || shots.length >= 4 || loading}
+              onClick={addShot}
+            >
+              <mdui-sym-photo-camera />
+            </mdui-button-icon>
+          </mdui-tooltip>
+          <mdui-tooltip content="出题考我">
+            <mdui-button-icon
+              data-testid="quiz-btn"
+              aria-label="出题考我"
+              disabled={!indexReady || loading}
+              onClick={() => send('根据课程内容出 3 道单选题考考我，选项要有干扰性')}
+            >
+              <mdui-sym-quiz />
+            </mdui-button-icon>
+          </mdui-tooltip>
+          <mdui-text-field
+            className="chat-input"
+            data-testid="chat-input"
+            variant="outlined"
+            rows={2}
+            placeholder={indexReady ? '输入问题，回车发送' : '等待索引就绪…'}
+            disabled={!indexReady}
+            value={input}
+            ref={composerInput}
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter' || e.shiftKey) return;
+              if (e.nativeEvent.isComposing) return;
+              e.preventDefault();
+              void send(input);
+            }}
+          />
+          <mdui-tooltip content="发送">
+            <mdui-button-icon
+              className="chat-send"
+              data-testid="chat-send"
+              aria-label="发送"
+              variant="filled"
+              loading={loading}
+              disabled={!indexReady}
+              onClick={() => send(input)}
+            >
+              <mdui-sym-send />
+            </mdui-button-icon>
+          </mdui-tooltip>
+        </div>
+        <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
           ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
           {ratio > 0.9 && ' · 建议开启新话题'}
         </div>
       </div>
-    </div>
+    </Panel>
   );
 }

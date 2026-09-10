@@ -142,6 +142,7 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
     danmakuEnabled: s.danmakuEnabled,
+    customRates: s.customRates,
   };
 
   const manifest: MigrationManifest = {

@@ -10,9 +10,9 @@ await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
 const t0 = Date.now();
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 const t1 = Date.now();
-await page.waitForSelector('.ant-progress', { timeout: 60000 });
+await page.waitForSelector('[data-testid="import-progress"]', { timeout: 60000 });
 const t2 = Date.now();
-await page.waitForSelector('.ant-list-item', { timeout: 300000 });
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 300000 });
 const t3 = Date.now();
 
 const size = await page.evaluate(async () => {

@@ -1,5 +1,4 @@
 import { useMemo } from 'react';
-import { CheckOutlined, CloseOutlined } from '@ant-design/icons';
 import type { QuizData } from '../harness/quiz';
 import { parseTs } from '../utils/linkify';
 
@@ -23,11 +22,7 @@ function ExplanationText({ text, onSeek }: { text: string; onSeek?: (t: number) 
     <>
       {parts.map((p, i) =>
         p.ts != null && onSeek ? (
-          <a
-            key={i}
-            onClick={() => onSeek(p.ts!)}
-            style={{ cursor: 'pointer', fontVariantNumeric: 'tabular-nums' }}
-          >
+          <a key={i} className="quiz-ts" onClick={() => onSeek(p.ts!)}>
             {p.str}
           </a>
         ) : (
@@ -46,84 +41,68 @@ interface Props {
   onSeek?: (t: number) => void;
 }
 
-/** 单选题答题卡：点选即判（本地判分），答后展开解析，全答完显示得分 */
+/**
+ * 单选题答题卡：点选即判（本地判分），答后展开解析，全答完显示得分。
+ *
+ * 选项刻意保留**原生 `<button>`** 而不是换 `mdui-button`：
+ * MD3 里这种「一行一个的可选项」在语义上更接近列表项，而 mdui-button 的形状（full 圆角胶囊）
+ * 会让四个选项显得像四个并排的按钮、反而看不出是一组单选。保持原生标签 + MD3 令牌上色，
+ * 既拿到设计语言的观感（surface 面层 / outline-variant 描边 / 令牌化的答对答错色），
+ * 又不改变既有交互与 a11y。
+ */
 export default function QuizCard({ quiz, picks, onAnswer, onSeek }: Props) {
   const done = quiz.questions.every((_, i) => (picks[i] ?? -1) >= 0);
   const score = quiz.questions.reduce((s, q, i) => s + (picks[i] === q.answer ? 1 : 0), 0);
 
   return (
-    <div
-      data-testid="quiz-card"
-      style={{ border: '1px solid #f0f0f0', borderRadius: 8, padding: 12, marginTop: 8, background: '#fafafa' }}
-    >
+    <div data-testid="quiz-card" className="quiz-card">
       {quiz.questions.map((q, qi) => {
         const pick = picks[qi] ?? -1;
         const isDone = pick >= 0;
         return (
-          <div key={qi} style={{ marginBottom: qi < quiz.questions.length - 1 ? 16 : 0 }}>
-            <div style={{ fontWeight: 500, marginBottom: 8, lineHeight: 1.6 }}>
+          <div key={qi} className="quiz-q">
+            <div className="quiz-stem">
               {quiz.questions.length > 1 ? `${qi + 1}. ` : ''}
               {q.stem}
               {q.time && onSeek && (
-                <a
-                  onClick={() => onSeek(parseTs(q.time!))}
-                  style={{
-                    cursor: 'pointer',
-                    marginLeft: 6,
-                    fontSize: 12,
-                    fontWeight: 400,
-                    fontVariantNumeric: 'tabular-nums',
-                  }}
-                >
+                <a className="quiz-ts quiz-ts--stem" onClick={() => onSeek(parseTs(q.time!))}>
                   [{q.time}]
                 </a>
               )}
             </div>
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <div className="quiz-options">
               {q.options.map((opt, oi) => {
                 const isAnswer = oi === q.answer;
                 const isPick = oi === pick;
-                let bg = '#fff';
-                let border = '#d9d9d9';
-                let icon: React.ReactNode = null;
-                if (isDone && isAnswer) {
-                  bg = '#f6ffed';
-                  border = '#52c41a';
-                  icon = <CheckOutlined style={{ color: '#52c41a', marginLeft: 6 }} />;
-                } else if (isDone && isPick) {
-                  bg = '#fff2f0';
-                  border = '#ff4d4f';
-                  icon = <CloseOutlined style={{ color: '#ff4d4f', marginLeft: 6 }} />;
-                }
+                // 三种状态：答对（绿）/ 错选（红）/ 已答但与此项无关（压暗）
+                const state = !isDone
+                  ? ''
+                  : isAnswer
+                    ? ' quiz-option--correct'
+                    : isPick
+                      ? ' quiz-option--wrong'
+                      : ' quiz-option--muted';
                 return (
                   <button
                     key={oi}
                     type="button"
+                    className={`quiz-option${state}`}
                     disabled={isDone}
                     onClick={() => onAnswer(qi, oi)}
-                    style={{
-                      minHeight: 40,
-                      textAlign: 'left',
-                      padding: '8px 12px',
-                      borderRadius: 6,
-                      border: `1px solid ${border}`,
-                      background: bg,
-                      cursor: isDone ? 'default' : 'pointer',
-                      opacity: isDone && !isAnswer && !isPick ? 0.55 : 1,
-                      fontSize: 14,
-                      lineHeight: 1.5,
-                    }}
                   >
-                    <b style={{ marginRight: 6 }}>{LETTERS[oi]}.</b>
+                    <b className="quiz-option__letter">{LETTERS[oi]}.</b>
                     {opt}
-                    {icon}
+                    {isDone && isAnswer && <mdui-sym-check className="quiz-option__mark quiz-option__mark--ok" />}
+                    {isDone && !isAnswer && isPick && (
+                      <mdui-sym-close className="quiz-option__mark quiz-option__mark--bad" />
+                    )}
                   </button>
                 );
               })}
             </div>
             {isDone && (
-              <div style={{ marginTop: 6, fontSize: 12, color: '#666', lineHeight: 1.6 }}>
-                <span style={{ color: pick === q.answer ? '#52c41a' : '#ff4d4f', fontWeight: 500 }}>
+              <div className="quiz-explain" data-testid="quiz-explain">
+                <span className={pick === q.answer ? 'quiz-result quiz-result--ok' : 'quiz-result quiz-result--bad'}>
                   {pick === q.answer ? '回答正确' : `正确答案：${LETTERS[q.answer]}`}
                 </span>
                 {' · '}
@@ -134,9 +113,7 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek }: Props) {
         );
       })}
       {done && (
-        <div
-          style={{ marginTop: 8, paddingTop: 8, borderTop: '1px dashed #e8e8e8', fontSize: 12, color: '#888' }}
-        >
+        <div className="quiz-score">
           答对 {score}/{quiz.questions.length}
         </div>
       )}

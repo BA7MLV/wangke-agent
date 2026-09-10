@@ -1,10 +1,16 @@
 /* 讲义结构化预览：公文风格（仿宋正文/黑体标题/三线表），字体名与 DOCX 对齐，
-   公文字体缺失设备由 previewFonts.ts 的 local() 别名 + 朱雀仿宋分包兜底。 */
+   公文字体缺失设备由 previewFonts.ts 的 local() 别名 + 朱雀仿宋分包兜底。
+   颜色策略：.hd-doc 这张「纸」内部的公文排版色（白纸、黑字、#000 分隔线、
+   绿/红批注、图注边框）一律保留硬编码——它必须跟打印/导出的 DOCX 版式一致，
+   深色模式下就是一张白纸浮在深色背景上（同 PDF 阅读器）。纸「之外」的 chrome
+   （滚动区底色、状态/提示、滑动操作、AI 改写面板、候选词 chip、编辑表格边框）
+   改走 MD3 令牌 rgb(var(--mdui-color-*))，深色模式自动成立；mdui 令牌是
+   R,G,B 三元组，必须包在 rgb() 里。 */
 
 .hd-scroll {
   height: 100%;
   overflow: auto;
-  background: #f5f5f5;
+  background: rgb(var(--mdui-color-surface-container));
 }
 
 .hd-doc {
@@ -26,7 +32,7 @@
 .hd-save-state {
   min-height: 18px;
   font-size: 12px;
-  color: #999;
+  color: rgb(var(--mdui-color-on-surface-variant));
   text-align: right;
   font-family: -apple-system, 'PingFang SC', sans-serif;
 }
@@ -118,9 +124,10 @@
   padding: 4px 6px;
 }
 
+/* 编辑态表格（在 Modal 内，属 chrome）：边框走 outline-variant，深色自动成立 */
 .hd-table-edit th,
 .hd-table-edit td {
-  border: 1px solid #f0f0f0;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
   padding: 2px 4px;
 }
 
@@ -158,7 +165,7 @@
 
 .hd-tip {
   font-size: 11px;
-  color: #aaa;
+  color: rgb(var(--mdui-color-on-surface-variant));
   text-align: center;
   margin-top: 24px;
   font-family: -apple-system, 'PingFang SC', sans-serif;
@@ -190,13 +197,13 @@
 }
 
 .hd-act-ai {
-  background: #1677ff;
-  color: #fff;
+  background: rgb(var(--mdui-color-primary));
+  color: rgb(var(--mdui-color-on-primary));
 }
 
 .hd-act-edit {
-  background: #f0f0f0;
-  color: #333;
+  background: rgb(var(--mdui-color-surface-container));
+  color: rgb(var(--mdui-color-on-surface));
 }
 
 .hd-swipe-content {
@@ -242,8 +249,8 @@
 /* ── AI 改写 / 编辑器 ───────────────────────────── */
 
 .hd-ai-panel {
-  border: 1px solid rgba(22, 119, 255, 0.25);
-  background: #f8fbff;
+  border: 1px solid rgb(var(--mdui-color-primary) / 0.25);
+  background: rgb(var(--mdui-color-primary-container));
   border-radius: 6px;
   padding: 8px;
   margin: 4px 0 8px;
@@ -258,17 +265,17 @@
 }
 
 .hd-chip {
-  border: 1px solid #d9d9d9;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
   border-radius: 999px;
   padding: 2px 10px;
   font-size: 12px;
-  background: #fff;
+  background: rgb(var(--mdui-color-surface-container-high));
   cursor: pointer;
   min-height: 28px;
 }
 
 .hd-chip:active {
-  background: #f0f0f0;
+  background: rgb(var(--mdui-color-surface-container));
 }
 
 /* iOS 防聚焦缩放：输入框字号 ≥16px */

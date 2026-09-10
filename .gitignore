@@ -11,3 +11,5 @@ scripts/out
 .playwright-browsers
 e2e-shots
 scripts/.tmp-*
+.workbuddy/
+vite.config.ts.timestamp-*

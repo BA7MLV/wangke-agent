@@ -139,9 +139,9 @@ async function openHandoutTab(page, videoId, mobile = false) {
   await page.goto(`${BASE}/#/player/${videoId}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('text=讲义', { timeout: 15000 });
   if (mobile) {
-    await page.click('nav >> text=讲义');
+    await page.click('[data-testid="panel-tab-handout"]');
   } else {
-    await page.click('.ant-tabs-nav >> text=讲义');
+    await page.click('[data-testid="panel-tab-handout"]');
   }
   await page.waitForSelector('.hd-doc', { timeout: 10000 });
 }
@@ -175,11 +175,12 @@ async function openHandoutTab(page, videoId, mobile = false) {
     const para = page.locator('.hd-swipe', { hasText: '极限是描述函数在某点附近' });
     await para.hover();
     await para.locator('.hd-hover-actions').getByRole('button', { name: /编\s*辑/ }).click();
-    const ta = para.locator('textarea');
-    await ta.waitFor({ timeout: 5000 });
-    await ta.fill('极限刻画的是函数值无限接近某个确定值的趋势。');
-    // 进入编辑态后原文本从 DOM 消失（textarea 的值不在 textContent），para 定位器失效，全局定位编辑器
-    await page.locator('.hd-editor').getByRole('button', { name: /保\s*存/ }).click();
+    // 编辑已改为 mdui-dialog（受控 open + closed 同步）：输入框是 mdui-text-field，
+    // 真实 textarea 在其 open shadow 里、Playwright 的 CSS 可穿透；保存按钮走 testid
+    const editInput = page.locator('[data-testid="handout-edit-input"] textarea');
+    await editInput.waitFor({ timeout: 5000 });
+    await editInput.fill('极限刻画的是函数值无限接近某个确定值的趋势。');
+    await page.click('[data-testid="handout-edit-save"]');
     await page.waitForSelector('text=极限刻画的是函数值无限接近', { timeout: 5000 });
     // 等待落盘（后台重建 DOCX）
     let row = null;
@@ -205,7 +206,8 @@ async function openHandoutTab(page, videoId, mobile = false) {
     const chips = await page.locator('.hd-chip').allTextContents();
     assert.deepEqual(chips, ['更精简', '更详细', '更口语化', '换个说法']);
     await page.click('.hd-chip >> text=更精简');
-    await page.waitForSelector('.ant-message-error', { timeout: 8000 });
+    // toast 走 mdui 的 snackbar（无语义色变体），出现即代表给出了错误提示
+    await page.waitForSelector('mdui-snackbar', { timeout: 8000 });
     ok('AI 改写面板：预设 chips + 自由输入；无 key 时给出错误提示');
   } catch (e) {
     fail(`AI 改写面板断言失败：${e.message}`);
@@ -221,7 +223,7 @@ async function openHandoutTab(page, videoId, mobile = false) {
   await seed(page); // 每个 context 有独立 IndexedDB，需各自播种
   await page.goto(`${BASE}/#/player/${LEGACY_VIDEO_ID}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('text=讲义', { timeout: 15000 });
-  await page.click('.ant-tabs-nav >> text=讲义');
+  await page.click('[data-testid="panel-tab-handout"]');
   try {
     await page.waitForSelector('text=该讲义由旧版生成', { timeout: 8000 });
     await page.waitForSelector('.docx-preview-container', { timeout: 8000 });
@@ -277,7 +279,7 @@ async function openHandoutTab(page, videoId, mobile = false) {
       .locator('..')
       .locator('.hd-swipe-actions button', { hasText: /编\s*辑/ })
       .click();
-    await page.waitForSelector('.hd-editor textarea', { timeout: 5000 });
+    await page.waitForSelector('[data-testid="handout-edit-input"]', { timeout: 5000 });
     ok('触摸左滑：露出「AI 改写 / 编辑」按钮，点击编辑进入编辑器');
   } catch (e) {
     fail(`移动端断言失败：${e.message}`);

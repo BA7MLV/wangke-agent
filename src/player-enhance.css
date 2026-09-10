@@ -2,13 +2,21 @@
    （叠加在 Vidstack 默认布局之上，:where() 零特异性，普通类选择器即可覆盖） */
 
 /* ── 倍速快捷按钮 ───────────────────────────────────────────── */
+/* 档位多于一屏时横向滚动（隐藏滚动条），不撑破顶栏 */
 .rate-buttons {
   display: flex;
   align-items: center;
   gap: 2px;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
 }
 
-/* 文本按钮：覆盖 .vds-button 的固定 38px 方形 */
+.rate-buttons::-webkit-scrollbar {
+  display: none;
+}
+
+/* 文本按钮：覆盖 .vds-button 的固定 38px 方形；不换行、不收缩，交给外层滚动 */
 .vds-video-layout .rate-btn {
   width: auto;
   min-width: 34px;
@@ -16,6 +24,8 @@
   border-radius: 6px;
   font-size: 13px;
   font-weight: 500;
+  white-space: nowrap;
+  flex: 0 0 auto;
   transition: background-color var(--duration-quick, 150ms) ease-out;
 }
 
@@ -40,7 +50,8 @@
 }
 
 /* ── 字幕字号按钮 ───────────────────────────────────────────── */
-/* antd 图标尺寸跟随 font-size */
+/* Material Symbols 图标是 1em 见方、继承 font-size，所以这条同时定住了图标尺寸
+   （原来是 antd 的 FontSizeOutlined，同理跟随 font-size） */
 .vds-video-layout .caption-size-btn {
   font-size: 19px;
 }

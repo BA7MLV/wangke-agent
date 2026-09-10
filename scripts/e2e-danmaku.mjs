@@ -29,7 +29,7 @@ if (API_KEY) {
 console.log('1. 打开首页并导入测试视频');
 await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
-await page.waitForSelector('.ant-list-item', { timeout: 30000 });
+await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 
 // 直接读 IndexedDB 拿 videoId，并种子字幕（6 分钟讲课内容，供弹幕生成/飘屏用）
 const videoId = await page.evaluate(async () => {
@@ -78,25 +78,25 @@ await page.evaluate(async (rows) => {
 ok('已种子 18 条字幕（6 分钟摄影课）');
 
 console.log('2. 进入播放页，等视频就绪，切到「弹幕」页');
-await page.click('button:has-text("学习")');
+await page.click('[data-testid="btn-play"]');
 await page.waitForSelector('video', { timeout: 15000 });
 await page.waitForFunction(
   () => { const v = document.querySelector('video'); return v && v.readyState >= 2 && v.duration > 0; },
   { timeout: 15000 },
 );
-await page.click('.ant-tabs-tab:has-text("弹幕")');
-await page.waitForSelector('button:has-text("生成弹幕")', { timeout: 10000 });
+await page.click('[data-testid="panel-tab-dm"]');
+await page.waitForSelector('[data-testid="dm-generate"]', { timeout: 10000 });
 ok('弹幕 Tab 已出现，生成按钮可用');
 
 if (API_KEY) {
   console.log('3. 点击「生成弹幕」（真实 API），等列表出条目');
-  await page.click('button:has-text("生成弹幕")');
+  await page.click('[data-testid="dm-generate"]');
   const deadline = Date.now() + 120000;
   let count = 0;
   while (Date.now() < deadline) {
     await page.waitForTimeout(3000);
-    count = await page.locator('.ant-tabs-tabpane-active .sub-item').count();
-    const paneText = await page.locator('.ant-tabs-tabpane-active').innerText();
+    count = await page.locator('[role="tabpanel"]:visible .sub-item').count();
+    const paneText = await page.locator('[role="tabpanel"]:visible').innerText();
     console.log('  …', paneText.replace(/\n/g, ' | ').slice(0, 120));
     if (count > 0 || paneText.includes('失败') || paneText.includes('没有挖出')) break;
   }
@@ -127,14 +127,16 @@ if (API_KEY) {
   }, videoId);
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForSelector('video', { timeout: 15000 });
-  await page.click('.ant-tabs-tab:has-text("弹幕")');
-  const count = await page.locator('.ant-tabs-tabpane-active .sub-item').count();
+  await page.click('[data-testid="panel-tab-dm"]');
+  // 弹幕面板是切到该 Tab 才挂载的，列表要等面板挂载后的一次 IndexedDB 读取落定
+  await page.waitForTimeout(800);
+  const count = await page.locator('[role="tabpanel"]:visible .sub-item').count();
   if (count !== 3) fail(`弹幕列表应有 3 条，实际 ${count}`);
   else ok('3 条种子弹幕已入列表');
 }
 
 console.log('4. 弹幕列表点击跳转：点第 2 条，播放器跳到对应时间');
-const items = page.locator('.ant-tabs-tabpane-active .sub-item');
+const items = page.locator('[role="tabpanel"]:visible .sub-item');
 const secondTime = await page.evaluate(async (vid) => {
   const db = await new Promise((res, rej) => { const q = indexedDB.open('wangke'); q.onsuccess = () => res(q.result); q.onerror = rej; });
   const all = await new Promise((res, rej) => { const q = db.transaction('danmakus', 'readonly').objectStore('danmakus').getAll(); q.onsuccess = () => res(q.result); q.onerror = rej; });

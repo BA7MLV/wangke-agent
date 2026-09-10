@@ -6,15 +6,15 @@
 
 - **库与文件夹**：首页视频按文件夹分组管理（新建/重命名/删除/折叠持久化，视频可移动归类，删文件夹视频回到未分类）
 - **B 站导入**：支持粘贴 B 站视频链接 / BV 号 / b23.tv 短链直接导入。经自建 Cloudflare Worker 代理绕过 CORS 与防盗链，用 mediabunny 在浏览器端把 DASH 音视频流重封装为 mp4（不重新编码、不丢画质），导入后与本地视频完全同权（字幕/讲义/问答/弹幕/Anki 全支持）。清晰度：未登录 360P，粘贴自己账号 Cookie 可解锁更高清晰度（仅取决于账号权限，不破解任何限制）
-- **字幕**：本地抽取音频 → VAD 分段 → 硅基流动 ASR 并发转写（断点续做），播放器内字幕轨 + 字幕列表点击跳转，可导出 VTT/SRT；播放进度自动记忆，重开视频断点续播；控制栏倍速快捷键（1/1.5/2/3x，窄屏折叠为循环按钮）、双击画面两侧 ±10s（涟漪反馈，连击累加）、字幕字号四档可调（持久化）
+- **字幕**：本地抽取音频 → VAD 分段 → 硅基流动 ASR 并发转写（断点续做，**转写中边转边显**——每完成一段即时出现在字幕列表与画面字幕上，全程可播放），播放器内字幕轨 + 字幕列表点击跳转，可导出 VTT/SRT；播放进度自动记忆，重开视频断点续播；控制栏倍速快捷键（1/1.5/2/3x，窄屏折叠为循环按钮）、双击画面两侧 ±10s（涟漪反馈，连击累加）、字幕字号四档可调（持久化）
 - **讲义**：自动抽帧 → 视觉模型筛选教学画面 → 生成公文格式讲义（封面/目录/页眉、A4 公文版式、仿宋正文黑体章节、单双页码、三线表、插图带章节号图注），DOCX 下载 + 网页预览。内容层为结构化 IR：模型输出块级 JSON（主旨段/小节/列表/表格/配图/提示），排版样式由渲染器按样式表统一生成，编号全自动。插图双轨抽帧：VL 识图用 640px 低清（省 token），实际进文档的图按原视频 1600px/q0.92 定点重抽。**块级编辑**：讲义预览为结构化 IR 渲染，文字块（含概述/节标题/小节/列表/表格文字）支持左滑（移动端）或悬停（桌面）露出「AI 改写 / 编辑」——AI 改写提供预设指令（更精简/更详细/更口语化/换个说法）+ 自由输入，先预览再接受；手动编辑原地修改列表可增删条目、表格弹窗改文字；修改后从 IR 实时重建 DOCX 落盘（图片优先 1600px 高清重抽，视频不在则用 640px 抽帧兜底）。网页预览经 @font-face 名字对齐还原文档公文字体：local() 优先命中各平台系统仿宋/楷体/黑体/宋体（含 PostScript 名变体），无公文字体的设备按需下载开源朱雀仿宋 woff2 分包（OFL，unicode-range 按真实 cmap 重算，SW CacheFirst 缓存）
 - **写作技能（Skills）**：Agent Skills 规范（SKILL.md + references/），渐进式披露——讲义生成前由 LLM 路由按课程内容自动选用（讲义面板可按视频手动覆盖），问答 agent 通过 `use_skill` / `read_skill_reference` 工具按需加载正文与参考文档；设置页可导入 .md 单文件或 zip 包，内置 6 个技能（公文讲义写作/公文版式规格/数学/编程/公考行测/公考申论，含 references）
-- **问答**：字幕 embedding 索引 + agent loop（function calling 检索工具），流式回答，引用时间戳可点击跳转播放器；截图提问（多图 + 时间轴上下文，多模态直读 / 视觉模型描述 / 不支持则拦截引导，三级降级）；画面引用（已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用，气泡内渲染幻灯片缩略图、点击跳转）；一键出题 / 对话式出题生成单选题卡（`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化）；思考深度低/高/最大可调（支持模型显示开关）；Sender 下方实时上下文用量提示；整会话一键复制 Markdown / 导出 .md（含思考过程与题卡答案折叠、作答对错标记）
+- **问答**：字幕 embedding 索引 + agent loop（function calling 检索工具），流式回答，引用时间戳可点击跳转播放器；**Mermaid 出图**（回答里的 ```mermaid 围栏自动渲染成流程图/时序图等，懒加载引擎 + 串行渲染，未闭合围栏先挂起不抖，语法错回退源码 + 错误提示，支持看源码/复制/下载 SVG/全屏缩放）；截图提问（多图 + 时间轴上下文，多模态直读 / 视觉模型描述 / 不支持则拦截引导，三级降级；送模型时图与字幕上下文同时带，且明确**以图为准**）；画面引用（已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用，气泡内渲染幻灯片缩略图、点击跳转）；一键出题 / 对话式出题生成单选题卡（`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化）；思考深度低/高/最大可调（支持模型显示开关）；Sender 下方实时上下文用量提示；整会话一键复制 Markdown / 导出 .md（含思考过程与题卡答案折叠、作答对错标记）
 - **弹幕**：基于字幕一键生成 AI 思考题弹幕（启发式为主、回忆式为辅，宁缺毋滥），播放时在画面顶部记顶弹出（暂停跟随暂停，seek 回退可重看）；控制栏「弹」开关持久化；「弹幕」页可重新生成、列表点击时间戳跳转
 - **卡片（Anki）**：一键从字幕提炼知识点生成问答候选卡（一卡一事实/自包含/答案唯一，带时间戳来源）→ Tinder 式滑动审核（右滑保留/左滑丢弃/点击翻面/撤销，移动端触摸拖拽 + 桌面按钮与键盘 ←/→/空格/⌫）→ 保留卡导出 .apkg（本地生成 collection.anki2 旧版包，Anki 桌面/AnkiMobile/AnkiDroid 均可导入；sql.js 懒加载 + PWA 预缓存，离线可导出）
 - **面板级模型切换**：字幕/讲义/问答/弹幕面板头部下拉即换模型，候选来自设置页模型收藏夹
 - **PWA**：添加到主屏幕离线可用外壳；长任务自动保持屏幕常亮（Wake Lock）；视频文件存 OPFS（流式写入、导入带进度），元数据/字幕/讲义存 IndexedDB
-- **移动端**：≤640px 手机断点——播放页改为「视频 + 全屏面板 + 底部 Tab 栏」（字幕/讲义/问答/弹幕/卡片，display:none 保活切换不丢草稿）；safe-area 避让刘海与 Home 条；键盘弹出经 `interactive-widget` + visualViewport 同步收缩页面避免遮挡输入框；输入框 16px 防 iOS 聚焦缩放；触控目标 ≥40px；库页低频操作收进 ⋯ 菜单；讲义 DOCX 预览按屏宽等比缩放
+- **移动端**：≤640px 手机断点——播放页改为「视频 + 全屏面板 + 底部 Tab 栏」（字幕/讲义/问答/弹幕/卡片，display:none 保活切换不丢草稿）；**手机横屏（矮 + 横）改为「左视频 / 右面板」左右分栏**，面板切换条落在右栏顶部、默认停在「问答」，复刻桌面边看边聊的姿势；safe-area 避让刘海与 Home 条（横屏含左右边缘）；键盘弹出经 `interactive-widget` + visualViewport 同步收缩页面避免遮挡输入框（横屏下同时收窄视频，保证控制栏不被顶出可视区）；输入框 16px 防 iOS 聚焦缩放；触控目标 ≥40px；库页低频操作收进 ⋯ 菜单；讲义 DOCX 预览按屏宽等比缩放
 
 ## 快速开始
 
@@ -57,10 +57,10 @@ src/
   handout/             # 公文 DOCX：ir.ts(IR 类型/解析/兜底) styles.ts(版式样式表) render.ts(IR→排版) docx.ts(组装/补丁)
   anki/                # .apkg 导出：apkgCore.ts(最小写入器核心，Node 可测) apkg.ts(浏览器封装，sql.js wasm 懒加载)
   skills/              # 写作技能：types.ts(frontmatter) builtin/(6 个内置 SKILL.md+references) builtin.ts(?raw 加载) store.ts(升级/导入) router.ts(讲义路由) zip.ts(zip 解析)
-  components/          # SubtitlePanel / HandoutPanel / HandoutDocView(IR 渲染+左滑编辑+AI 改写) / ChatPanel / QuizCard(答题卡) / DanmakuPanel(弹幕) / DanmakuLayer(飘屏层) / CardsPanel(制卡面板) / SwipeDeck(滑卡审核) / SkillsCard / StorageCard(设置页存储占用)
+  components/          # SubtitlePanel / HandoutPanel / HandoutDocView(IR 渲染+左滑编辑+AI 改写) / ChatPanel / mermaid/(问答 Mermaid 出图：懒加载引擎+串行渲染+失败回退) / QuizCard(答题卡) / DanmakuPanel(弹幕) / DanmakuLayer(飘屏层) / CardsPanel(制卡面板) / SwipeDeck(滑卡审核) / SkillsCard / StorageCard(设置页存储占用)
   pages/               # Library / Player / Settings
   store/               # db.ts(Dexie schema) settings.ts(zustand persist) fileStore.ts(视频文件 OPFS 存储) storageStats.ts(占用统计)
-scripts/               # playwright e2e（真实 API）：e2e-import / e2e-smoke / e2e-handout / e2e-chat / e2e-chat-image / e2e-chat-frames
+scripts/               # playwright e2e（真实 API）：e2e-import / e2e-smoke / e2e-handout / e2e-chat / e2e-chat-image / e2e-chat-frames / e2e-chat-mermaid
 cloudflare-worker/     # B 站导入代理：bili-proxy.js + README（部署说明）
 ```
 
@@ -93,10 +93,13 @@ npm run preview &   # 先起 4173
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-import.mjs                    # 导入链路（无需 API key）
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-resume.mjs                    # 断点续播链路（无需 API key）
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-player-enhance.mjs           # 播放器增强：倍速按钮/双击 ±10s/字幕字号（无需 API key）
-TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-mobile.mjs                   # 移动端 UI：底部 Tab/面板保活/触控尺寸/断点回退（无需 API key）
+TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-mobile.mjs                   # 移动端 UI：竖屏底部 Tab / 横屏左视频右会话 / 面板保活 / 触控尺寸 / 断点回退（无需 API key）
 node scripts/e2e-chat-export.mjs                                              # 会话复制/导出 Markdown（无需 API key，自播种数据）
 node scripts/e2e-cards.mjs                                                    # 滑动制卡：审核/撤销/导出 .apkg（无需 API key，自播种数据）
+npm run dev &  # 5173，下一条需要 dev（要用模块 URL 取应用同一份 Dexie 实例）
+TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-live-subs.mjs                 # 增量字幕：转写中边转边显（列表+画面轨）与下游门控（无需 API key，自播种数据）
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-danmaku.mjs                  # 弹幕链路：飘屏/开关持久化/seek 重发（无需 API key；加 SF_KEY 含 LLM 生成）
+BASE_URL=http://localhost:5173 node scripts/e2e-chat-mermaid.mjs              # 问答 Mermaid 渲染：出图/中文标签/失败回退源码/未闭合围栏挂起/代码块不被 linkify/导出 SVG（无需 API key，自播种数据）
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-smoke.mjs    # 字幕链路
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-handout.mjs  # 讲义链路
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-chat.mjs     # 问答链路

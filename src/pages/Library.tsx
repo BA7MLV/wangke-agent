@@ -1,22 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App, Alert, Button, Dropdown, Empty, Input, List, Modal, Popconfirm, Progress, Radio, Tag, Upload, Typography } from 'antd';
-import {
-  DeleteOutlined,
-  DownOutlined,
-  EditOutlined,
-  FolderAddOutlined,
-  FolderOpenOutlined,
-  FolderOutlined,
-  HolderOutlined,
-  InboxOutlined,
-  LinkOutlined,
-  MoreOutlined,
-  PlayCircleOutlined,
-  RightOutlined,
-  SettingOutlined,
-} from '@ant-design/icons';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
+import { Banner, EmptyState, PageShell, alertDialog, confirmDialog, toast, useMduiEvent } from '../ui';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { deleteVideoFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
@@ -104,11 +89,18 @@ async function probeDuration(file: Blob): Promise<number> {
   }
 }
 
-const STATUS_TAG: Record<VideoRow['status'], { color: string; text: string }> = {
-  new: { color: 'default', text: '未转写' },
-  transcribing: { color: 'processing', text: '转写中' },
-  transcribed: { color: 'success', text: '已转写' },
-  error: { color: 'error', text: '出错' },
+/**
+ * 转写状态标记。
+ *
+ * 原先用 antd `Tag`，颜色是 `default / processing / success / error`；
+ * mdui 的 `mdui-chip` 不带语义色变体、标签文字颜色还在 shadow DOM 里，按状态分别上色做不到，
+ * 因此改用页面自己的静态标记 `.tag-mini`（与 SkillsCard 同一取舍），配色走 MD3 语义色板。
+ */
+const STATUS_TAG: Record<VideoRow['status'], { variant: '' | 'primary' | 'error'; text: string }> = {
+  new: { variant: '', text: '未转写' },
+  transcribing: { variant: 'primary', text: '转写中' },
+  transcribed: { variant: 'primary', text: '已转写' },
+  error: { variant: 'error', text: '出错' },
 };
 
 interface ImportTask {
@@ -142,7 +134,6 @@ function loadCollapsed(): Set<string> {
 
 export default function Library() {
   const navigate = useNavigate();
-  const { message, modal } = App.useApp();
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -156,7 +147,7 @@ export default function Library() {
   const [folderText, setFolderText] = useState('');
   // 移动到文件夹弹窗：moving 为 null 时关闭；moveTarget -1 表示未分类
   const [moving, setMoving] = useState<VideoRow | null>(null);
-  const [moveTarget, setMoveTarget] = useState<number>(-1);
+  const [moveTarget, setMoveTarget] = useState<string>('-1');
   const [moveNewName, setMoveNewName] = useState('');
   /**
    * 拖拽移动（Pointer Events 实现，iPad Safari 不支持 HTML5 DnD）：
@@ -169,12 +160,28 @@ export default function Library() {
   // 顺序导入链：多个文件排队逐个写入，避免并发写存储互相拖慢
   const chainRef = useRef<Promise<void>>(Promise.resolve());
   const nativeInputRef = useRef<HTMLInputElement>(null);
+  // HTML5 拖放（桌面/iPad 从「文件」App 拖入）的悬停高亮
+  const [dropActive, setDropActive] = useState(false);
   // 哔哩哔哩导入弹窗
   const [biliOpen, setBiliOpen] = useState(false);
   const [biliUrl, setBiliUrl] = useState('');
   const [biliImporting, setBiliImporting] = useState(false);
   const [biliProgress, setBiliProgress] = useState(0);
   const [biliError, setBiliError] = useState<string | null>(null);
+
+  // mdui-dialog 自己处理 Esc / 点遮罩关闭时只是把 open 属性拿掉，React 的 state 不知道，
+  // 必须接 closed 事件同步回 state，否则出现「关不掉 / 自己弹回来」（阶段 1 已实测）。
+  const renameDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setRenaming(null));
+  const folderDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setFolderModal(null));
+  const moveDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setMoving(null));
+  const biliDlgRef = useMduiEvent('mdui-dialog', 'closed', () => {
+    if (!biliImporting) {
+      setBiliOpen(false);
+      setBiliUrl('');
+      setBiliError(null);
+    }
+  });
+  const moveRadioRef = useMduiEvent('mdui-radio-group', 'change', (_e, el) => setMoveTarget(el.value));
 
   const reload = async () => {
     const [rows, folderRows] = await Promise.all([
@@ -228,6 +235,11 @@ export default function Library() {
     setTasks((prev) => prev.map((t) => (t.key === key ? { ...t, ...patch } : t)));
   };
 
+  /** 报错详情：页面内提示没法承载长文本，仍旧弹窗，但保留「一键复制详情」 */
+  const showError = (headline: string, text: string) => {
+    void alertDialog({ headline, description: text, copyText: text });
+  };
+
   const importOne = async (file: File, key: string) => {
     // 大视频拷入 OPFS 要数分钟，持 Wake Lock 防熄屏后 tab 被挂起中断导入
     await acquireWakeLock();
@@ -250,23 +262,12 @@ export default function Library() {
         status: 'new',
       });
       patchTask(key, { status: 'done', percent: 100 });
-      message.success(`已导入《${file.name}》`);
+      toast.success(`已导入《${file.name}》`);
       await reload();
     } catch (e) {
       const text = formatCaughtError(e);
       patchTask(key, { status: 'error', error: text });
-      modal.error({
-        title: `导入《${file.name}》失败`,
-        width: 560,
-        content: (
-          <Typography.Paragraph
-            copyable={{ text }}
-            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
-          >
-            {text}
-          </Typography.Paragraph>
-        ),
-      });
+      showError(`导入《${file.name}》失败`, text);
     } finally {
       await releaseWakeLock();
     }
@@ -282,12 +283,12 @@ export default function Library() {
   const handleBiliImport = async () => {
     const { bilibiliProxy, bilibiliCookie } = getSettings();
     if (!bilibiliProxy) {
-      message.warning('请先在「设置」页填写哔哩哔哩代理地址');
+      toast.warning('请先在「设置」页填写哔哩哔哩代理地址');
       return;
     }
     const raw = biliUrl.trim();
     if (!raw) {
-      message.warning('请粘贴 B 站视频链接或 BV 号');
+      toast.warning('请粘贴 B 站视频链接或 BV 号');
       return;
     }
     setBiliImporting(true);
@@ -299,23 +300,12 @@ export default function Library() {
       );
       setBiliOpen(false);
       setBiliUrl('');
-      message.success(`已解析《${file.name}》，开始写入本地存储`);
+      toast.success(`已解析《${file.name}》，开始写入本地存储`);
       enqueue(file);
     } catch (e) {
       const text = formatCaughtError(e);
       setBiliError(text);
-      modal.error({
-        title: 'B 站导入失败',
-        width: 560,
-        content: (
-          <Typography.Paragraph
-            copyable={{ text }}
-            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
-          >
-            {text}
-          </Typography.Paragraph>
-        ),
-      });
+      showError('B 站导入失败', text);
     } finally {
       setBiliImporting(false);
       setBiliProgress(0);
@@ -323,25 +313,32 @@ export default function Library() {
   };
 
   /**
-   * 原生文件选择器兜底入口（兼诊断）：iPad PWA 里若 antd Dragger
-   * 选完没反应，用这个可以确认系统到底有没有把文件交给页面——
-   * 选中后立即弹出文件数量/名称/大小/类型。
+   * 原生文件选择器入口（兼诊断）：iPad PWA 里若投放区选完没反应，
+   * 用这个可以确认系统到底有没有把文件交给页面——选中后立即提示文件数量/名称/大小/类型。
    */
   const handleNativePick = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     e.target.value = '';
     if (files.length === 0) {
-      message.warning('系统没有返回任何文件，请改用 Safari 标签页打开后再试');
+      toast.warning('系统没有返回任何文件，请改用 Safari 标签页打开后再试');
       return;
     }
-    message.info(
-      `已选择 ${files.length} 个文件：` +
-        files.map((f) => `${f.name}（${formatSize(f.size)}${f.type ? `，${f.type}` : '，无类型'}）`).join('、'),
-      8,
-    );
+    const accepted = files.filter(isVideoFile);
+    const skipped = files.filter((f) => !isVideoFile(f));
+    if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个非视频文件`);
+    if (files.length > 1) toast.info(`已选择 ${accepted.length} 个视频，开始逐个导入`);
+    for (const f of accepted) enqueue(f);
+  };
+
+  /** HTML5 拖放（桌面 / iPad 从「文件」App 拖入） */
+  const handleDrop = (e: React.DragEvent) => {
+    e.preventDefault();
+    setDropActive(false);
+    const files = Array.from(e.dataTransfer?.files ?? []);
+    if (files.length === 0) return;
     for (const f of files) {
       if (!isVideoFile(f)) {
-        message.warning(`《${f.name}》不是支持的视频格式，已跳过`);
+        toast.warning(`《${f.name}》不是支持的视频格式，已跳过`);
         continue;
       }
       enqueue(f);
@@ -357,12 +354,12 @@ export default function Library() {
     if (!renaming) return;
     const name = renameText.trim();
     if (!name) {
-      message.warning('标题不能为空');
+      toast.warning('标题不能为空');
       return;
     }
     if (name !== renaming.name) {
       await db.videos.update(renaming.id, { name });
-      message.success('标题已修改');
+      toast.success('标题已修改');
     }
     setRenaming(null);
     await reload();
@@ -372,7 +369,7 @@ export default function Library() {
   const handleDeleteFile = async (row: VideoRow) => {
     await deleteVideoFile(row.id);
     await db.videos.update(row.id, { fileDeleted: 1 });
-    message.success('已删除视频文件，字幕/讲义/问答仍保留');
+    toast.success('已删除视频文件，字幕/讲义/问答仍保留');
     await reload();
   };
 
@@ -388,8 +385,27 @@ export default function Library() {
       await db.embeddings.where('videoId').equals(row.id).delete();
     });
     await deleteVideoFile(row.id);
-    message.success('已删除');
+    toast.success('已删除');
     await reload();
+  };
+
+  /**
+   * 删除确认：桌面端原本是行内 Popconfirm、手机端是 ⋯ 菜单里的 modal.confirm，
+   * 合并成同一个 confirmDialog —— 两条路径的文案与结果完全一致，没必要维护两份。
+   */
+  const askDeleteVideo = (v: VideoRow) => {
+    const full = v.fileDeleted === 1;
+    void confirmDialog({
+      headline: full ? '彻底删除该记录？' : '删除视频文件？',
+      description: full
+        ? '字幕、讲义、问答记录会一并删除，不可恢复'
+        : '仅删除视频本体释放空间，字幕、讲义、问答记录保留',
+      confirmText: full ? '彻底删除' : '删除',
+      danger: true,
+    }).then((ok) => {
+      if (!ok) return;
+      void (full ? handleDelete(v) : handleDeleteFile(v));
+    });
   };
 
   // ---------- 文件夹操作 ----------
@@ -403,15 +419,15 @@ export default function Library() {
     if (!folderModal) return;
     const name = folderText.trim();
     if (!name) {
-      message.warning('文件夹名称不能为空');
+      toast.warning('文件夹名称不能为空');
       return;
     }
     if (folderModal.mode === 'create') {
       await db.folders.add({ name, createdAt: Date.now() });
-      message.success(`已创建文件夹「${name}」`);
+      toast.success(`已创建文件夹「${name}」`);
     } else if (name !== folderModal.folder.name) {
       await db.folders.update(folderModal.folder.id!, { name });
-      message.success('文件夹已重命名');
+      toast.success('文件夹已重命名');
     }
     setFolderModal(null);
     await reload();
@@ -427,24 +443,24 @@ export default function Library() {
         });
       await db.folders.delete(folder.id!);
     });
-    message.success('文件夹已删除，视频已移回未分类');
+    toast.success('文件夹已删除，视频已移回未分类');
     await reload();
   };
 
   const confirmDeleteFolder = (folder: FolderRow, count: number) => {
-    modal.confirm({
-      title: `删除文件夹「${folder.name}」？`,
-      content: count > 0 ? `里面的 ${count} 个视频会移回未分类，视频本身不会被删除` : '文件夹为空，可直接删除',
-      okText: '删除',
-      okButtonProps: { danger: true },
-      cancelText: '取消',
-      onOk: () => handleDeleteFolder(folder),
+    void confirmDialog({
+      headline: `删除文件夹「${folder.name}」？`,
+      description: count > 0 ? `里面的 ${count} 个视频会移回未分类，视频本身不会被删除` : '文件夹为空，可直接删除',
+      confirmText: '删除',
+      danger: true,
+    }).then((ok) => {
+      if (ok) void handleDeleteFolder(folder);
     });
   };
 
   const openMove = (v: VideoRow) => {
     setMoving(v);
-    setMoveTarget(v.folderId ?? -1);
+    setMoveTarget(String(v.folderId ?? -1));
     setMoveNewName('');
   };
 
@@ -461,8 +477,9 @@ export default function Library() {
 
   const confirmMove = async () => {
     if (!moving) return;
-    await setVideoFolder(moving.id, moveTarget < 0 ? null : moveTarget);
-    message.success('已移动');
+    const target = Number(moveTarget);
+    await setVideoFolder(moving.id, target < 0 ? null : target);
+    toast.success('已移动');
     setMoving(null);
     await reload();
   };
@@ -473,7 +490,7 @@ export default function Library() {
     if (!name) return;
     const id = (await db.folders.add({ name, createdAt: Date.now() })) as number;
     setMoveNewName('');
-    setMoveTarget(id);
+    setMoveTarget(String(id));
     await reload();
   };
 
@@ -492,8 +509,9 @@ export default function Library() {
     const d = dragRef.current;
     if (!d) return;
     // 拖动中指针捕获抑制了页面滚动，贴近视口边缘时手动滚动
-    if (e.clientY < 80) window.scrollBy(0, -12);
-    else if (e.clientY > window.innerHeight - 80) window.scrollBy(0, 12);
+    const main = document.querySelector('mdui-layout-main');
+    if (e.clientY < 80) main?.scrollBy(0, -12);
+    else if (e.clientY > window.innerHeight - 80) main?.scrollBy(0, 12);
     // 命中检测：指针落在哪个组头的矩形内
     let overKey: string | null = null;
     for (const [key, el] of headerRefs.current) {
@@ -517,7 +535,7 @@ export default function Library() {
     if (target === (d.video.folderId ?? null)) return; // 原地放回
     await setVideoFolder(d.video.id, target);
     const name = target == null ? '未分类' : folders.find((f) => f.id === target)?.name;
-    message.success(`已移入「${name}」`);
+    toast.success(`已移入「${name}」`);
     await reload();
   };
 
@@ -540,432 +558,531 @@ export default function Library() {
     };
   }, [drag != null]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ---------- 视频行渲染 ----------
+  // ---------- 渲染 ----------
 
-  /** 手机端操作列：低频的改名/移动/删除收进 ⋯ 菜单；菜单项无法包 Popconfirm，删除改编程式 modal */
-  const mobileActions = (v: VideoRow) => [
-    <Button key="play" type="primary" icon={<PlayCircleOutlined />} onClick={() => navigate(`/player/${v.id}`)}>
-      学习
-    </Button>,
-    <Dropdown
-      key="more"
-      trigger={['click']}
-      menu={{
-        items: [
-          { key: 'rename', icon: <EditOutlined />, label: '重命名' },
-          { key: 'folder', icon: <FolderOpenOutlined />, label: '移动到文件夹' },
-          {
-            key: 'del',
-            icon: <DeleteOutlined />,
-            danger: true,
-            label: v.fileDeleted ? '彻底删除记录' : '删除视频文件',
-          },
-        ],
-        onClick: ({ key }) => {
-          if (key === 'rename') {
-            openRename(v);
-            return;
-          }
-          if (key === 'folder') {
-            openMove(v);
-            return;
-          }
-          modal.confirm({
-            title: v.fileDeleted ? '彻底删除该记录？' : '删除视频文件？',
-            content: v.fileDeleted
-              ? '字幕、讲义、问答记录会一并删除，不可恢复'
-              : '仅删除视频本体释放空间，字幕、讲义、问答记录保留',
-            okText: v.fileDeleted ? '彻底删除' : '删除',
-            okButtonProps: { danger: true },
-            cancelText: '取消',
-            onOk: () => (v.fileDeleted ? handleDelete(v) : handleDeleteFile(v)),
-          });
-        },
-      }}
-    >
-      <Button icon={<MoreOutlined />} />
-    </Dropdown>,
-  ];
-
-  const renderVideoItem = (v: VideoRow) => (
-    <List.Item
-      style={drag?.video.id === v.id ? { opacity: 0.4 } : undefined}
-      actions={
-        isMobile
-          ? mobileActions(v)
-          : [
-              <Button
-                key="play"
-                type="primary"
-                icon={<PlayCircleOutlined />}
-                onClick={() => navigate(`/player/${v.id}`)}
-              >
-                学习
-              </Button>,
-              <Button key="rename" icon={<EditOutlined />} onClick={() => openRename(v)} />,
-              <Button key="folder" icon={<FolderOpenOutlined />} onClick={() => openMove(v)} />,
-              v.fileDeleted ? (
-                <Popconfirm
-                  key="del"
-                  title="彻底删除该记录？"
-                  description="字幕、讲义、问答记录会一并删除，不可恢复"
-                  okText="彻底删除"
-                  onConfirm={() => handleDelete(v)}
-                >
-                  <Button danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              ) : (
-                <Popconfirm
-                  key="del"
-                  title="删除视频文件？"
-                  description="仅删除视频本体释放空间，字幕、讲义、问答记录保留"
-                  onConfirm={() => handleDeleteFile(v)}
-                >
-                  <Button danger icon={<DeleteOutlined />} />
-                </Popconfirm>
-              ),
-            ]
-      }
-    >
-      {/* 拖拽手柄：按住拖到组头移入文件夹。touchAction:none 让触屏从手柄起手不触发页面滚动 */}
-      <Button
-        type="text"
-        size="small"
-        icon={<HolderOutlined />}
-        aria-label="拖拽移动到文件夹"
-        style={{ cursor: 'grab', touchAction: 'none', color: 'var(--ant-color-text-secondary)', marginRight: 4 }}
-        onPointerDown={(e) => startDrag(e, v)}
-        onPointerMove={moveDrag}
-        onPointerUp={endDrag}
-        onPointerCancel={cancelDrag}
-      />
-      <List.Item.Meta
-        title={v.name}
-        description={`${formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`}
-      />
-      {v.fileDeleted === 1 && <Tag>文件已删</Tag>}
-      <Tag color={STATUS_TAG[v.status].color}>{STATUS_TAG[v.status].text}</Tag>
-    </List.Item>
-  );
-
-  /** 组头：折叠箭头 + 名称 + 数量，整行点击折叠；真实文件夹带 ⋯ 菜单（重命名/删除），未分类没有；拖拽时组头作为投放目标高亮 */
   const renderGroupHeader = (g: (typeof groups)[number]) => {
     const isCollapsed = collapsed.has(g.key);
     const isDropTarget = drag?.overKey === g.key;
+    const headerClass = [
+      'group-header',
+      drag ? 'group-header--dragging' : '',
+      isDropTarget ? 'group-header--over' : '',
+    ]
+      .filter(Boolean)
+      .join(' ');
     return (
       <div
+        key={g.key}
         ref={(el) => {
           if (el) headerRefs.current.set(g.key, el);
           else headerRefs.current.delete(g.key);
         }}
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 6,
-          margin: '16px 0 4px',
-          padding: '4px 8px',
-          borderRadius: 8,
-          cursor: 'pointer',
-          userSelect: 'none',
-          border: drag ? '1px dashed var(--ant-color-border)' : '1px solid transparent',
-          ...(isDropTarget
-            ? { borderColor: 'var(--ant-color-primary)', background: 'var(--ant-color-primary-bg, rgba(22,119,255,0.08))' }
-            : undefined),
-        }}
+        className={headerClass}
+        data-testid="group-header"
+        data-group-key={g.key}
         onClick={() => toggleCollapse(g.key)}
       >
-        <Button
-          type="text"
-          size="small"
-          icon={isCollapsed ? <RightOutlined /> : <DownOutlined />}
-        />
-        <FolderOutlined style={{ color: 'var(--ant-color-primary)' }} />
-        <span style={{ fontWeight: 600 }}>{g.name}</span>
-        <span style={{ color: 'var(--ant-color-text-secondary)', fontSize: 13 }}>{g.videos.length}</span>
+        <span className="group-header__icon">
+          {isCollapsed ? <mdui-sym-chevron-right /> : <mdui-sym-keyboard-arrow-down />}
+        </span>
+        <span className="group-header__icon">
+          <mdui-sym-folder />
+        </span>
+        <span className="group-header__name">{g.name}</span>
+        <span className="group-header__count">{g.videos.length}</span>
+        <span className="library-toolbar__spacer" />
         {g.folder && (
-          <Dropdown
-            trigger={['click']}
-            menu={{
-              items: [
-                { key: 'rename', icon: <EditOutlined />, label: '重命名文件夹' },
-                { key: 'del', icon: <DeleteOutlined />, danger: true, label: '删除文件夹' },
-              ],
-              onClick: ({ key }) => {
-                if (key === 'rename') openFolderModal('rename', g.folder!);
-                else confirmDeleteFolder(g.folder!, g.videos.length);
-              },
-            }}
-          >
-            <Button type="text" size="small" icon={<MoreOutlined />} onClick={(e) => e.stopPropagation()} />
-          </Dropdown>
+          <mdui-dropdown>
+            <mdui-button-icon
+              slot="trigger"
+              data-testid="btn-folder-more"
+              aria-label="文件夹操作"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <mdui-sym-more-vert />
+            </mdui-button-icon>
+            <mdui-menu>
+              <mdui-menu-item
+                data-testid="menu-folder-rename"
+                onClick={() => openFolderModal('rename', g.folder!)}
+              >
+                <mdui-sym-edit slot="icon" />
+                重命名文件夹
+              </mdui-menu-item>
+              <mdui-menu-item
+                data-testid="menu-folder-delete"
+                onClick={() => confirmDeleteFolder(g.folder!, g.videos.length)}
+              >
+                <mdui-sym-delete slot="icon" />
+                删除文件夹
+              </mdui-menu-item>
+            </mdui-menu>
+          </mdui-dropdown>
         )}
       </div>
     );
   };
 
+  const renderVideoItem = (v: VideoRow) => (
+    <VideoRow
+      key={v.id}
+      video={v}
+      isMobile={isMobile}
+      dragging={drag?.video.id === v.id}
+      onPlay={() => navigate(`/player/${v.id}`)}
+      onRename={() => openRename(v)}
+      onMove={() => openMove(v)}
+      onDelete={() => askDeleteVideo(v)}
+      onDragStart={(e) => startDrag(e, v)}
+      onDragMove={moveDrag}
+      onDragEnd={() => void endDrag()}
+      onDragCancel={cancelDrag}
+    />
+  );
+
   return (
-    <div className="page">
-      <div className="page-header">
-        <div className="title">网课学习助手</div>
-        <div style={{ display: 'flex', gap: 8 }}>
-          <Button
-            icon={<LinkOutlined />}
-            onClick={() => {
+    <PageShell
+      title="网课学习助手"
+      wide
+      bottomNav={{
+        value: 'home',
+        items: [
+          {
+            value: 'home',
+            label: '首页',
+            // MD3 的导航栏惯例：未选中描边、选中实心
+            icon: <mdui-sym-home />,
+            activeIcon: <mdui-sym-home filled />,
+            onClick: () => {},
+            testId: 'nav-bottom-home',
+          },
+          {
+            value: 'settings',
+            label: '设置',
+            icon: <mdui-sym-settings />,
+            activeIcon: <mdui-sym-settings filled />,
+            onClick: () => navigate('/settings'),
+            testId: 'nav-bottom-settings',
+          },
+        ],
+      }}
+      actions={
+        <mdui-button-icon
+          className="app-bar__action-mobile-hidden"
+          data-testid="nav-settings"
+          aria-label="设置"
+          onClick={() => navigate('/settings')}
+        >
+          <mdui-sym-settings />
+        </mdui-button-icon>
+      }
+    >
+      {SHOW_PWA_HINT && (
+        <Banner
+          variant="warning"
+          testId="pwa-hint"
+          icon={<mdui-sym-warning />}
+          title="建议用 Safari 将本页「添加到主屏幕」后使用"
+          description="在普通标签页中，若连续 7 天未打开，系统可能自动清除已导入的视频和字幕；从主屏幕打开则不会被清理。"
+        />
+      )}
+
+      {/* 导入投放区：替 antd Upload.Dragger（mdui 没有上传组件，自己搭）。
+          整块是可投放目标，点击任意空白处打开系统文件选择器。 */}
+      <div
+        className={dropActive ? 'drop-zone drop-zone--over' : 'drop-zone'}
+        data-testid="drop-zone"
+        onClick={() => nativeInputRef.current?.click()}
+        onDragOver={(e) => {
+          e.preventDefault();
+          if (!dropActive) setDropActive(true);
+        }}
+        onDragLeave={(e) => {
+          // 在子元素之间移动也会触发 dragleave，只有真正离开整块区域才取消高亮
+          if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setDropActive(false);
+        }}
+        onDrop={handleDrop}
+      >
+        <mdui-sym-cloud-upload className="drop-zone__icon" />
+        <div className="drop-zone__title">点击或拖拽视频到此处导入</div>
+        <div className="drop-zone__hint">
+          请从「文件」App 中选择视频——从相册选择系统可能先转码，大视频会长时间无进度；iCloud
+          文件请先在「文件」App 中下载到本机
+        </div>
+        <div className="drop-zone__hint">
+          视频只保存在本机浏览器存储中，不会上传到任何服务器；导入完成后可在「文件」App
+          中删除原视频释放空间
+        </div>
+        <div className="drop-zone__actions">
+          <mdui-button
+            data-testid="btn-bili-import"
+            variant="tonal"
+            onClick={(e) => {
+              e.stopPropagation();
               setBiliError(null);
               setBiliOpen(true);
             }}
           >
-            导入 B 站
-          </Button>
-          <Button icon={<FolderAddOutlined />} onClick={() => openFolderModal('create')}>
-            新建文件夹
-          </Button>
-          <Button icon={<SettingOutlined />} onClick={() => navigate('/settings')}>
-            设置
-          </Button>
+            <mdui-sym-link slot="icon" />
+            从 B 站导入
+          </mdui-button>
+          <mdui-button
+            data-testid="btn-native-pick"
+            variant="text"
+            onClick={(e) => {
+              e.stopPropagation();
+              nativeInputRef.current?.click();
+            }}
+          >
+            <mdui-sym-upload slot="icon" />
+            上方没反应？用系统选择器导入
+          </mdui-button>
         </div>
-      </div>
-      <div className="page-body" style={{ maxWidth: 860, margin: '0 auto', width: '100%' }}>
-        {SHOW_PWA_HINT && (
-          <Alert
-            style={{ marginBottom: 16 }}
-            type="warning"
-            showIcon
-            message="建议用 Safari 将本页「添加到主屏幕」后使用"
-            description="在普通标签页中，若连续 7 天未打开，系统可能自动清除已导入的视频和字幕；从主屏幕打开则不会被清理。"
-          />
-        )}
-        <Upload.Dragger
-          multiple
-          showUploadList={false}
-          beforeUpload={(file) => {
-            if (!isVideoFile(file)) {
-              message.warning(`《${file.name}》不是支持的视频格式，已跳过`);
-              return false;
-            }
-            enqueue(file);
-            return false;
-          }}
-        >
-          <p className="ant-upload-drag-icon">
-            <InboxOutlined />
-          </p>
-          <p className="ant-upload-text">点击或拖拽视频到此处导入</p>
-          <p className="ant-upload-hint">
-            请从「文件」App 中选择视频——从相册选择系统可能先转码，大视频会长时间无进度；iCloud
-            文件请先在「文件」App 中下载到本机
-          </p>
-          <p className="ant-upload-hint">
-            视频只保存在本机浏览器存储中，不会上传到任何服务器；导入完成后可在「文件」App 中删除原视频释放空间
-          </p>
-        </Upload.Dragger>
-
-        {/* iPad 兜底/诊断入口：Dragger 选完没反应时用。iOS 上隐藏 input 需可聚焦，不能用 display:none */}
+        {/* iOS 上隐藏 input 需可聚焦，不能用 display:none */}
         <input
           ref={nativeInputRef}
+          data-testid="import-input"
           type="file"
           multiple
           onChange={handleNativePick}
           style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}
         />
-        <div style={{ marginTop: 8, textAlign: 'center' }}>
-          <Button type="link" size="small" onClick={() => nativeInputRef.current?.click()}>
-            上方选完没反应？点这里用系统选择器导入
-          </Button>
-        </div>
-
-        {tasks.length > 0 && (
-          <div style={{ marginTop: 16 }}>
-            {tasks.map((t) => (
-              <div key={t.key} style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '4px 0' }}>
-                <span
-                  className="import-task-name"
-                  style={{
-                    flex: '0 1 220px',
-                    overflow: 'hidden',
-                    textOverflow: 'ellipsis',
-                    whiteSpace: 'nowrap',
-                  }}
-                  title={t.name}
-                >
-                  {t.name}
-                </span>
-                <Progress
-                  style={{ flex: 1, margin: 0 }}
-                  size="small"
-                  percent={t.status === 'done' ? 100 : t.status === 'writing' ? t.percent : undefined}
-                  status={
-                    t.status === 'error' ? 'exception' : t.status === 'done' ? 'success' : 'active'
-                  }
-                  format={(pct) =>
-                    t.status === 'error'
-                      ? (t.error ?? '失败')
-                      : t.status === 'writing'
-                        ? `${TASK_STATUS_TEXT.writing} ${pct ?? 0}%`
-                        : TASK_STATUS_TEXT[t.status]
-                  }
-                />
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div style={{ marginTop: 24 }}>
-          {videos.length === 0 && folders.length === 0 ? (
-            <Empty description="还没有视频，先导入一个网课视频吧" />
-          ) : (
-            groups
-              .filter((g) => g.videos.length > 0 || g.folder != null)
-              .map((g) => (
-                <div key={g.key}>
-                  {renderGroupHeader(g)}
-                  {!collapsed.has(g.key) && <List dataSource={g.videos} renderItem={renderVideoItem} />}
-                </div>
-              ))
-          )}
-        </div>
       </div>
-      {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
-      {drag && (
-        <div
-          style={{
-            position: 'fixed',
-            left: drag.x,
-            top: drag.y - 48,
-            transform: 'translateX(-50%)',
-            zIndex: 1000,
-            pointerEvents: 'none',
-            maxWidth: 240,
-            overflow: 'hidden',
-            textOverflow: 'ellipsis',
-            whiteSpace: 'nowrap',
-            padding: '8px 12px',
-            borderRadius: 8,
-            background: 'var(--ant-color-bg-elevated, #fff)',
-            boxShadow: 'var(--ant-box-shadow-secondary, 0 6px 16px rgba(0,0,0,0.12))',
-            border: '1px solid var(--ant-color-border, #d9d9d9)',
-            fontSize: 14,
-          }}
-        >
-          <HolderOutlined style={{ marginRight: 8, color: 'var(--ant-color-text-secondary)' }} />
-          {drag.video.name}
+
+      {tasks.length > 0 && (
+        <div data-testid="import-tasks">
+          {tasks.map((t) => (
+            <div key={t.key} className="import-task" data-testid="import-task">
+              <span className="import-task-name" title={t.name}>
+                {t.name}
+              </span>
+              {/* value 省略 = 不确定态（mdui 的 linear-progress 在 value 未定义时走 indeterminate），
+                  正好对应 antd Progress 的 status="active" */}
+              <mdui-linear-progress
+                data-testid="import-progress"
+                max={100}
+                value={
+                  t.status === 'done' ? 100 : t.status === 'writing' ? t.percent : undefined
+                }
+              />
+              <span
+                className={
+                  t.status === 'error'
+                    ? 'import-task__status import-task__status--error'
+                    : 'import-task__status'
+                }
+                data-testid="import-task-status"
+              >
+                {t.status === 'error'
+                  ? (t.error ?? '失败')
+                  : t.status === 'writing'
+                    ? `${TASK_STATUS_TEXT.writing} ${t.percent}%`
+                    : TASK_STATUS_TEXT[t.status]}
+              </span>
+            </div>
+          ))}
         </div>
       )}
-      <Modal
-        open={!!renaming}
-        title="修改标题"
-        okText="保存"
-        cancelText="取消"
-        onOk={confirmRename}
-        onCancel={() => setRenaming(null)}
-        destroyOnHidden
-      >
-        <Input
-          value={renameText}
-          onChange={(e) => setRenameText(e.target.value)}
-          onPressEnter={confirmRename}
-          maxLength={100}
-          placeholder="输入视频标题"
-          autoFocus
-        />
-      </Modal>
-      <Modal
-        open={!!folderModal}
-        title={folderModal?.mode === 'rename' ? '重命名文件夹' : '新建文件夹'}
-        okText="保存"
-        cancelText="取消"
-        onOk={confirmFolderModal}
-        onCancel={() => setFolderModal(null)}
-        destroyOnHidden
-      >
-        <Input
-          value={folderText}
-          onChange={(e) => setFolderText(e.target.value)}
-          onPressEnter={confirmFolderModal}
-          maxLength={50}
-          placeholder="如：行测、申论、面试"
-          autoFocus
-        />
-      </Modal>
-      <Modal
-        open={!!moving}
-        title={moving ? `移动《${moving.name}》到` : ''}
-        okText="移动"
-        cancelText="取消"
-        onOk={confirmMove}
-        onCancel={() => setMoving(null)}
-        destroyOnHidden
-      >
-        <Radio.Group
-          style={{ display: 'flex', flexDirection: 'column', gap: 8 }}
-          value={moveTarget}
-          onChange={(e) => setMoveTarget(e.target.value as number)}
-          options={[
-            { value: -1, label: '未分类' },
-            ...folders.map((f) => ({ value: f.id!, label: f.name })),
-          ]}
-        />
-        <div style={{ display: 'flex', gap: 8, marginTop: 16 }}>
-          <Input
-            value={moveNewName}
-            onChange={(e) => setMoveNewName(e.target.value)}
-            onPressEnter={createFolderInMove}
-            maxLength={50}
-            placeholder="新建文件夹名称"
-          />
-          <Button onClick={createFolderInMove} disabled={!moveNewName.trim()}>
-            新建并选中
-          </Button>
+
+      {(videos.length > 0 || folders.length > 0) && (
+        <div className="library-toolbar">
+          <span className="library-toolbar__spacer" />
+          <mdui-button data-testid="btn-new-folder" variant="text" onClick={() => openFolderModal('create')}>
+            <mdui-sym-create-new-folder slot="icon" />
+            新建文件夹
+          </mdui-button>
         </div>
-      </Modal>
-      <Modal
-        open={biliOpen}
-        title="导入哔哩哔哩视频"
-        okText="开始导入"
-        cancelText="取消"
-        confirmLoading={biliImporting}
-        onOk={handleBiliImport}
-        onCancel={() => {
-          if (!biliImporting) {
-            setBiliOpen(false);
-            setBiliUrl('');
-            setBiliError(null);
-          }
-        }}
-        destroyOnHidden
+      )}
+
+      <div data-testid="video-list">
+        {videos.length === 0 && folders.length === 0 ? (
+          <EmptyState
+            testId="empty-state"
+            title="还没有视频"
+            description="点上方投放区选择本机视频，或从 B 站链接导入。视频只保存在这台设备上，不会上传。"
+          />
+        ) : (
+          groups
+            .filter((g) => g.videos.length > 0 || g.folder != null)
+            .map((g) => (
+              <div key={g.key}>
+                {renderGroupHeader(g)}
+                {!collapsed.has(g.key) && g.videos.map(renderVideoItem)}
+              </div>
+            ))
+        )}
+      </div>
+
+      {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
+      {drag && (
+        <div className="drag-ghost" style={{ left: drag.x, top: drag.y - 48 }}>
+          <mdui-sym-drag-indicator className="drag-ghost__icon" />
+          <span className="drag-ghost__name">{drag.video.name}</span>
+        </div>
+      )}
+
+      {/* ── 弹窗 ─────────────────────────────────────────────────────────── */}
+      <mdui-dialog
+        ref={renameDlgRef}
+        open={!!renaming}
+        headline="修改标题"
+        data-testid="rename-dialog"
+        close-on-esc
+        close-on-overlay-click
       >
-        <Input.TextArea
-          value={biliUrl}
-          onChange={(e) => setBiliUrl(e.target.value)}
-          placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
-          autoSize={{ minRows: 2, maxRows: 4 }}
-          disabled={biliImporting}
+        <mdui-text-field
+          data-testid="rename-input"
+          value={renameText}
+          maxlength={100}
+          placeholder="输入视频标题"
+          autofocus
+          onInput={(e) => setRenameText((e.target as HTMLElement & { value: string }).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void confirmRename();
+          }}
         />
-        <div style={{ marginTop: 8, fontSize: 12, color: 'var(--ant-color-text-secondary)' }}>
+        <mdui-button slot="action" variant="text" data-testid="rename-cancel" onClick={() => setRenaming(null)}>
+          取消
+        </mdui-button>
+        <mdui-button slot="action" variant="filled" data-testid="rename-save" onClick={() => void confirmRename()}>
+          保存
+        </mdui-button>
+      </mdui-dialog>
+
+      <mdui-dialog
+        ref={folderDlgRef}
+        open={!!folderModal}
+        headline={folderModal?.mode === 'rename' ? '重命名文件夹' : '新建文件夹'}
+        data-testid="folder-dialog"
+        close-on-esc
+        close-on-overlay-click
+      >
+        <mdui-text-field
+          data-testid="folder-input"
+          value={folderText}
+          maxlength={50}
+          placeholder="如：行测、申论、面试"
+          autofocus
+          onInput={(e) => setFolderText((e.target as HTMLElement & { value: string }).value)}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') void confirmFolderModal();
+          }}
+        />
+        <mdui-button slot="action" variant="text" data-testid="folder-cancel" onClick={() => setFolderModal(null)}>
+          取消
+        </mdui-button>
+        <mdui-button
+          slot="action"
+          variant="filled"
+          data-testid="folder-save"
+          onClick={() => void confirmFolderModal()}
+        >
+          保存
+        </mdui-button>
+      </mdui-dialog>
+
+      <mdui-dialog
+        ref={moveDlgRef}
+        open={!!moving}
+        headline={moving ? `移动《${moving.name}》到` : ''}
+        data-testid="move-dialog"
+        close-on-esc
+        close-on-overlay-click
+      >
+        <mdui-radio-group ref={moveRadioRef} value={moveTarget} data-testid="move-radio-group">
+          <mdui-radio value="-1">未分类</mdui-radio>
+          {folders.map((f) => (
+            <mdui-radio key={f.id} value={String(f.id)}>
+              {f.name}
+            </mdui-radio>
+          ))}
+        </mdui-radio-group>
+        <div className="row row--nowrap" style={{ marginTop: 16 }}>
+          <mdui-text-field
+            data-testid="move-new-name"
+            value={moveNewName}
+            maxlength={50}
+            placeholder="新建文件夹名称"
+            onInput={(e) => setMoveNewName((e.target as HTMLElement & { value: string }).value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') void createFolderInMove();
+            }}
+          />
+          <mdui-button
+            data-testid="move-create-folder"
+            variant="tonal"
+            disabled={!moveNewName.trim()}
+            onClick={() => void createFolderInMove()}
+          >
+            新建并选中
+          </mdui-button>
+        </div>
+        <mdui-button slot="action" variant="text" data-testid="move-cancel" onClick={() => setMoving(null)}>
+          取消
+        </mdui-button>
+        <mdui-button slot="action" variant="filled" data-testid="move-confirm" onClick={() => void confirmMove()}>
+          移动
+        </mdui-button>
+      </mdui-dialog>
+
+      <mdui-dialog
+        ref={biliDlgRef}
+        open={biliOpen}
+        headline="导入哔哩哔哩视频"
+        data-testid="bili-dialog"
+        close-on-esc={!biliImporting}
+        close-on-overlay-click={!biliImporting}
+      >
+        <mdui-text-field
+          data-testid="bili-url"
+          value={biliUrl}
+          rows={2}
+          autosize
+          max-rows={4}
+          placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
+          disabled={biliImporting}
+          onInput={(e) => setBiliUrl((e.target as HTMLElement & { value: string }).value)}
+        />
+        <div className="text-secondary" style={{ marginTop: 8, fontSize: 12 }}>
           需先在「设置」页配置自建代理地址；未登录只能导入 360P，登录 Cookie 可解锁更高清晰度。
         </div>
         {biliImporting && (
           <div style={{ marginTop: 12 }}>
-            <Progress percent={biliProgress} size="small" />
+            <mdui-linear-progress data-testid="bili-progress" max={100} value={biliProgress} />
           </div>
         )}
         {biliError && (
-          <Alert
-            type="error"
-            showIcon
-            message="导入失败"
-            description={
-              <Typography.Paragraph
-                copyable={{ text: biliError }}
-                style={{ whiteSpace: 'pre-wrap', userSelect: 'text', marginBottom: 0, maxHeight: 200, overflow: 'auto' }}
-              >
-                {biliError}
-              </Typography.Paragraph>
-            }
-            style={{ marginTop: 12 }}
+          <Banner
+            variant="error"
+            testId="bili-error"
+            icon={<mdui-sym-error />}
+            title="导入失败"
+            description="详情见上方的错误弹窗，可一键复制"
           />
         )}
-      </Modal>
+        <mdui-button slot="action" variant="text" data-testid="bili-cancel" onClick={() => setBiliOpen(false)}>
+          取消
+        </mdui-button>
+        <mdui-button
+          slot="action"
+          variant="filled"
+          data-testid="bili-confirm"
+          loading={biliImporting}
+          onClick={() => void handleBiliImport()}
+        >
+          开始导入
+        </mdui-button>
+      </mdui-dialog>
+    </PageShell>
+  );
+}
+
+/**
+ * 单个视频行。抽成组件是为了让 ⋯ 菜单 / 开关这类「每行一份」的元素各自持有自己的 ref，
+ * 而不必在父级维护一张 ref 表（阶段 1 的 SkillRow 同一模式）。
+ *
+ * 行结构自建（不用 mdui-list-item）：一行里有拖拽手柄 + 标题/元信息 + 标签 + 最多 3 个按钮，
+ * 而 mdui-list-item 的 custom 插槽是覆盖式的，塞不下（详见 layout.css 的注释）。
+ */
+function VideoRow({
+  video: v,
+  isMobile,
+  dragging,
+  onPlay,
+  onRename,
+  onMove,
+  onDelete,
+  onDragStart,
+  onDragMove,
+  onDragEnd,
+  onDragCancel,
+}: {
+  video: VideoRow;
+  isMobile: boolean;
+  dragging: boolean;
+  onPlay: () => void;
+  onRename: () => void;
+  onMove: () => void;
+  onDelete: () => void;
+  onDragStart: (e: React.PointerEvent<HTMLElement>) => void;
+  onDragMove: (e: React.PointerEvent<HTMLElement>) => void;
+  onDragEnd: () => void;
+  onDragCancel: () => void;
+}) {
+  const status = STATUS_TAG[v.status];
+  const meta = `${formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
+  return (
+    <div
+      className={dragging ? 'video-row video-row--dragging' : 'video-row'}
+      data-testid="video-item"
+      data-video-id={v.id}
+    >
+      <div
+        className="video-row__handle"
+        role="button"
+        tabIndex={0}
+        aria-label="拖拽移动到文件夹"
+        data-testid="drag-handle"
+        onPointerDown={onDragStart}
+        onPointerMove={onDragMove}
+        onPointerUp={onDragEnd}
+        onPointerCancel={onDragCancel}
+      >
+        <mdui-sym-drag-indicator />
+      </div>
+      <div className="video-row__main">
+        <div className="video-row__name" title={v.name}>
+          {v.name}
+        </div>
+        <div className="video-row__meta" title={meta}>
+          {meta}
+        </div>
+      </div>
+      <div className="video-row__tags">
+        {v.fileDeleted === 1 && <span className="tag-mini">文件已删</span>}
+        <span className={status.variant ? `tag-mini tag-mini--${status.variant}` : 'tag-mini'}>
+          {status.text}
+        </span>
+      </div>
+      <div className="video-row__actions">
+        <mdui-button data-testid="btn-play" variant="filled" onClick={onPlay}>
+          <mdui-sym-play-circle slot="icon" />
+          学习
+        </mdui-button>
+        {isMobile ? (
+          <mdui-dropdown>
+            <mdui-button-icon slot="trigger" data-testid="btn-more" aria-label="更多操作">
+              <mdui-sym-more-vert />
+            </mdui-button-icon>
+            <mdui-menu>
+              <mdui-menu-item data-testid="menu-rename" onClick={onRename}>
+                <mdui-sym-edit slot="icon" />
+                重命名
+              </mdui-menu-item>
+              <mdui-menu-item data-testid="menu-move" onClick={onMove}>
+                <mdui-sym-folder-open slot="icon" />
+                移动到文件夹
+              </mdui-menu-item>
+              <mdui-menu-item data-testid="menu-delete" onClick={onDelete}>
+                <mdui-sym-delete slot="icon" />
+                {v.fileDeleted ? '彻底删除记录' : '删除视频文件'}
+              </mdui-menu-item>
+            </mdui-menu>
+          </mdui-dropdown>
+        ) : (
+          <>
+            <mdui-button-icon data-testid="btn-rename" aria-label="重命名" onClick={onRename}>
+              <mdui-sym-edit />
+            </mdui-button-icon>
+            <mdui-button-icon data-testid="btn-move" aria-label="移动到文件夹" onClick={onMove}>
+              <mdui-sym-folder-open />
+            </mdui-button-icon>
+            <mdui-button-icon data-testid="btn-delete" aria-label="删除" onClick={onDelete}>
+              <mdui-sym-delete />
+            </mdui-button-icon>
+          </>
+        )}
+      </div>
     </div>
   );
 }

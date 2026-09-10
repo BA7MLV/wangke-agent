@@ -1,0 +1,40 @@
+/* 阶段 3：字幕 / 弹幕面板与共用件（PersistentError / ModelPicker）的样式。
+   颜色一律走 MD3 令牌（rgb(var(--mdui-color-*))），深色模式自动成立；
+   不再写死 #888 / #999 / #1677ff / #e6f4ff 这类内联色。 */
+
+/* ── 工具条里的模型切换（图标触发 + 点击弹出菜单，替 mdui-select 内联展示） ── */
+/* 菜单项：模型 id 省略号 + 静态语义标记（多模态 / 可思考）。
+   标记用 .tag-mini（layout.css 已定义），不引 mdui-chip 的可交互语义。 */
+.model-picker__opt {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.model-picker__check {
+  flex: none;
+  font-size: 18px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.model-picker__id {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── PersistentError：失败详情常驻条 ─────────────────────────────────── */
+/* 报错文本可能很长，折叠层保留可滚动 + 保留空白（原 antd Typography 的
+   whiteSpace:'pre-wrap' + 滚动），免得把面板撑爆。复制原文走 alertDialog，
+   这里再给一条常驻条，关掉前不消失（替 antd Alert closable）。 */
+.persistent-error__desc {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 240px;
+  overflow: auto;
+}
