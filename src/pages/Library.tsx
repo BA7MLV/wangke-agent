@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { App, Alert, Button, Dropdown, Empty, Input, List, Modal, Popconfirm, Progress, Radio, Tag, Upload } from 'antd';
+import { App, Alert, Button, Dropdown, Empty, Input, List, Modal, Popconfirm, Progress, Radio, Tag, Upload, Typography } from 'antd';
 import {
   DeleteOutlined,
   DownOutlined,
@@ -24,6 +24,7 @@ import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
 import { importBiliVideo } from '../bilibili';
 import { getSettings } from '../store/settings';
+import { formatCaughtError } from '../utils/errorText';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -173,6 +174,7 @@ export default function Library() {
   const [biliUrl, setBiliUrl] = useState('');
   const [biliImporting, setBiliImporting] = useState(false);
   const [biliProgress, setBiliProgress] = useState(0);
+  const [biliError, setBiliError] = useState<string | null>(null);
 
   const reload = async () => {
     const [rows, folderRows] = await Promise.all([
@@ -251,13 +253,22 @@ export default function Library() {
       message.success(`已导入《${file.name}》`);
       await reload();
     } catch (e) {
-      const text = e instanceof Error ? e.message : String(e);
+      const text = formatCaughtError(e);
       patchTask(key, { status: 'error', error: text });
-      message.error(`导入《${file.name}》失败：${text}`);
+      modal.error({
+        title: `导入《${file.name}》失败`,
+        width: 560,
+        content: (
+          <Typography.Paragraph
+            copyable={{ text }}
+            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
+          >
+            {text}
+          </Typography.Paragraph>
+        ),
+      });
     } finally {
       await releaseWakeLock();
-      // 结果保留几秒后从队列列表移除
-      setTimeout(() => setTasks((prev) => prev.filter((t) => t.key !== key)), 5000);
     }
   };
 
@@ -281,6 +292,7 @@ export default function Library() {
     }
     setBiliImporting(true);
     setBiliProgress(0);
+    setBiliError(null);
     try {
       const file = await importBiliVideo(raw, { proxy: bilibiliProxy, cookie: bilibiliCookie }, (r) =>
         setBiliProgress(Math.round(r * 100)),
@@ -290,8 +302,20 @@ export default function Library() {
       message.success(`已解析《${file.name}》，开始写入本地存储`);
       enqueue(file);
     } catch (e) {
-      const text = e instanceof Error ? e.message : String(e);
-      message.error(`B 站导入失败：${text}`);
+      const text = formatCaughtError(e);
+      setBiliError(text);
+      modal.error({
+        title: 'B 站导入失败',
+        width: 560,
+        content: (
+          <Typography.Paragraph
+            copyable={{ text }}
+            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
+          >
+            {text}
+          </Typography.Paragraph>
+        ),
+      });
     } finally {
       setBiliImporting(false);
       setBiliProgress(0);
@@ -684,7 +708,13 @@ export default function Library() {
       <div className="page-header">
         <div className="title">网课学习助手</div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <Button icon={<LinkOutlined />} onClick={() => setBiliOpen(true)}>
+          <Button
+            icon={<LinkOutlined />}
+            onClick={() => {
+              setBiliError(null);
+              setBiliOpen(true);
+            }}
+          >
             导入 B 站
           </Button>
           <Button icon={<FolderAddOutlined />} onClick={() => openFolderModal('create')}>
@@ -899,6 +929,7 @@ export default function Library() {
           if (!biliImporting) {
             setBiliOpen(false);
             setBiliUrl('');
+            setBiliError(null);
           }
         }}
         destroyOnHidden
@@ -917,6 +948,22 @@ export default function Library() {
           <div style={{ marginTop: 12 }}>
             <Progress percent={biliProgress} size="small" />
           </div>
+        )}
+        {biliError && (
+          <Alert
+            type="error"
+            showIcon
+            message="导入失败"
+            description={
+              <Typography.Paragraph
+                copyable={{ text: biliError }}
+                style={{ whiteSpace: 'pre-wrap', userSelect: 'text', marginBottom: 0, maxHeight: 200, overflow: 'auto' }}
+              >
+                {biliError}
+              </Typography.Paragraph>
+            }
+            style={{ marginTop: 12 }}
+          />
         )}
       </Modal>
     </div>

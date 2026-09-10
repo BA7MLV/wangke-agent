@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Alert, App, Button, Popover, Progress, Segmented, Space, Tooltip } from 'antd';
+import { Alert, App, Button, Popover, Progress, Segmented, Space, Tooltip, Typography } from 'antd';
 import { ControlOutlined, DownloadOutlined, FileWordOutlined, SettingOutlined } from '@ant-design/icons';
 import { renderAsync } from 'docx-preview';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
@@ -10,6 +10,8 @@ import { useIsMobile } from '../utils/useMobile';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import HandoutDocView from './HandoutDocView';
+import PersistentError from './PersistentError';
+import { formatCaughtError } from '../utils/errorText';
 
 interface Props {
   videoId: string;
@@ -19,9 +21,10 @@ interface Props {
 type SkillMode = 'auto' | 'pin' | 'drop';
 
 export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [handout, setHandout] = useState<HandoutRow | null>(null);
   const [progress, setProgress] = useState<HandoutProgress | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
   const [skills, setSkills] = useState<SkillMeta[]>([]);
   const [skillModes, setSkillModes] = useState<Record<number, SkillMode>>({});
   const skelRef = useRef<HTMLDivElement>(null);
@@ -120,12 +123,26 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
   }, [handout, fitPreviewScale]);
 
   const start = async () => {
+    setErrorText(null);
     setProgress({ phase: 'frames', done: 0, total: 1, message: '准备中…' });
     try {
       await runHandout(videoId, setProgress);
       message.success('讲义生成完成');
     } catch (e) {
-      message.error(`讲义生成失败：${e instanceof Error ? e.message : String(e)}`);
+      const errText = formatCaughtError(e);
+      setErrorText(errText);
+      modal.error({
+        title: '讲义生成失败',
+        width: 560,
+        content: (
+          <Typography.Paragraph
+            copyable={{ text: errText }}
+            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
+          >
+            {errText}
+          </Typography.Paragraph>
+        ),
+      });
     } finally {
       setProgress(null);
       await loadLatest();
@@ -241,6 +258,8 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
           <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
         </div>
       )}
+
+      <PersistentError title="讲义生成失败" text={errorText} onClose={() => setErrorText(null)} />
 
       <div style={{ flex: 1, minHeight: 0, position: 'relative' }}>
         {handout ? (

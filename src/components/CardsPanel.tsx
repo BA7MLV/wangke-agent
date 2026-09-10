@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { App, Button, Progress, Space } from 'antd';
+import { App, Button, Progress, Space, Typography } from 'antd';
 import { DownloadOutlined, IdcardOutlined, UndoOutlined } from '@ant-design/icons';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type CardRow } from '../store/db';
@@ -8,6 +8,8 @@ import { fmtTime } from '../utils/vtt';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import SwipeDeck from './SwipeDeck';
+import PersistentError from './PersistentError';
+import { formatCaughtError } from '../utils/errorText';
 import '../cards.css';
 
 interface Props {
@@ -33,6 +35,7 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
   const [history, setHistory] = useState<number[]>([]);
   const [progress, setProgress] = useState<CardsProgress | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [errorText, setErrorText] = useState<string | null>(null);
 
   const reload = useCallback(async () => {
     const rs = await db.cards.where('videoId').equals(videoId).sortBy('time');
@@ -70,12 +73,26 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
   }, []);
 
   const doGenerate = async () => {
+    setErrorText(null);
     setProgress({ done: 0, total: 1, message: '准备中…' });
     try {
       const count = await runCards(videoId, setProgress);
       message.success(count > 0 ? `制卡完成，共 ${count} 张候选卡，滑动审核吧` : '生成完成：这段课程没有挖出合适的卡片');
     } catch (e) {
-      message.error(`制卡失败：${e instanceof Error ? e.message : String(e)}`);
+      const errText = formatCaughtError(e);
+      setErrorText(errText);
+      modal.error({
+        title: '制卡失败',
+        width: 560,
+        content: (
+          <Typography.Paragraph
+            copyable={{ text: errText }}
+            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
+          >
+            {errText}
+          </Typography.Paragraph>
+        ),
+      });
     } finally {
       setProgress(null);
       await reload();
@@ -158,6 +175,8 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
           <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
         </div>
       )}
+
+      <PersistentError title="制卡失败" text={errorText} onClose={() => setErrorText(null)} />
 
       {!hasSubtitles && rows.length === 0 && !running && (
         <div style={{ color: '#999', padding: 16, textAlign: 'center' }}>

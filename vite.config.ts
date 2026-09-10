@@ -20,6 +20,7 @@ function serveOrt(): Plugin {
         const file = path.join(ortDir, m[1]);
         if (!fs.existsSync(file)) return next();
         res.setHeader('Content-Type', m[1].endsWith('.wasm') ? 'application/wasm' : 'text/javascript');
+        res.setHeader('Cross-Origin-Resource-Policy', 'same-origin');
         fs.createReadStream(file).pipe(res);
       });
     },
@@ -49,7 +50,10 @@ export default defineConfig({
       workbox: {
         // ffmpeg.wasm / onnxruntime 的 wasm 文件较大
         maximumFileSizeToCacheInBytes: 48 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,wasm}'],
+        // 不预缓存 html：否则 SW 回放时会丢掉 Cloudflare 下发的 COOP/COEP，VAD wasm 无法用 SharedArrayBuffer
+        globPatterns: ['**/*.{js,css,svg,wasm}'],
+        navigateFallback: undefined,
+        cleanupOutdatedCaches: true,
         runtimeCaching: [
           {
             // 讲义预览的朱雀仿宋分包字体：按需下载后长期缓存（离线可用）
@@ -64,9 +68,28 @@ export default defineConfig({
       },
     }),
   ],
-  server: { host: true },
-  preview: { host: true },
+  resolve: {
+    alias: {
+      // 默认 ort.bundle 会去拉 jsep wasm（超 Cloudflare Pages 25MiB）；wasm 构建对应 public/ort 已部署文件
+      'onnxruntime-web': path.resolve(__dirname, 'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs'),
+    },
+  },
+  server: {
+    host: true,
+    port: 5173,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
+  preview: {
+    host: true,
+    headers: {
+      'Cross-Origin-Opener-Policy': 'same-origin',
+      'Cross-Origin-Embedder-Policy': 'require-corp',
+    },
+  },
   // sql.js 供 .apkg 导出用：预打包避免首次导出时 dev 服务器中途重优化依赖导致整页刷新
-  optimizeDeps: { include: ['sql.js'] },
+  optimizeDeps: { include: ['sql.js', 'onnxruntime-web'] },
   build: { target: 'es2020', chunkSizeWarningLimit: 2000 },
 });

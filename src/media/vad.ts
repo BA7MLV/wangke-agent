@@ -1,4 +1,5 @@
 import { NonRealTimeVAD } from '@ricky0123/vad-web';
+import { configureOrt } from './ortConfig';
 
 let vadPromise: Promise<NonRealTimeVAD> | null = null;
 
@@ -7,12 +8,14 @@ export function getVAD(): Promise<NonRealTimeVAD> {
     vadPromise = NonRealTimeVAD.new({
       modelURL: '/vad/silero_vad_legacy.onnx',
       ortConfig: (ort) => {
-        // 自托管 wasm（public/ort/，dev 由 vite 中间件直发，prod 原样拷贝）
-        ort.env.wasm.wasmPaths = '/ort/';
+        configureOrt(ort);
       },
       minSpeechMs: 200,
       // 默认 redemptionMs 偏大，800ms 停顿都不会切段；调小以获得更细的字幕粒度
       redemptionMs: 300,
+    }).catch((e) => {
+      vadPromise = null;
+      throw e;
     });
   }
   return vadPromise;

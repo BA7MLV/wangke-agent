@@ -1,13 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { App, Button, Progress, Space } from 'antd';
+import { App, Button, Progress, Space, Typography } from 'antd';
 import { AudioOutlined, DownloadOutlined } from '@ant-design/icons';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type SegmentRow } from '../store/db';
 import { runTranscription, type TranscribeProgress } from '../pipelines/transcribe';
 import { fmtTime, toSRT, toVTT, type Cue } from '../utils/vtt';
 import { splitIntoCues } from '../utils/cues';
+import { formatCaughtError } from '../utils/errorText';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
+import PersistentError from './PersistentError';
 
 interface Props {
   videoId: string;
@@ -27,9 +29,10 @@ function download(filename: string, content: string, type: string) {
 }
 
 export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegmentsChange }: Props) {
-  const { message } = App.useApp();
+  const { message, modal } = App.useApp();
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [progress, setProgress] = useState<TranscribeProgress | null>(null);
+  const [errorText, setErrorText] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
 
   const reload = useCallback(async () => {
@@ -57,12 +60,26 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   }, [cues, onSegmentsChange]);
 
   const start = async () => {
+    setErrorText(null);
     setProgress({ phase: 'extract', done: 0, total: 1, message: '准备中…' });
     try {
       await runTranscription(videoId, setProgress);
       message.success('字幕生成完成');
     } catch (e) {
-      message.error(`转写失败：${e instanceof Error ? e.message : String(e)}`);
+      const errText = formatCaughtError(e);
+      setErrorText(errText);
+      modal.error({
+        title: '转写失败',
+        width: 560,
+        content: (
+          <Typography.Paragraph
+            copyable={{ text: errText }}
+            style={{ whiteSpace: 'pre-wrap', userSelect: 'text', maxHeight: 320, overflow: 'auto' }}
+          >
+            {errText}
+          </Typography.Paragraph>
+        ),
+      });
     } finally {
       setProgress(null);
       await reload();
@@ -119,6 +136,8 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
           <TextSwap text={progress.message} style={{ fontSize: 12, color: '#888' }} />
         </div>
       )}
+
+      <PersistentError title="转写失败" text={errorText} onClose={() => setErrorText(null)} />
 
       <div ref={listRef} style={{ flex: 1, overflow: 'auto' }}>
         {segments.length === 0 && !running && (
