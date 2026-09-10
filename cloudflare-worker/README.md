@@ -1,6 +1,8 @@
 # 哔哩哔哩导入代理（Cloudflare Worker）
 
-这个 Worker 是**网课学习助手**导入 B 站视频的必要组件，作用是把浏览器对 B 站的请求转发出去，从而绕过：
+这个 Worker 是导入 B 站视频的**可选回退**。桌面浏览器请优先用油猴脚本（设置页「安装脚本」），从本机直连，不经过 Cloudflare。Worker 出口 IP 常被 B 站拒绝。
+
+若仍要用 Worker，作用是把浏览器对 B 站的请求转发出去，从而绕过：
 
 1. **CORS 限制**：`api.bilibili.com` / `bilivideo.com` 不允许浏览器跨域直连；
 2. **防盗链**：B 站 CDN 会校验 `Referer`，必须伪装成来自 `https://www.bilibili.com`。

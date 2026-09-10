@@ -5,7 +5,7 @@
 ## 功能
 
 - **库与文件夹**：首页视频按文件夹分组管理（新建/重命名/删除/折叠持久化，视频可移动归类，删文件夹视频回到未分类）
-- **B 站导入**：支持粘贴 B 站视频链接 / BV 号 / b23.tv 短链直接导入。经自建 Cloudflare Worker 代理绕过 CORS 与防盗链，用 mediabunny 在浏览器端把 DASH 音视频流重封装为 mp4（不重新编码、不丢画质），导入后与本地视频完全同权（字幕/讲义/问答/弹幕/Anki 全支持）。清晰度：未登录 360P，粘贴自己账号 Cookie 可解锁更高清晰度（仅取决于账号权限，不破解任何限制）
+- **B 站导入**：支持粘贴 B 站视频链接 / BV 号 / b23.tv 短链直接导入。优先走油猴脚本（Tampermonkey，`userscript/wangke-bili-bridge.user.js`）从本机直连 B 站 API/CDN（带 Referer、绕 CORS，不经过 Cloudflare）；没有脚本时才回退到自建代理。浏览器端用 mediabunny 把 DASH 音视频流重封装为 mp4（不重新编码、不丢画质），导入后与本地视频完全同权。清晰度：未登录 360P，粘贴自己账号 Cookie 可解锁更高清晰度（仅取决于账号权限，不破解任何限制）。iPad / 手机 PWA 无油猴，请改用本地文件导入
 - **字幕**：本地抽取音频 → VAD 分段 → 硅基流动 ASR 并发转写（断点续做，**转写中边转边显**——每完成一段即时出现在字幕列表与画面字幕上，全程可播放），播放器内字幕轨 + 字幕列表点击跳转，可导出 VTT/SRT；播放进度自动记忆，重开视频断点续播；控制栏倍速快捷键（1/1.5/2/3x，窄屏折叠为循环按钮）、双击画面两侧 ±10s（涟漪反馈，连击累加）、字幕字号四档可调（持久化）
 - **讲义**：自动抽帧 → 视觉模型筛选教学画面 → 生成公文格式讲义（封面/目录/页眉、A4 公文版式、仿宋正文黑体章节、单双页码、三线表、插图带章节号图注），DOCX 下载 + 网页预览。内容层为结构化 IR：模型输出块级 JSON（主旨段/小节/列表/表格/配图/提示），排版样式由渲染器按样式表统一生成，编号全自动。插图双轨抽帧：VL 识图用 640px 低清（省 token），实际进文档的图按原视频 1600px/q0.92 定点重抽。**块级编辑**：讲义预览为结构化 IR 渲染，文字块（含概述/节标题/小节/列表/表格文字）支持左滑（移动端）或悬停（桌面）露出「AI 改写 / 编辑」——AI 改写提供预设指令（更精简/更详细/更口语化/换个说法）+ 自由输入，先预览再接受；手动编辑原地修改列表可增删条目、表格弹窗改文字；修改后从 IR 实时重建 DOCX 落盘（图片优先 1600px 高清重抽，视频不在则用 640px 抽帧兜底）。网页预览经 @font-face 名字对齐还原文档公文字体：local() 优先命中各平台系统仿宋/楷体/黑体/宋体（含 PostScript 名变体），无公文字体的设备按需下载开源朱雀仿宋 woff2 分包（OFL，unicode-range 按真实 cmap 重算，SW CacheFirst 缓存）
 - **写作技能（Skills）**：Agent Skills 规范（SKILL.md + references/），渐进式披露——讲义生成前由 LLM 路由按课程内容自动选用（讲义面板可按视频手动覆盖），问答 agent 通过 `use_skill` / `read_skill_reference` 工具按需加载正文与参考文档；设置页可导入 .md 单文件或 zip 包，内置 6 个技能（公文讲义写作/公文版式规格/数学/编程/公考行测/公考申论，含 references）
@@ -50,7 +50,7 @@ React 18 + Vite + TypeScript + Ant Design 6 / @ant-design/x · @ant-design/x-mar
 src/
   api/siliconflow.ts   # OpenAI 兼容客户端（SSE 流式 + tool_calls）
   api/modelMeta.ts     # models.dev 模型能力元数据（拉取/缓存/TTL），modelCaps.ts 查询入口
-  bilibili/            # B 站导入：parse.ts(链接/BV/短链解析) api.ts(接口封装经代理) remux.ts(mediabunny 重封装 m4s→mp4) index.ts(编排产出 File)
+  bilibili/            # B 站导入：parse.ts api.ts remux.ts transport.ts(油猴桥优先/代理回退) index.ts
   harness/             # agent 层：agent.ts(循环) tools.ts prompts.ts search.ts(向量检索) quiz.ts(题卡校验) ankiCard.ts(卡片清洗/去重)
   pipelines/           # 流水线：transcribe.ts handout.ts handoutEdit.ts(块级 AI 改写/手动编辑落盘) embedIndex.ts danmaku.ts(思考题弹幕) cards.ts(Anki 制卡)（重试/并发池/断点续做）
   media/               # audio.ts(抽音频) vad.ts frames.ts(抽帧) wav.ts
@@ -61,7 +61,8 @@ src/
   pages/               # Library / Player / Settings
   store/               # db.ts(Dexie schema) settings.ts(zustand persist) fileStore.ts(视频文件 OPFS 存储) storageStats.ts(占用统计)
 scripts/               # playwright e2e（真实 API）：e2e-import / e2e-smoke / e2e-handout / e2e-chat / e2e-chat-image / e2e-chat-frames / e2e-chat-mermaid
-cloudflare-worker/     # B 站导入代理：bili-proxy.js + README（部署说明）
+cloudflare-worker/     # B 站导入代理（油猴不可用时的回退）：bili-proxy.js + README
+userscript/            # 油猴桥：wangke-bili-bridge.user.js（挂在助手页，GM 直连 B 站）
 ```
 
 ## 测试
@@ -70,6 +71,7 @@ cloudflare-worker/     # B 站导入代理：bili-proxy.js + README（部署说�
 # B 站导入（无需 API key / 无需起服务，Node 直接跑）
 node scripts/test-bilibili-parse.mjs     # 链接/BV/短链解析
 node scripts/test-bilibili-api.mjs       # 接口封装（假 fetch）
+node scripts/test-bilibili-transport.mjs # 油猴桥优先 / 代理回退
 node scripts/test-bilibili-index.mjs     # 文件名清洗
 
 # 讲义单元级（无需 API key / 无需起服务，Node 直接跑）

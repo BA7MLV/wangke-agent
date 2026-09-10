@@ -1,6 +1,7 @@
 // B 站视频导入编排：链接 → 解析 → 拉流 → 重封装 → 产出 File（走 Library 现有导入链）。
 //
 // 用法：const file = await importBiliVideo(rawInput, { proxy, cookie }, onProgress)
+// 出口优先油猴桥（window.__wangkeBiliBridge），否则走 proxy。
 // 返回一个普通 File（mp4），后续完全复用本地文件导入路径（probeDuration/saveVideoFile/db）。
 
 import { fetchPlayStreams, fetchVideoInfo, resolveShortUrl, type BiliApiOptions } from './api';

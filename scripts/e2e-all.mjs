@@ -43,6 +43,7 @@ const META = {
   'test-bilibili-api': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-index': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-parse': { service: 'none', antd: false, timeout: 120 },
+  'test-bilibili-transport': { service: 'none', antd: false, timeout: 120 },
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },

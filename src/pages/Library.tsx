@@ -10,6 +10,7 @@ import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
 import { importBiliVideo } from '../bilibili';
 import { getSettings } from '../store/settings';
+import { describeTransport, isBiliBridgeAvailable } from '../bilibili/transport';
 import { isJobActive, useJobStore, useTranscribeJob } from '../store/jobs';
 import { cancelTranscription } from '../pipelines/transcribeQueue';
 import { formatCaughtError } from '../utils/errorText';
@@ -286,8 +287,8 @@ export default function Library() {
   /** 哔哩哔哩导入：先经代理下载+重封装成 File，再走现有本地导入链 */
   const handleBiliImport = async () => {
     const { bilibiliProxy, bilibiliCookie } = getSettings();
-    if (!bilibiliProxy) {
-      toast.warning('请先在「设置」页填写哔哩哔哩代理地址');
+    if (describeTransport({ proxy: bilibiliProxy }).kind === 'none') {
+      toast.warning('请先安装油猴脚本（设置页「安装脚本」），或填写代理地址');
       return;
     }
     const raw = biliUrl.trim();
@@ -921,7 +922,9 @@ export default function Library() {
           onInput={(e) => setBiliUrl((e.target as HTMLElement & { value: string }).value)}
         />
         <div className="text-secondary" style={{ marginTop: 8, fontSize: 12 }}>
-          需先在「设置」页配置自建代理地址；未登录只能导入 360P，登录 Cookie 可解锁更高清晰度。
+          {isBiliBridgeAvailable()
+            ? '已连接油猴桥，将从本机直连 B 站。未登录约 360P，设置里贴 SESSDATA 可解锁更高清晰度。'
+            : '推荐先在「设置」安装油猴脚本（桌面浏览器）；没有脚本则需填写代理。未登录约 360P。'}
         </div>
         {biliImporting && (
           <div style={{ marginTop: 12 }}>

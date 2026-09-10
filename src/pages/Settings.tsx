@@ -12,6 +12,7 @@ import StorageCard from '../components/StorageCard';
 import MigrationCard from '../components/MigrationCard';
 import { Field, PageShell, SectionCard, confirmDialog, toast, useMduiEvent } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { describeTransport, isBiliBridgeAvailable } from '../bilibili/transport';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 const EMBED_MODEL_RE = /embed|bge|gte/i;
@@ -183,6 +184,7 @@ export default function Settings() {
   const embedConfirmRef = useRef(false);
   /** 自定义倍速的输入草稿（null = 输入框为空，「添加」按钮置灰） */
   const [rateDraft, setRateDraft] = useState<number | null>(null);
+  const [bridgeTick, setBridgeTick] = useState(0);
 
   // 已提交值外部变化（确认写回 / 面板 ModelPicker 切换）时同步草稿
   useEffect(() => {
@@ -206,6 +208,11 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
+  }, []);
+
+  useEffect(() => {
+    const t = window.setInterval(() => setBridgeTick((n) => n + 1), 1500);
+    return () => window.clearInterval(t);
   }, []);
 
   /** 手动刷新：更新缓存并把当前文本模型的上下文窗口回填为最新元数据（仍可手改） */
@@ -589,8 +596,28 @@ export default function Settings() {
 
       <SectionCard title="哔哩哔哩导入" testId="card-bilibili">
         <Field
-          label="代理地址"
-          hint="自建 Cloudflare Worker 地址，用于绕过 B 站 CORS 与防盗链。留空则无法导入 B 站视频"
+          label="油猴桥（推荐）"
+          hint={describeTransport({ proxy: settings.bilibiliProxy }).hint}
+          testId="field-bili-bridge"
+        >
+          <div className="row row--nowrap" data-bridge-tick={bridgeTick} data-testid="bili-bridge-status">
+            <span className="text-secondary" style={{ flex: 1 }}>
+              {isBiliBridgeAvailable()
+                ? '已连接，导入将从本机直连 B 站'
+                : '未检测到脚本。桌面 Chrome / Edge / Firefox 安装 Tampermonkey 后点右侧按钮'}
+            </span>
+            <mdui-button
+              variant="tonal"
+              data-testid="bili-bridge-install"
+              onClick={() => window.open('/wangke-bili-bridge.user.js', '_blank')}
+            >
+              安装脚本
+            </mdui-button>
+          </div>
+        </Field>
+        <Field
+          label="代理地址（可选回退）"
+          hint="油猴不可用时才走这里。Cloudflare Worker 常被 B 站拒 IP，可不填"
           testId="field-bili-proxy"
         >
           <mdui-text-field
