@@ -11,6 +11,7 @@ import { useSettings } from '../store/settings';
 import type { Cue } from '../utils/vtt';
 import { useIsMobile, useIsPhoneLandscape } from '../utils/useMobile';
 import { PageShell, EmptyState, useDynamicColor, useMduiEvent, toast } from '../ui';
+import { useAppNav } from '../components/appNav';
 import SubtitlePanel from '../components/SubtitlePanel';
 import HandoutPanel from '../components/HandoutPanel';
 import ChatPanel from '../components/ChatPanel';
@@ -62,6 +63,8 @@ const PANEL_TABS: { key: PanelKey; label: string; icon: ReactNode; activeIcon: R
 export default function Player() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
+  // 播放页是课程库的下级页面：宽屏 rail 里高亮「课程库」（底部导航的位置让给面板切换）
+  const nav = useAppNav('home');
   const [video, setVideo] = useState<VideoRow | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
   // 记录存在但视频文件本体已删：进入无文件模式，字幕/讲义/问答仍可用
@@ -326,6 +329,7 @@ export default function Player() {
       fill
       rootRef={colorSchemeRef}
       rootClassName="page-player"
+      rail={nav.rail}
       bottomNav={
         useBottomNav
           ? {

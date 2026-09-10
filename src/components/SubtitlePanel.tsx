@@ -2,14 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { liveQuery } from 'dexie';
 import { db, type SegmentRow } from '../store/db';
-import { runTranscription, type TranscribeProgress } from '../pipelines/transcribe';
+import { isJobActive, useJobStore, useTranscribeJob } from '../store/jobs';
+import { cancelTranscription, startTranscription } from '../pipelines/transcribeQueue';
+import { formatCaughtError } from '../utils/errorText';
 import { fmtTime, toSRT, toVTT, type Cue } from '../utils/vtt';
 import { splitIntoCues, cueKey } from '../utils/cues';
-import { formatCaughtError } from '../utils/errorText';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
-import { Panel, PanelBar, PanelBody, PanelProgress, PanelPlaceholder, CueRow, toast, alertDialog } from '../ui';
+import { Panel, PanelBar, PanelBody, PanelProgress, PanelPlaceholder, CueRow } from '../ui';
 import './subtitle-danmaku.css';
 
 interface Props {
@@ -33,9 +34,13 @@ function download(filename: string, content: string, type: string) {
 
 export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegmentsChange, onRunningChange }: Props) {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
-  const [progress, setProgress] = useState<TranscribeProgress | null>(null);
-  const [errorText, setErrorText] = useState<string | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+
+  // 转写任务在全局队列里跑（可能是在别的视频上启动的、也可能是刷新后续跑的），
+  // 这里只订阅自己这个视频的那一份：切走再回来进度还在，重复点也不会起第二份。
+  const job = useTranscribeJob(videoId);
+  const running = isJobActive(job);
 
   // 转写进行中：每完成一段上游都会写库，这里用 liveQuery 增量跟进，不再等到最后 reload
   useEffect(() => {
@@ -43,7 +48,7 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
       (await db.segments.where('videoId').equals(videoId).sortBy('idx')).filter((r) => r.status === 1 && !!r.text),
     ).subscribe({
       next: setSegments,
-      error: (e) => setErrorText(formatCaughtError(e)),
+      error: (e) => setLoadError(formatCaughtError(e)),
     });
     return () => sub.unsubscribe();
   }, [videoId]);
@@ -76,27 +81,11 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
     onSegmentsChange(cues);
   }, [cues, onSegmentsChange]);
 
-  const running = progress !== null;
   useEffect(() => {
     onRunningChange?.(running);
   }, [running, onRunningChange]);
 
-  const start = async () => {
-    setErrorText(null);
-    setProgress({ phase: 'extract', done: 0, total: 1, message: '准备中…' });
-    try {
-      await runTranscription(videoId, setProgress);
-      toast.success('字幕生成完成');
-    } catch (e) {
-      const errText = formatCaughtError(e);
-      setErrorText(errText);
-      // 弹窗只给「知道了」+ 一键复制原文；完整报错文本会被折叠空白（主 agent 已确认取舍）
-      void alertDialog({ headline: '转写失败', description: errText, copyText: errText });
-    } finally {
-      // 已完成段由 liveQuery 自动跟进，这里无需再 reload
-      setProgress(null);
-    }
-  };
+  const start = () => startTranscription(videoId);
 
   const activeIdx = cues.findIndex((c) => currentTime >= c.start && currentTime < c.end);
 
@@ -108,11 +97,13 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   }, [activeIdx]);
 
   const pct =
-    progress?.phase === 'asr'
-      ? Math.round((progress.done / Math.max(1, progress.total)) * 100)
-      : progress?.phase === 'extract'
-        ? Math.round(progress.done * 100)
-        : undefined;
+    job?.phase === 'asr'
+      ? Math.round((job.done / Math.max(1, job.total)) * 100)
+      : job?.phase === 'extract'
+        ? Math.round(job.done * 100)
+        : undefined; // 排队 / VAD：没有确定比例，走不确定态
+
+  const errorText = job?.phase === 'error' ? (job.error ?? job.message) : loadError;
 
   return (
     <Panel testId="panel-subs">
@@ -121,6 +112,12 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
           <mdui-sym-graphic-eq slot="icon" />
           {running ? '转写中…' : segments.length > 0 ? '重新生成字幕' : '生成字幕'}
         </mdui-button>
+        {running && (
+          <mdui-button variant="outlined" data-testid="subs-cancel" onClick={() => cancelTranscription(videoId)}>
+            <mdui-sym-close slot="icon" />
+            取消
+          </mdui-button>
+        )}
         {segments.length > 0 && (
           <>
             <mdui-button variant="outlined" data-testid="subs-download-vtt" onClick={() => download('subtitles.vtt', toVTT(cues), 'text/vtt')}>
@@ -136,19 +133,27 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
         <ModelPicker slot="asr" field="asrModel" />
       </PanelBar>
 
-      {running && progress && (
+      {running && job && (
         <PanelProgress
           testId="subs-progress"
           percent={pct}
           text={
             <TextSwap
-              text={`${progress.message}${progress.phase === 'asr' && cues.length > 0 ? ` · 已可看 ${cues.length} 条` : ''}`}
+              text={`${job.message}${job.phase === 'asr' && cues.length > 0 ? ` · 已可看 ${cues.length} 条` : ''}`}
             />
           }
         />
       )}
 
-      <PersistentError title="转写失败" text={errorText} onClose={() => setErrorText(null)} />
+      <PersistentError
+        title="转写失败"
+        text={errorText}
+        onClose={() => {
+          setLoadError(null);
+          // 转写失败的报错存在 job 里（切页面也要能看到），关掉就得把 job 一起清掉
+          if (job?.phase === 'error') useJobStore.getState().drop(videoId);
+        }}
+      />
 
       <PanelBody bodyRef={listRef} testId="subs-list">
         {segments.length === 0 && !running && (

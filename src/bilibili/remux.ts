@@ -21,6 +21,9 @@ import {
   Output,
   StreamTarget,
 } from 'mediabunny';
+import { biliRequest, buildProxiedUrl } from './transport';
+
+export { buildProxiedUrl };
 
 export interface RemuxProgress {
   /** 0..1，下载阶段与封装阶段的合并进度（下载占 0.85，封装占 0.15） */
@@ -41,27 +44,19 @@ export interface DownloadJob {
   weight: number;
 }
 
-/** 把代理地址 + 目标地址拼成最终请求 URL（与 api.ts 同协议，抽出来便于单测） */
-export function buildProxiedUrl(proxy: string, target: string): string {
-  const sep = proxy.includes('?') ? '&' : '?';
-  return `${proxy}${sep}url=${encodeURIComponent(target)}`;
-}
-
 /**
- * 经代理下载一路流到 Blob（流式读，报进度）。
- * B 站 CDN 必须带 Referer 头，由代理转发时注入；浏览器端无需也不能自设 Referer。
+ * 经油猴桥或代理下载一路流到 Blob（流式读，报进度）。
+ * B 站 CDN 必须带 Referer：油猴脚本会注入；代理则由 Worker 转发时注入。
  */
 async function downloadTrack(
-  proxy: string,
+  proxy: string | undefined,
   cookie: string | undefined,
   url: string,
   onBytes: (done: number, total: number) => void,
 ): Promise<Blob> {
-  const headers: Record<string, string> = {};
-  if (cookie) headers['X-Bili-Cookie'] = cookie;
-  const resp = await fetch(buildProxiedUrl(proxy, url), { headers });
+  const resp = await biliRequest({ proxy, cookie }, url);
   if (!resp.ok || !resp.body) {
-    throw new Error(`下载视频流失败 HTTP ${resp.status}（防盗链或代理未透传 Referer）`);
+    throw new Error(`下载视频流失败 HTTP ${resp.status}（防盗链或未注入 Referer）`);
   }
   const total = Number(resp.headers.get('content-length') ?? 0);
   const reader = resp.body.getReader();
@@ -131,7 +126,7 @@ async function pipeTrack(
 }
 
 export interface RemuxOptions {
-  proxy: string;
+  proxy?: string;
   cookie?: string;
   videoUrl: string;
   audioUrl: string | null;

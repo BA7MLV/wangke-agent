@@ -122,8 +122,10 @@ await navPage.goto(`${BASE}/`, { waitUntil: 'networkidle' });
 await navPage.waitForTimeout(1200);
 const navPairs = await navPage.evaluate(() =>
   [...document.querySelectorAll('mdui-navigation-bar-item')].map((item) => {
+    // 图标名不写死（导航项换图标不该改这里），只要求是 Material Symbols 自定义元素
     const pick = (slot) => {
-      const el = item.querySelector(`[slot="${slot}"] mdui-sym-home, [slot="${slot}"] mdui-sym-settings`);
+      const span = item.querySelector(`[slot="${slot}"]`);
+      const el = span && [...span.children].find((c) => c.tagName.toLowerCase().startsWith('mdui-sym-'));
       return el?.shadowRoot?.querySelector('path')?.getAttribute('d') ?? null;
     };
     return { label: item.innerText.trim(), active: item.hasAttribute('active'), icon: pick('icon'), activeIcon: pick('active-icon') };

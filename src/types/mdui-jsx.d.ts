@@ -3416,6 +3416,7 @@ declare module 'react' {
       'mdui-sym-tune': MduiSymbolProps;
       'mdui-sym-undo': MduiSymbolProps;
       'mdui-sym-upload': MduiSymbolProps;
+      'mdui-sym-video-library': MduiSymbolProps;
       'mdui-sym-visibility': MduiSymbolProps;
       'mdui-sym-warning': MduiSymbolProps;
       'mdui-sym-zoom-in': MduiSymbolProps;

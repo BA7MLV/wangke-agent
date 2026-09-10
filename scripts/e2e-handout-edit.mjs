@@ -181,7 +181,9 @@ async function openHandoutTab(page, videoId, mobile = false) {
     await editInput.waitFor({ timeout: 5000 });
     await editInput.fill('极限刻画的是函数值无限接近某个确定值的趋势。');
     await page.click('[data-testid="handout-edit-save"]');
-    await page.waitForSelector('text=极限刻画的是函数值无限接近', { timeout: 5000 });
+    // 保存后 mdui-dialog 先播关闭动画、再由后台重建 DOCX：全量跑时机器忙，5s 会超时 —— 两段都放宽
+    await page.waitForSelector('[data-testid="handout-edit-dialog"][open]', { state: 'detached', timeout: 10000 }).catch(() => {});
+    await page.waitForSelector('text=极限刻画的是函数值无限接近', { timeout: 15000 });
     // 等待落盘（后台重建 DOCX）
     let row = null;
     for (let i = 0; i < 20; i++) {

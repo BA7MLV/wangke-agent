@@ -24,6 +24,8 @@ export {
   type FieldProps,
   type EmptyStateProps,
   type BannerProps,
+  type NavItem,
+  type NavConfig,
 } from './layout';
 export {
   Panel,

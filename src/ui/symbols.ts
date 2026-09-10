@@ -63,6 +63,7 @@ export const SYMBOL_NAMES = [
   'tune',
   'undo',
   'upload',
+  'video_library',
   'visibility',
   'warning',
   'zoom_in',

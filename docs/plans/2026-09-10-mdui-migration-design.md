@@ -732,3 +732,67 @@ React StrictMode 在 **dev** 下会把 `useEffect` 触发两次 → 两次并发
 即 JS +38KB（21 个图标的描边/实心两套路径数据占大头）；
 另有 4 个 Roboto 字体文件（woff2 + woff 各两个字重）约 86KB 进预缓存。
 两处都是「换来 MD3 图标双态与 Roboto 拉丁字形」的明码标价 —— 阶段 5 去掉 antd 后会大幅回落。
+
+---
+
+## 十三、阶段 3 实施记录：Player 与五个面板全部换成 MD3；antd 退场（2026-09-10，已完成）
+
+### 13.1 交付物
+
+| 文件 | 说明 |
+| --- | --- |
+| `src/pages/Player.tsx` | 整页重写：`PageShell`（TopAppBar + fill 内容区）+ 桌面/横屏 `mdui-tabs`、竖屏底部 `mdui-navigation-bar`；视频窗格、常驻字幕轨、断点续播、动态取色逐行保留 |
+| `src/ui/panel.tsx` + `panel.css` | **新**：五面板共享骨架（`Panel` / `PanelBar` / `PanelBody` / `PanelProgress` / `PanelPlaceholder` / `PanelSpinner` / `CueRow`），颜色全部令牌化 |
+| `src/components/SubtitlePanel.tsx` 等 11 个 | 五个面板 + HandoutDocView + SwipeDeck + QuizCard + MermaidBlock + ModelPicker + PersistentError + CaptionSizeButton 全部去 antd |
+| `src/components/chat-panel.css` 等 3 个 | **新**：chat-panel.css / subtitle-danmaku.css / handout-panel.css |
+| `src/theme.css` | 删除 `.page-header` / `.mobile-tabbar` / `.panel-column` / `.ant-app` 等被取代的规则；播放页布局接进 PageShell 的 fill 模式 |
+| `src/main.tsx` | **antd 外壳整体移除**（ConfigProvider / App / darkAlgorithm 同步层全部不再需要） |
+| `package.json` | **卸载 `antd` / `@ant-design/x` / `@ant-design/icons`**（`@ant-design/x-markdown` 保留，peer 仅 react） |
+| `scripts/e2e-*`（18 个） | 面板切换 / 气泡 / 输入区 / 弹窗 / toast 的定位全部换成 testid 契约（见 13.5） |
+
+**迁移至此全部完成**：三页 + 五面板 + 全局骨架都已是 Material You，`src/` 里没有任何 antd / @ant-design（icons / x）引用。设计文档 §5 的「阶段 4 ChatPanel 外壳、阶段 5 去 antd」实际在阶段 3 一并落地。
+
+### 13.2 架构决策
+
+1. **面板切换两档共用一套 testid**：桌面/横屏是 `mdui-tabs`（`variant="secondary"`，MD3 里「切换一组相关内容」的用法；`placement` 显式传 `top-start` —— `:host([placement^=top])` 的 flex 方向靠属性选择器生效，不传就拿不到），竖屏是底部 `mdui-navigation-bar`（描边/实心双态图标）。两档的触发元素都挂 `data-testid="panel-tab-<key>"`，e2e 一个选择器通吃，不再按断点分支。
+2. **面板容器统一带 `role="tabpanel"`**：`e2e-live-subs` / `e2e-danmaku` / `e2e-cards` 都用 `[role="tabpanel"]:visible .sub-item` 定位「当前面板的条目行」——桌面 `mdui-tab-panel` 与竖屏 `.panel-slot` 都补上这个 role 后，三个关键回归脚本的选择器零改动。`.sub-item` 类名同理保留（见 ui/panel.tsx 注释）。
+3. **横屏行为改为「保持当前面板」**：原实现（未完成的 `.panel-column` + 自动跳问答）在代码里并没有接通；现在横屏与桌面共用侧栏 + `mdui-tabs`，旋转不强制切面板 —— 自动跳问答会打断正在看讲义的人。
+4. **竖屏保活语义不变**：`.panel-slot` 仍是 `hidden` 属性切 display:none，五面板 DOM 常驻。
+5. **ChatPanel 的气泡 / 输入区自搭**：`Bubble` / `Sender` 换成 `mdui-card` 系自建（MD3 聊天气泡的标志是**靠对话侧小圆角、另一侧全圆角**）；`XMarkdown` 渲染链原样保留。
+
+### 13.3 本阶段的坑（构建与类型检查都抓不到）
+
+1. **hook 不能放在提前 return 之后**（React #310，页面直接白屏）：ChatPanel 的三个 `useMduiEvent` 一度写在 `if (!hasSubtitles) return …` 之后 —— 无字幕 → 有字幕状态翻转时 hook 数量变化，整个面板树崩溃。已把「hook 顺序审计」跑过全部面板组件（写有临时审计脚本，按「组件级 return 之后不得再出现 hook」扫描）。
+2. **`Playwright 的 isDisabled() 对 mdui-button 恒为 false`**：mdui 把原生 `<button disabled>` 放在 shadow DOM 里、宿主不带 `aria-disabled`，Playwright 的可交互性检查不穿透。断言一律改读宿主反射的 `disabled` 属性（`el.hasAttribute('disabled')` / `el.disabled`），`e2e-player-enhance` 在阶段 2 就踩过同款。
+3. **`mdui-tabs` 组件不带任何 ARIA 角色**（tablist / tab / tabpanel 都没有，`custom-elements.json` 与实现里均无）：`getByRole('tab')` 会找不到。已在 JSX 上手动补 `role="tablist"` / `role="tab"`（面板容器另有 `role="tabpanel"`）。
+4. **`mdui-dialog` 在弹窗内连续点击后会自发关闭**（未解之谜，已记录）：复现序列 = 打开大图 → 点「放大」→ 点「复位」→ ~300ms 后弹窗自行关闭（事件时间线里有两轮 close/closed，`open=false` 的写入来自 React 提交 —— 即 `zoomOpen` 状态被翻转，触发源未定位；单独点「放大」或单独点「下载」都正常）。e2e 已把下载断言挪到缩放操作之前规避；**产品影响**：大图里连点缩放再想下载，可能要重新打开弹窗。列入待查。
+5. **`mdui-select` / `mdui-menu-item` 的官方 JSX 类型落后于 manifest**：`mdui-menu-item` 的 `selected` 在 manifest 里有、类型里没有 —— 不硬塞属性，改用 `mdui-menu selects="single" value=…` 让菜单自己标选中态。
+6. **`mdui-button-icon` 没有 `text` 变体**（standard / filled / outlined / tonal），关态用 `standard`。
+7. **`::part(panel)` 是改 mdui-dialog 尺寸的正道**：面板宽高在 shadow 里（`.panel{max-width:35rem}`），Mermaid 大图弹窗用 `.mermaid-zoom-dialog::part(panel){width:92vw;max-width:1400px}` 保持原 antd Modal 的观感。
+8. **`disabled` 状态反射**：mdui 组件的布尔 prop 会反射成 attribute，所以 e2e 与纯 DOM 判断都能用 `hasAttribute('disabled')`。
+
+### 13.4 e2e 的同步改动
+
+- **面板切换**：`.ant-tabs-tab:has-text("X")` / `.ant-tabs-nav >> text=X` / `.mobile-tabbar button` → `[data-testid="panel-tab-<key>"]`（17 处）。
+- **气泡与输入区**：`.ant-bubble-start` → `[data-testid="chat-msg-ai"]`、`.ant-bubble-end` → `[data-testid="chat-msg-user"]`、`.ant-sender` → `[data-testid="chat-composer"]`。
+- **弹窗**：`.ant-modal-confirm` → `mdui-dialog:has([data-testid="confirm-dialog-danger"])`（action 按钮顺序固定为先取消后确认）；`.ant-modal-wrap`（mermaid 大图）→ `[data-testid="mermaid-zoom-dialog"][open]`（**必须带 `[open]`**：现在三个 mermaid 块各自有一个弹窗，关闭的也在 DOM 里）。
+- **toast**：`.ant-message-success` / `.ant-message-error` → `mdui-snackbar` 出现。
+- **面板按钮**：`button:has-text("生成字幕"等)` → testid（mdui-button 的可见文字在 light DOM 插槽里，`button:has-text` 依赖穿透 shadow 的内部按钮，不稳定）。
+- **`e2e-preview-fonts` 转绿**：它当年就是被 antd 弃用警告误判成红的（`e2e-mdui-adapter` 里的注释早有记录），antd 移除后自然恢复。
+- **`e2e-mdui-adapter` 第 5 节反转**：从「antd 界面仍在」改为「antd 已完全移除（残留 0 个 .ant- 节点）」。
+
+### 13.5 测试结果
+
+| 项 | 结果 |
+| --- | --- |
+| `tsc -b` | 通过 |
+| `vite build` | 通过；主包 3,215,157 → **2,485,567** B（gzip 959,175 → **719,162**，**-240KB / -25%**）—— antd + @ant-design/x 退场的全额收益 |
+| 全量无 key 套件 | **35 通过 / 4 失败 / 9 跳过**（48 个，通过率 72.9%） |
+
+失败的 4 个全部是阶段 0 基线里的历史红灯（`render-handout-fixture`、`test-migration`、`motion-components-test`、`e2e-frames-hires`），与 UI 迁移无关；`e2e-preview-fonts`（当年被 antd 警告误判）与 `e2e-mobile` 均已转绿。**零新增回归**。
+
+### 13.6 已知问题 / 待办
+
+1. **`mdui-dialog` 自发关闭**（见 13.3.4）：复现序列、事件时间线、React 写入证据都已记录，待定位。规避：连续操作弹窗内的按钮后如需下载，重新打开弹窗即可。
+2. **横屏矮视口的 mdui-tabs 密度**：320px 宽的右栏放 5 个 secondary tab，标签贴边（`e2e-mobile` 第 16 步只量了栏宽，未量标签溢出）。视觉可接受，若后续觉得挤可改 `variant="primary"` 或缩字号。
+3. 带 key 的用例（`e2e-chat` / `e2e-chat-frames` / `e2e-chat-image` / `e2e-quiz` / `debug-*`）本轮未跑，需要真实 API key 的场景（流式回答、截图提问、出题）建议你按 README 用 `--with-key` 档跑一遍。

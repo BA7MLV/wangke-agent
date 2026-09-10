@@ -126,11 +126,12 @@ await page.waitForTimeout(400);
 // 播放页 → 首页 → 设置页。
 // 返回按钮统一用 data-testid="nav-back"：播放页还是 antd Button，设置页已经换成 mdui 的
 // mdui-button-icon —— 标签与类名都不同了，只有 testid 是跨页面稳定的（这也是迁移期的既定做法）。
+// 宽屏走左侧导航轨（rail 1280 宽可见；窄屏才显示底部导航的同名项 nav-bottom-settings）。
 const backBtn = () => page.locator('[data-testid="nav-back"]');
 const openSettings = async () => {
   await backBtn().click();
   await page.waitForSelector('[data-testid="video-item"]', { timeout: 15000 });
-  await page.locator('[data-testid="nav-settings"]').click();
+  await page.locator('[data-testid="nav-rail-settings"]').click();
   await page.waitForSelector('[data-testid="card-rates"]', { timeout: 15000 });
 };
 const rateCard = () => page.locator('[data-testid="card-rates"]');

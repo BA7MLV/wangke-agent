@@ -17,21 +17,11 @@
 
 const ALLOWED_ORIGIN = '*'; // 上线建议改成你的前端域名，如 'https://wangke.example.com'
 
-// 允许代理的目标域名白名单（防止被用来刷别的站）
-const ALLOWED_HOSTS = new Set([
-  'api.bilibili.com',
-  'www.bilibili.com',
-  'b23.tv',
-  'upos-sz-mirror08.bilivideo.com',
-  'upos-sz-mirrorcos.bilivideo.com',
-  'upos-sz-mirrorali.bilivideo.com',
-  'upos-sz-mirrorhw.bilivideo.com',
-  'upos-sz-mirrorbsa.bilivideo.com',
-  'upos-sz-mirrorbos.bilivideo.com',
-  'upos-sz-mirrorcosov.bilivideo.com',
-  'upos-sz-mirrorhwov.bilivideo.com',
-  'upos-sz-mirror08ov.bilivideo.com',
-]);
+function isAllowedHost(hostname) {
+  if (hostname === 'api.bilibili.com' || hostname === 'www.bilibili.com' || hostname === 'b23.tv') return true;
+  // CDN 主机名经常变（upos-sz-mirrorcoso1 / estgcos / 海外 ov 等），按后缀放行
+  return hostname.endsWith('.bilivideo.com') || hostname.endsWith('.bilivideo.cn');
+}
 
 addEventListener('fetch', (event) => {
   event.respondWith(handleRequest(event.request));
@@ -62,7 +52,7 @@ async function handleRequest(request) {
     return jsonError('url 参数不是合法 URL', 400);
   }
 
-  if (!ALLOWED_HOSTS.has(target.hostname)) {
+  if (!isAllowedHost(target.hostname)) {
     return jsonError(`目标域名 ${target.hostname} 不在白名单`, 403);
   }
 

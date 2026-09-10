@@ -189,9 +189,9 @@ html.mdui-theme-dark {
 }
 
 /* ── 手机横屏：左视频 / 右面板 ───────────────────────────────────────────
-   flex 5:4 → 852px 宽下视频约 460×259、右栏约 320。切换条落在右栏**顶部**的
-   `mdui-tabs`（横向 5 个短标签放得下）：与桌面侧栏同构、多给会话宽度，
-   也不撞横屏底部的 home indicator 区。 */
+   左右按**黄金比例 φ≈1.618:1** 分栏（左视频占大头，约 61.8% / 右栏 38.2%）。
+   切换条落在右栏**顶部**的 `mdui-tabs`（横向 5 个短标签放得下）：与桌面侧栏同构、
+   多给会话宽度，也不撞横屏底部的 home indicator 区。 */
 @media (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
   .player-layout {
     flex-direction: row;
@@ -201,7 +201,7 @@ html.mdui-theme-dark {
   }
 
   .player-layout .video-pane {
-    flex: 5 1 0;
+    flex: 1.618 1 0;
     min-width: 0;
     min-height: 0;
     align-items: center;
@@ -215,7 +215,7 @@ html.mdui-theme-dark {
   }
 
   .player-layout .side-pane {
-    flex: 4 1 0;
+    flex: 1 1 0;
     min-width: 0;
   }
 }

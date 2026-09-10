@@ -23,6 +23,19 @@
    色阶：page(background 254,247,255) < card(surface-container-low 247,242,250) < 输入框(surface-container-highest 230,224,233) */
 .page-mdui {
   background: rgb(var(--mdui-color-background));
+  /* mdui 的布局助手会给导航轨等 item 写内联 position:absolute（top/left 偏移），
+     这里兜一个定位祖先，保证它们锚定在页面外壳而不是更外层。 */
+  position: relative;
+}
+
+/* 内容列宽度：标题栏（.app-bar 的 padding-left）与内容区（.page-inner--*）共用同一份值，
+   两者的左边界才是同一条竖线。fill（播放页）不设，走 var() 的默认值 100%。 */
+.page-shell--wide {
+  --page-content-max: 892px;
+}
+
+.page-shell--narrow {
+  --page-content-max: 672px;
 }
 
 /* ⚠️ 内边距**不能**加在 mdui-layout-main 上：mdui 的布局助手会用内联样式写它的
@@ -31,18 +44,22 @@
 .page-inner {
   width: 100%;
   padding: 16px;
+  /* ⚠️ 必须显式给 border-box：项目并没有全局 box-sizing 规则（本文件旧注释里
+     「项目全局 border-box」是想当然），浏览器默认 content-box 会让 max-width 变成
+     内容盒宽、总宽多出 32px —— 标题栏按「总宽 892/672」推导的对齐公式就会整体偏 16px。 */
+  box-sizing: border-box;
 }
 
 /* 640 = 内容宽；因为 .page-inner 自带 16px 内边距，外层要给到 672 才能让内容正好 640
-   （项目全局 box-sizing: border-box，max-width 含 padding）。 */
+   （.page-inner 显式 border-box，max-width 含 padding —— 项目没有全局 box-sizing 规则）。 */
 .page-inner--narrow {
-  max-width: 672px;
+  max-width: var(--page-content-max, 672px);
   margin: 0 auto;
 }
 
 /* 列表页（Library）用 860 内容宽 → 892 */
 .page-inner--wide {
-  max-width: 892px;
+  max-width: var(--page-content-max, 892px);
   margin: 0 auto;
 }
 
@@ -76,6 +93,11 @@
   position: relative;
   width: 100%;
   padding-top: env(safe-area-inset-top);
+  /* 标题与内容列左边界对齐：这条 padding-left 会覆盖 mdui :host 自带的 .5rem，
+     标题 x = 标题栏左缘 + 该值。宽屏取「(标题栏宽 - 内容列宽) / 2 + 16px」正好落在
+     .page-inner 的文字左边界上；宽度不够（含 fill 模式，变量为默认值 100%）时
+     max() 回落到 16px，即原来 :host 的 8 + 8。 */
+  padding-left: max(16px, calc((100% - var(--page-content-max, 100%)) / 2 + 16px));
 }
 
 .app-bar__spacer {
@@ -120,6 +142,33 @@
   .app-bar__action-mobile-hidden {
     display: none;
   }
+}
+
+/* ── 左侧导航轨（宽屏专属，MD3 NavigationRail）────────────────────────────
+   与 .bottom-nav 互补：>640px 且不是「手机横屏」那档时显示。
+   手机横屏判据必须用高度（横屏宽度普遍 >640，见 useIsPhoneLandscape）：
+   那一档视口高度只有 300~500px，再切掉 80px 宽不合算，两者都不显示。
+   ⚠️ rail 必须直接放在 mdui-layout 下（PageShell 里已保证）——包进 mdui-layout-item
+   会走「非 layout 子元素」分支，给它爹补 padding 而不是给 main 补。实测见
+   docs/plans/2026-09-10-navigation-rail-design.md「一」：display:none 时助手量到
+   宽度 0，main 的 padding-left 自动归零，所以显隐用纯 CSS 就够，不用 JS 判断视口。 */
+.nav-rail {
+  display: none;
+}
+
+@media (min-width: 641px) and (min-height: 521px) {
+  .nav-rail {
+    /* 覆盖 mdui 的 :host{display:flex} 的显隐；布局助手会再给内联 position:absolute 定位 */
+    display: flex;
+  }
+}
+
+/* 与底部导航同一个坑：shadow 里 `::slotted([slot=icon])` 是 font-size: inherit，
+   图标会被外部基准字号（16px）压小，补回 MD3 的 24px。 */
+.nav-rail [slot='icon'],
+.nav-rail [slot='active-icon'] {
+  display: flex;
+  font-size: 1.5rem;
 }
 
 /* ── 内容分区（替 antd Card） ───────────────────────────────────────────── */
@@ -647,6 +696,21 @@
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
+/* 后台转写的进度：任务跑在全局队列里，不在当前播放页也要看得见 */
+.video-row__job {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 4px;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-primary));
+}
+
+.video-row__job mdui-linear-progress {
+  flex: none;
+  width: 72px;
+}
+
 .video-row__tags,
 .video-row__actions {
   display: flex;
@@ -714,10 +778,11 @@ mdui-dialog:has([data-testid='confirm-dialog-danger']) mdui-button[slot='action'
   }
 }
 
-/* 横屏时刘海在左右边缘上，标题栏要往内让位（竖屏的刘海由 padding-top 兜住） */
+/* 横屏时刘海在左右边缘上，标题栏要往内让位（竖屏的刘海由 padding-top 兜住）。
+   左侧与「对齐内容列」的公式取 max：刘海避让与内容对齐谁大听谁的。 */
 @media (orientation: landscape) {
   .app-bar {
-    padding-left: env(safe-area-inset-left);
+    padding-left: max(env(safe-area-inset-left), 16px, calc((100% - var(--page-content-max, 100%)) / 2 + 16px));
     padding-right: env(safe-area-inset-right);
   }
 }

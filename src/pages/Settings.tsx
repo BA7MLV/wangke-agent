@@ -11,6 +11,7 @@ import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
 import MigrationCard from '../components/MigrationCard';
 import { Field, PageShell, SectionCard, confirmDialog, toast, useMduiEvent } from '../ui';
+import { useAppNav } from '../components/appNav';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 const EMBED_MODEL_RE = /embed|bge|gte/i;
@@ -165,6 +166,7 @@ function RateChip({ rate, onDelete }: { rate: number; onDelete: () => void }) {
 
 export default function Settings() {
   const navigate = useNavigate();
+  const nav = useAppNav('settings');
   const settings = useSettings();
   const [checking, setChecking] = useState(false);
   const [modelOptions, setModelOptions] = useState<string[]>([]);
@@ -433,32 +435,7 @@ export default function Settings() {
   );
 
   return (
-    <PageShell
-      title="设置"
-      onBack={() => navigate('/')}
-      narrow
-      bottomNav={{
-        value: 'settings',
-        items: [
-          {
-            value: 'home',
-            label: '首页',
-            icon: <mdui-sym-home />,
-            activeIcon: <mdui-sym-home filled />,
-            onClick: () => navigate('/'),
-            testId: 'nav-bottom-home',
-          },
-          {
-            value: 'settings',
-            label: '设置',
-            icon: <mdui-sym-settings />,
-            activeIcon: <mdui-sym-settings filled />,
-            onClick: () => {},
-            testId: 'nav-bottom-settings',
-          },
-        ],
-      }}
-    >
+    <PageShell title="设置" onBack={() => navigate('/')} narrow rail={nav.rail} bottomNav={nav.bottom}>
       <SectionCard title="硅基流动 API" testId="card-api">
         <Field
           label="API Key"

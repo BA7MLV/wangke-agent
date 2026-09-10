@@ -90,6 +90,8 @@ const META = {
   'debug-transcribe': { service: 'dev', antd: true, key: true, testFile: true, diagnostic: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-frames-hires': { service: 'dev', antd: false, timeout: 300 },
   'e2e-live-subs': { service: 'dev', antd: true, testFile: true, timeout: 300, video: '/tmp/e2e-live.mp4' },
+  // 后台转写（L1 任务外置 / L2 续跑）：要拿应用同一份 store 句柄，只能跑 dev；不调真实 API
+  'e2e-bg-transcribe': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-preview-fonts': { service: 'dev', antd: true, timeout: 300 },
   // 只能跑 dev：守的是 StrictMode 双调用引发的并发竞态，生产构建不触发（见脚本头注释）
   'e2e-skills-dedupe': { service: 'dev', antd: false, timeout: 120 },

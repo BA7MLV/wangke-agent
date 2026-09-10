@@ -175,7 +175,19 @@ const zoomSvg = await page.locator('.xmd-mermaid-zoom-inner svg').count();
 const zoomBox = await page.locator('[data-testid="mermaid-zoom-dialog"][open]').first().boundingBox();
 const zoomVisible = await page.locator('.xmd-mermaid-zoom-inner svg').first().isVisible();
 check(zoomSvg === 1 && zoomVisible && !!zoomBox, '大图弹层内渲染出 SVG');
-// 缩放档位：放大后宽度应变化，复位后回到初值（按钮用 data-testid 定位：antd 6 可能给两字中文按钮插空格）
+// 下载 SVG：文件要能独立打开且内容完整（含中文标签）。
+// 注意顺序：下载断言放在缩放操作**之前** —— mdui-dialog 在弹窗内连点数次按钮后会自发关闭
+//（复现与排查记录见设计文档 §13.3），下载必须赶在它面前做。
+const [dl] = await Promise.all([
+  page.waitForEvent('download', { timeout: 10000 }),
+  page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-download"]').click(),
+]);
+const svgPath = await dl.path();
+const svgText = svgPath ? readFileSync(svgPath, 'utf8') : '';
+check(/\.svg$/.test(dl.suggestedFilename()), `下载文件名为 .svg（${dl.suggestedFilename()}）`);
+check(svgText.startsWith('<?xml') && svgText.includes('<svg'), '导出内容带 xml 头与 svg 根');
+check(/<svg[^>]*width="\d+"/.test(svgText), '导出 svg 有显式宽度（独立打开不会缩成 0）');
+
 const inner = page.locator('.xmd-mermaid-zoom-inner').first();
 const w0 = await inner.evaluate((el) => el.getBoundingClientRect().width);
 await page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-in"]').click();
@@ -188,16 +200,7 @@ check(wZoom > w0 * 1.2, `放大 25% 后宽度增加（${Math.round(w0)} → ${Ma
 check(Math.abs(w1 - w0) < 2, `复位后宽度回到初值（${Math.round(w1)}px）`);
 await page.screenshot({ path: `${SHOTS}/chat-mermaid-zoom.png` });
 
-// 下载 SVG：文件要能独立打开且内容完整（含中文标签）
-const [dl] = await Promise.all([
-  page.waitForEvent('download', { timeout: 10000 }),
-  page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-download"]').click(),
-]);
-const svgPath = await dl.path();
-const svgText = svgPath ? readFileSync(svgPath, 'utf8') : '';
-check(/\.svg$/.test(dl.suggestedFilename()), `下载文件名为 .svg（${dl.suggestedFilename()}）`);
-check(svgText.startsWith('<?xml') && svgText.includes('<svg'), '导出内容带 xml 头与 svg 根');
-check(/<svg[^>]*width="\d+"/.test(svgText), '导出 svg 有显式宽度（独立打开不会缩成 0）');
+
 check(svgText.includes('输入网络课程视频'), '导出 svg 含中文标签');
 if (svgPath) {
   const viewer = await context.newPage();

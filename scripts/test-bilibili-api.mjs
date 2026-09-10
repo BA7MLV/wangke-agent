@@ -136,11 +136,43 @@ console.log('resolveShortUrl');
   eq(bvid, 'BV1Ab411c7mD', '短链解析出 BV');
 }
 
-console.log('代理未配置');
+console.log('出口未配置');
 {
   let msg = '';
-  try { await api.fetchVideoInfo({ proxy: '' }, 'BV1xx411c7mD', 1); } catch (e) { msg = e.message; }
-  ok(msg.includes('未配置哔哩哔哩代理'), '未配置代理报错');
+  try { await api.fetchVideoInfo({ proxy: '', bridge: null }, 'BV1xx411c7mD', 1); } catch (e) { msg = e.message; }
+  ok(msg.includes('油猴') && msg.includes('代理'), '无桥无代理时报错引导安装油猴');
+}
+
+console.log('fetchPlayStreams 优先选 upos backup');
+{
+  const { fetchMock } = makeFetch([
+    ['/x/player/playurl', () => ({
+      json: {
+        code: 0,
+        data: {
+          dash: {
+            duration: 10,
+            video: [{
+              id: 32,
+              height: 480,
+              baseUrl: 'https://xy1.mcdn.bilivideo.cn/v.m4s',
+              backupUrl: [
+                'https://foo.edge.mountaintoys.cn/v.m4s',
+                'https://upos-sz-mirrorcoso1.bilivideo.com/v.m4s',
+              ],
+            }],
+            audio: [{
+              baseUrl: 'https://xy2.mcdn.bilivideo.cn/a.m4s',
+              backup_url: ['https://upos-sz-estgoss.bilivideo.com/a.m4s'],
+            }],
+          },
+        },
+      },
+    })],
+  ]);
+  const s = await withFetch(fetchMock, () => api.fetchPlayStreams({ proxy }, 'BV1xx411c7mD', 1));
+  eq(s.videoUrl, 'https://upos-sz-mirrorcoso1.bilivideo.com/v.m4s', '视频跳过 mcdn 选 upos backup');
+  eq(s.audioUrl, 'https://upos-sz-estgoss.bilivideo.com/a.m4s', '音频跳过 mcdn 选 upos backup');
 }
 
 fs.rmSync(tmp, { force: true });

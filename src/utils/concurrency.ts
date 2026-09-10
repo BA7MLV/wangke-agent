@@ -1,4 +1,5 @@
 /** 并发控制原语：AIMD 自适应限流 + 并发池，供转写/识图等批量调用场景共用 */
+import { CancelError } from './cancel';
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
@@ -34,11 +35,15 @@ export class AdaptiveLimit {
   }
 }
 
-/** 带 AIMD 反馈的重试：429 通知控制器降速并按 Retry-After 等待；400/401/403 不可重试 */
+/**
+ * 带 AIMD 反馈的重试：429 通知控制器降速并按 Retry-After 等待；400/401/403 不可重试。
+ * `shouldAbort` 用于取消：退避 sleep 最长 4s，不检查的话「点了取消要等好几秒才停」。
+ */
 export async function withAdaptiveRetry<T>(
   fn: () => Promise<T>,
   limiter: AdaptiveLimit,
   retries = 3,
+  shouldAbort?: () => boolean,
 ): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < retries; attempt++) {
@@ -55,6 +60,7 @@ export async function withAdaptiveRetry<T>(
       } else {
         await sleep(1000 * 2 ** attempt + Math.random() * 500);
       }
+      if (shouldAbort?.()) throw new CancelError();
     }
   }
   throw lastErr;

@@ -1,18 +1,15 @@
-// 哔哩哔哩公开接口封装：BV→cid→播放地址。所有请求经用户自建的 CORS 代理转发。
-//
-// 代理协议（见 cloudflare-worker/bili-proxy.js）：
-//   GET {proxy}?url={encodeURIComponent(目标地址)}
-//   可选头 X-Bili-Cookie：用户自己的 B 站 Cookie（含 SESSDATA 时解锁高清），
-//   由代理透传为对 bilibili 域名的 Cookie 与 Referer。
-//
-// 不登录时 B 站只给 360P（qn=32 已登录普通清晰度需 Cookie；此处未登录仅 16/32 视接口而定），
-// 登录 Cookie 由用户自愿提供，清晰度上限取决于其账号权限（本工具不破解任何限制）。
+// 哔哩哔哩公开接口封装：BV→cid→播放地址。
+// 出口见 transport.ts：油猴桥优先（本机直连），否则走自建代理。
+
+import { biliRequest, type BiliBridge } from './transport';
 
 export interface BiliApiOptions {
-  /** 自建代理地址，例如 https://bili-proxy.yourname.workers.dev */
-  proxy: string;
+  /** 自建代理地址（油猴桥不可用时的回退） */
+  proxy?: string;
   /** 可选：用户自己的 Cookie 串（SESSDATA=...; bili_jct=...）。不提供则匿名。 */
   cookie?: string;
+  /** 测试注入油猴桥；生产读 window.__wangkeBiliBridge */
+  bridge?: BiliBridge | null;
 }
 
 /** 一个可用的播放流（DASH 一路视频 + 一路音频） */
@@ -61,20 +58,12 @@ class BiliHttpError extends Error {
   }
 }
 
-function joinUrl(proxy: string, target: string): string {
-  const sep = proxy.includes('?') ? '&' : '?';
-  return `${proxy}${sep}url=${encodeURIComponent(target)}`;
-}
-
 async function apiGet<T>(opts: BiliApiOptions, target: string): Promise<T> {
-  if (!opts.proxy) throw new BiliHttpError('未配置哔哩哔哩代理地址，请先在「设置」页填写');
-  const headers: Record<string, string> = {};
-  if (opts.cookie) headers['X-Bili-Cookie'] = opts.cookie;
   let resp: Response;
   try {
-    resp = await fetch(joinUrl(opts.proxy, target), { headers });
+    resp = await biliRequest(opts, target);
   } catch (e) {
-    throw new BiliHttpError(`网络请求失败（代理不可达？）：${e instanceof Error ? e.message : String(e)}`);
+    throw e instanceof Error ? e : new BiliHttpError(String(e));
   }
   if (!resp.ok) throw new BiliHttpError(`接口请求失败 HTTP ${resp.status}`, resp.status);
   const json = (await resp.json()) as { code: number; message?: string; data?: T };
@@ -133,22 +122,30 @@ export async function fetchPlayStreams(
   };
 }
 
+function isStableCdn(url: string): boolean {
+  try {
+    const host = new URL(url).hostname;
+    return host.endsWith('.bilivideo.com') && host.includes('upos-');
+  } catch {
+    return false;
+  }
+}
+
 function pickUrl(s: DashStream): string {
-  const url = s.baseUrl ?? s.base_url ?? s.backupUrl?.[0] ?? s.backup_url?.[0];
-  if (!url) throw new BiliHttpError('流地址为空');
-  return url;
+  const candidates = [s.baseUrl, s.base_url, ...(s.backupUrl ?? []), ...(s.backup_url ?? [])].filter(
+    (u): u is string => typeof u === 'string' && u.length > 0,
+  );
+  if (!candidates.length) throw new BiliHttpError('流地址为空');
+  return candidates.find(isStableCdn) ?? candidates[0];
 }
 
 /** 经代理解析 b23.tv 短链 → 最终落地页里的 BV 号 */
 export async function resolveShortUrl(opts: BiliApiOptions, shortUrl: string): Promise<string> {
-  if (!opts.proxy) throw new BiliHttpError('未配置哔哩哔哩代理地址');
-  const headers: Record<string, string> = {};
-  if (opts.cookie) headers['X-Bili-Cookie'] = opts.cookie;
   let resp: Response;
   try {
-    resp = await fetch(joinUrl(opts.proxy, shortUrl), { headers });
+    resp = await biliRequest(opts, shortUrl);
   } catch (e) {
-    throw new BiliHttpError(`短链请求失败：${e instanceof Error ? e.message : String(e)}`);
+    throw e instanceof Error ? e : new BiliHttpError(String(e));
   }
   if (!resp.ok) throw new BiliHttpError(`短链解析失败 HTTP ${resp.status}`, resp.status);
   const text = await resp.text();

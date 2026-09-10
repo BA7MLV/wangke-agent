@@ -153,8 +153,12 @@ else {
   // 切换条（mdui-tabs）在侧栏顶部：它自身应当就从侧栏顶部开始
   if (land.tabs.y > land.side.y + 2) fail(`切换条应贴侧栏顶部（tabs y=${Math.round(land.tabs.y)}，side y=${Math.round(land.side.y)}）`);
   else ok(`切换条在右栏顶部（y=${Math.round(land.tabs.y)}）`);
-  if (land.video.w < land.side.w) fail(`视频宽 ${Math.round(land.video.w)} 应大于右栏宽 ${Math.round(land.side.w)}（5:4）`);
+  if (land.video.w < land.side.w) fail(`视频宽 ${Math.round(land.video.w)} 应大于右栏宽 ${Math.round(land.side.w)}（黄金比例）`);
   else ok(`左视频 ${Math.round(land.video.w)}px > 右栏 ${Math.round(land.side.w)}px`);
+  // 黄金比例 φ≈1.618:1：左视频占大头。比的是两栏容器宽（视频元素本身会因高度约束缩窄）
+  const ratio = land.pane.w / land.side.w;
+  if (ratio < 1.55 || ratio > 1.7) fail(`左/右栏宽比 ${ratio.toFixed(2)} 应接近黄金比例 1.618`);
+  else ok(`黄金比例分栏（左:右 ≈ ${ratio.toFixed(2)}:1）`);
   // 视频不能被裁到视口外（宽度受可用高度 × 16:9 约束）
   if (land.video.h > 393 - 36) fail(`视频高 ${Math.round(land.video.h)} 超出可用高度`);
   else ok(`视频 ${Math.round(land.video.w)}×${Math.round(land.video.h)} 完整可见`);

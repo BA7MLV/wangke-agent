@@ -8,10 +8,12 @@ import './layout.css';
  * （`.page` 里没有任何 rules/校验配置，唯一的错误态是 Settings 手写的 keyError）。
  * 换成 mdui 后不存在等价组件，与其硬凑，不如把这几行布局收成三个原语，让各页面写法一致。
  *
- * 结构（与设计文档 §3.1 的 MD3 骨架一致）：
+ * 结构（与设计文档 §3.1 的 MD3 骨架一致；宽屏侧边导航见 2026-09-10-navigation-rail-design.md）：
  *   .page（沿用既有 CSS，负责 --vvh 高度链）
  *     └ mdui-layout（mdui 官方布局：自己测量 mdui-layout-item 并给 mdui-layout-main 补间距）
+ *         ├ mdui-navigation-rail（宽屏左侧，CSS 控制显隐；必须排在标题栏之前）
  *         ├ mdui-layout-item[placement=top] → mdui-top-app-bar
+ *         ├ mdui-layout-item[placement=bottom] → mdui-navigation-bar（窄屏）
  *         └ mdui-layout-main → .page-inner → 各 SectionCard
  *
  * 注：本文件会从外部样式表改 mdui 组件的宿主属性（如 .section-card 的 display）。
@@ -19,16 +21,24 @@ import './layout.css';
  * 详见 src/ui/layout.css 顶部注释。
  */
 
-export interface BottomNavItem {
-  /** 与 `bottomNav.value` 比对来决定哪一项高亮 */
+export interface NavItem {
+  /** 与 `NavConfig.value` 比对来决定哪一项高亮 */
   value: string;
   label: string;
-  /** 未激活时的图标元素（放 mdui-icon-*） */
+  /** 未激活时的图标元素（放 mdui-sym-*） */
   icon: ReactNode;
   /** 激活时的图标元素，可选 */
   activeIcon?: ReactNode;
   onClick: () => void;
   testId?: string;
+}
+
+/** 旧名保留：底部导航与 rail 共用同一份条目结构 */
+export type BottomNavItem = NavItem;
+
+export interface NavConfig {
+  items: NavItem[];
+  value: string;
 }
 
 export interface PageShellProps {
@@ -56,8 +66,14 @@ export interface PageShellProps {
   rootRef?: (el: HTMLDivElement | null) => void;
   /** 追加到根 `.page` 上的类名（页面级的样式挂载点） */
   rootClassName?: string;
+  /**
+   * 宽屏左侧导航轨（MD3 NavigationRail）。窄屏由 CSS 隐藏，此时导航走 `bottomNav`。
+   * ⚠️ 必须直接放在 mdui-layout 下、且排在标题栏之前 —— 实测见
+   * docs/plans/2026-09-10-navigation-rail-design.md「一」。
+   */
+  rail?: NavConfig;
   /** 窄屏底部导航（MD3 应用外壳）。宽屏由 CSS 隐藏，mdui 的布局助手会随之把内容区的 padding 归零。 */
-  bottomNav?: { items: BottomNavItem[]; value: string };
+  bottomNav?: NavConfig;
   children: ReactNode;
 }
 
@@ -70,6 +86,7 @@ export function PageShell({
   fill,
   rootRef,
   rootClassName,
+  rail,
   bottomNav,
   children,
 }: PageShellProps) {
@@ -80,9 +97,33 @@ export function PageShell({
   ]
     .filter(Boolean)
     .join(' ');
+  // 标题栏按这个变量对齐内容列左边界（见 layout.css 的 .app-bar 与 .page-shell--*）
+  const shellClass = narrow ? 'page-shell--narrow' : wide ? 'page-shell--wide' : 'page-shell--fill';
   return (
-    <div className={rootClassName ? `page page-mdui ${rootClassName}` : 'page page-mdui'} ref={rootRef}>
+    <div
+      className={rootClassName ? `page page-mdui ${shellClass} ${rootClassName}` : `page page-mdui ${shellClass}`}
+      ref={rootRef}
+    >
       <mdui-layout>
+        {rail && (
+          /* rail 必须是 mdui-layout 的直接子元素且排在标题栏之前：
+             布局助手按 DOM 顺序累加偏移，rail 的 80px 宽度会写进标题栏 item 的 left
+             与 main 的 padding-left；display:none 时量到 0，偏移自动归零（实测）。 */
+          <mdui-navigation-rail className="nav-rail" value={rail.value} divider data-testid="nav-rail">
+            {rail.items.map((it) => (
+              <mdui-navigation-rail-item
+                key={it.value}
+                value={it.value}
+                data-testid={it.testId}
+                onClick={it.onClick}
+              >
+                <span slot="icon">{it.icon}</span>
+                {it.activeIcon && <span slot="active-icon">{it.activeIcon}</span>}
+                {it.label}
+              </mdui-navigation-rail-item>
+            ))}
+          </mdui-navigation-rail>
+        )}
         <mdui-layout-item placement="top">
           <mdui-top-app-bar className="app-bar" data-testid="top-app-bar">
             {onBack && (

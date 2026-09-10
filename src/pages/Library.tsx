@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import { Banner, EmptyState, PageShell, alertDialog, confirmDialog, toast, useMduiEvent } from '../ui';
+import { useAppNav } from '../components/appNav';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { deleteVideoFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
@@ -9,6 +10,8 @@ import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
 import { importBiliVideo } from '../bilibili';
 import { getSettings } from '../store/settings';
+import { isJobActive, useJobStore, useTranscribeJob } from '../store/jobs';
+import { cancelTranscription } from '../pipelines/transcribeQueue';
 import { formatCaughtError } from '../utils/errorText';
 
 function formatDuration(sec: number): string {
@@ -134,6 +137,7 @@ function loadCollapsed(): Set<string> {
 
 export default function Library() {
   const navigate = useNavigate();
+  const nav = useAppNav('home');
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -375,6 +379,9 @@ export default function Library() {
 
   /** 第二步删除（文件已删后）：彻底删除记录及全部内容 */
   const handleDelete = async (row: VideoRow) => {
+    // 记录都没了，后台还在转它就没意义了（队列里也要摘掉，否则会给已删除的视频写段）
+    cancelTranscription(row.id);
+    useJobStore.getState().drop(row.id);
     await db.transaction('rw', [db.videos, db.segments, db.frames, db.handouts, db.chats, db.chatSessions, db.embeddings], async () => {
       await db.videos.delete(row.id);
       await db.segments.where('videoId').equals(row.id).delete();
@@ -642,40 +649,10 @@ export default function Library() {
 
   return (
     <PageShell
-      title="网课学习助手"
+      title="课程库"
       wide
-      bottomNav={{
-        value: 'home',
-        items: [
-          {
-            value: 'home',
-            label: '首页',
-            // MD3 的导航栏惯例：未选中描边、选中实心
-            icon: <mdui-sym-home />,
-            activeIcon: <mdui-sym-home filled />,
-            onClick: () => {},
-            testId: 'nav-bottom-home',
-          },
-          {
-            value: 'settings',
-            label: '设置',
-            icon: <mdui-sym-settings />,
-            activeIcon: <mdui-sym-settings filled />,
-            onClick: () => navigate('/settings'),
-            testId: 'nav-bottom-settings',
-          },
-        ],
-      }}
-      actions={
-        <mdui-button-icon
-          className="app-bar__action-mobile-hidden"
-          data-testid="nav-settings"
-          aria-label="设置"
-          onClick={() => navigate('/settings')}
-        >
-          <mdui-sym-settings />
-        </mdui-button-icon>
-      }
+      rail={nav.rail}
+      bottomNav={nav.bottom}
     >
       {SHOW_PWA_HINT && (
         <Banner
@@ -1011,6 +988,16 @@ function VideoRow({
 }) {
   const status = STATUS_TAG[v.status];
   const meta = `${formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
+  // 转写是全局队列里的后台任务：在播放页、在别处、刷新后续跑的，列表上都要看得到
+  const job = useTranscribeJob(v.id);
+  const activeJob = isJobActive(job) ? job : undefined;
+  const jobText = !activeJob
+    ? ''
+    : activeJob.phase === 'asr'
+      ? `转写中 ${activeJob.done}/${activeJob.total}`
+      : activeJob.phase === 'queued'
+        ? '转写排队中'
+        : activeJob.message || '转写中';
   return (
     <div
       className={dragging ? 'video-row video-row--dragging' : 'video-row'}
@@ -1037,11 +1024,24 @@ function VideoRow({
         <div className="video-row__meta" title={meta}>
           {meta}
         </div>
+        {activeJob && (
+          <div className="video-row__job" data-testid="video-job">
+            <mdui-linear-progress
+              max={100}
+              value={
+                activeJob.phase === 'asr'
+                  ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
+                  : undefined
+              }
+            />
+            <span>{jobText}</span>
+          </div>
+        )}
       </div>
       <div className="video-row__tags">
         {v.fileDeleted === 1 && <span className="tag-mini">文件已删</span>}
         <span className={status.variant ? `tag-mini tag-mini--${status.variant}` : 'tag-mini'}>
-          {status.text}
+          {activeJob ? jobText : status.text}
         </span>
       </div>
       <div className="video-row__actions">
