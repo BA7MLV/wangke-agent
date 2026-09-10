@@ -73,8 +73,9 @@ test('隔离环境下仍强制非 jsep 路径且不强制单线程', () => {
   assert.equal(ort.env.wasm.numThreads, undefined);
 });
 
-test('vite 把 onnxruntime-web 别名到非 jsep 的 wasm 构建', () => {
+test('vite 把 onnxruntime-web 精确别名到非 jsep 的 wasm 构建', () => {
   const cfg = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
+  assert.match(cfg, /find:\s*\/\^onnxruntime-web\(\?:\\\/wasm\)\?\$\//);
   assert.match(cfg, /ort\.wasm\.min\.mjs/);
   assert.match(cfg, /Cross-Origin-Embedder-Policy/);
 });

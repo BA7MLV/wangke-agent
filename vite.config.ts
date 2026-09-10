@@ -69,10 +69,13 @@ export default defineConfig({
     }),
   ],
   resolve: {
-    alias: {
-      // 默认 ort.bundle 会去拉 jsep wasm（超 Cloudflare Pages 25MiB）；wasm 构建对应 public/ort 已部署文件
-      'onnxruntime-web': path.resolve(__dirname, 'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs'),
-    },
+    alias: [
+      {
+        // 必须精确匹配：前缀别名会把 onnxruntime-web/wasm 拼成 *.mjs/wasm
+        find: /^onnxruntime-web(?:\/wasm)?$/,
+        replacement: path.resolve(__dirname, 'node_modules/onnxruntime-web/dist/ort.wasm.min.mjs'),
+      },
+    ],
   },
   server: {
     host: true,
