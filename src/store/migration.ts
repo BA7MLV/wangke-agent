@@ -28,6 +28,7 @@ const TABLES = [
   'videos',
   'folders',
   'segments',
+  'subtitleTracks',
   'frames',
   'handouts',
   'chatSessions',
@@ -283,7 +284,7 @@ export async function importMigrationZip(
   result.videosAdded = newVideoIds.size;
 
   // 3) 简单子表：只跟随新视频写入，剥自增主键后 bulkAdd
-  const simpleTables = ['segments', 'frames', 'handouts', 'danmakus', 'cards'] as const;
+  const simpleTables = ['segments', 'subtitleTracks', 'frames', 'handouts', 'danmakus', 'cards'] as const;
   for (const t of simpleTables) {
     const rows = data[t] ?? [];
     onStep?.(`正在导入 ${t}（${rows.length} 条）…`);

@@ -8,9 +8,13 @@ import { deleteVideoFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
-import { importBiliVideo } from '../bilibili';
+import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget } from '../bilibili';
+import type { BiliSubtitleItem } from '../bilibili/dmview';
+import { formatTotalDuration, pageLabel, resolveSelectedPages, selectedDuration } from '../bilibili/pages';
+import { defaultSelectedLangs, type SubtitleBundle } from '../bilibili/subtitle';
+import { saveImportedSubtitles } from '../store/subtitles';
 import { getSettings } from '../store/settings';
-import { describeTransport, isBiliBridgeAvailable } from '../bilibili/transport';
+import { describeTransport, isBiliBridgeAvailable, isBridgePostCapable } from '../bilibili/transport';
 import { isJobActive, useJobStore, useTranscribeJob } from '../store/jobs';
 import { cancelTranscription } from '../pipelines/transcribeQueue';
 import { formatCaughtError } from '../utils/errorText';
@@ -167,12 +171,29 @@ export default function Library() {
   const nativeInputRef = useRef<HTMLInputElement>(null);
   // HTML5 拖放（桌面/iPad 从「文件」App 拖入）的悬停高亮
   const [dropActive, setDropActive] = useState(false);
-  // 哔哩哔哩导入弹窗
+  // 哔哩哔哩导入弹窗（两步：解析 → 勾语言 → 下载）
   const [biliOpen, setBiliOpen] = useState(false);
   const [biliUrl, setBiliUrl] = useState('');
+  const [biliTarget, setBiliTarget] = useState<BiliTarget | null>(null);
+  const [biliResolving, setBiliResolving] = useState(false);
+  /** 勾选的字幕语言（B 站 lan key）；第一路（按优先级）作主字幕 */
+  const [biliLangs, setBiliLangs] = useState<string[]>([]);
+  /** 已解析出的字幕语言（跟着「第一个选中的分 P」走，切 P 会刷新） */
+  const [biliLangItems, setBiliLangItems] = useState<BiliSubtitleItem[]>([]);
+  /** biliLangItems 是哪个分 P 的（用来判断切 P 后要不要重新拉） */
+  const [biliLangPage, setBiliLangPage] = useState<number | null>(null);
+  /** 勾选的分 P 序号 */
+  const [biliPagesSel, setBiliPagesSel] = useState<number[]>([]);
   const [biliImporting, setBiliImporting] = useState(false);
   const [biliProgress, setBiliProgress] = useState(0);
+  /** 导入中的阶段文案（多 P 时是「P2 … · 2/5」） */
+  const [biliLabel, setBiliLabel] = useState('');
   const [biliError, setBiliError] = useState<string | null>(null);
+  /** chips 容器：mdui-chip 的 change 事件会冒泡，用容器代理省去逐个 ref */
+  const langListRef = useRef<HTMLDivElement>(null);
+  const pageListRef = useRef<HTMLDivElement>(null);
+  /** 语言列表刷新的竞态计数：只认最后一次请求 */
+  const langReqRef = useRef(0);
 
   // mdui-dialog 自己处理 Esc / 点遮罩关闭时只是把 open 属性拿掉，React 的 state 不知道，
   // 必须接 closed 事件同步回 state，否则出现「关不掉 / 自己弹回来」（阶段 1 已实测）。
@@ -182,8 +203,7 @@ export default function Library() {
   const biliDlgRef = useMduiEvent('mdui-dialog', 'closed', () => {
     if (!biliImporting) {
       setBiliOpen(false);
-      setBiliUrl('');
-      setBiliError(null);
+      resetBiliDraft();
     }
   });
   const moveRadioRef = useMduiEvent('mdui-radio-group', 'change', (_e, el) => setMoveTarget(el.value));
@@ -245,7 +265,7 @@ export default function Library() {
     void alertDialog({ headline, description: text, copyText: text });
   };
 
-  const importOne = async (file: File, key: string) => {
+  const importOne = async (file: File, key: string, subtitles?: SubtitleBundle) => {
     // 大视频拷入 OPFS 要数分钟，持 Wake Lock 防熄屏后 tab 被挂起中断导入
     await acquireWakeLock();
     try {
@@ -266,8 +286,14 @@ export default function Library() {
         createdAt: Date.now(),
         status: 'new',
       });
+      // B 站自带字幕：主语言写 segments、全部语言写 subtitleTracks，并直接置为已转写
+      if (subtitles) await saveImportedSubtitles(id, subtitles);
       patchTask(key, { status: 'done', percent: 100 });
-      toast.success(`已导入《${file.name}》`);
+      toast.success(
+        subtitles?.primary
+          ? `已导入《${file.name}》· 自带字幕 ${subtitles.primary.cues.length} 条`
+          : `已导入《${file.name}》`,
+      );
       await reload();
     } catch (e) {
       const text = formatCaughtError(e);
@@ -278,14 +304,88 @@ export default function Library() {
     }
   };
 
-  const enqueue = (file: File) => {
+  const enqueue = (file: File, subtitles?: SubtitleBundle) => {
     const key = uuid();
     setTasks((prev) => [...prev, { key, name: file.name, status: 'queued', percent: 0 }]);
-    chainRef.current = chainRef.current.then(() => importOne(file, key));
+    chainRef.current = chainRef.current.then(() => importOne(file, key, subtitles));
   };
 
-  /** 哔哩哔哩导入：先经代理下载+重封装成 File，再走现有本地导入链 */
-  const handleBiliImport = async () => {
+  /** 清空 B 站导入弹窗的草稿（关弹窗 / 导入成功后都调） */
+  function resetBiliDraft() {
+    setBiliUrl('');
+    setBiliTarget(null);
+    setBiliLangs([]);
+    setBiliLangItems([]);
+    setBiliLangPage(null);
+    setBiliPagesSel([]);
+    setBiliError(null);
+    setBiliLabel('');
+  }
+
+  /** 选中的分 P 里最靠前的那个（字幕语言按它刷新） */
+  function firstSelectedPage(target: BiliTarget, selected: number[]): number | null {
+    const hit = resolveSelectedPages(target.pages, selected)[0];
+    return hit ? hit.page : null;
+  }
+
+  /**
+   * 切分 P 后刷新字幕语言列表：每个分 P 的 cid 不同，字幕语言也可能不同
+   * （同理「这集没字幕」也要如实告诉用户）。保留用户已勾、且新列表里仍存在的语言。
+   */
+  async function refreshLangsForPage(target: BiliTarget, page: number) {
+    const { bilibiliProxy, bilibiliCookie } = getSettings();
+    const seq = ++langReqRef.current;
+    const items = await fetchPageSubtitles({ proxy: bilibiliProxy, cookie: bilibiliCookie }, target, page);
+    if (seq !== langReqRef.current) return; // 又有新的切换，丢弃这次结果
+    setBiliLangItems(items);
+    setBiliLangPage(page);
+    setBiliLangs((prev) => {
+      const keep = prev.filter((lan) => items.some((i) => i.lan === lan));
+      return keep.length > 0 ? keep : defaultSelectedLangs(items);
+    });
+  }
+
+  // 分 P chips：选中切换 + 切换后刷新语言列表
+  useEffect(() => {
+    const el = pageListRef.current;
+    if (!biliOpen || !el || !biliTarget) return;
+    const onChange = (e: Event) => {
+      const chip = e.target as HTMLElement & { selected?: boolean };
+      const n = Number(chip?.dataset?.page);
+      if (!Number.isFinite(n) || n <= 0) return;
+      setBiliPagesSel((prev) => {
+        const next = chip.selected !== false ? [...new Set([...prev, n])].sort((a, b) => a - b) : prev.filter((p) => p !== n);
+        const first = firstSelectedPage(biliTarget, next);
+        if (first != null && first !== biliLangPage) void refreshLangsForPage(biliTarget, first);
+        return next;
+      });
+    };
+    el.addEventListener('change', onChange);
+    return () => el.removeEventListener('change', onChange);
+  }, [biliOpen, biliTarget, biliLangPage]);
+
+  // 语言 chips：选中切换（mdui-chip 自己已经把 selected 翻好了，读它以免和 React 状态打架）
+  useEffect(() => {
+    const el = langListRef.current;
+    if (!biliOpen || !el) return;
+    const onChange = (e: Event) => {
+      const chip = e.target as HTMLElement & { selected?: boolean };
+      const lang = chip?.dataset?.lang;
+      if (!lang) return;
+      const on = chip.selected !== false;
+      setBiliLangs((prev) =>
+        on ? (prev.includes(lang) ? prev : [...prev, lang]) : prev.filter((l) => l !== lang),
+      );
+    };
+    el.addEventListener('change', onChange);
+    return () => el.removeEventListener('change', onChange);
+  }, [biliOpen, biliTarget]);
+
+  /**
+   * B 站导入第一步：解析链接，拿到标题/时长与「自带字幕」语言列表。
+   * 真正下载放到第二步，因为选哪几路字幕要用户先拍板。
+   */
+  const handleBiliResolve = async () => {
     const { bilibiliProxy, bilibiliCookie } = getSettings();
     if (describeTransport({ proxy: bilibiliProxy }).kind === 'none') {
       toast.warning('请先安装油猴脚本（设置页「安装脚本」），或填写代理地址');
@@ -296,17 +396,69 @@ export default function Library() {
       toast.warning('请粘贴 B 站视频链接或 BV 号');
       return;
     }
-    setBiliImporting(true);
-    setBiliProgress(0);
+    setBiliResolving(true);
     setBiliError(null);
     try {
-      const file = await importBiliVideo(raw, { proxy: bilibiliProxy, cookie: bilibiliCookie }, (r) =>
-        setBiliProgress(Math.round(r * 100)),
+      const target = await resolveBiliTarget({ proxy: bilibiliProxy, cookie: bilibiliCookie }, raw);
+      setBiliTarget(target);
+      setBiliPagesSel(target.defaultPages);
+      setBiliLangItems(target.subtitles);
+      setBiliLangPage(target.defaultPages[0] ?? null);
+      setBiliLangs(defaultSelectedLangs(target.subtitles));
+      if (target.subtitles.length === 0) {
+        // 分两种：真没字幕 vs 旧版脚本不支持 POST（否则会误以为「这视频没字幕」）
+        if (isBiliBridgeAvailable() && !isBridgePostCapable()) {
+          toast.warning('油猴脚本版本过旧，读不到 B 站自带字幕；到「设置」重新安装一次脚本即可');
+        } else {
+          toast.info('该视频没有自带字幕，导入后可点「生成字幕」走本地转写');
+        }
+      }
+    } catch (e) {
+      const text = formatCaughtError(e);
+      setBiliError(text);
+      showError('B 站解析失败', text);
+    } finally {
+      setBiliResolving(false);
+    }
+  };
+
+  /** B 站导入第二步：逐个分 P 下载，每完成一个立刻入队写盘 */
+  const handleBiliImport = async () => {
+    if (!biliTarget) return;
+    const selected = resolveSelectedPages(biliTarget.pages, biliPagesSel);
+    if (selected.length === 0) {
+      toast.warning('请至少勾选一个分 P');
+      return;
+    }
+    const totalSec = selectedDuration(biliTarget.pages, biliPagesSel);
+    // 防手滑：一门课几十 P 几十小时，误点「全选」会很惨
+    if (selected.length > 10 || totalSec > 6 * 3600) {
+      const ok = await confirmDialog({
+        headline: `确认下载 ${selected.length} 个分 P？`,
+        description: `合计约 ${formatTotalDuration(totalSec)}，会逐个写入本机存储（可随时在任务列表里看到进度）`,
+        confirmText: '开始下载',
+      });
+      if (!ok) return;
+    }
+
+    const { bilibiliProxy, bilibiliCookie } = getSettings();
+    setBiliImporting(true);
+    setBiliProgress(0);
+    setBiliLabel('');
+    setBiliError(null);
+    try {
+      await importBiliPages(
+        biliTarget,
+        { proxy: bilibiliProxy, cookie: bilibiliCookie, langs: biliLangs, pages: biliPagesSel },
+        // 每下完一个 P 就入队：下一个 P 的下载与上一个 P 的 OPFS 写入并行
+        (item) => void enqueue(item.file, item.subtitles.tracks.length > 0 ? item.subtitles : undefined),
+        (ratio, label) => {
+          setBiliProgress(Math.round(ratio * 100));
+          setBiliLabel(label);
+        },
       );
       setBiliOpen(false);
-      setBiliUrl('');
-      toast.success(`已解析《${file.name}》，开始写入本地存储`);
-      enqueue(file);
+      resetBiliDraft();
     } catch (e) {
       const text = formatCaughtError(e);
       setBiliError(text);
@@ -314,8 +466,25 @@ export default function Library() {
     } finally {
       setBiliImporting(false);
       setBiliProgress(0);
+      setBiliLabel('');
     }
   };
+
+  /** 多分 P 相关派生值（单 P 视频时整块 UI 都不出现） */
+  const multiPage = (biliTarget?.pages.length ?? 0) > 1;
+  const selectedSec = biliTarget ? selectedDuration(biliTarget.pages, biliPagesSel) : 0;
+
+  /** 全选 / 清空分 P（清空后语言列表保持最后的那个 P，用户可自己再勾） */
+  function selectAllPages(all: boolean) {
+    if (!biliTarget) return;
+    if (!all) {
+      setBiliPagesSel([]);
+      return;
+    }
+    setBiliPagesSel(biliTarget.pages.map((p) => p.page));
+    const first = biliTarget.pages[0]?.page ?? null;
+    if (first != null && first !== biliLangPage) void refreshLangsForPage(biliTarget, first);
+  }
 
   /**
    * 原生文件选择器入口（兼诊断）：iPad PWA 里若投放区选完没反应，
@@ -383,15 +552,20 @@ export default function Library() {
     // 记录都没了，后台还在转它就没意义了（队列里也要摘掉，否则会给已删除的视频写段）
     cancelTranscription(row.id);
     useJobStore.getState().drop(row.id);
-    await db.transaction('rw', [db.videos, db.segments, db.frames, db.handouts, db.chats, db.chatSessions, db.embeddings], async () => {
-      await db.videos.delete(row.id);
-      await db.segments.where('videoId').equals(row.id).delete();
-      await db.frames.where('videoId').equals(row.id).delete();
-      await db.handouts.where('videoId').equals(row.id).delete();
-      await db.chats.where('videoId').equals(row.id).delete();
-      await db.chatSessions.where('videoId').equals(row.id).delete();
-      await db.embeddings.where('videoId').equals(row.id).delete();
-    });
+    await db.transaction(
+      'rw',
+      [db.videos, db.segments, db.subtitleTracks, db.frames, db.handouts, db.chats, db.chatSessions, db.embeddings],
+      async () => {
+        await db.videos.delete(row.id);
+        await db.segments.where('videoId').equals(row.id).delete();
+        await db.subtitleTracks.where('videoId').equals(row.id).delete();
+        await db.frames.where('videoId').equals(row.id).delete();
+        await db.handouts.where('videoId').equals(row.id).delete();
+        await db.chats.where('videoId').equals(row.id).delete();
+        await db.chatSessions.where('videoId').equals(row.id).delete();
+        await db.embeddings.where('videoId').equals(row.id).delete();
+      },
+    );
     await deleteVideoFile(row.id);
     toast.success('已删除');
     await reload();
@@ -918,16 +1092,107 @@ export default function Library() {
           autosize
           max-rows={4}
           placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
-          disabled={biliImporting}
-          onInput={(e) => setBiliUrl((e.target as HTMLElement & { value: string }).value)}
+          disabled={biliImporting || biliResolving}
+          onInput={(e) => {
+            setBiliUrl((e.target as HTMLElement & { value: string }).value);
+            setBiliTarget(null); // 改链接后旧的解析结果（含字幕列表）作废
+          }}
         />
         <div className="text-secondary" style={{ marginTop: 8, fontSize: 12 }}>
           {isBiliBridgeAvailable()
             ? '已连接油猴桥，将从本机直连 B 站。未登录约 360P，设置里贴 SESSDATA 可解锁更高清晰度。'
             : '推荐先在「设置」安装油猴脚本（桌面浏览器）；没有脚本则需填写代理。未登录约 360P。'}
         </div>
+        {biliTarget && (
+          <div style={{ marginTop: 12 }} data-testid="bili-target">
+            <div className="row row--nowrap" style={{ alignItems: 'baseline', gap: 8 }}>
+              <strong
+                style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+              >
+                {biliTarget.title}
+              </strong>
+              <span className="text-secondary" style={{ fontSize: 12 }} data-testid="bili-summary">
+                {multiPage
+                  ? `共 ${biliTarget.pages.length} P · 已选 ${biliPagesSel.length} P · 合计 ${formatTotalDuration(selectedSec)}`
+                  : formatTotalDuration(selectedSec)}
+              </span>
+            </div>
+            {multiPage && (
+              <>
+                <div className="row row--nowrap" style={{ gap: 8, marginTop: 10 }}>
+                  <span className="text-secondary" style={{ flex: 1, fontSize: 12 }}>
+                    分 P（每个 P 是一条独立视频，可多选）
+                  </span>
+                  <mdui-button variant="text" data-testid="bili-pages-all" onClick={() => selectAllPages(true)}>
+                    全选
+                  </mdui-button>
+                  <mdui-button
+                    variant="text"
+                    data-testid="bili-pages-none"
+                    disabled={biliPagesSel.length === 0}
+                    onClick={() => selectAllPages(false)}
+                  >
+                    清空
+                  </mdui-button>
+                </div>
+                <div
+                  ref={pageListRef}
+                  className="row"
+                  style={{ flexWrap: 'wrap', gap: 8, marginTop: 6, maxHeight: 168, overflowY: 'auto' }}
+                  data-testid="bili-pages"
+                >
+                  {biliTarget.pages.map((p) => (
+                    <mdui-chip
+                      key={p.page}
+                      selectable
+                      selected={biliPagesSel.includes(p.page)}
+                      data-page={String(p.page)}
+                      data-testid="bili-page"
+                      title={`${pageLabel(p)} · ${formatDuration(p.duration)}`}
+                    >
+                      {pageLabel(p)}
+                    </mdui-chip>
+                  ))}
+                </div>
+              </>
+            )}
+            {biliLangItems.length > 0 ? (
+              <>
+                <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
+                  {multiPage ? `字幕语言（按 P${biliLangPage ?? ''} 上可用的语言）` : '自带字幕'}
+                  ：选中的第一路作主字幕（讲义/问答用它），其余可选做播放页的「对照语言」
+                </div>
+                <div
+                  ref={langListRef}
+                  className="row"
+                  style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}
+                  data-testid="bili-langs"
+                >
+                  {biliLangItems.map((s) => (
+                    <mdui-chip
+                      key={s.lan}
+                      selectable
+                      selected={biliLangs.includes(s.lan)}
+                      data-lang={s.lan}
+                      data-testid="bili-lang"
+                    >
+                      {s.lanDoc || s.lan}
+                    </mdui-chip>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
+                该视频没有自带字幕，导入后可点「生成字幕」走本地转写
+              </div>
+            )}
+          </div>
+        )}
         {biliImporting && (
           <div style={{ marginTop: 12 }}>
+            <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }} data-testid="bili-label">
+              {biliLabel ? `正在下载 ${biliLabel}` : '正在下载…'}
+            </div>
             <mdui-linear-progress data-testid="bili-progress" max={100} value={biliProgress} />
           </div>
         )}
@@ -943,15 +1208,27 @@ export default function Library() {
         <mdui-button slot="action" variant="text" data-testid="bili-cancel" onClick={() => setBiliOpen(false)}>
           取消
         </mdui-button>
-        <mdui-button
-          slot="action"
-          variant="filled"
-          data-testid="bili-confirm"
-          loading={biliImporting}
-          onClick={() => void handleBiliImport()}
-        >
-          开始导入
-        </mdui-button>
+        {biliTarget ? (
+          <mdui-button
+            slot="action"
+            variant="filled"
+            data-testid="bili-confirm"
+            loading={biliImporting}
+            onClick={() => void handleBiliImport()}
+          >
+            开始导入
+          </mdui-button>
+        ) : (
+          <mdui-button
+            slot="action"
+            variant="filled"
+            data-testid="bili-confirm"
+            loading={biliResolving}
+            onClick={() => void handleBiliResolve()}
+          >
+            解析
+          </mdui-button>
+        )}
       </mdui-dialog>
     </PageShell>
   );

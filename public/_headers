@@ -2,3 +2,7 @@
   Cross-Origin-Opener-Policy: same-origin
   Cross-Origin-Embedder-Policy: require-corp
   Cross-Origin-Resource-Policy: same-origin
+
+# 油猴脚本会在新标签页被直接打开：不带 charset 时 Chromium 会把中文嗅探成 GBK（实测乱码）
+/wangke-bili-bridge.user.js
+  Content-Type: text/javascript; charset=utf-8

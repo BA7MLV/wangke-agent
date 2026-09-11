@@ -43,6 +43,23 @@ export interface SegmentRow {
   cues?: { start: number; end: number; text: string }[];
 }
 
+/**
+ * B 站多语言字幕：**只喂显示层**（字幕面板的「对照语言」），不进 AI 流水线。
+ * 主语言同时写进 `segments`（讲义/卡片/弹幕/检索都用那份），这里存的是全套已选语言。
+ */
+export interface SubtitleTrackRow {
+  id?: number;
+  videoId: string;
+  /** B 站语言 key，如 ai-zh / ai-en / zh-Hant */
+  lang: string;
+  /** 展示名，如「英语（自动翻译）」 */
+  lanDoc: string;
+  /** 1 = 这一路就是 segments 里的主语言 */
+  primary?: 1 | 0;
+  /** 原始字幕 cue（未按字数细分；显示层再切） */
+  cues: { start: number; end: number; text: string }[];
+}
+
 export interface FrameRow {
   id?: number;
   videoId: string;
@@ -163,6 +180,7 @@ class WangkeDB extends Dexie {
   danmakus!: Table<DanmakuRow, number>;
   folders!: Table<FolderRow, number>;
   cards!: Table<CardRow, number>;
+  subtitleTracks!: Table<SubtitleTrackRow, number>;
 
   constructor() {
     super('wangke');
@@ -214,6 +232,10 @@ class WangkeDB extends Dexie {
     });
     this.version(7).stores({
       cards: '++id, videoId, createdAt',
+    });
+    // v8：B 站多语言字幕（对照显示用）
+    this.version(8).stores({
+      subtitleTracks: '++id, videoId, lang',
     });
   }
 }

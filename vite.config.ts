@@ -27,9 +27,43 @@ function serveOrt(): Plugin {
   };
 }
 
+/**
+ * 油猴脚本必须显式声明 charset=utf-8。
+ *
+ * Vite 的静态中间件对 .js 只发 `Content-Type: text/javascript`（无 charset），
+ * 而点「安装脚本」是用新标签页直接打开这个文件的：Chromium 会按内容**嗅探编码**，
+ * 中文内容会被猜成 GBK —— 实测 document.characterSet === 'GBK'，元数据里的中文全成乱码
+ * （`网课学习助手` → `缃戣瀛︿範鍔╂墜`）。油猴装出来 name/description 也就跟着乱。
+ *
+ * dev 与 preview 都拦下来自己发（带上 charset），生产构建由 `public/_headers` 顶上。
+ */
+function serveUserscript(): Plugin {
+  const file = path.resolve(__dirname, 'public/wangke-bili-bridge.user.js');
+  const middleware = (
+    req: { url?: string },
+    res: { setHeader: (k: string, v: string) => void },
+    next: () => void,
+  ) => {
+    if ((req.url ?? '').split('?')[0] !== '/wangke-bili-bridge.user.js') return next();
+    if (!fs.existsSync(file)) return next();
+    res.setHeader('Content-Type', 'text/javascript; charset=utf-8');
+    fs.createReadStream(file).pipe(res as unknown as NodeJS.WritableStream);
+  };
+  return {
+    name: 'serve-userscript',
+    configureServer(server) {
+      server.middlewares.use(middleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware);
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     serveOrt(),
+    serveUserscript(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',

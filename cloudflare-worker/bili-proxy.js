@@ -9,7 +9,9 @@
 //
 // 协议：
 //   GET  /?url=<encodeURIComponent(目标地址)>
+//   POST /?url=<encodeURIComponent(目标地址)>   body 原样转发（App gRPC 字幕接口需要）
 //   头   X-Bili-Cookie: <用户可选 Cookie>（代理会透传为对 bilibili 的 Cookie）
+//        Content-Type / grpc-encoding / grpc-accept-encoding 会透传给目标（gRPC 必需）
 //
 // 安全说明：
 //   - 建议部署后只允许你自己的前端域名访问（改 ALLOWED_ORIGIN）。
@@ -19,9 +21,19 @@ const ALLOWED_ORIGIN = '*'; // 上线建议改成你的前端域名，如 'https
 
 function isAllowedHost(hostname) {
   if (hostname === 'api.bilibili.com' || hostname === 'www.bilibili.com' || hostname === 'b23.tv') return true;
-  // CDN 主机名经常变（upos-sz-mirrorcoso1 / estgcos / 海外 ov 等），按后缀放行
-  return hostname.endsWith('.bilivideo.com') || hostname.endsWith('.bilivideo.cn');
+  // App 接口：B 站自带字幕（gRPC DmView）只在这个出口上匿名可拿
+  if (hostname === 'app.biliapi.net' || hostname === 'grpc.biliapi.net' || hostname === 'app.bilibili.com') return true;
+  // CDN 主机名经常变（upos-sz-mirrorcoso1 / estgcos / 海外 ov 等），按后缀放行；
+  // hdslb.com 下是字幕 JSON（i0/i1/aisubtitle）与静态资源
+  return (
+    hostname.endsWith('.bilivideo.com') ||
+    hostname.endsWith('.bilivideo.cn') ||
+    hostname.endsWith('.hdslb.com')
+  );
 }
+
+/** 需要透传给目标站的请求头（gRPC 必需；其余一律忽略，避免把浏览器的杂项头带出去） */
+const PASSTHROUGH_HEADERS = ['content-type', 'grpc-encoding', 'grpc-accept-encoding'];
 
 addEventListener('fetch', (event) => {
   event.respondWith(handleRequest(event.request));
@@ -36,8 +48,8 @@ async function handleRequest(request) {
     });
   }
 
-  if (request.method !== 'GET') {
-    return jsonError('仅支持 GET', 405);
+  if (request.method !== 'GET' && request.method !== 'POST') {
+    return jsonError('仅支持 GET / POST', 405);
   }
 
   const urlParam = new URL(request.url).searchParams.get('url');
@@ -62,6 +74,10 @@ async function handleRequest(request) {
   headers.set('User-Agent', request.headers.get('User-Agent') ?? 'Mozilla/5.0 (compatible; BiliProxy/1.0)');
   headers.set('Accept', '*/*');
   headers.set('Accept-Language', 'zh-CN,zh;q=0.9');
+  for (const name of PASSTHROUGH_HEADERS) {
+    const value = request.headers.get(name);
+    if (value) headers.set(name, value);
+  }
 
   const cookie = request.headers.get('X-Bili-Cookie');
   if (cookie) {
@@ -69,10 +85,14 @@ async function handleRequest(request) {
   }
 
   const init = {
-    method: 'GET',
+    method: request.method,
     headers,
     redirect: 'follow',
   };
+  if (request.method === 'POST') {
+    // 请求体很小（protobuf 帧），直接吃成 ArrayBuffer 最稳
+    init.body = await request.arrayBuffer();
+  }
 
   let resp;
   try {
@@ -98,8 +118,8 @@ async function handleRequest(request) {
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': ALLOWED_ORIGIN,
-    'Access-Control-Allow-Methods': 'GET, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Bili-Cookie',
+    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, X-Bili-Cookie, grpc-encoding, grpc-accept-encoding',
     'Access-Control-Max-Age': '86400',
     'Cross-Origin-Resource-Policy': 'cross-origin',
   };

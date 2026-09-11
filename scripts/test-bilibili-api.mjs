@@ -59,25 +59,34 @@ async function withFetch(fetchMock, fn) {
 
 const proxy = 'https://proxy.example.com';
 
-console.log('fetchVideoInfo');
+console.log('fetchVideoView');
 {
   const { fetchMock, calls } = makeFetch([
     ['/x/web-interface/view', () => ({
       json: {
         code: 0,
         data: {
+          aid: 80433022,
           title: '测试课程',
           duration: 3661,
           pages: [
-            { cid: 111, part: 'P1', page: 1 },
-            { cid: 222, part: '第二章', page: 2 },
+            { cid: 111, part: 'P1', page: 1, duration: 100 },
+            { cid: 222, part: '第二章', page: 2, duration: 200 },
           ],
         },
       },
     })],
   ]);
-  const r = await withFetch(fetchMock, () => api.fetchVideoInfo({ proxy, cookie: 'SESSDATA=x' }, 'BV1xx411c7mD', 2));
-  eq(r, { title: '测试课程 P2 第二章', duration: 3661, cid: 222 }, '选 P2 并拼标题');
+  const r = await withFetch(fetchMock, () => api.fetchVideoView({ proxy, cookie: 'SESSDATA=x' }, 'BV1xx411c7mD'));
+  eq(r, {
+    aid: 80433022,
+    title: '测试课程',
+    duration: 3661,
+    pages: [
+      { page: 1, cid: 111, part: 'P1', duration: 100 },
+      { page: 2, cid: 222, part: '第二章', duration: 200 },
+    ],
+  }, '取到全部分 P（多 P 合集要在对话框里挑 P）');
   ok(calls[0].url.startsWith(proxy + '?url='), '经代理');
   ok(calls[0].url.includes(encodeURIComponent('bvid=BV1xx411c7mD')), '带 bvid');
   eq(calls[0].init.headers['X-Bili-Cookie'], 'SESSDATA=x', 'Cookie 透传头');
@@ -87,7 +96,7 @@ console.log('fetchVideoInfo');
     ['/x/web-interface/view', () => ({ json: { code: -404, message: '啥都木有' } })],
   ]);
   let msg = '';
-  try { await withFetch(fetchMock, () => api.fetchVideoInfo({ proxy }, 'BV1xx411c7mD', 1)); } catch (e) { msg = e.message; }
+  try { await withFetch(fetchMock, () => api.fetchVideoView({ proxy }, 'BV1xx411c7mD')); } catch (e) { msg = e.message; }
   ok(msg.includes('code=-404') && msg.includes('啥都木有'), '接口错误码透出');
 }
 
@@ -139,7 +148,7 @@ console.log('resolveShortUrl');
 console.log('出口未配置');
 {
   let msg = '';
-  try { await api.fetchVideoInfo({ proxy: '', bridge: null }, 'BV1xx411c7mD', 1); } catch (e) { msg = e.message; }
+  try { await api.fetchVideoView({ proxy: '', bridge: null }, 'BV1xx411c7mD'); } catch (e) { msg = e.message; }
   ok(msg.includes('油猴') && msg.includes('代理'), '无桥无代理时报错引导安装油猴');
 }
 

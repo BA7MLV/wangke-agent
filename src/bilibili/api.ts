@@ -28,10 +28,23 @@ export interface BiliStreams {
 
 interface ViewPage {
   cid: number;
-  part: string;
+  part?: string;
   page: number;
+  duration?: number;
+}
+
+/** 一个分 P（合集/系列课的「一集」）：cid 独立，播放流与字幕都各拉各的 */
+export interface BiliPageInfo {
+  /** 1 起 */
+  page: number;
+  cid: number;
+  /** 分 P 名，可能是空串 */
+  part: string;
+  /** 秒 */
+  duration: number;
 }
 interface ViewData {
+  aid: number;
   title: string;
   duration: number;
   pages: ViewPage[];
@@ -74,22 +87,38 @@ async function apiGet<T>(opts: BiliApiOptions, target: string): Promise<T> {
   return json.data;
 }
 
-/** 取视频基本信息（标题/时长/分 P 列表），并选中目标分 P 的 cid */
-export async function fetchVideoInfo(
+/** 取视频基本信息：标题/总时长 + **全部分 P**（多 P 的合集要在对话框里挑 P） */
+export async function fetchVideoView(
   opts: BiliApiOptions,
   bvid: string,
-  page: number,
-): Promise<{ title: string; duration: number; cid: number }> {
+): Promise<{ aid: number; title: string; duration: number; pages: BiliPageInfo[] }> {
   const data = await apiGet<ViewData>(
     opts,
     `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
   );
-  const pages = data.pages ?? [];
-  const target = pages.find((p) => p.page === page) ?? pages[0];
-  if (!target) throw new BiliHttpError('未找到可用分 P');
-  // 多分 P 时标题带上分 P 名，避免同名覆盖
-  const title = pages.length > 1 && target.part ? `${data.title} P${target.page} ${target.part}` : data.title;
-  return { title, duration: data.duration ?? 0, cid: target.cid };
+  const pages: BiliPageInfo[] = (data.pages ?? []).map((p) => ({
+    page: p.page,
+    cid: p.cid,
+    part: p.part ?? '',
+    duration: p.duration ?? 0,
+  }));
+  if (pages.length === 0) throw new BiliHttpError('未找到可用分 P');
+  return { aid: data.aid, title: data.title, duration: data.duration ?? 0, pages };
+}
+
+/** 探测当前出口是否已登录（油猴桥会带上浏览器自己的 B 站 Cookie）。失败返回 null，不打扰导入。 */
+export async function probeBiliLogin(
+  opts: BiliApiOptions,
+): Promise<{ isLogin: boolean; uname?: string } | null> {
+  try {
+    const data = await apiGet<{ isLogin?: boolean; uname?: string }>(
+      opts,
+      'https://api.bilibili.com/x/web-interface/nav',
+    );
+    return { isLogin: !!data.isLogin, uname: data.uname };
+  } catch {
+    return null;
+  }
 }
 
 /** 取播放地址（DASH 音视频分离），选可得的最高清晰度 */

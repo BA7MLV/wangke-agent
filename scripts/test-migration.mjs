@@ -8,16 +8,53 @@
  *   node scripts/test-migration.mjs
  */
 import assert from 'node:assert/strict';
+import { execSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
+import os from 'node:os';
 
-// Node 缺浏览器 API：fake-indexeddb 提供 IDB；Blob/atob/btoa Node 20+ 均有
+// Node 缺浏览器 API：fake-indexeddb 提供 IDB；Blob/atob/btoa Node 20+ 均有；
+// settings 的 zustand persist 在导入期就会读 localStorage，补个最小桩
 const { indexedDB, IDBKeyRange } = await import('fake-indexeddb');
 globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
+// Node 26 自带一个「未启用就抛错」的 localStorage 全局，??= 会看见它，故显式覆盖
+const localStorageStub = {
+  store: new Map(),
+  getItem(k) {
+    return this.store.has(k) ? this.store.get(k) : null;
+  },
+  setItem(k, v) {
+    this.store.set(k, String(v));
+  },
+  removeItem(k) {
+    this.store.delete(k);
+  },
+};
+try {
+  Object.defineProperty(globalThis, 'localStorage', {
+    value: localStorageStub,
+    configurable: true,
+    writable: true,
+  });
+} catch {
+  /* 个别运行时不可重定义：退化为不补桩（settings 落盘会打警告，不影响断言） */
+}
 
-const { db } = await import('../src/store/db.ts');
-const { exportMigrationZip, importMigrationZip, previewMigrationZip } = await import(
-  '../src/store/migration.ts'
+// db 与 migration 必须来自同一个 bundle（两份 bundle = 两个 Dexie 实例，测试会假绿）
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const entry = path.join(os.tmpdir(), `test-migration-entry-${Date.now()}.ts`);
+const bundle = path.join(os.tmpdir(), `test-migration-bundle-${Date.now()}.mjs`);
+fs.writeFileSync(
+  entry,
+  `export * from '${root}/src/store/db';\nexport * from '${root}/src/store/migration';\n`,
 );
+execSync(`node_modules/.bin/esbuild ${entry} --bundle --platform=node --format=esm --outfile=${bundle}`, {
+  cwd: root,
+  stdio: 'inherit',
+});
+const { db, exportMigrationZip, importMigrationZip, previewMigrationZip } = await import(bundle);
 const { unzipSync, strFromU8 } = await import('fflate');
 
 let passed = 0;
@@ -57,6 +94,11 @@ await db.segments.bulkAdd([
   { videoId: VID_A, idx: 1, start: 5, end: 10, text: '今天讲增长率', status: 1 },
   { videoId: VID_B, idx: 0, start: 0, end: 3, text: 'B 课字幕', status: 1 },
 ]);
+// B 站多语言字幕（只喂显示层，随视频一起迁移）
+await db.subtitleTracks.add({
+  videoId: VID_A, lang: 'ai-en', lanDoc: '英语（自动翻译）', primary: 0,
+  cues: [{ start: 0, end: 2, text: 'Hello' }, { start: 2, end: 5, text: 'Today we cover growth rate' }],
+});
 await db.frames.add({
   videoId: VID_A, ts: 30, kind: 'slide', caption: '公式页',
   blob: new Blob([PNG], { type: 'image/png' }),
@@ -89,6 +131,7 @@ await test('zip 含 manifest/db/settings 三件', () => {
   assert.equal(m.format, 1);
   assert.equal(m.counts.videos, 2);
   assert.equal(m.counts.segments, 3);
+  assert.equal(m.counts.subtitleTracks, 1);
   assert.equal(m.counts.frames, 1);
 });
 
@@ -127,6 +170,15 @@ await test('全新导入：字幕/弹幕/卡片跟随新视频', async () => {
   const seg = await db.segments.where('videoId').equals(VID_A).first();
   assert.equal(seg.text, '大家好');
   assert.deepEqual(seg.cues.length, 2); // 嵌套对象保留
+});
+
+await test('全新导入：多语言字幕轨跟随新视频', async () => {
+  const tracks = await db.subtitleTracks.where('videoId').equals(VID_A).toArray();
+  assert.equal(tracks.length, 1);
+  assert.equal(tracks[0].lang, 'ai-en');
+  assert.equal(tracks[0].primary, 0);
+  assert.equal(tracks[0].cues.length, 2); // 嵌套 cue 数组保留
+  assert.equal(tracks[0].cues[1].text, 'Today we cover growth rate');
 });
 
 await test('全新导入：帧 Blob 字节级一致', async () => {
@@ -175,6 +227,7 @@ await test('二次导入：视频全部跳过，无重复写入', async () => {
   assert.equal(r2.videosAdded, 0);
   assert.equal(r2.videosSkipped, 2);
   assert.equal(await db.segments.count(), 3);
+  assert.equal(await db.subtitleTracks.count(), 1);
   assert.equal(await db.chats.count(), 2);
   assert.equal(await db.folders.count(), 1); // 同名 folder 合并
   assert.equal(await db.skills.count(), 1); // 同名 skill 跳过
@@ -201,6 +254,7 @@ await test('部分冲突：已有视频整条跳过（含子表），新视频�
   assert.equal(await db.segments.where('videoId').equals(VID_A).count(), 1); // 本机字幕保留
   assert.equal(await db.segments.where('videoId').equals(VID_B).count(), 1); // B 字幕迁入
   assert.equal(await db.frames.count(), 0); // A 被跳过 → A 的帧不导入
+  assert.equal(await db.subtitleTracks.count(), 0); // 字幕轨只跟着迁入的 B 走（A 被跳过 → 它的轨也不导入）
   const b = await db.videos.get(VID_B);
   assert.equal(b.fileDeleted, 1);
 });

@@ -46,6 +46,10 @@ export async function getStorageStats(): Promise<StorageStats> {
   await db.segments.each((s) => {
     textAndVectors += s.text.length * 2; // JS 字符串按 UTF-16 估算
   });
+  // B 站多语言字幕轨（对照显示用，条数与主字幕同量级）
+  await db.subtitleTracks.each((t) => {
+    for (const c of t.cues) textAndVectors += c.text.length * 2;
+  });
   await db.embeddings.each((e) => {
     textAndVectors += e.vector.byteLength;
   });

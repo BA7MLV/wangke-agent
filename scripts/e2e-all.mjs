@@ -42,8 +42,11 @@ const META = {
   'test-apkg': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-api': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-index': { service: 'none', antd: false, timeout: 120 },
+  'test-bilibili-pages': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-parse': { service: 'none', antd: false, timeout: 120 },
+  'test-bilibili-subtitle': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-transport': { service: 'none', antd: false, timeout: 120 },
+  'test-bilingual': { service: 'none', antd: false, timeout: 120 },
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
@@ -57,6 +60,8 @@ const META = {
 
   // ── preview(4173)：生产构建档 ──
   // 注意：本注释与下面 e2e-mdui-adapter 的说明在 mdui 迁移期间才成立
+  // 需要直连 B 站（地区/网络相关），默认跳过：用 node scripts/e2e-bilibili-subtitle.mjs 单独跑
+  'e2e-bilibili-subtitle': { service: 'dev', antd: false, timeout: 600, skip: '需要直连 B 站' },
   'debug-import-perf': { service: 'preview', antd: true, testFile: true, diagnostic: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-cards': { service: 'preview', antd: true, base: true, timeout: 300 },
   'e2e-chat-export': { service: 'preview', antd: true, base: true, timeout: 300 },
@@ -82,6 +87,8 @@ const META = {
   'e2e-quiz': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-resume': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-smoke': { service: 'preview', antd: true, key: true, testFile: true, timeout: 600, video: '/tmp/wangke-test.mp4' },
+  'e2e-bili-cookie': { service: 'preview', antd: false, timeout: 120 },
+  'e2e-userscript-charset': { service: 'preview', antd: false, timeout: 60 },
   'e2e-storage-card': { service: 'preview', antd: true, timeout: 300 },
   'motion-components-test': { service: 'preview', antd: false, timeout: 120 },
   'motion-smoke': { service: 'preview', antd: true, timeout: 120 },

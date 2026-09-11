@@ -12,7 +12,13 @@ import StorageCard from '../components/StorageCard';
 import MigrationCard from '../components/MigrationCard';
 import { Field, PageShell, SectionCard, confirmDialog, toast, useMduiEvent } from '../ui';
 import { useAppNav } from '../components/appNav';
-import { describeTransport, isBiliBridgeAvailable } from '../bilibili/transport';
+import {
+  getBiliBridgeVersion,
+  isBiliBridgeAvailable,
+  isBridgePostCapable,
+  readBiliCookie,
+} from '../bilibili/transport';
+import { probeBiliLogin } from '../bilibili/api';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 const EMBED_MODEL_RE = /embed|bge|gte/i;
@@ -185,16 +191,102 @@ export default function Settings() {
   /** 自定义倍速的输入草稿（null = 输入框为空，「添加」按钮置灰） */
   const [rateDraft, setRateDraft] = useState<number | null>(null);
   const [bridgeTick, setBridgeTick] = useState(0);
+  /** 读取本机 Cookie 的进行中标记 + 读到的结果说明 */
+  const [cookieReading, setCookieReading] = useState(false);
+  /** 上一次「读取本机 Cookie」的结果说明（失败时写清是哪一种失败） */
+  const [cookieNote, setCookieNote] = useState('');
+  /** 说明是「问题」（红）还是「只是没法读明细，不影响用」（灰） */
+  const [cookieNoteLevel, setCookieNoteLevel] = useState<'info' | 'warn'>('info');
+  /** 「备用出口」的展开态：null = 跟着主路径（没桥就展开，有桥就收起） */
+  const [advOverride, setAdvOverride] = useState<boolean | null>(null);
+  /** 油猴桥视角的登录态（进设置页探测一次；null = 探不到） */
+  const [biliLogin, setBiliLogin] = useState<{ isLogin: boolean; uname?: string } | null>(null);
 
   // 已提交值外部变化（确认写回 / 面板 ModelPicker 切换）时同步草稿
   useEffect(() => {
     setEmbedDraft(settings.embedModel);
   }, [settings.embedModel]);
+  const bridgeOk = isBiliBridgeAvailable();
+  const advOpen = advOverride ?? !bridgeOk;
+
+  /**
+   * 「读取本机 Cookie」：经油猴桥的 GM_cookie 读 .bilibili.com 全量 Cookie 并填入。
+   * 失败的四种情况分开提示（否则「没读到」这一句话会把「脚本太旧」和「没登录」混在一起，无法对症）。
+   */
+  const readCookieFromBrowser = async () => {
+    setCookieReading(true);
+    try {
+      const result = await readBiliCookie();
+      if (result.status !== 'ok') {
+        if (result.status === 'empty') {
+          // 「读到 0 项」有两种截然不同的含义，靠桥出口自己问一次登录态来分辨（桥的请求会带上浏览器 Cookie）：
+          //   已登录 → 只是扩展不给 GM_cookie 明细，不影响任何功能，别吓唬用户；
+          //   未登录 → 那确实该先去登录。
+          const login = await probeBiliLogin({ proxy: settings.bilibiliProxy, cookie: settings.bilibiliCookie });
+          setBiliLogin(login);
+          const note = login?.isLogin
+            ? `读到 0 项 Cookie，但油猴桥出口已登录${login.uname ? `（${login.uname}）` : ''}：说明扩展没提供 GM_cookie 明细。这不影响导入 —— 桥的请求本来就会带上浏览器自己的 Cookie，这个输入框留空即可`
+            : '能读 Cookie，但本机没有 bilibili.com 的：先在浏览器里登录 B 站（无痕窗口、容器标签页读不到）';
+          setCookieNoteLevel(login?.isLogin ? 'info' : 'warn');
+          setCookieNote(note);
+          if (login?.isLogin) toast.info(note);
+          else toast.warning(note);
+          return;
+        }
+        const note =
+          result.status === 'no-bridge'
+            ? '没检测到油猴桥：先点上面的「安装脚本」装好脚本（装完刷新本页），再点这个按钮'
+            : result.status === 'old-bridge'
+              ? `当前脚本是 ${result.version} 版，没有读 Cookie 的能力：浏览器里的脚本副本不会自动更新，请在左侧重新安装一次`
+              : '脚本读不到 Cookie（浏览器/扩展不支持或未授权 GM_cookie：Safari 的 Userscripts 属于这种）。手动粘贴即可，或者直接留空 —— 装了油猴桥时请求会自动带上浏览器自己的 Cookie';
+        setCookieNoteLevel('warn');
+        setCookieNote(note);
+        toast.warning(note);
+        return;
+      }
+      settings.update({ bilibiliCookie: result.cookie });
+      const hasSess = /(^|;\s*)SESSDATA=/.test(result.cookie);
+      const note = hasSess
+        ? `已读取 ${result.cookie.split(';').length} 项 Cookie（含 SESSDATA）`
+        : '已读取本机 Cookie，但没发现 SESSDATA（可能未登录 B 站）';
+      setCookieNoteLevel(hasSess ? 'info' : 'warn');
+      setCookieNote(note);
+      toast.success(note);
+      const state = await probeBiliLogin({ proxy: settings.bilibiliProxy, cookie: result.cookie });
+      setBiliLogin(state);
+    } finally {
+      setCookieReading(false);
+    }
+  };
+
   const [keyError, setKeyError] = useState(false);
   const keyInputRef = useRef<HTMLDivElement>(null);
   const revertTimerRef = useRef<number | undefined>(undefined);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
+
+  // 装/卸脚本后「备用出口」回到自动态（有桥就收起）
+  useEffect(() => {
+    setAdvOverride(null);
+  }, [bridgeTick]);
+
+  // 进入设置页（或安装脚本后 tick 变化）探测一次 B 站登录态：只做展示，失败静默。
+  // 依赖只跟 bridgeTick 走 —— 带 cookie 进依赖会在输框里每敲一个字发一次请求。
+  const biliProbeRef = useRef({ proxy: '', cookie: '' });
+  biliProbeRef.current = { proxy: settings.bilibiliProxy, cookie: settings.bilibiliCookie };
+  useEffect(() => {
+    if (!bridgeOk) {
+      setBiliLogin(null);
+      return;
+    }
+    let alive = true;
+    void probeBiliLogin(biliProbeRef.current).then((r) => {
+      if (alive) setBiliLogin(r);
+    });
+    return () => {
+      alive = false;
+    };
+  }, [bridgeTick]);
 
   // 能力数据过期则进入设置页时静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
@@ -595,62 +687,130 @@ export default function Settings() {
       </SectionCard>
 
       <SectionCard title="哔哩哔哩导入" testId="card-bilibili">
+        {/* 常驻只有这一行：主路径（油猴桥）状态 + 登录态。备用出口收进下面的折叠项 ——
+            装了桥还能正常登录时，代理地址与 Cookie 都是纯噪音（请求自带浏览器 Cookie）。 */}
         <Field
           label="油猴桥（推荐）"
-          hint={describeTransport({ proxy: settings.bilibiliProxy }).hint}
+          hint={bridgeOk ? undefined : '装一次脚本，之后导入全部从本机直连 B 站，不经过任何中转'}
           testId="field-bili-bridge"
         >
           <div className="row row--nowrap" data-bridge-tick={bridgeTick} data-testid="bili-bridge-status">
             <span className="text-secondary" style={{ flex: 1 }}>
-              {isBiliBridgeAvailable()
-                ? '已连接，导入将从本机直连 B 站'
-                : '未检测到脚本。桌面 Chrome / Edge / Firefox 安装 Tampermonkey 后点右侧按钮'}
+              {!bridgeOk ? (
+                '未检测到油猴脚本'
+              ) : (
+                <>
+                  已连接 v{getBiliBridgeVersion()}
+                  {isBridgePostCapable() ? '' : '（版本过旧，读不到自带字幕）'} ·{' '}
+                  <span data-testid="bili-login-state">
+                    {biliLogin == null
+                      ? '登录态未确认'
+                      : biliLogin.isLogin
+                        ? `已登录${biliLogin.uname ? `：${biliLogin.uname}` : ''}`
+                        : '未登录（B 站只给低清晰度）'}
+                  </span>
+                </>
+              )}
             </span>
             <mdui-button
-              variant="tonal"
+              variant={bridgeOk ? 'text' : 'tonal'}
               data-testid="bili-bridge-install"
               onClick={() => window.open('/wangke-bili-bridge.user.js', '_blank')}
             >
-              安装脚本
+              {bridgeOk ? '重装脚本' : '安装脚本'}
             </mdui-button>
           </div>
         </Field>
-        <Field
-          label="代理地址（可选回退）"
-          hint="油猴不可用时才走这里。Cloudflare Worker 常被 B 站拒 IP，可不填"
-          testId="field-bili-proxy"
+
+        {/* 备用出口：收起时整块不渲染（不是 CSS 隐藏）—— 免得一屏文字都在说「不用填」，也避免键盘 Tab 进隐藏输入框 */}
+        <button
+          type="button"
+          data-testid="bili-adv-toggle"
+          aria-expanded={advOpen}
+          onClick={() => setAdvOverride(!advOpen)}
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            gap: 6,
+            width: '100%',
+            padding: '12px 0 0',
+            background: 'none',
+            border: 'none',
+            color: 'inherit',
+            font: 'inherit',
+            cursor: 'pointer',
+            textAlign: 'left',
+          }}
         >
-          <mdui-text-field
-            data-testid="bili-proxy"
-            value={settings.bilibiliProxy}
-            clearable
-            placeholder="https://bili-proxy.yourname.workers.dev"
-            onInput={(e) =>
-              settings.update({
-                bilibiliProxy: (e.target as HTMLElement & { value: string }).value.trim(),
-              })
-            }
-          />
-        </Field>
-        <Field
-          label="B 站 Cookie（可选）"
-          hint="粘贴自己账号的 Cookie 可解锁更高清晰度；不上传任何服务器，仅存本机 localStorage"
-          testId="field-bili-cookie"
-        >
-          <mdui-text-field
-            data-testid="bili-cookie"
-            type="password"
-            toggle-password
-            clearable
-            placeholder="SESSDATA=...; bili_jct=..."
-            value={settings.bilibiliCookie}
-            onInput={(e) =>
-              settings.update({
-                bilibiliCookie: (e.target as HTMLElement & { value: string }).value.trim(),
-              })
-            }
-          />
-        </Field>
+          <span className="text-secondary" style={{ flex: 1, fontSize: 14 }}>
+            备用出口：代理地址 / B 站 Cookie
+          </span>
+          {advOpen ? <mdui-sym-keyboard-arrow-down /> : <mdui-sym-chevron-right />}
+        </button>
+        {advOpen && (
+          <div data-testid="bili-adv">
+            <div className="text-secondary" style={{ fontSize: 12, margin: '10px 0 12px' }}>
+              只有油猴桥不可用、或要改用代理时才需要填。装了桥时请求会自动带上浏览器自己的 Cookie，
+              「B 站 Cookie」可以留空。
+            </div>
+            <Field
+              label="代理地址"
+              hint="Cloudflare Worker 的出口 IP 常被 B 站拒绝，优先级低于油猴桥"
+              testId="field-bili-proxy"
+            >
+              <mdui-text-field
+                data-testid="bili-proxy"
+                value={settings.bilibiliProxy}
+                clearable
+                placeholder="https://bili-proxy.yourname.workers.dev"
+                onInput={(e) =>
+                  settings.update({
+                    bilibiliProxy: (e.target as HTMLElement & { value: string }).value.trim(),
+                  })
+                }
+              />
+            </Field>
+            <Field label="B 站 Cookie" hint="仅存本机 localStorage，用于代理回退路径" testId="field-bili-cookie">
+              <div className="row row--nowrap">
+                <mdui-text-field
+                  data-testid="bili-cookie"
+                  type="password"
+                  toggle-password
+                  clearable
+                  placeholder="SESSDATA=...; bili_jct=..."
+                  value={settings.bilibiliCookie}
+                  style={{ flex: 1, minWidth: 0 }}
+                  onInput={(e) =>
+                    settings.update({
+                      bilibiliCookie: (e.target as HTMLElement & { value: string }).value.trim(),
+                    })
+                  }
+                />
+                <mdui-button
+                  variant="tonal"
+                  data-testid="bili-cookie-read"
+                  loading={cookieReading}
+                  onClick={() => void readCookieFromBrowser()}
+                >
+                  读取本机 Cookie
+                </mdui-button>
+              </div>
+              {cookieNote && (
+                <div
+                  className="text-secondary"
+                  style={{
+                    fontSize: 12,
+                    marginTop: 6,
+                    color: cookieNoteLevel === 'warn' ? 'rgb(var(--mdui-color-error))' : undefined,
+                  }}
+                  data-testid="bili-cookie-note"
+                >
+                  {cookieNote}
+                </div>
+              )}
+            </Field>
+          </div>
+        )}
       </SectionCard>
 
       <SectionCard
