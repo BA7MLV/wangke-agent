@@ -551,18 +551,32 @@
   margin-top: 12px;
 }
 
-/* ── 库页：导入任务行 ───────────────────────────────────────────────────── */
-.import-task {
+/* ── 库页：导入任务行 ─────────────────────────────────────────────────────
+   文件名和状态同一行，进度条单独占下一行。完成项会很快从队列里消失，
+   真正的视频已经出现在下方列表里，不必把「已导入」一直钉在投放区下面。 */
+.import-tasks {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  padding: 4px 0;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 12px;
 }
 
-/* 注意：theme.css 在 ≤640px 下用 `.import-task-name { flex-basis: 120px !important }` 收窄它，
-   所以这里的基准值要保持可被覆盖（那条规则的 !important 说了算）。 */
+.import-task {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.import-task__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .import-task-name {
-  flex: 0 1 220px;
+  flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -573,18 +587,26 @@
 
 .import-task mdui-linear-progress {
   display: block; /* 宿主默认不是 block，不铺开的话进度条只有内容宽 */
-  flex: 1 1 auto;
-  min-width: 0;
+  width: 100%;
 }
 
 .import-task__status {
   flex: none;
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 12px;
+  font-variant-numeric: tabular-nums;
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
 .import-task__status--error {
   color: rgb(var(--mdui-color-error));
+}
+
+.import-task__head mdui-button-icon {
+  flex: none;
 }
 
 /* ── 库页：工具条 / 分组头 / 视频行 ─────────────────────────────────────── */

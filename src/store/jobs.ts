@@ -28,6 +28,17 @@ export function isJobActive(job: TranscribeJob | undefined): boolean {
   return !!job && ACTIVE_PHASES.includes(job.phase);
 }
 
+/** 资料库行：进度条旁写细节，状态标签只写「转写中」，避免同一句出现两次 */
+export function libraryJobCopy(job: TranscribeJob): { detail: string; tag: string } {
+  const detail =
+    job.phase === 'asr'
+      ? `转写中 ${job.done}/${job.total}`
+      : job.phase === 'queued'
+        ? '转写排队中'
+        : job.message || '转写中';
+  return { detail, tag: '转写中' };
+}
+
 interface JobStore {
   jobs: Record<string, TranscribeJob>;
   /** 等待中的 videoId（同一时刻只跑一个转写，避免和正在播放的视频抢 CPU） */

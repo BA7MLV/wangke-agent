@@ -15,7 +15,7 @@ import { defaultSelectedLangs, type SubtitleBundle } from '../bilibili/subtitle'
 import { saveImportedSubtitles } from '../store/subtitles';
 import { getSettings } from '../store/settings';
 import { describeTransport, isBiliBridgeAvailable, isBridgePostCapable } from '../bilibili/transport';
-import { isJobActive, useJobStore, useTranscribeJob } from '../store/jobs';
+import { isJobActive, libraryJobCopy, useJobStore, useTranscribeJob } from '../store/jobs';
 import { cancelTranscription } from '../pipelines/transcribeQueue';
 import { formatCaughtError } from '../utils/errorText';
 
@@ -120,10 +120,10 @@ interface ImportTask {
 }
 
 const TASK_STATUS_TEXT: Record<ImportTask['status'], string> = {
-  queued: '等待中',
-  probing: '读取文件信息…',
-  writing: '写入本地存储',
-  done: '完成',
+  queued: '排队中',
+  probing: '读取信息',
+  writing: '写入中',
+  done: '已导入',
   error: '失败',
 };
 
@@ -288,13 +288,14 @@ export default function Library() {
       });
       // B 站自带字幕：主语言写 segments、全部语言写 subtitleTracks，并直接置为已转写
       if (subtitles) await saveImportedSubtitles(id, subtitles);
-      patchTask(key, { status: 'done', percent: 100 });
+      await reload();
+      // 视频已经出现在下方列表，队列只留还在进行 / 失败的项
+      setTasks((prev) => prev.filter((t) => t.key !== key));
       toast.success(
         subtitles?.primary
           ? `已导入《${file.name}》· 自带字幕 ${subtitles.primary.cues.length} 条`
           : `已导入《${file.name}》`,
       );
-      await reload();
     } catch (e) {
       const text = formatCaughtError(e);
       patchTask(key, { status: 'error', error: text });
@@ -902,35 +903,45 @@ export default function Library() {
       </div>
 
       {tasks.length > 0 && (
-        <div data-testid="import-tasks">
+        <div className="import-tasks" data-testid="import-tasks">
           {tasks.map((t) => (
             <div key={t.key} className="import-task" data-testid="import-task">
-              <span className="import-task-name" title={t.name}>
-                {t.name}
-              </span>
-              {/* value 省略 = 不确定态（mdui 的 linear-progress 在 value 未定义时走 indeterminate），
-                  正好对应 antd Progress 的 status="active" */}
-              <mdui-linear-progress
-                data-testid="import-progress"
-                max={100}
-                value={
-                  t.status === 'done' ? 100 : t.status === 'writing' ? t.percent : undefined
-                }
-              />
-              <span
-                className={
-                  t.status === 'error'
-                    ? 'import-task__status import-task__status--error'
-                    : 'import-task__status'
-                }
-                data-testid="import-task-status"
-              >
-                {t.status === 'error'
-                  ? (t.error ?? '失败')
-                  : t.status === 'writing'
-                    ? `${TASK_STATUS_TEXT.writing} ${t.percent}%`
-                    : TASK_STATUS_TEXT[t.status]}
-              </span>
+              <div className="import-task__head">
+                <span className="import-task-name" title={t.name}>
+                  {t.name}
+                </span>
+                <span
+                  className={
+                    t.status === 'error'
+                      ? 'import-task__status import-task__status--error'
+                      : 'import-task__status'
+                  }
+                  data-testid="import-task-status"
+                  title={t.status === 'error' ? t.error : undefined}
+                >
+                  {t.status === 'error'
+                    ? (t.error ?? '失败')
+                    : t.status === 'writing'
+                      ? `${t.percent}%`
+                      : TASK_STATUS_TEXT[t.status]}
+                </span>
+                {t.status === 'error' && (
+                  <mdui-button-icon
+                    data-testid="btn-dismiss-import-error"
+                    aria-label="关掉这条失败提示"
+                    onClick={() => setTasks((prev) => prev.filter((x) => x.key !== t.key))}
+                  >
+                    <mdui-sym-close />
+                  </mdui-button-icon>
+                )}
+              </div>
+              {t.status !== 'done' && t.status !== 'error' && (
+                <mdui-linear-progress
+                  data-testid="import-progress"
+                  max={100}
+                  value={t.status === 'writing' ? t.percent : undefined}
+                />
+              )}
             </div>
           ))}
         </div>
@@ -1271,13 +1282,7 @@ function VideoRow({
   // 转写是全局队列里的后台任务：在播放页、在别处、刷新后续跑的，列表上都要看得到
   const job = useTranscribeJob(v.id);
   const activeJob = isJobActive(job) ? job : undefined;
-  const jobText = !activeJob
-    ? ''
-    : activeJob.phase === 'asr'
-      ? `转写中 ${activeJob.done}/${activeJob.total}`
-      : activeJob.phase === 'queued'
-        ? '转写排队中'
-        : activeJob.message || '转写中';
+  const jobCopy = activeJob ? libraryJobCopy(activeJob) : undefined;
   return (
     <div
       className={dragging ? 'video-row video-row--dragging' : 'video-row'}
@@ -1314,14 +1319,14 @@ function VideoRow({
                   : undefined
               }
             />
-            <span>{jobText}</span>
+            <span>{jobCopy?.detail}</span>
           </div>
         )}
       </div>
       <div className="video-row__tags">
         {v.fileDeleted === 1 && <span className="tag-mini">文件已删</span>}
         <span className={status.variant ? `tag-mini tag-mini--${status.variant}` : 'tag-mini'}>
-          {activeJob ? jobText : status.text}
+          {jobCopy ? jobCopy.tag : status.text}
         </span>
       </div>
       <div className="video-row__actions">

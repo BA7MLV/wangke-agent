@@ -180,12 +180,6 @@ html.mdui-theme-dark {
     font-size: 16px !important;
   }
 
-  /* 库页导入任务行：文件名窄屏收缩基准改小，给进度条留空间
-     （基准值在 src/ui/layout.css 的 .import-task-name，这里是窄屏覆盖） */
-  .import-task-name {
-    flex-basis: 120px !important;
-    min-width: 0;
-  }
 }
 
 /* ── 手机横屏：左视频 / 右面板 ───────────────────────────────────────────
