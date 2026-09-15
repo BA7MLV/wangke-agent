@@ -679,13 +679,28 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
   // 时它内部还是 undefined（`const { scrollHeight } = undefined` 直接抛 TypeError），那次
   // 异常发生在挂载期、React 会把整棵页面树卸掉重挂 —— 现在自己持有真实元素，`?.` 已足够，
   // 但延后一帧仍然是必要的（否则滚不到底）。
+  //
+  // 依赖**不能**是 msgs 本身：作答题卡、落库回写 rowId 这类「原地交互」也会换 msgs 的引用，
+  // 于是点一下选项就重新吸一次底 —— 而此刻解析块刚插进来、内容正好长高 Δ，列表又被贴到
+  // 新底部，整屏（含刚点的那个选项）就往上跳 Δ。这里只认「消息变多 / 末尾正文增长」。
+  // 题卡是否挂上也算一条：它是在气泡末尾追加的新内容，该跟到底部；
+  // 而 picks 的变化不影响这个信号，所以作答不会触发滚动。
+  const lastMsg = msgs[msgs.length - 1];
+  const scrollSignal = [
+    msgs.length,
+    lastMsg?.key ?? '',
+    lastMsg?.content.length ?? 0,
+    lastMsg?.reasoning?.length ?? 0,
+    lastMsg?.hint ?? '',
+    lastMsg?.quiz ? 1 : 0,
+  ].join('|');
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       const el = listRef.current;
       if (el) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
-  }, [msgs]);
+  }, [scrollSignal]);
 
   if (!hasSubtitles) {
     return (

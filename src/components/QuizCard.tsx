@@ -92,10 +92,15 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek }: Props) {
                   >
                     <b className="quiz-option__letter">{LETTERS[oi]}.</b>
                     {opt}
-                    {isDone && isAnswer && <mdui-sym-check className="quiz-option__mark quiz-option__mark--ok" />}
-                    {isDone && !isAnswer && isPick && (
-                      <mdui-sym-close className="quiz-option__mark quiz-option__mark--bad" />
-                    )}
+                    {/* 槽位常驻（未作答时是空的）：判定图标只能在作答那一刻出现，
+                        否则行内宽度/行高会同时变化，被点的选项连同下面的选项一起跳一下。
+                        详见 cards.css 的 .quiz-option__mark 注释。 */}
+                    <span className="quiz-option__mark">
+                      {isDone && isAnswer && <mdui-sym-check className="quiz-option__mark--ok" />}
+                      {isDone && !isAnswer && isPick && (
+                        <mdui-sym-close className="quiz-option__mark--bad" />
+                      )}
+                    </span>
                   </button>
                 );
               })}

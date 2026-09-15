@@ -106,5 +106,86 @@ test('多余字段被忽略', () => {
   assert.equal('foo' in r.quiz.questions[0], false);
 });
 
+// ── 组件契约：判定图标槽位必须常驻 ───────────────────────────────────────────
+// 点完选项整块 UI 会跳一下的根因之一，就是「图标只在作答那一刻才插进行内」：
+// 实测行高 40→42（min-height:40 减掉 padding 后内容盒只有 22px，装不下 24px 图标），
+// 长选项还会被挤成第二行、把下面的选项整行顶下去 20px。
+// 这里 SSR 渲染真实组件，守住「未作答时槽位也在」这条不变量。
+{
+  const { build } = await import('esbuild');
+  const { mkdirSync, rmSync, writeFileSync } = await import('node:fs');
+  const { dirname, join } = await import('node:path');
+  const { fileURLToPath, pathToFileURL } = await import('node:url');
+  const here = dirname(fileURLToPath(import.meta.url));
+
+  const testAsync = async (name, fn) => {
+    try {
+      await fn();
+      passed++;
+      console.log(`  ok - ${name}`);
+    } catch (e) {
+      failures.push({ name, e });
+      console.log(`  FAIL - ${name}\n    ${e.message}`);
+    }
+  };
+
+  // 产物必须落在**项目内**（scripts/.cache）：react / react-dom 走 external 不打包，
+  // 由 Node 在运行时按产物所在目录往上找 node_modules 解析；
+  // 放系统临时目录会解析不到 bare import，而把它们打进包又会撞上 CJS 的 dynamic require。
+  const dir = join(here, '.cache');
+  mkdirSync(dir, { recursive: true });
+  const entry = join(dir, 'quiz-dom-entry.tsx');
+  const outfile = join(dir, 'quiz-dom-bundle.mjs');
+  // 组件是 .tsx：Node 的类型擦除不处理 JSX，先 esbuild 打成一个包再 import
+  writeFileSync(
+    entry,
+    `import { renderToStaticMarkup } from 'react-dom/server';
+import QuizCard from ${JSON.stringify(join(here, '../src/components/QuizCard.tsx'))};
+const quiz = { questions: [
+  { stem: '题干一', options: ['甲', '乙', '丙', '丁'], answer: 1, explanation: '解析一' },
+  { stem: '题干二', options: ['甲', '乙', '丙', '丁'], answer: 2, explanation: '解析二' },
+] };
+export const render = (picks) => renderToStaticMarkup(<QuizCard quiz={quiz} picks={picks} onAnswer={() => {}} />);
+`,
+  );
+  await build({
+    entryPoints: [entry],
+    bundle: true,
+    format: 'esm',
+    platform: 'node',
+    jsx: 'automatic',
+    packages: 'external', // react / react-dom / jsx-runtime 交给运行时解析
+    outfile,
+    logLevel: 'silent',
+  });
+  const { render } = await import(pathToFileURL(outfile).href);
+
+  // 后面必须紧跟空格（状态类）或引号：否则 `quiz-options` 容器、`quiz-option__letter` 都会被误算
+  const OPTION_RE = /class="quiz-option(?=[ "])/g;
+  const SLOT_RE = /class="quiz-option__mark(?=[ "])/g;
+  const count = (s, re) => (s.match(re) ?? []).length;
+
+  await testAsync('未作答时每个选项也带判定槽位（作答不再改变盒模型）', () => {
+    const html = render([-1, -1]);
+    assert.equal(count(html, OPTION_RE), 8, '选项数应为 8');
+    assert.equal(count(html, SLOT_RE), 8, '槽位数应与选项数相等');
+    assert.equal(html.includes('mdui-sym-check'), false, '未作答不该出现判定图标');
+    assert.equal(html.includes('mdui-sym-close'), false, '未作答不该出现判定图标');
+  });
+
+  await testAsync('作答后槽位数不变，只多出图标', () => {
+    // 第 1 题答案下标 1，故意选 3：一行吃到「答对」图标，一行吃到「错选」图标
+    const html = render([3, -1]);
+    assert.equal(count(html, OPTION_RE), 8);
+    assert.equal(count(html, SLOT_RE), 8, '作答不得改变槽位数');
+    assert.equal(html.includes('mdui-sym-check'), true, '应出现「答对」图标');
+    assert.equal(html.includes('mdui-sym-close'), true, '应出现「错选」图标');
+    assert.equal(html.includes('正确答案：B'), true, '应提示正确答案');
+  });
+
+  rmSync(entry, { force: true });
+  rmSync(outfile, { force: true });
+}
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 process.exit(failures.length ? 1 : 0);
