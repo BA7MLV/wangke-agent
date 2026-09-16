@@ -57,6 +57,10 @@ const META = {
   'test-ort-config': { service: 'none', antd: false, timeout: 120 },
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
   'test-rate': { service: 'none', antd: false, timeout: 120 },
+  // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
+  'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
+  // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
+  'e2e-audio-corrupt-frame': { service: 'none', antd: false, timeout: 300 },
 
   // ── preview(4173)：生产构建档 ──
   // 注意：本注释与下面 e2e-mdui-adapter 的说明在 mdui 迁移期间才成立

@@ -22,7 +22,7 @@ export function mixToMono(buf: AudioBuffer): Float32Array {
 
 /**
  * 把多声道的平面 Float32 数据（每声道一段）混成单声道。
- * Worker 里拿到的是 `f32-planar`，没有 AudioBuffer 可用，所以走这条路径。
+ * `AudioSample` 拿到的是 `f32-planar`（不是 AudioBuffer），所以只保留这一条路径。
  */
 export function mixPlanarToMono(planes: Float32Array[]): Float32Array {
   if (planes.length === 0) return new Float32Array(0);
@@ -37,21 +37,26 @@ export function mixPlanarToMono(planes: Float32Array[]): Float32Array {
   return out;
 }
 
-/** 线性插值重采样到 16kHz，输出 s16 */
-export function resampleTo16kS16(input: Float32Array, srcRate: number): Int16Array {
-  if (srcRate === 16000) {
-    const out = new Int16Array(input.length);
-    for (let i = 0; i < input.length; i++) {
-      const v = Math.max(-1, Math.min(1, input[i]));
-      out[i] = v < 0 ? v * 32768 : v * 32767;
-    }
-    return out;
-  }
+/**
+ * 线性插值重采样到 16kHz，输出 s16。
+ *
+ * `srcStartSeconds` 是这段数据在**媒体时间轴**上的起点（秒）。输出样本按全局序号对齐到
+ * 1/16000 的网格：第 j 个输出样本就代表源时间 `j / 16000`，本段负责的区间是
+ * `[ceil(start*16000), ceil(end*16000))`。**必须传真实起点**，不能只按长度算——
+ * 44.1kHz 下每帧 1024 样本精确应得 371.51 个 16k 样本，若每帧独立 `floor(len/ratio)` 就只出 371 个，
+ * 91 分钟累计会短 7.6s（0.139%），后期字幕线性偏早；按时间轴算区间时各段首尾相接、误差不累积。
+ *
+ * 相邻两段的边界需要一个跨段样本做插值，这里用 `input[idx+1] ?? a` 兜底（最多 1 个采样点的误差）。
+ */
+export function resampleTo16kS16(input: Float32Array, srcRate: number, srcStartSeconds = 0): Int16Array {
   const ratio = srcRate / 16000;
-  const outLen = Math.floor(input.length / ratio);
+  const grid = srcStartSeconds * 16000;
+  const outStart = Math.ceil(grid);
+  const outEnd = Math.ceil(grid + input.length / ratio);
+  const outLen = Math.max(0, outEnd - outStart);
   const out = new Int16Array(outLen);
   for (let i = 0; i < outLen; i++) {
-    const pos = i * ratio;
+    const pos = (outStart + i - grid) * ratio;
     const idx = Math.floor(pos);
     const frac = pos - idx;
     const a = input[idx] ?? 0;
