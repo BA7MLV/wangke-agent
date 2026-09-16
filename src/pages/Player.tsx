@@ -32,6 +32,13 @@ const SUBS_TRACK_ID = 'live-subs';
 /** 把被替换掉的旧 cue 挪到这个时间点：远超任何媒体时长，等于永久失效（不能删，见 syncTrack 注释） */
 const CUE_DISABLED_TIME = 1e9;
 
+/** 控制栏的「无操作自动隐藏」延迟。这里刻意设成 24 小时，等于关掉 vidstack 的静止自动隐藏：
+ *  显隐完全由鼠标悬停决定（hiding 仍发生在 mouseleave，那一路的 delay 是 0，不受此值影响），
+ *  这样 vds 内部状态（data-visible / 焦点 / 菜单）与 CSS 的 hover 视觉始终一致
+ *  —— 否则悬停静止 2s 后状态翻成不可见，`.vds-controls[data-visible]` 的底部渐变背景会掉。
+ *  注意不能写 Infinity 或超过 2^31-1 的值：setTimeout 会溢出成 ~1ms 立即触发。 */
+const CONTROLS_IDLE_DELAY = 24 * 60 * 60 * 1000;
+
 /** 把任意 MIME 映射到 vidstack 支持的联合类型，未知则按 mp4 处理 */
 function toPlayerMime(mime: string): 'video/mp4' | 'video/webm' | 'video/ogg' | 'audio/mpeg' | 'audio/ogg' {
   const known = ['video/mp4', 'video/webm', 'video/ogg', 'audio/mpeg', 'audio/ogg'] as const;
@@ -367,7 +374,12 @@ export default function Player() {
               storage={resumeStorage}
               playsInline
               crossOrigin
-              style={{ borderRadius: 8, overflow: 'hidden' }}
+              // 控制栏只在鼠标悬停播放器时出现（YouTube 行为）：mouseenter → show(0)、
+              // mouseleave → hide(0) 立即收起；静态隐藏关掉（见 CONTROLS_IDLE_DELAY）。
+              // 「未播放过」那段 vds 不注册鼠标监听，由 player-enhance.css 的 :hover 兜住。
+              hideControlsOnMouseLeave
+              controlsDelay={CONTROLS_IDLE_DELAY}
+              style={{ borderRadius: 12, overflow: 'hidden' }}
             >
               <MediaProvider>
                 {/* 常驻单轨、不设 src：挂载即 ready，之后由 syncTrack 增量 addCue */}

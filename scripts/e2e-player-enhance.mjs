@@ -28,9 +28,18 @@ await page.waitForFunction(
 );
 ok('视频已加载');
 
+// 控制栏只在鼠标悬停播放器时出现（YouTube 行为，见 player-enhance.css）：点控制栏内元素前
+// 先把鼠标移进播放器唤醒它（与 e2e-danmaku 的 wakeControls 同一约定）
+const wakeControls = async () => {
+  const b = await page.locator('[data-media-player]').boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 5 });
+  await page.waitForTimeout(250);
+};
+
 console.log('3. 倍速快捷按钮：5 档平铺（含 4x），点击 4x 生效且高亮');
 const rateBtns = page.locator('.rate-btn-full');
 if ((await rateBtns.count()) !== 5) fail(`应有 5 个倍速按钮，实际 ${await rateBtns.count()}`);
+await wakeControls();
 await page.locator('.rate-btn-full', { hasText: '4x' }).click();
 await page.waitForTimeout(200);
 const rate = await page.evaluate(() => document.querySelector('video')?.playbackRate);
@@ -183,6 +192,7 @@ await page.waitForFunction(
 const withCustom = await page.locator('.rate-btn-full').count();
 if (withCustom !== 7) fail(`内置 5 档 + 自定义 2 档应 7 个按钮，实际 ${withCustom}`);
 else ok('自定义档位已并入档位栏');
+await wakeControls();
 await page.locator('.rate-btn-full', { hasText: '1.25x' }).click();
 await page.waitForTimeout(200);
 const r125 = await page.evaluate(() => document.querySelector('video')?.playbackRate);

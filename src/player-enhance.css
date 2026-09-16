@@ -1,5 +1,62 @@
-/* 播放器增强：倍速快捷按钮 / 字幕字号按钮 / 双击 ±10s 涟漪反馈
+/* 播放器增强：控制栏 hover 显隐 / 倍速快捷按钮 / 字幕字号按钮 / 双击 ±10s 涟漪反馈
    （叠加在 Vidstack 默认布局之上，:where() 零特异性，普通类选择器即可覆盖） */
+
+/* ── 控制栏：只在悬停播放器时出现（YouTube 行为） ────────────── */
+/* 两处配合：
+   ① JS 侧 <MediaPlayer hideControlsOnMouseLeave controlsDelay=24h>（Player.tsx）——
+      鼠标进入 show(0)、离开 hide(0)（这一路 delay 是 0，立即生效）；静止自动隐藏被
+      那个 24h 的 controlsDelay 关掉，好让 vds 内部状态（data-visible / 焦点 / 菜单 /
+      `[data-visible]` 才有的底部渐变背景）与「悬停即显示」的视觉始终一致。
+   ② 下面这一段负责「样式」与 JS 不接管的边界：vds 只在 pointer: fine 且已 started
+      （播放过）时才注册 mouseenter/mouseleave，首次加载、以及触摸设备都不在那个状态机里。
+      所以 desktop 一端直接由 :hover 决定显隐（鼠标在视频上就有操作栏，移开立刻收起），
+      触摸端完全不动（保持点一下才出控制栏）。
+   特异性说明：vds 的默认规则都写在 :where(...) 里（计 0 特异性），
+   这里的 [data-media-player]:hover .vds-controls 一定赢。 */
+.vds-video-layout {
+  /* 出现 0.15s 淡入（默认 0.2s 偏拖沓）；消失由 out 过渡控制，
+     visibility 比 opacity 晚 0.1s 落地，这才有「淡出」而不是闪没 */
+  --media-controls-in-transition: opacity 0.15s ease-out;
+  --media-controls-out-transition: opacity 0.1s ease-out, visibility 0s linear 0.1s;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  [data-media-player]:hover .vds-controls {
+    opacity: 1;
+    visibility: visible;
+  }
+
+  [data-media-player]:not(:hover) .vds-controls {
+    opacity: 0;
+    visibility: hidden;
+  }
+}
+
+/* ── 控制栏：YouTube 视觉（进度条 / 按钮） ───────────────────── */
+/* 只覆盖 vidstack 的令牌 —— 它的默认样式都包在 `:where()` 里（0 特异性），
+   普通类选择器即可覆盖，不需要 `!important`。
+   进度条：静止 3px → hover / 拖动 6px（vds 在 `[data-active]` 时自动切到 focused 高度），
+   已播部分用主题色（动态取色后随课程封面变），hover 冒出的圆点播放头也交给 vds
+   —— thumb 默认 `opacity: 0`、`[data-active]` 才现，与 YouTube 一致。 */
+.vds-video-layout {
+  --media-slider-track-height: 3px;
+  --media-slider-focused-track-height: 6px;
+  --media-slider-thumb-size: 13px;
+  --media-slider-track-bg: rgb(255 255 255 / 0.25);
+  --media-slider-track-fill-bg: rgb(var(--mdui-color-primary));
+  --media-slider-track-border-radius: 9999px;
+
+  /* 按钮：38px → 40px；图标占比 70% → 60%（YouTube 的图标小而精致）；
+     hover 底色压到 0.12（默认 0.2 在深色画面上过亮） */
+  --media-button-size: 40px;
+  --media-button-icon-size: 60%;
+  --media-button-hover-bg: rgb(255 255 255 / 0.12);
+}
+
+/* 按钮间距：vidstack 默认 2.5px 太挤，YouTube 大约 8px */
+.vds-video-layout .vds-button {
+  margin-right: 6px;
+}
 
 /* ── 倍速快捷按钮 ───────────────────────────────────────────── */
 /* 档位多于一屏时横向滚动（隐藏滚动条），不撑破顶栏 */
