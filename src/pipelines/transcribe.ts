@@ -42,11 +42,27 @@ export async function runTranscription(
   await db.videos.update(videoId, { status: 'transcribing' });
   try {
     // 1. 抽取音频 + VAD（Worker 内一次性完成）
-    const { pcm, segments: vadSegs } = await extractAndSegment(blob, video.duration, (phase, ratio) =>
+    const {
+      pcm,
+      segments: vadSegs,
+      recoveries,
+      skipped,
+    } = await extractAndSegment(blob, video.duration, (phase, ratio, note) =>
       phase === 'vad'
         ? onProgress({ phase: 'vad', done: 0, total: 1, message: '语音端点检测中…' })
-        : onProgress({ phase: 'extract', done: ratio, total: 1, message: `抽取音频 ${Math.round(ratio * 100)}%` }),
+        : onProgress({
+            phase: 'extract',
+            done: ratio,
+            total: 1,
+            message: `抽取音频 ${Math.round(ratio * 100)}%${note ? `（${note}）` : ''}`,
+          }),
     );
+    if (recoveries > 0) {
+      // 音轨有损坏帧：已跳过并补静音（时间轴不漂），这里只留一条诊断线索
+      console.warn(
+        `[transcribe] 音轨有 ${recoveries} 处损坏帧，已跳过约 ${skipped.toFixed(2)}s（时间轴已用静音补齐）`,
+      );
+    }
     if (opts.signal?.aborted) throw new CancelError();
     if (vadSegs.length === 0) throw new Error('未检测到语音内容');
 

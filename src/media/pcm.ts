@@ -6,20 +6,6 @@
  * 两处必须是同一份实现，否则字幕时间轴会随「走没走 Worker」而漂移。
  */
 
-/** 把 AudioBuffer 混成单声道 Float32 */
-export function mixToMono(buf: AudioBuffer): Float32Array {
-  const ch0 = buf.getChannelData(0);
-  if (buf.numberOfChannels === 1) return ch0;
-  const out = new Float32Array(buf.length);
-  for (let c = 0; c < buf.numberOfChannels; c++) {
-    const ch = buf.getChannelData(c);
-    for (let i = 0; i < buf.length; i++) out[i] += ch[i];
-  }
-  const inv = 1 / buf.numberOfChannels;
-  for (let i = 0; i < buf.length; i++) out[i] *= inv;
-  return out;
-}
-
 /**
  * 把多声道的平面 Float32 数据（每声道一段）混成单声道。
  * `AudioSample` 拿到的是 `f32-planar`（不是 AudioBuffer），所以只保留这一条路径。

@@ -3,15 +3,15 @@
  * 抽音频 + VAD 的 Worker：把转写里最吃 CPU 的两步挪出页面线程，
  * 这样「后台转写 A 视频」不会卡住「正在播放的 B 视频」。
  *
- * 为什么不用主线程那套 `AudioBufferSink`：它内部 `new AudioBuffer(...)`，
- * 而 Web Audio 在 Worker 里根本不存在。这里改用 `AudioSampleSink` +
- * `copyTo({ format: 'f32-planar' })` 直接拿平面 PCM，绕开 Web Audio。
+ * 抽音频走 `extractAudio16kFromTrack`（与主线程回退路径**同一份实现**）：
+ * 它用 `AudioSampleSink` + `copyTo({ format: 'f32-planar' })` 直接拿平面 PCM，
+ * 绕开 Web Audio（`AudioBufferSink` 在 Worker 里根本用不了），并自带坏帧续解。
  *
  * Worker 常驻（不每任务重建）：VAD 的 ONNX 会话只加载一次。
  */
-import { ALL_FORMATS, AudioSampleSink, BlobSource, Input } from 'mediabunny';
+import { ALL_FORMATS, BlobSource, Input } from 'mediabunny';
+import { extractAudio16kFromTrack } from './tolerantDecode';
 import { getVAD, mergeSegments } from './vad';
-import { concatS16, mixPlanarToMono, resampleTo16kS16 } from './pcm';
 
 export interface ExtractRequest {
   id: number;
@@ -21,9 +21,21 @@ export interface ExtractRequest {
 }
 
 export type ExtractResponse =
-  | { id: number; type: 'progress'; phase: 'extract' | 'vad'; ratio: number }
-  | { id: number; type: 'done'; pcm: ArrayBuffer; segments: { start: number; end: number }[] }
-  /** retryable：Worker 环境问题（解码器不可用等）值得回退主线程重试；业务问题（没音轨）重试没意义 */
+  /** note：绕过损坏帧时的提示（可跟进度一起显示给用户） */
+  | { id: number; type: 'progress'; phase: 'extract' | 'vad'; ratio: number; note?: string }
+  | {
+      id: number;
+      type: 'done';
+      pcm: ArrayBuffer;
+      segments: { start: number; end: number }[];
+      /** 音轨里有几处损坏帧被跳过，以及为此补了多少秒静音（诊断用） */
+      recoveries: number;
+      skipped: number;
+    }
+  /**
+   * retryable：Worker 环境问题（解码器不可用等）值得回退主线程重试；
+   * 业务问题（没音轨）与音频坏帧（文件问题）换线程也一样失败，给 false
+   */
   | { id: number; type: 'error'; message: string; retryable: boolean };
 
 /** 业务错误：与线程/环境无关，回退到主线程再跑一遍也是同样的结果 */
@@ -38,31 +50,24 @@ async function extract(req: ExtractRequest): Promise<void> {
     const track = await input.getPrimaryAudioTrack();
     if (!track) throw new BizError('未找到音轨：该文件可能没有声音，或格式不受支持（建议转为 MP4）');
 
-    const sink = new AudioSampleSink(track);
-    const chunks: Int16Array[] = [];
-    let total = 0;
-    let lastEnd = 0;
+    let lastRatio = 0;
+    const { pcm, skipped, recoveries } = await extractAudio16kFromTrack(track, {
+      duration: req.duration,
+      onProgress: (ratio) => {
+        lastRatio = ratio;
+        post({ id: req.id, type: 'progress', phase: 'extract', ratio });
+      },
+      onRecover: (info) => {
+        post({
+          id: req.id,
+          type: 'progress',
+          phase: 'extract',
+          ratio: lastRatio,
+          note: `已跳过第 ${info.attempt} 处损坏帧`,
+        });
+      },
+    });
 
-    for await (const sample of sink.samples()) {
-      const ch = sample.numberOfChannels;
-      const planes: Float32Array[] = [];
-      for (let p = 0; p < ch; p++) {
-        const bytes = sample.allocationSize({ planeIndex: p, format: 'f32-planar' });
-        const buf = new Float32Array(bytes / 4);
-        sample.copyTo(buf, { planeIndex: p, format: 'f32-planar' });
-        planes.push(buf);
-      }
-      const s16 = resampleTo16kS16(mixPlanarToMono(planes), sample.sampleRate);
-      chunks.push(s16);
-      total += s16.length;
-      lastEnd = sample.timestamp + sample.duration;
-      sample.close();
-      if (req.duration > 0) {
-        post({ id: req.id, type: 'progress', phase: 'extract', ratio: Math.min(0.99, lastEnd / req.duration) });
-      }
-    }
-
-    const pcm = concatS16(chunks, total);
     post({ id: req.id, type: 'progress', phase: 'vad', ratio: 0 });
 
     const f32 = new Float32Array(pcm.length);
@@ -74,7 +79,9 @@ async function extract(req: ExtractRequest): Promise<void> {
     }
     const segments = mergeSegments(raw);
 
-    post({ id: req.id, type: 'done', pcm: pcm.buffer as ArrayBuffer, segments }, [pcm.buffer]);
+    post({ id: req.id, type: 'done', pcm: pcm.buffer as ArrayBuffer, segments, recoveries, skipped }, [
+      pcm.buffer,
+    ]);
   } finally {
     input.dispose();
   }
@@ -84,11 +91,13 @@ self.onmessage = (e: MessageEvent<ExtractRequest>) => {
   const req = e.data;
   if (req?.type !== 'extract') return;
   extract(req).catch((err: unknown) => {
+    // 坏帧绕不过去属于文件问题（AudioDecodeError），回退主线程只会把整个文件再解一遍、结果一样
+    const decodeFailure = (err as { name?: string })?.name === 'AudioDecodeError';
     post({
       id: req.id,
       type: 'error',
       message: err instanceof Error ? err.message : String(err),
-      retryable: !(err instanceof BizError),
+      retryable: !(err instanceof BizError) && !decodeFailure,
     });
   });
 };

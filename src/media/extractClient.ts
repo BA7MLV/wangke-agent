@@ -7,6 +7,7 @@
 import { extractAudio16k } from './audio';
 import { segmentAudio, type VadSegment } from './vad';
 import type { ExtractRequest, ExtractResponse } from './extractWorker';
+import { AudioDecodeError } from './tolerantDecode';
 import { CancelError } from '../utils/cancel';
 
 export interface ExtractResult {
@@ -14,12 +15,18 @@ export interface ExtractResult {
   segments: VadSegment[];
   /** 这次跑在哪个线程上（诊断用：Worker 挂了会静默降级，得能查出来） */
   via: 'worker' | 'main';
+  /** 音轨里有几处损坏帧被跳过（0 = 音轨完好） */
+  recoveries: number;
+  /** 为此补了多少秒静音 */
+  skipped: number;
 }
+
+type ProgressFn = (phase: 'extract' | 'vad', ratio: number, note?: string) => void;
 
 interface Pending {
   resolve: (r: ExtractResult) => void;
   reject: (e: unknown) => void;
-  onProgress?: (phase: 'extract' | 'vad', ratio: number) => void;
+  onProgress?: ProgressFn;
 }
 
 let worker: Worker | null = null;
@@ -37,12 +44,18 @@ function ensureWorker(): Worker | null {
       const p = pending.get(msg.id);
       if (!p) return;
       if (msg.type === 'progress') {
-        p.onProgress?.(msg.phase, msg.ratio);
+        p.onProgress?.(msg.phase, msg.ratio, msg.note);
         return;
       }
       pending.delete(msg.id);
       if (msg.type === 'done') {
-        p.resolve({ pcm: new Int16Array(msg.pcm), segments: msg.segments, via: 'worker' });
+        p.resolve({
+          pcm: new Int16Array(msg.pcm),
+          segments: msg.segments,
+          via: 'worker',
+          recoveries: msg.recoveries,
+          skipped: msg.skipped,
+        });
         return;
       }
       const err = new Error(msg.message) as Error & { retryable?: boolean };
@@ -84,14 +97,19 @@ export function resetExtractor(): void {
 export async function extractAndSegment(
   blob: Blob,
   duration: number,
-  onProgress?: (phase: 'extract' | 'vad', ratio: number) => void,
+  onProgress?: ProgressFn,
 ): Promise<ExtractResult> {
   const w = ensureWorker();
   if (!w) {
-    const { pcm } = await extractAudio16k(blob, duration, (r) => onProgress?.('extract', r));
+    const { pcm, skipped, recoveries } = await extractAudio16k(
+      blob,
+      duration,
+      (r) => onProgress?.('extract', r),
+      (info) => onProgress?.('extract', 0, `已跳过第 ${info.attempt} 处损坏帧`),
+    );
     onProgress?.('vad', 0);
     const segments = await segmentAudio(pcm);
-    return { pcm, segments, via: 'main' };
+    return { pcm, segments, via: 'main', recoveries, skipped };
   }
 
   const id = ++seq;
@@ -101,8 +119,8 @@ export async function extractAndSegment(
     w.postMessage(req);
   }).catch((e: unknown) => {
     if (e instanceof CancelError) throw e;
-    // 业务错误（没音轨之类）换线程也一样失败，别白跑一遍解码；环境问题才回退
-    if ((e as { retryable?: boolean }).retryable === false) throw e;
+    // 业务错误（没音轨之类）和音频坏帧换线程也一样失败，别白跑一遍解码；环境问题才回退
+    if ((e as { retryable?: boolean }).retryable === false || e instanceof AudioDecodeError) throw e;
     console.debug('[extract] worker 路径失败，回退主线程：', e);
     workerBroken = true;
     return extractAndSegment(blob, duration, onProgress);
