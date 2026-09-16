@@ -87,6 +87,10 @@ html.mdui-theme-dark {
   min-width: 0;
   display: flex;
   flex-direction: column;
+  /* 视频竖向居中：16:9 的高度由宽度决定，在更高的视口里顶对齐会在下方留一大片空白
+     （YouTube 的播放器也是按可用高度居中，而不是贴顶） */
+  align-items: center;
+  justify-content: center;
 }
 
 .player-layout .side-pane {

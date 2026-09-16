@@ -827,6 +827,7 @@ export default function Library() {
     <PageShell
       title="课程库"
       wide
+      rootClassName="page-library"
       rail={nav.rail}
       bottomNav={nav.bottom}
     >
@@ -970,7 +971,9 @@ export default function Library() {
             .map((g) => (
               <div key={g.key}>
                 {renderGroupHeader(g)}
-                {!collapsed.has(g.key) && g.videos.map(renderVideoItem)}
+                {!collapsed.has(g.key) && (
+                  <div className="video-grid">{g.videos.map(renderVideoItem)}</div>
+                )}
               </div>
             ))
         )}
@@ -1252,6 +1255,42 @@ export default function Library() {
  * 行结构自建（不用 mdui-list-item）：一行里有拖拽手柄 + 标题/元信息 + 标签 + 最多 3 个按钮，
  * 而 mdui-list-item 的 custom 插槽是覆盖式的，塞不下（详见 layout.css 的注释）。
  */
+/**
+ * 卡片封面：取该视频在 `db.frames` 里的第一帧当缩略图（YouTube 风格卡片的核心元素）。
+ * 帧是「截图理解」流程的产物，没跑过就没有 —— 此时返回 null，由调用方出占位图。
+ *
+ * 两个刻意的做法：
+ *   1. 用 `where('videoId')` 走索引游标 + `first()`，**只读一条记录**；直接 `toArray()` 会把
+ *      整表的 blob（几十上百张图）拉进内存，列表一长就顶不住。
+ *   2. 换视频 / 卸载时 `revokeObjectURL`，否则 object URL 会一直占着图不放（列表滚动会累积）。
+ */
+function useCover(videoId: string): string | null {
+  const [url, setUrl] = useState<string | null>(null);
+
+  useEffect(() => {
+    let created: string | null = null;
+    let cancelled = false;
+    db.frames
+      .where('videoId')
+      .equals(videoId)
+      .first()
+      .then((frame) => {
+        if (cancelled || !frame?.blob) return;
+        created = URL.createObjectURL(frame.blob);
+        setUrl(created);
+      })
+      .catch(() => {
+        /* 取帧失败只是「没有封面」，静默走占位，不影响列表 */
+      });
+    return () => {
+      cancelled = true;
+      if (created) URL.revokeObjectURL(created);
+    };
+  }, [videoId]);
+
+  return url;
+}
+
 function VideoRow({
   video: v,
   isMobile,
@@ -1279,6 +1318,7 @@ function VideoRow({
 }) {
   const status = STATUS_TAG[v.status];
   const meta = `${formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
+  const cover = useCover(v.id);
   // 转写是全局队列里的后台任务：在播放页、在别处、刷新后续跑的，列表上都要看得到
   const job = useTranscribeJob(v.id);
   const activeJob = isJobActive(job) ? job : undefined;
@@ -1301,6 +1341,25 @@ function VideoRow({
         onPointerCancel={onDragCancel}
       >
         <mdui-sym-drag-indicator />
+      </div>
+      {/* 缩略图：16:9 通栏，右下角压时长徽标（YouTube 卡片的两件套）。
+          点缩略图直接进播放页，与卡片式的「整张可点」一致 */}
+      <div
+        className="video-row__thumb"
+        data-testid="video-thumb"
+        role="button"
+        tabIndex={-1}
+        aria-label={`学习 ${v.name}`}
+        onClick={onPlay}
+      >
+        {cover ? (
+          <img src={cover} alt="" loading="lazy" />
+        ) : (
+          <div className="video-row__thumb-empty">
+            <mdui-sym-play-circle />
+          </div>
+        )}
+        <span className="video-row__duration">{formatDuration(v.duration)}</span>
       </div>
       <div className="video-row__main">
         <div className="video-row__name" title={v.name}>
@@ -1330,7 +1389,7 @@ function VideoRow({
         </span>
       </div>
       <div className="video-row__actions">
-        <mdui-button data-testid="btn-play" variant="filled" onClick={onPlay}>
+        <mdui-button data-testid="btn-play" variant="tonal" onClick={onPlay}>
           <mdui-sym-play-circle slot="icon" />
           学习
         </mdui-button>

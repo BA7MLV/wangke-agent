@@ -534,7 +534,14 @@ export default function Settings() {
   );
 
   return (
-    <PageShell title="设置" onBack={() => navigate('/')} narrow rail={nav.rail} bottomNav={nav.bottom}>
+    <PageShell
+      title="设置"
+      onBack={() => navigate('/')}
+      narrow
+      rootClassName="page-settings"
+      rail={nav.rail}
+      bottomNav={nav.bottom}
+    >
       <SectionCard title="硅基流动 API" testId="card-api">
         <Field
           label="API Key"
@@ -573,6 +580,7 @@ export default function Settings() {
         <Field
           label={`字幕转写并发（当前 ${settings.asrConcurrency}）`}
           hint="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
+          className="field--stack"
           testId="field-asr-concurrency"
         >
           <mdui-slider
@@ -818,7 +826,7 @@ export default function Settings() {
         testId="card-rates"
         subtitle={`播放器控制栏除内置的 ${PRESET_RATES.map(formatRate).join(' / ')} 外，还会平铺这里添加的档位（${MIN_RATE}–${MAX_RATE}），可逐条删除`}
       >
-        <Field label="自定义倍速" testId="field-custom-rates">
+        <Field label="自定义倍速" className="field--stack" testId="field-custom-rates">
           <div className="stack">
             <div className="row" data-testid="rate-chips">
               {settings.customRates.length === 0 ? (

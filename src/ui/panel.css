@@ -23,7 +23,7 @@
   flex: none;
   align-items: center;
   gap: 8px;
-  padding: 8px 0;
+  padding: 10px 0;
 }
 
 .panel-bar--wrap {
@@ -78,9 +78,11 @@
 /* ── 条目行（字幕 / 弹幕 / 卡片共用） ───────────────────────────────────── */
 .sub-item {
   display: flex;
-  gap: 8px;
-  padding: 6px 8px;
+  gap: 10px;
+  padding: 8px 10px;
   border-radius: var(--mdui-shape-corner-small);
+  font-size: 13px;
+  line-height: 1.55;
   cursor: pointer;
   /* 悬停/聚焦的状态层由 MD3 的 surface 层级表达，不用分隔线（那是 MD2/antd 的惯性） */
   transition: background-color var(--mdui-motion-duration-short2) var(--mdui-motion-easing-linear);

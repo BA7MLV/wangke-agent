@@ -238,6 +238,74 @@
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
+/* ── 设置页：YouTube 行式设置项（阶段 3a） ──────────────────────────────── */
+/* 设置页原本是「标签在上、控件在下」的纵向表单（antd Form.Item 的习惯）。
+   YouTube 的设置项是**一条一行**：左标题（标题下方一行说明）、右侧控件，行间一条细线，
+   整块看起来像列表而不是表单。这里只作用于设置页（`.page-settings`）——
+   `.field` 同时被播放页的讲义面板复用，那边必须保持纵向。 */
+.page-settings .field {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto);
+  align-items: center;
+  column-gap: 20px;
+  margin-bottom: 0;
+  padding: 14px 0;
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant) / 0.55);
+}
+
+.page-settings .field:last-child {
+  padding-bottom: 2px;
+  border-bottom: none;
+}
+
+.page-settings .field__label {
+  grid-column: 1;
+  align-self: end;
+  margin-bottom: 0;
+  font-size: 14px;
+  font-weight: 500;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.page-settings .field__hint {
+  grid-column: 1;
+  align-self: start;
+  margin-top: 3px;
+}
+
+/* 控件统一放右列；label 与 hint 都在左列，所以控件跨两行垂直居中 */
+.page-settings .field > :not(.field__label):not(.field__hint) {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  justify-self: end;
+}
+
+/* 右侧输入框不铺满整行（YouTube 的输入框也是定宽） */
+.page-settings .field > mdui-text-field {
+  width: min(300px, 48vw);
+}
+
+/* 需要整行铺开的设置项：多控件一行 / chip 列表 / 滑块 + 数值。
+   在 TSX 里给 Field 加 `className="field--stack"`。 */
+.page-settings .field--stack {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.page-settings .field--stack > :not(.field__label):not(.field__hint),
+.page-settings .field--stack > mdui-text-field {
+  grid-column: 1;
+  grid-row: auto;
+  width: auto;
+  margin-top: 10px;
+  justify-self: stretch;
+}
+
+/* 行式之后卡片内边距可以再收一点，标题与第一行的间距也跟着收 */
+.page-settings .section-card__body {
+  margin-top: 4px;
+}
+
 /* ── 小工具类 ───────────────────────────────────────────────────────────── */
 .stack {
   display: flex;
@@ -659,58 +727,152 @@
   color: rgb(var(--mdui-color-primary));
 }
 
-/* 视频行自建而非用 mdui-list-item：一行里有「拖拽手柄 + 标题/元信息 + 标签 + 最多 3 个按钮」四组内容，
-   而 mdui-list-item 的 custom 插槽是**覆盖式**的（塞了自定义内容，预设的标题/描述/end-icon 全不渲染），
-   与 SkillsCard 的行是同一条理由（见那里的注释）。
-   同 .skill-row：MD3 列表不用分隔线，用留白 + 悬停态层。 */
+/* ── 库页：视频网格卡片（YouTube 风格） ─────────────────────────────────── */
+/* 从行式列表改为网格卡片：16:9 缩略图（取 db.frames 的首帧）+ 标题两行截断 + 元信息 + 操作行。
+   四组内容（拖拽手柄 / 标题元信息 / 标签 / 按钮）一个都不少 —— 手柄浮到缩略图左上角，
+   标签与按钮落到卡片底部的两行；**DOM 顺序不变**（e2e 的 data-testid 全部照旧），只靠 CSS 排布。 */
+
+/* 网格卡片要更宽的容器：默认 `--page-content-max: 892px` 在 1440 视口下只排得下 3 列，
+   而 YouTube 的网格是吃满内容区的（同一变量也决定标题栏左缘，改一处两处一起对齐）。 */
+.page-library {
+  --page-content-max: 1360px;
+}
+
+.video-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 20px 16px;
+  margin: 8px 0 4px;
+}
+
+@media (max-width: 640px) {
+  /* 手机竖屏单列大卡（YouTube 移动端也是单列） */
+  .video-grid {
+    grid-template-columns: 1fr;
+    gap: 16px;
+    margin: 6px 0 2px;
+  }
+}
+
 .video-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 12px 8px;
-  border-radius: var(--mdui-shape-corner-small);
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 2px;
+  padding: 6px 6px 8px;
+  border-radius: 14px;
   transition: background-color var(--mdui-motion-duration-short3) var(--mdui-motion-easing-standard);
 }
 
 .video-row:hover {
-  background: rgb(var(--mdui-color-surface-container-high));
+  background: rgb(var(--mdui-color-surface-container-low));
 }
 
 .video-row--dragging {
   opacity: 0.4;
 }
 
-.video-row__handle {
+/* 缩略图：16:9；有帧就用真图，没有则主题色底 + 图标占位 */
+.video-row__thumb {
+  position: relative;
+  order: 1;
+  aspect-ratio: 16 / 9;
+  margin-bottom: 8px;
+  overflow: hidden;
+  border-radius: 12px;
+  background: rgb(var(--mdui-color-surface-container-high));
+}
+
+.video-row__thumb img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  transition: transform var(--mdui-motion-duration-medium2) var(--mdui-motion-easing-standard);
+}
+
+.video-row:hover .video-row__thumb img {
+  transform: scale(1.03);
+}
+
+.video-row__thumb-empty {
   display: flex;
-  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  color: rgb(var(--mdui-color-primary));
+  font-size: 44px;
+  opacity: 0.45;
+}
+
+/* 右下角时长徽标（YouTube 卡片同款位置） */
+.video-row__duration {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 1px 5px;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.78);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 拖拽手柄：浮在缩略图左上角，桌面端悬停卡片才显形（脱离文档流，不挡点缩略图） */
+.video-row__handle {
+  position: absolute;
+  top: 10px;
+  left: 10px;
+  z-index: 2;
+  display: flex;
   align-items: center;
   justify-content: center;
   min-width: 32px;
   min-height: 32px;
   border-radius: var(--mdui-shape-corner-full);
-  color: rgb(var(--mdui-color-on-surface-variant));
+  background: rgb(0 0 0 / 0.45);
+  color: #fff;
   font-size: 20px;
+  opacity: 0;
   cursor: grab;
+  transition: opacity var(--mdui-motion-duration-short3) var(--mdui-motion-easing-standard);
   /* 触屏从手柄起手拖动时不触发页面滚动 */
   touch-action: none;
   -webkit-tap-highlight-color: transparent;
 }
 
+.video-row:hover .video-row__handle,
+.video-row__handle:focus-visible {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  /* 触屏没有 hover：手柄常驻，否则无从拖拽 */
+  .video-row__handle {
+    opacity: 0.75;
+  }
+}
+
 .video-row__main {
-  flex: 1 1 auto;
+  order: 2;
   min-width: 0;
 }
 
 .video-row__name {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
   overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: var(--mdui-typescale-body-large-size);
+  font-size: 15px;
+  font-weight: 500;
+  line-height: 1.35;
   color: rgb(var(--mdui-color-on-surface));
 }
 
 .video-row__meta {
-  margin-top: 2px;
+  margin-top: 3px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -723,22 +885,82 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-top: 4px;
+  margin-top: 6px;
   font-size: 12px;
   color: rgb(var(--mdui-color-primary));
 }
 
 .video-row__job mdui-linear-progress {
-  flex: none;
-  width: 72px;
+  flex: 1 1 auto;
+  min-width: 0;
 }
 
-.video-row__tags,
+.video-row__tags {
+  order: 3;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 6px;
+}
+
 .video-row__actions {
+  order: 4;
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  justify-content: flex-end;
+  gap: 2px;
+  margin-top: 6px;
+}
+
+/* 卡片里的次要操作（重命名 / 移动 / 删除）压一档对比度，悬停卡片才全亮 ——
+   YouTube 的卡片对次要操作就是这个处理。注意只降 opacity 不加 pointer-events，
+   否则 e2e 里直接点 btn-rename 会因「元素不接收事件」而超时。 */
+.video-row__actions mdui-button-icon {
+  color: rgb(var(--mdui-color-on-surface-variant));
+  opacity: 0.7;
+  transition: opacity var(--mdui-motion-duration-short3) var(--mdui-motion-easing-standard);
+}
+
+.video-row:hover .video-row__actions mdui-button-icon,
+.video-row__actions mdui-button-icon:focus-visible {
+  opacity: 1;
+}
+
+/* 卡片底部：主操作「学习」靠左、三个次要操作靠右（YouTube 卡片的操作分布） */
+.page-library .video-row__actions > mdui-button {
+  margin-right: auto;
+}
+
+/* 导入区：原来的纵向大虚线块在放宽后的容器里很占地方，收成一条横排提示条
+   （图标 + 文案 + 按钮一行），仍是同一个 drop-zone（testid 与整页拖拽投放都不动）。 */
+.page-library .drop-zone {
+  flex-direction: row;
+  align-items: center;
+  gap: 14px;
+  max-width: none;
+  padding: 14px 18px;
+  text-align: left;
+}
+
+.page-library .drop-zone__icon {
+  font-size: 28px;
+}
+
+.page-library .drop-zone__title {
+  flex: none;
+  margin-top: 0;
+  font-size: 14px;
+}
+
+.page-library .drop-zone__hint {
+  flex: 1 1 auto;
+  max-width: none;
+}
+
+.page-library .drop-zone__actions {
+  flex: none;
+  margin-top: 0;
 }
 
 /* 静态语义标记：刻意不用 mdui-chip —— 它会带涟漪与可交互语义，
