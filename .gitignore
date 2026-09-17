@@ -1,6 +1,8 @@
 node_modules
 dist
 dist-ssr
+# 用 --outDir 试构建时留下的产物目录（pdfjs 资源 + sw.js），不是源码
+dist-build
 *.local
 .DS_Store
 data
