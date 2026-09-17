@@ -450,7 +450,13 @@ node scripts/probe-pdf-fixture.mjs      # 探针：在 Node 里抽 fixture 文�
 ```bash
 npm run preview &                  # 4173（走构建产物，连带验证 worker 与 cmaps 的产物形态）
 node scripts/e2e-materials.mjs     # 无需 API key
+# 或者走编排器（已登记，preview 档）：
+node scripts/e2e-all.mjs --only=e2e-materials
 ```
+
+> ⚠️ 这一档**必须走 preview（真 dist）**才算数。跑在 vite dev 上时 dev 直接编译源码、
+> 永远最新，对「构建产物形态」零信息量 —— 而且构建被宿主审批拦住时它会假装全绿
+> （§12.14 就是踩了这个：dev 档全绿、preview 档第 9 节全红）。
 
 | 断言 | 说明 |
 |---|---|
@@ -469,9 +475,21 @@ node scripts/e2e-materials.mjs     # 无需 API key
 | 点回答里的 `[第2页]` → 指示器变 `2 / 3` | 页码引用可跳转（用**播种历史会话**实现，不需要 API key） |
 | 页面上没有 `a[href^="#seek-"]` | 材料模式没跑 `linkifyTimestamps`，不会出现点了没反应的死链 |
 | 扫描件：列表标「扫描件」+ 打开后 `material-scan-hint` 含「无法参与问答检索」+ 仍渲染出 2 页 | 无文本层这条分支被显式覆盖 |
+| **Word 一节**：`sample.docx` 标「已解析 10 段」（**不是**「扫描件」）、`docx-preview` 渲染出 `data-unit`、划词 → 引用条带段标、点 `[第5段]` → 滚动到第 5 段 | §12.11 的回归锁：段均 25 字不许被当成扫描件。**只有第一条依赖标签**，dist 陈旧时红的也只有它（§12.14） |
+| **空文档一节**：`sample-empty.docx` 标「无正文·不可检索」+ `material-empty-hint` 出现 + 问答面板按「没有正文」解释，且**页面不许出现「扫描件」字样** | `empty` 与 `scanned` 两条分支必须互斥、话术不许串（§12.11）；这一节**三条全依赖标签/文案**，dist 陈旧时会整节红（§12.14） |
+
+定位库行一律用「导入前后 id 集合的差」，**不要按文件名找**（§12.12）。
 
 **回归红线**（必须全绿）：`e2e-library` / `e2e-mobile` / `e2e-chat` / `e2e-chat-image` /
-`e2e-chat-frames` / `e2e-chat-mermaid` / `e2e-handout-edit` / `e2e-storage-card` / `e2e-all`。
+`e2e-chat-frames` / `e2e-chat-mermaid` / `e2e-handout-edit` / `e2e-storage-card` /
+`e2e-materials` / `e2e-covers` / `e2e-all`。
+
+> `e2e-all` 的脚本清单（`META`）是**手工维护**的，漏登记 = **静默跳过**：脚本在磁盘上、
+> 报告里也不报错，看起来全绿其实没跑。材料这一批就这样漏过一整轮（4 个单测 + `e2e-materials`
+> + `e2e-covers` + `test-library-job-copy`），直到人工比对才发现。
+> 现在启动时会按前缀点名未登记的脚本，并写进汇总行、`e2e-report.json` 的
+> `unregisteredScripts` 与报告开头 —— 新增脚本时请一并补 `META`。
+
 主要回归风险点：`videos` 表加字段、`PANEL_TABS` 按 kind 过滤、`ChatPanel` 的 `playerRef` 变可选、
 `CueRow` 多了 `ask` 属性、存储统计多了一个分类。
 
@@ -624,6 +642,56 @@ node scripts/e2e-materials.mjs     # 无需 API key
     **为什么没有顺手改掉**：`vite.config.ts` 里 `maximumFileSizeToCacheInBytes: 48MB`
     的注释明确写着「ffmpeg.wasm / onnxruntime 的 wasm 文件较大」——
     预缓存 ort 的 wasm 看起来是**有意为之**（离线转写要用），不是漏网。
-    真要瘦身应改成 `globIgnores: ['**/ort/**']` + 对 `/ort/*.wasm` 走运行时 CacheFirst
-    （与 pdf worker 同一套路），代价是「离线转写需要先在线用过一次」——
-    这是产品取舍，不属于本次改动范围，记在这里以免下次又按 §2.4 的错归因去「优化」。
+   真要瘦身应改成 `globIgnores: ['**/ort/**']` + 对 `/ort/*.wasm` 走运行时 CacheFirst
+   （与 pdf worker 同一套路），代价是「离线转写需要先在线用过一次」——
+   这是产品取舍，不属于本次改动范围，记在这里以免下次又按 §2.4 的错归因去「优化」。
+
+14. **`e2e-materials` 在 preview 档（真 dist）下 29 条里红 4 条，而 dev 档 29 条全绿 ——
+   不是回归，是「生产构建被文件审批拦住」这个缺口的第一个可观测症状**
+   （对应 §8「走构建产物」那句）。
+
+   症状：`node scripts/e2e-all.mjs --only=e2e-materials`（preview 档）
+   **25 ✅ / 4 ❌**，红的 4 条集中在 §12.11 那条修复所覆盖的两节：
+
+   | 节 | 断言 | 结果 |
+   |---|---|---|
+   | 7. Word | `sample.docx` 库行标「已解析 10 段」 | ❌ 等 40s 超时 |
+   | 7. Word | docx-preview 渲染 / 段数不变式 / 划词 / 引用条 / 跳第 5 段 | ✅ 全过 |
+   | 9. 空文档 | 库行标「无正文·不可检索」 | ❌ |
+   | 9. 空文档 | `material-empty-hint` 出现 | ❌ |
+   | 9. 空文档 | 问答面板按「没有正文」解释 | ❌ 实际文案是「没有文本层（扫描件）…」 |
+
+   注意 Word 一节**只有标签那条红**：渲染、`DOM 段数 === 数据侧 unit 数`、划词、
+   引用条、跳段全绿 —— 因为那些都不依赖标签。**别看到「Word 一节有红」就以为 Word 坏了。**
+
+   根因不是代码，是**产物停在修复之前**：`dist/assets/*.js` 全是 **23:54:36** 构建的，
+   而功能提交在 **00:53**。从产物里直接挖出证据 —— dist 的库页判定是：
+
+   ```js
+   b = h ? t.scanned===1 ? {text:"扫描件·不可检索"}
+         : t.unitCount ? {text:`已解析 ${t.unitCount} ${g}`} : {text:"待解析"} : …
+   ```
+
+   **既没有格式门禁（`format === 'pdf'`）、也没有 `empty` 分支** ——
+   逐串检索也印证：`扫描件·不可检索` / `没有文本层（扫描件）` / `material-scan-hint` 都在，
+   `无正文` / `material-empty-hint` **一条都没有**。
+   也就是说这份 dist 就是 §12.11 修掉的那一版：Word 的 `scanned` 照旧被写成 1，
+   于是段均 25 字的 `sample.docx` 在库页显示「扫描件·不可检索」而不是「已解析 10 段」，
+   空 docx 同理。4 条失败逐条都能由它解释，**PDF 路径不受影响所以前 6 节全绿**。
+
+   **为什么此前一直没暴露**：§8 的验收一直是跑在 vite dev（4173）上，而 dev 直接编译源码，
+   永远是最新的 —— 所以「dev 全绿」对构建产物形态**零信息量**。
+   §12.11 里那句「`e2e-materials` 的 Word 一节也覆盖了这条」同样是 dev 档的结论。
+
+   意义有两层：一是 dev 档全绿**不等于**产物可用，二是 `e2e-materials` 一旦按 §8 的写法
+   走 preview 档并登记进 `e2e-all`，它就成了这个缺口的哨兵 —— 构建卡住时它会红，
+   而不是像之前那样在 dev 上一直绿着。
+
+   待办：放行宿主对 `node_modules/@mdui/jq/functions/param.js` 的读取审批后
+   `npm run build`，再跑 `node scripts/e2e-all.mjs --only=e2e-materials`。
+   在此之前，preview 档的 `e2e-materials` 红 4 条是**预期状态**，不要当成回归去改代码。
+
+   附：失败构建会在 `dist/` 留下半成品，但这次没有损坏产物 ——
+   校验了 `dist/sw.js` 的 89 条预缓存清单，**磁盘缺失 0 条**（`dist/assets` 未被覆盖，
+   清单里的文件名与磁盘一致，因为自上次成功构建以来 `src/` 没有改动）。
+   也就是说 preview 档的其它脚本仍跑在一致产物上，可以正常参考。
