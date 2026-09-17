@@ -35,18 +35,31 @@ while (Date.now() < deadline) {
 
 console.log('2. 向 IndexedDB 播种两帧假幻灯片（带 caption）');
 await page.evaluate(async () => {
-  const req = indexedDB.open('wangke');
-  const db = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = rej; });
-  const tx = db.transaction(['videos', 'frames'], 'readwrite');
-  const videos = await new Promise((res, rej) => { const q = tx.objectStore('videos').getAll(); q.onsuccess = () => res(q.result); q.onerror = rej; });
-  const videoId = videos[0].id;
-  // 画布生成可见的测试图（1x1 像素图在截图里不可见）
+  /**
+   * ⚠️ 顺序不能改：**先造好 blob，再开事务**。
+   *
+   * IndexedDB 的事务在「控制权回到事件循环且没有未决请求」时会自动提交，
+   * 而 `canvas.toBlob` 是**宏任务** —— 一旦在事务存活期间 `await` 它，
+   * 事务当场提交，后面再碰 `tx.objectStore('frames')` 就会抛
+   * 「The transaction has finished」，整个脚本在第 2 步崩掉。
+   * （微任务级的 await 是安全的，比如等一个 IDB 请求的结果 —— 事务在事件处理期间仍然 active。）
+   */
   const canvas = document.createElement('canvas');
   canvas.width = 320; canvas.height = 180;
   const ctx = canvas.getContext('2d');
   ctx.fillStyle = '#2b6cb0'; ctx.fillRect(0, 0, 320, 180);
   ctx.fillStyle = '#fff'; ctx.font = '20px sans-serif'; ctx.fillText('测试幻灯片', 20, 90);
   const blob = await new Promise((res) => canvas.toBlob(res, 'image/png'));
+
+  const req = indexedDB.open('wangke');
+  const db = await new Promise((res, rej) => { req.onsuccess = () => res(req.result); req.onerror = rej; });
+  const videoId = await new Promise((res, rej) => {
+    const q = db.transaction('videos').objectStore('videos').getAll();
+    q.onsuccess = () => res(q.result[0].id); q.onerror = rej;
+  });
+
+  // 从这里到 tx.oncomplete 之间除了等事务自己，不能再有任何 await
+  const tx = db.transaction('frames', 'readwrite');
   const frames = tx.objectStore('frames');
   frames.add({ videoId, ts: 30, blob, kind: 'slide', caption: '课程封面与学习目标' });
   frames.add({ videoId, ts: 250, blob, kind: 'slide', caption: '第二章标题页' });
