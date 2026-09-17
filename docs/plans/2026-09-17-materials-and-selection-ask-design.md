@@ -609,3 +609,21 @@ node scripts/e2e-materials.mjs     # 无需 API key
     而真实原因只是 `docxId` 拿成了 PDF 的 id。
     现在改为先记录导入前的 id 集合、等**新增的那一行**出现——与文件名、列表排序、
     卡片文案都无关。**凡是「导入 → 拿 id」的 e2e 都该用这个写法**，别按名字找。
+
+13. **§2.4 关于预缓存体积的归因是错的，实测订正**（与实现无关，是文档自己的测量结论有问题）。
+    §2.4 把「precache 20MB」记成「加 `**/*.mjs` 把 `public/ort/` 拖了进来」，
+    并称改用运行时 CacheFirst 后「首次安装体积约 1MB」。实测（把 `dist/sw.js` 的清单
+    逐条对文件大小求和）：**当前配置（globPatterns 里并没有 mjs）是 89 项 / 20.7 MiB**，
+    与 §2.4 记为「错误修法」的 88 项 / 20817.85 KiB 几乎一样 ——
+    也就是说那 20MB **从来不是 mjs 造成的**，改用运行时 CacheFirst 并没有省掉它。
+    真正的大头是**单个文件**：`ort/ort-wasm-simd-threaded.wasm` = **13.32 MiB**，
+    由 globPatterns 里本来就有的 `**/*.wasm` 命中（这条不能删，
+    `assets/sql-wasm-*.wasm` 要靠它才能离线导出 .apkg）。
+    剔除 ort 后仍有约 7.4 MiB（index 2.45 / mermaid 0.62 / cytoscape 0.42 / katex 0.25 …），
+    §2.4 的「约 1MB」同样对不上。
+    **为什么没有顺手改掉**：`vite.config.ts` 里 `maximumFileSizeToCacheInBytes: 48MB`
+    的注释明确写着「ffmpeg.wasm / onnxruntime 的 wasm 文件较大」——
+    预缓存 ort 的 wasm 看起来是**有意为之**（离线转写要用），不是漏网。
+    真要瘦身应改成 `globIgnores: ['**/ort/**']` + 对 `/ort/*.wasm` 走运行时 CacheFirst
+    （与 pdf worker 同一套路），代价是「离线转写需要先在线用过一次」——
+    这是产品取舍，不属于本次改动范围，记在这里以免下次又按 §2.4 的错归因去「优化」。
