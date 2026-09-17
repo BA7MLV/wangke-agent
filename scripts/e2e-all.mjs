@@ -30,7 +30,11 @@ mkdirSync(CACHE_DIR, { recursive: true });
 // key:     是否硬/软依赖 SF_KEY（true → 无 key 档跳过）
 // testFile: 是否注入 TEST_FILE
 // antd:    是否依赖 antd 的 DOM/类名选择器（迁移 mdui 时会集体变红）
-// diagnostic: 诊断脚本，总以 0 退出（输出仅供人工看）
+// diagnostic: 诊断脚本，输出仅供人工参考。
+//             ⚠️ **不是「总以 0 退出」**：probe-svg-sanitize / probe-controls-hover /
+//             probe-quiz-option-shift / probe-rail-pages 失败时都会 exit 非 0，
+//             而 runScript 是按退出码判 passed/failed 的 —— 所以探针挂了同样会让整轮
+//             跑分变红。这是有意保留的：探针坏掉值得显式看见，不该被「仅供参考」掩盖。
 // base:    读取 BASE_URL（编排器会按服务注入正确地址）
 // timeout:  单脚本超时（秒）
 // video:   优先注入的测试视频
@@ -64,6 +68,9 @@ const META = {
   'test-material-region': { service: 'none', antd: false, timeout: 120 },
   'test-material-units': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
+  // 在 Node 里用 pdf.js 抽 fixture 的中文文本（确认「fixture 可解析」，e2e 失败时好分清
+  // 是 fixture 的问题还是阅读器的问题）。纯 Node，不起服务。
+  'probe-pdf-fixture': { service: 'none', antd: false, diagnostic: true, timeout: 120 },
   'test-ort-config': { service: 'none', antd: false, timeout: 120 },
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
   'test-rate': { service: 'none', antd: false, timeout: 120 },
@@ -131,6 +138,14 @@ const META = {
   // 只能跑 dev：动态取色那段要往 IndexedDB 种封面帧，得拿应用同一份 Dexie 实例
   'e2e-material-you': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'probe': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
+  // 控制栏 hover 显隐（悬停出现 / 移出收起，含未播放过 / 播放中 / 暂停中三态），要 TEST_FILE
+  'probe-controls-hover': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+  // 题卡作答后的几何位移（作答前后各选项位置必须一致，守「整屏跳动」那个 bug）
+  'probe-quiz-option-shift': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
+  // 下面两个侧栏探针的地址走 `process.argv[2]`、默认 5174 / 4174（vite 抢不到 5173 时的备用端口），
+  // **不读 BASE_URL** —— 编排器注入不了地址，跑起来必然连不上。只能手动跑，故显式跳过并写明原因。
+  'probe-rail': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '地址走 argv、默认 5174，不读 BASE_URL，编排器注入不了' },
+  'probe-rail-pages': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '地址走 argv、默认 4174，不读 BASE_URL，编排器注入不了' },
   'probe-mermaid': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '缺失 public/probe-mermaid.html，页面 404，无法加载' },
   // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
   'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
@@ -142,11 +157,17 @@ const META = {
  * META 是**手工维护**的，漏登记的后果是「静默跳过」——脚本在，一键跑分却永远不执行它，
  * 报告里也看不出少了什么。阅读材料那一批就这样整整漏了一轮（4 个单测 + e2e-materials
  * + e2e-covers + test-library-job-copy 全都没登记），直到人工比对才发现。
- * 所以这里每次都点一遍名：新增脚本时请一并补 META。
+ *
+ * 覆盖范围是「按约定命名、会被当作可执行脚本」的那几类前缀：test / e2e / probe / debug
+ * / render / motion / scenario。**不含** `gen-*`（代码生成）与 `.tmp-*`（本地临时件）。
+ * 上一版只查了 test/e2e，于是 5 个 probe-* 又漏在网外 —— 所以这里按前缀表来，
+ * 新增前缀时一并补进正则。e2e-all 自己不进 META（它是编排器）。
  */
+const SCRIPT_PREFIX_RE = /^(test|e2e|probe|debug|render|motion|scenario)(-|$)/;
 const unregistered = readdirSync(__dirname)
-  .filter((f) => /^(test|e2e)-.*\.mjs$/.test(f) && f !== 'e2e-all.mjs')
+  .filter((f) => f.endsWith('.mjs') && !f.startsWith('.') && f !== 'e2e-all.mjs')
   .map((f) => f.replace(/\.mjs$/, ''))
+  .filter((n) => SCRIPT_PREFIX_RE.test(n))
   .filter((n) => !(n in META));
 if (unregistered.length > 0) {
   console.warn(`⚠️  ${unregistered.length} 个脚本没有登记进 META，本次不会被跑到：`);
@@ -245,8 +266,8 @@ function runScript(name, meta, svc) {
       const v = resolveVideo(meta.video);
       if (v) env.TEST_FILE = v; else { resolve({ status: 'skipped', durationMs: 0, exitCode: null, tail: ['无可用测试视频且 ffmpeg 生成失败'] }); return; }
     }
-    if (svc && !svc.reused && meta.base) env.BASE_URL = `http://localhost:${svc.port}`;
-    else if (svc && meta.base) env.BASE_URL = `http://localhost:${svc.port}`;
+    // 只有声明了 base 的脚本才读 BASE_URL；服务复用与否端口都一样，无需分支
+    if (svc && meta.base) env.BASE_URL = `http://localhost:${svc.port}`;
 
     const child = spawn('node', [file], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
@@ -346,12 +367,19 @@ const total = results.length;
 const passRate = total ? ((passed / total) * 100).toFixed(1) : '0.0';
 
 console.log(`\n=== 汇总：${passed} 通过 / ${failed} 失败 / ${skippedN} 跳过（共 ${total}，通过率 ${passRate}%）===\n`);
+// 把「有脚本没登记」这件事也钉在汇总上：只报警一次很容易被滚屏冲掉，
+// 而它恰恰是上一轮「一键跑分全绿、材料那批压根没跑」的成因。
+if (unregistered.length > 0) {
+  console.warn(`⚠️  另有 ${unregistered.length} 个脚本未登记进 META、本轮未执行：${unregistered.join(', ')}\n`);
+}
 
 const reportJson = {
   generatedAt: new Date().toISOString(),
   withKey,
   react18BaselineVia: 'preview(4173)=dist(React18); dev(5173)=node_modules(React19, 非升级前基线)',
   summary: { passed, failed, skipped: skippedN, total, passRate: Number(passRate) },
+  // 未登记脚本（按约定前缀命名却没进 META）—— 不为空即说明「一键跑分」有盲区
+  unregisteredScripts: unregistered,
   results,
 };
 writeFileSync(join(CACHE_DIR, 'e2e-report.json'), JSON.stringify(reportJson, null, 2), 'utf8');
@@ -364,6 +392,15 @@ const md = [
   `- 档位：--with-key=${withKey}`,
   `- React18 基线来源：preview(4173) 读取 dist（React18 构建）；dev(5173) 由 node_modules 重编译（当前已是 React19，**非升级前基线**）`,
   `- 汇总：**${passed} 通过 / ${failed} 失败 / ${skippedN} 跳过**（共 ${total}，通过率 ${passRate}%）`,
+  ...(unregistered.length > 0
+    ? [
+        ``,
+        `> ⚠️ **本轮有 ${unregistered.length} 个脚本没有登记进 META，未被执行**：`,
+        `> ${unregistered.map((n) => `\`${n}\``).join('、')}`,
+        `> 它们是按约定前缀命名、本该进「一键跑分」的脚本。请在 \`scripts/e2e-all.mjs\` 的 META 里补条目，`,
+        `> 否则上面的「通过率」并不覆盖它们 —— 这正是阅读材料那批曾被静默跳过的原因。`,
+      ]
+    : []),
   ``,
   `## 结果明细`,
   ``,
@@ -380,7 +417,9 @@ const md = [
     '```',
     '',
   ]),
-  `> 注：诊断脚本（debug-*/probe-*）总以 0 退出，状态仅供参考；其输出中的 pageerror/console.error 不代表断言失败。`,
+  `> 注：诊断脚本（debug-*/probe-*）的输出仅供人工参考，其中的 pageerror/console.error 不一定代表断言失败。`,
+  `> 但它们**并非「总以 0 退出」**：probe-svg-sanitize 等失败时会以非零码退出，因而同样计入 failed`,
+  `> 并让本轮整体非零 —— 这是有意保留的，探针坏掉值得显式看见。判断结论请看脚本自己最后那行总结。`,
   '',
 ].join('\n');
 writeFileSync(join(CACHE_DIR, 'e2e-report.md'), md, 'utf8');
