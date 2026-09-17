@@ -70,7 +70,13 @@ const META = {
   'test-migration': { service: 'none', antd: false, timeout: 120 },
   // 在 Node 里用 pdf.js 抽 fixture 的中文文本（确认「fixture 可解析」，e2e 失败时好分清
   // 是 fixture 的问题还是阅读器的问题）。纯 Node，不起服务。
-  'probe-pdf-fixture': { service: 'none', antd: false, diagnostic: true, timeout: 120 },
+  // ⚠️ 暂 skip：它 `await import('pdfjs-dist/legacy/build/pdf.mjs')`，而这个文件和
+  //    `@mdui/jq/functions/param.js` 一样被宿主的文件审批拦着（同生产构建那个根因）。
+  //    在**非交互**子进程里没人应答审批，表现不是报错而是**无限挂起** ——
+  //    实测 20s 无任何输出、进程仍活着，编排器里会白烧满 120s 超时再报红。
+  //    那种红跟「探针真的查出问题」长得一模一样，会把人训练成忽略红色，
+  //    所以这里显式跳过并写明原因。**审批放行后请把 skip 去掉。**
+  'probe-pdf-fixture': { service: 'none', antd: false, diagnostic: true, timeout: 120, skip: '依赖 pdfjs-dist/legacy/build/pdf.mjs，该文件被宿主审批拦住（同生产构建），非交互下无限挂起' },
   'test-ort-config': { service: 'none', antd: false, timeout: 120 },
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
   'test-rate': { service: 'none', antd: false, timeout: 120 },
