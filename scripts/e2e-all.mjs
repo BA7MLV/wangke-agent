@@ -55,6 +55,14 @@ const META = {
   'test-error-text': { service: 'none', antd: false, timeout: 120 },
   'test-handout-ir': { service: 'none', antd: false, timeout: 120 },
   'test-handout-prompts': { service: 'none', antd: false, timeout: 120 },
+  // 后台任务文案（转写 / 解析 / 建索引）—— 库页状态标签的纯函数部分
+  'test-library-job-copy': { service: 'none', antd: false, timeout: 120 },
+  // 阅读材料的纯逻辑四件套：引用标记 / 分块与扫描件判定 / Word 抽取 / 框选几何。
+  // 都不依赖 DOM，所以能进这一档（materials/docx.ts 刻意与渲染分离，就是为了这个）
+  'test-material-chunk': { service: 'none', antd: false, timeout: 120 },
+  'test-material-docx': { service: 'none', antd: false, timeout: 120 },
+  'test-material-region': { service: 'none', antd: false, timeout: 120 },
+  'test-material-units': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
   'test-ort-config': { service: 'none', antd: false, timeout: 120 },
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
@@ -78,6 +86,14 @@ const META = {
   // 题卡解析的出图链路：mermaid 与 svg 两种围栏各一个脚本（自播种题卡，不调真实 API）
   'e2e-quiz-mermaid': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   'e2e-svg-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
+  // 阅读材料（PDF / Word）+ 选区提问：走**真实导入路径**（setInputFiles），不播种 OPFS，
+  // 所以整条 isImportable → 写盘 → 解析 → 建索引 都被覆盖。不需要 key。
+  // 在 preview 档跑还顺带验「构建产物里的 pdf.js worker 与 /pdfjs/cmaps/ 是否齐」——
+  // fixture 刻意用未内嵌字体的 STSong-Light，插件没生效就会在「文本层渲染出中文」那条炸。
+  'e2e-materials': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 封面（covers 表）：导入即有封面 / 小图档位 / PDF 材料首页 / 刷新后仍在 / 删除不残留。
+  // 读库的交叉验证在 preview 下自动跳过，核心断言全部走 DOM，故 preview 档可用。
+  'e2e-covers': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   // mdui 迁移基建验收（React 19 生效 / 46 个自定义元素已注册 / 设计令牌可用 / 未污染 antd 界面）。
   // 本档验不了「React 版本」与「中文语言包」两项（生产构建拿不到模块句柄），
   // 需要时手动补跑 dev 档：BASE_URL=http://localhost:5173 node scripts/e2e-mdui-adapter.mjs
@@ -119,6 +135,24 @@ const META = {
   // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
   'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
 };
+
+/**
+ * 守门员：磁盘上有、但 META 里没登记的脚本。
+ *
+ * META 是**手工维护**的，漏登记的后果是「静默跳过」——脚本在，一键跑分却永远不执行它，
+ * 报告里也看不出少了什么。阅读材料那一批就这样整整漏了一轮（4 个单测 + e2e-materials
+ * + e2e-covers + test-library-job-copy 全都没登记），直到人工比对才发现。
+ * 所以这里每次都点一遍名：新增脚本时请一并补 META。
+ */
+const unregistered = readdirSync(__dirname)
+  .filter((f) => /^(test|e2e)-.*\.mjs$/.test(f) && f !== 'e2e-all.mjs')
+  .map((f) => f.replace(/\.mjs$/, ''))
+  .filter((n) => !(n in META));
+if (unregistered.length > 0) {
+  console.warn(`⚠️  ${unregistered.length} 个脚本没有登记进 META，本次不会被跑到：`);
+  console.warn(`    ${unregistered.join('、')}`);
+  console.warn('    补上 META 条目后它们才会进入「一键跑分」。\n');
+}
 
 // ───────────────────────────── 参数解析 ─────────────────────────────
 const argv = process.argv.slice(2);
