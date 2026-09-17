@@ -26,7 +26,7 @@
 | 时间显示「当前 / 总长」 | **vidstack 默认就是这个格式**（`DefaultTimeGroup` = current + `/` + duration），不用改 | 1 ✅ |
 | 控制栏按钮 40px、图标约 24px、间距松 | `--media-button-size: 40px` / `--media-button-icon-size: 60%` / `--media-button-hover-bg: rgb(255 255 255 / .12)` / `.vds-button { margin-right: 6px }`（默认 38px + 2.5px 偏挤） | 1 ✅ |
 | 悬停才出现的控制栏 | 已完成（`hideControlsOnMouseLeave` + hover CSS），见 `2026-09-16` 日志 | 1 ✅ |
-| 网格卡片：16:9 缩略图 + 右下时长徽标 | 资料库改网格：`minmax(240px,1fr)`，封面取 `db.frames` 里该视频第一帧的 `thumb`（320px dataURL）；无帧则主题色底 + 图标占位 | 2 |
+| 网格卡片：16:9 缩略图 + 右下时长徽标 | 资料库改网格：`minmax(240px,1fr)`，封面取 `db.frames` 里该视频第一帧的 `thumb`（320px dataURL）；无帧则主题色底 + 图标占位<br>**（2026-09-17 订正）**：`frames.thumb` 从未落地，且「取 frames 第一帧」意味着**只有跑过讲义的视频才有封面**。现已改为独立的封面链路（`covers` 表 + `pipelines/cover.ts`，入库即生成），见 `2026-09-17-cover-design.md` | 2 |
 | 标题两行截断、元信息 12px secondary | 卡片标题 `-webkit-line-clamp: 2` + 15px/500；元信息行沿用现有「时长 · 大小 · 日期」文案改 12px secondary | 2 |
 | 卡片无描边，靠表面色差分层 | 卡片去掉 border，用 `--mdui-color-surface-container` / `-low`，radius 12px | 2 |
 | hover：缩略图轻微变化 + 卡片提亮 | 缩略图 `transform: scale(1.02)`，卡片底色提亮一档，标题不变色 | 2 |

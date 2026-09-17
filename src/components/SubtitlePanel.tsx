@@ -218,6 +218,8 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
             time={fmtTime(c.start)}
             active={i === activeIdx}
             testId="subs-row"
+            // 划词提问契约：在字幕行里选中文字后，全局浮层据此知道「选的是哪一句」
+            ask={{ source: 'subtitle', time: c.start, label: fmtTime(c.start) }}
             onClick={() => {
               if (playerRef.current) playerRef.current.currentTime = c.start + 0.01;
             }}

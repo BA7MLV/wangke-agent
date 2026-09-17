@@ -7,9 +7,24 @@ import { create } from 'zustand';
  * 之前进度是 `SubtitlePanel` 的 `useState`，切走视频/回资料库就丢了，
  * 回来再点一次还会起第二份并发转写。现在任何入口（面板、资料库、启动续跑）
  * 都读同一份 job，切到哪儿进度都还在。
+ *
+ * v9 起这里也承载**阅读材料的解析/建索引**（`parse` / `index` 两个 phase）：
+ * 三百页 PDF 的解析要几十秒，用户在库页点了导入就走开是常态，
+ * 复用同一个「任务不跟组件走」的机制最省事，也自然获得列表行的进度展示。
  */
 
-export type JobPhase = 'queued' | 'extract' | 'vad' | 'asr' | 'done' | 'error' | 'canceled';
+export type JobPhase =
+  | 'queued'
+  | 'extract'
+  | 'vad'
+  | 'asr'
+  /** 阅读材料：抽文本单元 → 落 materialBlocks */
+  | 'parse'
+  /** 阅读材料：文本块向量化 */
+  | 'index'
+  | 'done'
+  | 'error'
+  | 'canceled';
 
 export interface TranscribeJob {
   videoId: string;
@@ -22,14 +37,21 @@ export interface TranscribeJob {
   resume: boolean;
 }
 
-const ACTIVE_PHASES: JobPhase[] = ['queued', 'extract', 'vad', 'asr'];
+const ACTIVE_PHASES: JobPhase[] = ['queued', 'extract', 'vad', 'asr', 'parse', 'index'];
 
 export function isJobActive(job: TranscribeJob | undefined): boolean {
   return !!job && ACTIVE_PHASES.includes(job.phase);
 }
 
+/** 材料解析/建索引任务（与视频转写共用一份 job 状态，但文案与入口不同） */
+export function isMaterialJob(job: TranscribeJob | undefined): boolean {
+  return !!job && (job.phase === 'parse' || job.phase === 'index');
+}
+
 /** 资料库行：进度条旁写细节，状态标签只写「转写中」，避免同一句出现两次 */
 export function libraryJobCopy(job: TranscribeJob): { detail: string; tag: string } {
+  if (job.phase === 'parse') return { detail: job.message || '解析中', tag: '解析中' };
+  if (job.phase === 'index') return { detail: job.message || '建立索引中', tag: '建索引' };
   const detail =
     job.phase === 'asr'
       ? `转写中 ${job.done}/${job.total}`

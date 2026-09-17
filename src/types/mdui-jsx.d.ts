@@ -3386,7 +3386,9 @@ declare module 'react' {
       'mdui-sym-comment': MduiSymbolProps;
       'mdui-sym-content-copy': MduiSymbolProps;
       'mdui-sym-create-new-folder': MduiSymbolProps;
+      'mdui-sym-crop-free': MduiSymbolProps;
       'mdui-sym-delete': MduiSymbolProps;
+      'mdui-sym-description': MduiSymbolProps;
       'mdui-sym-download': MduiSymbolProps;
       'mdui-sym-drag-indicator': MduiSymbolProps;
       'mdui-sym-edit': MduiSymbolProps;
@@ -3405,6 +3407,7 @@ declare module 'react' {
       'mdui-sym-neurology': MduiSymbolProps;
       'mdui-sym-open-in-full': MduiSymbolProps;
       'mdui-sym-photo-camera': MduiSymbolProps;
+      'mdui-sym-picture-as-pdf': MduiSymbolProps;
       'mdui-sym-play-circle': MduiSymbolProps;
       'mdui-sym-quiz': MduiSymbolProps;
       'mdui-sym-refresh': MduiSymbolProps;
@@ -3413,6 +3416,7 @@ declare module 'react' {
       'mdui-sym-style': MduiSymbolProps;
       'mdui-sym-subtitles': MduiSymbolProps;
       'mdui-sym-swap-horiz': MduiSymbolProps;
+      'mdui-sym-toc': MduiSymbolProps;
       'mdui-sym-tune': MduiSymbolProps;
       'mdui-sym-undo': MduiSymbolProps;
       'mdui-sym-upload': MduiSymbolProps;

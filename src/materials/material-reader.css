@@ -1,0 +1,229 @@
+/* 阅读材料（PDF / Word）阅读器样式。
+   层级全部走 mdui 的 MD3 令牌，与播放页/讲义页保持同一套视觉语言。 */
+
+/* ── PDF 文本层（逐条摘录自 pdf.js web/pdf_viewer.css，Apache-2.0） ──────────────
+   为什么要抄：`.textLayer` 是 pdf.js 文本层的**契约样式** —— span 绝对定位、文字透明，
+   叠在 canvas 之上，少一条就会「选不中字」或「选到的位置错位」。
+   整份 pdf_viewer.css 有 100KB（绝大部分是 viewer 工具栏/侧栏的 chrome，我们用不到），
+   所以只摘这几组规则，并把作用域收在 .mr-page 里避免外溢。
+   来源：pdfjs-dist@4.10.38  web/pdf_viewer.css:583-709 */
+.mr-page .textLayer {
+  position: absolute;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
+  opacity: 1;
+  line-height: 1;
+  -webkit-text-size-adjust: none;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  caret-color: CanvasText;
+  z-index: 0;
+}
+.mr-page .textLayer :is(span, br) {
+  color: transparent;
+  position: absolute;
+  white-space: pre;
+  cursor: text;
+  transform-origin: 0% 0%;
+}
+.mr-page .textLayer > :not(.markedContent),
+.mr-page .textLayer .markedContent span:not(.markedContent) {
+  z-index: 1;
+}
+.mr-page .textLayer span.markedContent {
+  top: 0;
+  height: 0;
+}
+.mr-page .textLayer ::selection {
+  background: rgb(var(--mdui-color-primary) / 0.28);
+}
+.mr-page .textLayer br::selection {
+  background: transparent;
+}
+.mr-page .textLayer .endOfContent {
+  display: block;
+  position: absolute;
+  inset: 100% 0 0;
+  z-index: 0;
+  cursor: default;
+  user-select: none;
+}
+.mr-page .textLayer.selecting .endOfContent {
+  top: 0;
+}
+
+/* 框选态：文本层让位给框选覆盖层。
+   不这么做的话拖动会被原生选择吃掉，框选永远起不来。 */
+.mr-page.mr-page--area .textLayer {
+  pointer-events: none;
+  user-select: none;
+}
+
+/* ── 阅读器骨架 ─────────────────────────────────────────────────────────── */
+
+.mr-root {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  background: rgb(var(--mdui-color-surface-container-lowest));
+}
+
+.mr-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant) / 0.5);
+  flex-wrap: wrap;
+}
+
+.mr-bar__pos {
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.mr-bar__spacer {
+  flex: 1;
+}
+
+.mr-bar__input {
+  width: 62px;
+}
+
+/* Material Symbols 只有横向的 chevron_right，没有 chevron_left（见 ui/symbols.ts 注释），
+   「上一页」靠翻转同一个图标实现 */
+.mr-bar__flip {
+  transform: rotate(180deg);
+}
+
+/* 扫描件/无文本层提示条：必须显现，否则用户会以为问答坏了 */
+.mr-hint {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 8px 12px;
+  font-size: 13px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  background: rgb(var(--mdui-color-surface-container));
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant) / 0.5);
+}
+
+.mr-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 12px 12px 24px;
+  /* 阅读时双指缩放交给浏览器，避免和页面滚动抢手势 */
+  -webkit-overflow-scrolling: touch;
+}
+
+/* ── PDF 页面 ───────────────────────────────────────────────────────────── */
+
+.mr-page {
+  position: relative;
+  margin: 0 auto 12px;
+  background: #fff;
+  border-radius: 4px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  /* 页面未渲染时先按真实比例占位，滚动条长度才不会跳 */
+  overflow: hidden;
+}
+
+.mr-page__skel {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgb(var(--mdui-color-on-surface-variant) / 0.5);
+  font-size: 12px;
+}
+
+.mr-page canvas {
+  display: block;
+  border-radius: 4px;
+}
+
+/* 框选覆盖层：只在框选态吃指针事件 */
+.mr-area {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  cursor: crosshair;
+  pointer-events: none;
+  touch-action: none;
+}
+.mr-page--area .mr-area {
+  pointer-events: auto;
+}
+
+.mr-area__rect {
+  position: absolute;
+  border: 1.5px solid rgb(var(--mdui-color-primary));
+  background: rgb(var(--mdui-color-primary) / 0.14);
+  border-radius: 2px;
+  pointer-events: none;
+}
+
+/* 框选态下整页描边提示，避免用户忘了自己在框选态、以为「选不了字了」 */
+.mr-page--area {
+  outline: 2px dashed rgb(var(--mdui-color-primary) / 0.7);
+  outline-offset: 2px;
+}
+
+/* 引用跳转来的落点高亮（800ms 后由 JS 移除） */
+@keyframes mr-flash {
+  from {
+    box-shadow: 0 0 0 3px rgb(var(--mdui-color-primary) / 0.85);
+  }
+  to {
+    box-shadow: 0 0 0 3px rgb(var(--mdui-color-primary) / 0);
+  }
+}
+.mr-flash {
+  animation: mr-flash 800ms ease-out;
+}
+
+/* ── Word 阅读器 ────────────────────────────────────────────────────────── */
+
+.mr-docx {
+  /* docx-preview 自带 .docx-wrapper 的灰底与内边距，这里收一收让它贴合我们的容器 */
+  background: transparent;
+}
+
+.mr-docx .docx-wrapper {
+  background: transparent;
+  padding: 0;
+}
+
+.mr-docx .docx-wrapper > section.docx {
+  margin: 0 auto 12px;
+  padding: 32px 36px;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  border-radius: 4px;
+  background: #fff;
+  color: #000;
+}
+
+/* 段落级定位锚点：划词/引用跳转按它滚动与高亮 */
+.mr-docx [data-unit] {
+  scroll-margin-top: 12px;
+}
+
+.mr-docx__skel {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 40px 0;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 13px;
+}

@@ -1,5 +1,6 @@
 // 注：本文件被 node 测试脚本直接 import（type stripping），相对导入必须带 .ts 扩展名
 import { fmtTime } from './vtt.ts';
+import { unitRefRe, type UnitKind } from '../materials/units.ts';
 
 /** 解析 [mm:ss] / [h:mm:ss] 为秒 */
 export function parseTs(s: string): number {
@@ -75,3 +76,23 @@ export function formatFrameList(rows: { ts: number; caption?: string }[]): strin
     .map((r) => `[${fmtTime(r.ts)}] ${r.caption?.trim() || '（无画面描述）'}`)
     .join('\n');
 }
+
+/**
+ * 阅读材料的定位引用：`[第3页]` / `[第3段]` → `[第3页](#unit-3)`，
+ * 交由自定义 a 组件滚动阅读器到对应单元并高亮。
+ *
+ * 用统一的 `#unit-` 前缀而不是 `#page-`/`#para-`：材料页天然知道自己是 PDF 还是 Word，
+ * 一个前缀就够，ChatPanel 的分支也少一条。与 `#seek-`（跳播放器时间）互不干扰。
+ *
+ * ⚠️ 材料场景**只跑本函数、不跑 linkifyTimestamps** —— 材料没有播放器，
+ * 模型万一输出了 `[03:25]`，`#seek-` 会变成一个点了没反应的死链。
+ */
+export function linkifyUnits(text: string, kind: UnitKind): string {
+  return mapOutsideCode(text, (s) => {
+    const re = unitRefRe(kind);
+    return s.replace(re, (m, n: string) => `[${m}](#unit-${n})`);
+  });
+}
+
+/** 材料引用链接的前缀，渲染层（ChatPanel 的 a 组件）与测试共用同一常量，避免两边写死不一致 */
+export const UNIT_LINK_PREFIX = '#unit-';

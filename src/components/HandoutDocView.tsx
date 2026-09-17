@@ -174,12 +174,23 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
     const k = keyOf(t);
     const draft = aiDraft?.key === k ? aiDraft.block : null;
     const show = (b: Block) => (displayTransform ? displayTransform(b) : b);
+    // 划词提问的位置描述：讲义里没有页码，用「第 N 节 + 块编号」定位最实在
+    const askLabel =
+      t.kind === 'summary'
+        ? '讲义 · 概述'
+        : t.kind === 'heading'
+          ? `讲义 · 第 ${t.sec + 1} 节标题`
+          : `讲义 · 第 ${t.sec + 1} 节${label ? ` ${label}` : ''}`;
+    // 单独取一份用于收窄类型：TS 不能跨 show() 这个函数调用做类型收窄
+    const shown = show(block);
     return (
       <EditableBlock
         key={k}
         hasAi={block.type !== 'figure'}
         locked={editTarget !== null || aiBusy}
         swipeOpen={openKey === k}
+        // 图片块有对应时间点，引用块因此能带上可点击的 [mm:ss]
+        ask={{ label: askLabel, time: shown.type === 'figure' ? shown.ts : undefined }}
         onSwipeOpen={() => setOpenKey(k)}
         onSwipeClose={() => setOpenKey(null)}
         onStartEdit={() => {
@@ -326,6 +337,7 @@ function EditableBlock({
   onSwipeClose,
   onStartEdit,
   onStartAi,
+  ask,
 }: {
   children: ReactNode;
   hasAi: boolean;
@@ -336,6 +348,12 @@ function EditableBlock({
   onSwipeClose: () => void;
   onStartEdit: () => void;
   onStartAi?: () => void;
+  /**
+   * 划词提问的定位信息。全局浮层（SelectionAsk）靠这几个 data 属性反查
+   * 「选中的是哪一块、在讲义什么位置」，不需要把回调层层传上去。
+   * 图片块带 time，引用块因此能生成可点击跳转的 [mm:ss]。
+   */
+  ask?: { label: string; time?: number };
 }) {
   const contentRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<{ x: number; y: number; dragging: boolean; base: number } | null>(null);
@@ -364,6 +382,9 @@ function EditableBlock({
         ref={contentRef}
         className="hd-swipe-content"
         style={{ touchAction: 'pan-y' }}
+        data-askable={ask ? 'handout' : undefined}
+        data-ask-label={ask?.label}
+        data-ask-time={ask?.time}
         onTouchStart={
           locked
             ? undefined

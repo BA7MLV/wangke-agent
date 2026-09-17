@@ -36,8 +36,8 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 6 个内置 skill', () => {
-  assert.equal(skills.length, 6);
+test('恰好 7 个内置 skill', () => {
+  assert.equal(skills.length, 7);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -47,13 +47,42 @@ test('每个 skill 有 name + description（路由依赖 description）', () => 
   }
 });
 
-test('包含必备的五个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论', () => {
+test('包含必备的六个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论 / 讲解配图', () => {
   const names = skills.map((s) => s.name);
   assert.ok(names.includes('公文讲义写作'));
   assert.ok(names.includes('公文版式规格'));
   assert.ok(names.some((n) => /数学|编程/.test(n)));
   assert.ok(names.includes('公考行测讲义'));
   assert.ok(names.includes('公考申论讲义'));
+  assert.ok(names.includes('讲解配图'));
+});
+
+test('「讲解配图」写死两种围栏名、五类图种、节点上限，并划清不用于讲义', () => {
+  const s = skills.find((x) => x.name === '讲解配图');
+  assert.ok(s, '缺讲解配图');
+  // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这两个）
+  for (const kw of ['```mermaid', '```svg']) assert.ok(s.body.includes(kw), `缺围栏名：${kw}`);
+  // 前端不认的围栏名要明确列为反例
+  for (const kw of ['dot', 'plantuml']) assert.ok(s.body.includes(kw), `缺反例围栏名：${kw}`);
+  // 五类图种
+  for (const kw of ['flowchart', 'sequenceDiagram', 'stateDiagram-v2', 'mindmap', 'pie']) {
+    assert.ok(s.body.includes(kw), `缺图种：${kw}`);
+  }
+  // 数量上限与防滥画
+  assert.match(s.body, /不超过 10 个节点/);
+  assert.match(s.body, /不超过 10 个字/);
+  // 安全面：svg 不能带脚本与外部引用
+  for (const kw of ['<script>', 'onclick', '<foreignObject>']) {
+    assert.ok(s.body.includes(kw), `svg 安全约束缺：${kw}`);
+  }
+  // 讲义走公文 IR、不渲染图表围栏，技能必须自己说清适用范围
+  assert.match(s.body, /讲义/);
+});
+
+test('「讲解配图」的 description 点明适用范围（路由靠它决定选不选）', () => {
+  const s = skills.find((x) => x.name === '讲解配图');
+  assert.match(s.description, /问答|解析/);
+  assert.match(s.description, /讲义/);
 });
 
 test('「公文讲义写作」含四步流程、负面清单、自检清单、IR 范文', () => {

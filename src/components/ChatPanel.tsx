@@ -4,8 +4,9 @@ import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
 import { getSettings, useSettings } from '../store/settings';
 import { ensureEmbeddingIndex, type EmbedProgress } from '../pipelines/embedIndex';
+import { ensureMaterialIndex, materialIndexCount } from '../pipelines/embedMaterial';
 import { runAgentLoop } from '../harness/agent';
-import { QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
+import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
 import { loadEnabledSkillMeta, skillMetaBlock } from '../skills/store';
@@ -13,7 +14,10 @@ import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
 import { fmtTime } from '../utils/vtt';
-import { linkifyFrames, linkifyTimestamps } from '../utils/linkify';
+import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
+import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
+import type { MaterialReaderHandle } from '../materials/types';
+import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citation } from '../store/selectionAsk';
 import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
@@ -27,7 +31,18 @@ import './chat-panel.css';
 interface Props {
   videoId: string;
   videoName: string;
+  /** 视频：播放器实例；材料：传一个恒为 null 的 ref（材料没有播放器） */
   playerRef: React.RefObject<MediaPlayerInstance | null>;
+  /**
+   * 阅读器句柄（只有材料课程有）。用于把回答里的 `[第3页]` 引用变成「点一下就滚过去」。
+   * 与 playerRef 完全对称：视频靠 playerRef 跳时间，材料靠 readerRef 跳页/段。
+   */
+  readerRef?: React.RefObject<MaterialReaderHandle | null>;
+  /**
+   * 材料的定位单元类型：`'page'`（PDF）/ `'para'`（Word）。
+   * **不传 = 视频课程**，此时走字幕检索 + 时间戳引用。
+   */
+  materialKind?: UnitKind;
 }
 
 interface ChatMsg {
@@ -151,16 +166,79 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
   );
 }
 
-export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
+/**
+ * 用户气泡内容：把开头的**引用块**（`> ` 前缀的连续行）单独渲染成引用样式。
+ *
+ * 为什么要拆：引用块落库时存的是 Markdown blockquote 原文，而用户气泡是**纯文本渲染**
+ * （不走 markdown），直接吐出来会把 `> ` 露在脸上。拆开渲染既好看，也让人一眼分清
+ * 「这是我引的原文」与「这是我问的问题」。
+ *
+ * 没有引用块时行为与从前完全一致（原样渲染 `content`），既有消息与 e2e 都不受影响。
+ */
+function UserContent({ content }: { content: string }) {
+  const lines = content.split('\n');
+  const quoted: string[] = [];
+  let i = 0;
+  while (i < lines.length && lines[i].startsWith('> ')) {
+    quoted.push(lines[i].slice(2));
+    i++;
+  }
+  if (quoted.length === 0) return <>{content}</>;
+  const rest = lines.slice(i).join('\n').trim();
+  // formatCitation 的首行固定是「[选自 位置]」，抽出来单独当来源标签
+  const src = /^\[选自\s*(.+?)\]$/.exec(quoted[0] ?? '');
+  const body = src ? quoted.slice(1).join('\n') : quoted.join('\n');
+  return (
+    <>
+      <span className="chat-quote" data-testid="chat-quote">
+        <span className="chat-quote__src">{src ? `选自 ${src[1]}` : '引用原文'}</span>
+        <span className="chat-quote__text">{body}</span>
+      </span>
+      {rest && <span className="chat-quote__ask">{rest}</span>}
+    </>
+  );
+}
+
+export default function ChatPanel({
+  videoId,
+  videoName,
+  playerRef,
+  readerRef,
+  materialKind,
+}: Props) {
+  /** 材料课程（PDF / Word）：没有字幕、没有播放器，检索与引用都走材料那一套 */
+  const isMaterial = materialKind !== undefined;
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [hasSubtitles, setHasSubtitles] = useState(false);
+  const [hasSubtitles, setHasSubtitles] = useState(isMaterial);
   const [indexProgress, setIndexProgress] = useState<EmbedProgress | null>(null);
   const [indexReady, setIndexReady] = useState(false);
+  /**
+   * 索引为什么不可用（材料专属文案）。扫描件 / 空文档永远不会就绪，
+   * 光禁掉输入框而不说明原因，用户只会以为是坏了 —— 尤其窄屏下阅读区不可见时。
+   */
+  const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [shots, setShots] = useState<Snapshot[]>([]);
+  /**
+   * 划词/框选带进来的引用条（最多 MAX_REFS 条）。
+   * 做成独立的 chip 列表而不是把引用拼进 textarea：用户能看清自己引了什么、能单条删掉。
+   */
+  const [refs, setRefs] = useState<Citation[]>([]);
+  /** 选区提问的投递（来自 SelectionAsk 浮层 / PDF 框选） */
+  const pendingAsk = useSelectionAsk((s) => s.pending);
+  const takeAsk = useSelectionAsk((s) => s.take);
+  /** 发送时读最新引用：send 会被 effect 同步调用，闭包里的 refs 可能还没更新 */
+  const refsRef = useRef<Citation[]>([]);
+  useEffect(() => {
+    refsRef.current = refs;
+  }, [refs]);
+  // 输入框 ref：mdui-text-field 的 input 事件没有 payload，值要从元素上读。
+  // 声明放在这里（而不是靠近 JSX）是因为「选区提问」的 effect 要用它来聚焦输入框 ——
+  // 常量声明在使用之后会被 TS 判为 use-before-declaration。
+  const composerInput = useMduiEvent('mdui-text-field', 'input', (_e, el) => setInput(el.value));
   // 讲义抽帧元数据：决定 list_frames 工具/提示词注入，也供 AI 气泡里的画面引用渲染
   const [framesMeta, setFramesMeta] = useState<FrameMeta[]>([]);
   const llmModel = useSettings((s) => s.llmModel);
@@ -205,7 +283,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
     );
   };
 
-  /** 自定义链接渲染：#seek-N 跳转播放器，其余外链新窗口打开 */
+  /** 自定义链接渲染：#seek-N 跳播放器、#unit-N 跳材料对应页/段，其余外链新窗口打开 */
   const SeekLink = useCallback(
     ({ href, children }: ComponentProps & { href?: string }) => {
       const h = href ?? '';
@@ -223,23 +301,44 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
           </a>
         );
       }
+      // 阅读材料的引用：[第3页] → #unit-3，点一下滚动阅读器并高亮
+      if (h.startsWith('#unit-')) {
+        const unit = Number(h.slice(6));
+        return (
+          <a
+            onClick={(e) => {
+              e.preventDefault();
+              readerRef?.current?.scrollToUnit(unit);
+            }}
+            className="chat-ts"
+          >
+            {children}
+          </a>
+        );
+      }
       return (
         <a href={h} target="_blank" rel="noreferrer">
           {children}
         </a>
       );
     },
-    [seekTo],
+    [seekTo, readerRef],
   );
 
-  // 上下文用量估算（system + 历史 + 当前输入/截图），仅作 UI 提示
+  // 上下文用量估算（system + 历史 + 当前输入/截图/引用），仅作 UI 提示
   const ctxEst = useMemo(() => {
-    const sys = estimateTokens(PROMPTS.qaSystem(videoName, undefined, undefined, shots.length));
+    // 注意 estimateTokens：两个 qaSystem 返回的都是**提示词文本**，忘了包就变成字符串拼接
+    const sysText = isMaterial
+      ? PROMPTS.qaSystemMaterial(videoName, materialKind!, undefined, shots.length, refs.length)
+      : PROMPTS.qaSystem(videoName, undefined, undefined, shots.length, refs.length);
+    const sys = estimateTokens(sysText);
     // 历史只发送 content，reasoning 不计入
     const hist = msgs.reduce((s, m) => s + estimateTokens(m.content), 0);
-    const cur = estimateTokens(input) + shots.length * 1200; // 每张图约 1.2k tokens
+    // 引用块会随本轮一起发出去，得算进去（一段 1200 字上限 ≈ 1.2k tokens），否则用量条会低估
+    const refTokens = refs.reduce((n, c) => n + estimateTokens(c.text) + 12, 0);
+    const cur = estimateTokens(input) + shots.length * 1200 + refTokens; // 每张图约 1.2k tokens
     return sys + hist + cur;
-  }, [msgs, input, shots, videoName]);
+  }, [msgs, input, shots, refs, videoName, isMaterial, materialKind]);
   const ratio = ctxEst / ctxWin;
   // 用量告警分三档（>90% 危险 / >70% 注意），色走 MD3 语义令牌
   const ctxLevel = ratio > 0.9 ? 'bad' : ratio > 0.7 ? 'warn' : '';
@@ -281,6 +380,43 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
       setSessions(list);
       setActiveId(list[list.length - 1].id!);
 
+      // ── 阅读材料：索引的是文本块（materialBlocks / materialEmbeddings） ──
+      if (isMaterial) {
+        // 材料没有「字幕」，但 hasSubtitles 在上游是「内容是否就绪」的语义，材料解析完就算就绪
+        setHasSubtitles(true);
+        const blockCount = await db.materialBlocks.where('materialId').equals(videoId).count();
+        if (cancelled) return;
+        // 没有可检索文本：indexReady 保持 false，并给出**能操作的**说明。
+        // 话术必须按格式分：扫描件只可能是 PDF（有页面但取不到字），
+        // Word 取不到字就是「没有正文」—— 与 chunk.ts 的 judgeMaterialText 同一套区分。
+        if (blockCount === 0) {
+          if (!cancelled) {
+            setIndexNote(
+              materialKind === 'page'
+                ? '这份材料没有文本层（扫描件），无法参与检索；可以在阅读区划词或框选区域提问'
+                : '这份材料没有正文，没有可供检索的内容',
+            );
+          }
+          return;
+        }
+        const embCount = await materialIndexCount(videoId);
+        if (embCount >= blockCount) {
+          if (!cancelled) setIndexReady(true);
+          return;
+        }
+        try {
+          await ensureMaterialIndex(videoId, (p) => {
+            if (!cancelled) setIndexProgress(p);
+          });
+          if (!cancelled) setIndexReady(true);
+        } catch (e) {
+          if (!cancelled) toast.error(`建立材料索引失败：${e instanceof Error ? e.message : String(e)}`);
+        } finally {
+          if (!cancelled) setIndexProgress(null);
+        }
+        return;
+      }
+
       const segCount = await db.segments
         .where('videoId')
         .equals(videoId)
@@ -310,7 +446,39 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
     return () => {
       cancelled = true;
     };
-  }, [videoId]);
+  }, [videoId, isMaterial]);
+
+  /**
+   * 消费「选区提问」的投递：浮层点「解释这段」或「就这段提问」后进到这里。
+   *
+   * 两种模式的分工：
+   * - `compose`：只把引用压进引用条并聚焦输入框，用户自己补问题（多数情况）
+   * - `explain`：直接用默认提问发送，省一步（「这段什么意思」这种不用再打字）
+   *
+   * 引用条满了就丢掉最旧的一条：用户刚点的这条显然比三分钟前那条更相关。
+   */
+  useEffect(() => {
+    if (!pendingAsk) return;
+    const { cite, mode } = pendingAsk;
+    takeAsk();
+    // 直接基于 refsRef 算下一份并同步写回：同一次事件里 setState 还没落地，
+    // 而 explain 模式要立刻把这份引用发出去，不能用 state 读
+    const next =
+      refsRef.current.length >= MAX_REFS
+        ? [...refsRef.current.slice(refsRef.current.length - MAX_REFS + 1), cite]
+        : [...refsRef.current, cite];
+    refsRef.current = next;
+    setRefs(next);
+    if (mode === 'explain') {
+      void send(EXPLAIN_PROMPT, next);
+    } else {
+      // compose：引用已进引用条，焦点交给输入框，用户直接补问题。
+      // 复用 composerInput（useMduiEvent 返回的就是元素 ref），不额外造一个 ref。
+      composerInput.current?.focus();
+    }
+    // send 每轮渲染都是新引用，放进依赖会无限触发；这里只在 pendingAsk 变化时消费一次
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingAsk]);
 
   // 进入面板时预载帧元数据（历史消息里的画面引用回放需要）
   useEffect(() => {
@@ -406,16 +574,36 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
     toast.success('已删除会话');
   };
 
-  const send = async (question: string) => {
+  /**
+   * 发送一轮提问。
+   *
+   * `extraRefs` 用于「解释这段」：那一步在 effect 里触发，走 refsRef 传进来，
+   * 免得依赖 state 的落地时序。普通输入框发送不传，用当前引用条。
+   */
+  const send = async (question: string, extraRefs?: Citation[]) => {
     const q = question.trim();
-    if ((!q && shots.length === 0) || loading || activeId == null) return;
+    const curRefs = extraRefs ?? refsRef.current;
+    // 引用也算内容：只划了词没打字也应能发送
+    if ((!q && shots.length === 0 && curRefs.length === 0) || loading || activeId == null) return;
     if (!indexReady) {
       toast.warning('问答索引尚未就绪');
       return;
     }
     const sessionId = activeId;
     const settings = getSettings();
-    const curShots = [...shots].sort((a, b) => a.ts - b.ts);
+    /**
+     * 框选截图与视频截图共用同一条多模态通道：把引用里的裁图折进 shots，
+     * 下面的「多模态直读 / 视觉模型描述 / 不支持则拦截」三级降级链就**一行都不用改**。
+     * 材料的锚点是页号，正好复用 Snapshot.ts 这个字段（语义由 isMaterial 决定）。
+     */
+    const refShots: Snapshot[] = curRefs
+      .filter((c) => c.image)
+      .map((c) => ({ dataUrl: c.image!.dataUrl, thumb: c.image!.thumb, ts: c.unit ?? 0 }));
+    const curShots = [...shots, ...refShots].sort((a, b) => a.ts - b.ts);
+
+    /** 素材标记：视频是 [截图@mm:ss]，材料是 [选区@第N页] */
+    const shotTag = (s: Snapshot) =>
+      isMaterial ? `[选区@${fmtUnitRef(materialKind!, s.ts)}]` : `[截图@${fmtTime(s.ts)}]`;
 
     // 降级链 tier 3 前置检查：模型无图能力且未配视觉模型时直接拦截，不清空输入与截图，保留草稿
     if (curShots.length > 0 && !isVisionModel(settings.llmModel) && !settings.visionModel) {
@@ -425,6 +613,8 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
     setInput('');
     setShots([]);
+    setRefs([]);
+    refsRef.current = [];
     setLoading(true);
 
     const userKey = nextKey();
@@ -437,9 +627,22 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
     try {
       // 先上屏用户气泡与 AI 占位，此后描述/落库/问答任何一步抛错都能落到占位气泡上
-      const marker = curShots.map((s) => `[截图@${fmtTime(s.ts)}]`).join('');
-      const displayContent = marker + q;
-      const userImages: ChatImage[] = curShots.map((s) => ({ ts: s.ts, thumb: s.thumb }));
+      //
+      // 引用块放在最前面：模型对「开头是引用、后面是问题」的结构最敏感，
+      // 也让用户回看历史时一眼看到「我当时引的是哪一段」。
+      const quoteBlock = curRefs.map(formatCitation).join('\n\n');
+      const marker = curShots.map(shotTag).join('');
+      const displayContent = (quoteBlock ? `${quoteBlock}\n\n` : '') + marker + q;
+      const userImages: ChatImage[] = curShots.map((s) =>
+        isMaterial
+          ? {
+              ts: s.ts,
+              thumb: s.thumb,
+              label: `${fmtUnitRef(materialKind!, s.ts)}选区`,
+              kind: 'page-selection' as const,
+            }
+          : { ts: s.ts, thumb: s.thumb },
+      );
       setMsgs((prev) => [
         ...prev,
         {
@@ -469,49 +672,68 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         setSessions((prev) => prev.map((s) => (s.id === sessionId ? { ...s, title } : s)));
       }
 
-      // 截图时刻前后的字幕窗口（多时刻窗口按段去重合并）。
-      // 先于看图描述计算：tier 2 的视觉模型也要带着该时刻的上下文认图，否则容易把画面里的小字认错。
+      // 截图来源处的上下文。
+      // 视频：该时刻前后的**字幕窗口**（多时刻按段去重合并）；
+      // 材料：该页/段的**原文**（替代字幕，作用一样 —— 让视觉模型认图时带着上下文，
+      //      否则它容易把画面里的小字认错）。
+      // 先于看图描述计算：tier 2 的视觉模型也要带着这份上下文认图。
       const shotWindows = new Map<number, string>();
       let subBlock = '';
       if (curShots.length > 0) {
-        const segs = await db.segments
-          .where('videoId')
-          .equals(videoId)
-          .filter((r) => r.status === 1 && !!r.text)
-          .sortBy('idx');
-        const byIdx = new Map<number, SegmentRow>();
-        for (const s of curShots) {
-          const win = subtitleWindow(segs, s.ts);
-          shotWindows.set(s.ts, win.map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`).join('\n'));
-          for (const seg of win) byIdx.set(seg.idx, seg);
+        if (isMaterial) {
+          for (const s of curShots) {
+            const rows = await db.materialBlocks
+              .where('materialId')
+              .equals(videoId)
+              .filter((r) => r.unit === s.ts)
+              .toArray();
+            shotWindows.set(s.ts, rows.map((r) => r.text).join('\n'));
+          }
+        } else {
+          const segs = await db.segments
+            .where('videoId')
+            .equals(videoId)
+            .filter((r) => r.status === 1 && !!r.text)
+            .sortBy('idx');
+          const byIdx = new Map<number, SegmentRow>();
+          for (const s of curShots) {
+            const win = subtitleWindow(segs, s.ts);
+            shotWindows.set(s.ts, win.map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`).join('\n'));
+            for (const seg of win) byIdx.set(seg.idx, seg);
+          }
+          subBlock = [...byIdx.values()]
+            .sort((a, b) => a.idx - b.idx)
+            .map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`)
+            .join('\n');
         }
-        subBlock = [...byIdx.values()]
-          .sort((a, b) => a.idx - b.idx)
-          .map((seg) => `[${fmtTime(seg.start)}] ${seg.text}`)
-          .join('\n');
       }
 
-      // 截图进上下文的降级链：tier 1 多模态模型直接看图；tier 2 视觉模型先描述成文字
+      // 截图进上下文的降级链：tier 1 多模态模型直接看图；tier 2 视觉模型先描述成文字。
+      // 材料的措辞与视频分开：材料是「框选出来的区域」，且没有字幕可作背景。
       const shotLead =
         curShots.length === 0
           ? ''
           : isVisionModel(settings.llmModel)
-            ? `本轮附带 ${curShots.length} 张截图：正文中 [截图@mm:ss] 标记后紧跟的就是该时刻的画面。截图是最高优先级证据，请先按画面实际内容作答，字幕只作背景；两者冲突时以截图为准。`
-            : `本轮提问附带了 ${curShots.length} 张截图，下面「[截图@mm:ss] 画面：…」是视觉模型对每张图的逐字转述，忠实于画面、为最高优先级证据；与字幕冲突时以画面为准。`;
+            ? isMaterial
+              ? `本轮附带 ${curShots.length} 张选区截图：正文中 [选区@第N${materialKind === 'para' ? '段' : '页'}] 标记后紧跟的就是该处框出来的画面。截图是最高优先级证据，请先按画面实际内容作答，材料文字只作背景；两者冲突时以截图为准。`
+              : `本轮附带 ${curShots.length} 张截图：正文中 [截图@mm:ss] 标记后紧跟的就是该时刻的画面。截图是最高优先级证据，请先按画面实际内容作答，字幕只作背景；两者冲突时以截图为准。`
+            : isMaterial
+              ? `本轮提问附带了 ${curShots.length} 张选区截图，下面「[选区@第N${materialKind === 'para' ? '段' : '页'}] 画面：…」是视觉模型对每张图的逐字转述，忠实于画面、为最高优先级证据；与材料文字冲突时以画面为准。`
+              : `本轮提问附带了 ${curShots.length} 张截图，下面「[截图@mm:ss] 画面：…」是视觉模型对每张图的逐字转述，忠实于画面、为最高优先级证据；与字幕冲突时以画面为准。`;
       let imageParts: ContentPart[] | null = null;
       let descBlock = '';
       let descFailed = false;
       if (curShots.length > 0) {
         if (isVisionModel(settings.llmModel)) {
-          // 每张图前插入时间戳文本，模型才能把画面归属到 [截图@mm:ss]
+          // 每张图前插入位置文本，模型才能把画面归属到对应的标记
           imageParts = curShots.flatMap(
             (s): ContentPart[] => [
-              { type: 'text', text: `[截图@${fmtTime(s.ts)}]` },
+              { type: 'text', text: shotTag(s) },
               { type: 'image_url', image_url: { url: s.dataUrl } },
             ],
           );
         } else {
-          // 前置检查已保证 visionModel 非空；描述提示词带上该时刻字幕，并声明以画面为准
+          // 前置检查已保证 visionModel 非空；描述提示词带上该处上下文，并声明以画面为准
           const results = await Promise.allSettled(
             curShots.map((s) =>
               chatOnce(settings, {
@@ -532,10 +754,10 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
           descFailed = results.some((r) => r.status === 'rejected');
           descBlock = results
             .map((r, i) => {
-              const at = `[截图@${fmtTime(curShots[i].ts)}]`;
+              const at = shotTag(curShots[i]);
               return r.status === 'fulfilled'
                 ? `${at} 画面：${textOf(r.value)}`
-                : `${at}（画面描述失败，仅参考时间戳与字幕）`;
+                : `${at}（画面描述失败，仅参考位置与${isMaterial ? '材料原文' : '字幕'}）`;
             })
             .join('\n');
         }
@@ -545,23 +767,24 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
       // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文
       const skillMetas = await loadEnabledSkillMeta();
       // 每次发送前刷新帧元数据（讲义可能在本面板挂载后生成）：有帧才注册 list_frames 工具并注入引用规则
-      const meta = await loadFramesMeta();
+      // 材料没有画面可引用，直接跳过这次查询
+      const meta = isMaterial ? [] : await loadFramesMeta();
       const hasFrames = meta.length > 0;
-      const systemPrompt = PROMPTS.qaSystem(
-        videoName,
-        skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined,
-        hasFrames,
-        curShots.length,
-      );
+      const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
+      const systemPrompt = isMaterial
+        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length)
+        : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length);
       const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
       // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
       // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀
+      // ⚠️ 引用块要同时进两处：displayContent（上屏 + 落库，用户回看历史时能看到自己引了什么）
+      // 和 currentText（真正发给模型的那条）。漏掉后者的话，模型只能看到一个「这段」而不知道指什么。
       const currentText =
+        (quoteBlock ? `${quoteBlock}\n\n` : '') +
         (shotLead ? `${shotLead}\n` : '') +
         q +
         (descBlock ? `\n${descBlock}` : '') +
-        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');
-      const budget =
+        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');      const budget =
         settings.contextWindow -
         estimateTokens(systemPrompt) -
         estimateTokens(currentText) -
@@ -583,13 +806,18 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
 
       // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
       let quizState: QuizState | undefined;
-      const executeTool = createToolExecutor(videoId, (data) => {
-        quizState = { data, picks: data.questions.map(() => -1) };
-        patchAi({ quiz: quizState });
+      const executeTool = createToolExecutor(videoId, {
+        // 材料：kind 决定走 search_material；视频：undefined 走 search_transcript
+        kind: materialKind,
+        onQuiz: (data) => {
+          quizState = { data, picks: data.questions.map(() => -1) };
+          patchAi({ quiz: quizState });
+        },
       });
       await runAgentLoop(
         messages,
-        hasFrames ? [...QA_TOOLS, LIST_FRAMES_TOOL] : QA_TOOLS,
+        // 材料用材料工具集（没有 search_transcript）；视频按是否有抽帧加 list_frames
+        isMaterial ? MATERIAL_QA_TOOLS : hasFrames ? [...QA_TOOLS, LIST_FRAMES_TOOL] : QA_TOOLS,
         executeTool,
         {
           thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
@@ -607,11 +835,13 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
             patchAi({ content: '', hint: undefined });
           },
           onToolStart: (name, argsJson) => {
-            let hint = '正在检索字幕…';
+            let hint = isMaterial ? '正在检索材料…' : '正在检索字幕…';
             try {
               const args = JSON.parse(argsJson || '{}') as { query?: string; name?: string };
               if (name === 'search_transcript' && args.query) hint = `正在检索：${args.query}`;
+              if (name === 'search_material' && args.query) hint = `正在检索材料：${args.query}`;
               if (name === 'get_transcript_range') hint = '正在查看字幕原文…';
+              if (name === 'get_material_range') hint = '正在查看材料原文…';
               if (name === 'list_frames') hint = '正在查看课程画面…';
               if (name === 'present_quiz') hint = '正在出题…';
               if (name === 'use_skill') hint = `正在加载技能：${args.name ?? ''}`;
@@ -666,8 +896,7 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
     const n = Number(el.value);
     if (Number.isFinite(n)) setActiveId(n);
   });
-  // 输入框：mdui-text-field 的 input 事件没有 payload，值要从元素上读
-  const composerInput = useMduiEvent('mdui-text-field', 'input', (_e, el) => setInput(el.value));
+  // 输入框：mdui-text-field 的 input 事件没有 payload，值要从元素上读（composerInput 声明在组件上方）
   // 思考深度：低 / 高 / 最大
   const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
     updateSettings({ thinkingEffort: el.value as ReasoningEffort }),
@@ -705,7 +934,11 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
   if (!hasSubtitles) {
     return (
       <Panel testId="panel-chat">
-        <PanelPlaceholder testId="chat-empty">请先在「字幕」页生成字幕，然后才能针对课程内容提问</PanelPlaceholder>
+        <PanelPlaceholder testId="chat-empty">
+          {isMaterial
+            ? '这份材料还没有解析出可检索的文本，暂时无法提问'
+            : '请先在「字幕」页生成字幕，然后才能针对课程内容提问'}
+        </PanelPlaceholder>
       </Panel>
     );
   }
@@ -825,13 +1058,29 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
                     <div className="chat-shots">
                       {m.images.map((img, i) => (
                         <span key={i} className="chat-shot">
-                          <img src={img.thumb} alt="" onClick={() => seekTo(img.ts)} className="chat-shot__img" />
-                          <span className="chat-ts-chip">{fmtTime(img.ts)}</span>
+                          {/* 材料的截图锚点是页/段号：点击滚到那一页，标签也写「第 N 页」而不是时间 */}
+                          <img
+                            src={img.thumb}
+                            alt=""
+                            onClick={() =>
+                              img.kind === 'page-selection'
+                                ? readerRef?.current?.scrollToUnit(img.ts)
+                                : seekTo(img.ts)
+                            }
+                            className="chat-shot__img"
+                          />
+                          <span className="chat-ts-chip">
+                            {img.kind === 'page-selection' && materialKind
+                              ? fmtUnitRef(materialKind, img.ts)
+                              : fmtTime(img.ts)}
+                          </span>
                         </span>
                       ))}
                     </div>
                   )}
-                  <div className="chat-bubble chat-bubble--user">{m.content}</div>
+                  <div className="chat-bubble chat-bubble--user">
+                    <UserContent content={m.content} />
+                  </div>
                 </>
               ) : (
                 <div className="chat-bubble chat-bubble--ai">
@@ -843,12 +1092,26 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
                         <ReasoningBlock reasoning={m.reasoning} active={!!m.streaming && !m.content} />
                       )}
                       <XMarkdown
-                        content={linkifyTimestamps(linkifyFrames(m.content))}
+                        // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
+                        // 材料没有播放器，留着会生成点了没反应的死链；
+                        // #frame- 画面引用同理（材料没有抽帧）。
+                        content={
+                          isMaterial && materialKind
+                            ? linkifyUnits(m.content, materialKind)
+                            : linkifyTimestamps(linkifyFrames(m.content))
+                        }
                         components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre }}
                         streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
                       />
                       {m.quiz && (
-                        <QuizCard quiz={m.quiz.data} picks={m.quiz.picks} onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)} onSeek={seekTo} />
+                        <QuizCard
+                          quiz={m.quiz.data}
+                          picks={m.quiz.picks}
+                          onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)}
+                          onSeek={seekTo}
+                          // 材料没有播放器：解析里的时间戳不 linkify，免得出现点了没反应的死链
+                          seekable={!isMaterial}
+                        />
                       )}
                     </>
                   )}
@@ -859,15 +1122,61 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
         })}
       </PanelBody>
 
+      {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}
+      {indexNote && (
+        <div className="chat-note" data-testid="chat-index-note">
+          <mdui-sym-warning />
+          <span>{indexNote}</span>
+        </div>
+      )}
+
       {/* 输入区：截图/出题在左，输入框居中，发送在右。
           Enter 发送、Shift+Enter 换行；isComposing 时放行（中文输入法选词的回车不是提交意图）。 */}
       <div className="chat-composer" data-testid="chat-composer">
+        {/*
+          引用条：划词/框选带进来的原文片段（最多 MAX_REFS 条）。
+          单独一行而不是塞进输入框文本里 —— 用户能一眼看清引了什么、能单条删掉，
+          也不会污染自己正在写的句子。
+        */}
+        {refs.length > 0 && (
+          <div className="chat-refs" data-testid="chat-refs">
+            {refs.map((c, i) => (
+              <span
+                key={`${c.source}-${c.unit ?? c.time ?? 0}-${i}`}
+                className="chat-ref"
+                data-testid="chat-ref-chip"
+              >
+                {c.image && <img src={c.image.thumb} alt="" className="chat-ref__img" />}
+                <span className="chat-ref__body">
+                  {c.unitLabel && <span className="chat-ref__where">{c.unitLabel}</span>}
+                  <span className="chat-ref__text" title={c.text}>
+                    {c.text}
+                  </span>
+                </span>
+                <mdui-button-icon
+                  className="chat-ref__remove"
+                  aria-label="移除引用"
+                  data-testid="ref-chip-remove"
+                  onClick={() => {
+                    const next = refs.filter((_, j) => j !== i);
+                    refsRef.current = next;
+                    setRefs(next);
+                  }}
+                >
+                  <mdui-sym-close />
+                </mdui-button-icon>
+              </span>
+            ))}
+          </div>
+        )}
         {shots.length > 0 && (
           <div className="chat-shots chat-shots--pending">
             {shots.map((s, i) => (
               <span key={i} className="chat-shot">
                 <img src={s.thumb} alt="" className="chat-shot__img chat-shot__img--sm" />
-                <span className="chat-ts-chip">{fmtTime(s.ts)}</span>
+                <span className="chat-ts-chip">
+                  {isMaterial ? fmtUnitRef(materialKind!, s.ts) : fmtTime(s.ts)}
+                </span>
                 <mdui-button-icon
                   className="chat-shot__remove"
                   aria-label="移除截图"
@@ -880,16 +1189,19 @@ export default function ChatPanel({ videoId, videoName, playerRef }: Props) {
           </div>
         )}
         <div className="chat-composer__row">
-          <mdui-tooltip content="截取当前画面（最多 4 张）">
-            <mdui-button-icon
-              data-testid="shot-btn"
-              aria-label="截取当前画面"
-              disabled={!indexReady || shots.length >= 4 || loading}
-              onClick={addShot}
-            >
-              <mdui-sym-photo-camera />
-            </mdui-button-icon>
-          </mdui-tooltip>
+          {/* 截图按钮只在有播放器时出现：材料没有正在播放的画面可截，框选走阅读器的「框选」按钮 */}
+          {!isMaterial && (
+            <mdui-tooltip content="截取当前画面（最多 4 张）">
+              <mdui-button-icon
+                data-testid="shot-btn"
+                aria-label="截取当前画面"
+                disabled={!indexReady || shots.length >= 4 || loading}
+                onClick={addShot}
+              >
+                <mdui-sym-photo-camera />
+              </mdui-button-icon>
+            </mdui-tooltip>
+          )}
           <mdui-tooltip content="出题考我">
             <mdui-button-icon
               data-testid="quiz-btn"

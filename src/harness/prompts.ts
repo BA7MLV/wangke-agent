@@ -1,5 +1,20 @@
 /** 所有 LLM 提示词集中管理 */
 
+/**
+ * 「讲不清就画图」规则：问答正文（qaSystem）与阅读材料问答（qaSystemMaterial）共用同一句话术。
+ *
+ * 两个要点都不能省：
+ * 1. **必须点明围栏名** —— 前端只认 `mermaid` 与 `svg` 两个语言标记（components/mermaid/fence.ts
+ *    的 LANG_RULES）。模型写成 ```dot / ```plantuml / ```graphviz 都会落回普通代码块，
+ *    用户看到一坨源码，比不画更糟。两种围栏的**分工**也要写死：mermaid 优先，
+ *    只有 mermaid 表达不了的（函数图像、几何图形、坐标轴）才手写 svg ——
+ *    不写这一句，模型会放着现成图种不用去手搓 SVG，正确率反而掉。
+ * 2. **必须给上限** —— 图种随内容选，但节点数与节点文字要收；否则模型画出三十个节点的图，
+ *    手机上横向滚到看不清。末尾那句「一句话能说清就别画」是防滥画：图比文字更费上下文与渲染开销。
+ */
+const DIAGRAM_RULE =
+  '讲解流程、结构、关系、对比这类"文字绕着说、一画就懂"的内容时，用 ```mermaid 围栏画一张图（flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie 等按内容选），节点文字不超过 10 个字、整张图不超过 10 个节点；函数图像、几何图形、坐标轴这类 mermaid 画不出的才用 ```svg 围栏手写 SVG（只画线与图形，不写 script、事件属性、外部图片或外链样式）；图的前后各用一句话说明，不要只丢一张图。一句话能说清的就别画。';
+
 export const PROMPTS = {
   /** VL：判断帧是否为教学内容并 OCR */
   frameCaption: `这是网课视频中的一帧画面。请判断：
@@ -109,8 +124,9 @@ ${metaList}
 
 要求：
 1. 只选择对该课程讲义写作确有帮助的技能；课程领域与技能用途不匹配的不选。
-2. 都不合适时返回空数组。
-3. 严格输出 JSON：{"skills": ["技能名称1", "技能名称2"]}，名称必须从上方列表中原样复制。`,
+2. 讲义正文按公文结构化渲染（IR 块），**不解析图表围栏**；只服务问答讲解与题目解析的出图类技能不要选。
+3. 都不合适时返回空数组。
+4. 严格输出 JSON：{"skills": ["技能名称1", "技能名称2"]}，名称必须从上方列表中原样复制。`,
 
   /** 思考题弹幕：按字幕块出题（JSON），启发式为主、回忆式为辅 */
   danmaku: (videoName: string, transcript: string, context?: string) =>
@@ -155,13 +171,25 @@ ${transcript}
    * 问答 Agent 系统提示词。
    * hasFrames：视频已有讲义抽帧时注入画面引用规则。
    * shotCount：本轮用户附带的截图张数（>0 时注入「以图为准」规则；tier 1 图会真的送进模型，tier 2 送的是描述）。
+   * selectionCount：本轮用户在字幕/讲义上划词引用了几段（>0 时注入「引用优先」规则）。
    */
-  qaSystem: (videoName: string, skillMetaList?: string, hasFrames?: boolean, shotCount?: number) => {
+  qaSystem: (
+    videoName: string,
+    skillMetaList?: string,
+    hasFrames?: boolean,
+    shotCount?: number,
+    selectionCount?: number,
+  ) => {
     const rules = [
       '回答前先用 search_transcript 工具检索相关字幕片段；需要更多上下文时用 get_transcript_range 工具查看指定时间范围的字幕原文。',
       '检索有预算：通常 1~3 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',
       '回答必须基于字幕内容，不要编造。字幕中没有涉及的内容，明确说明"课程中未提及"。',
     ];
+    if (selectionCount && selectionCount > 0) {
+      rules.push(
+        `本轮用户**划词引用了 ${selectionCount} 段课程原文**（消息开头的 > 引用块，带 [选自 位置] 标注）。引用内容是提问的**主要对象**：请优先围绕它作答；引用里出现"这段/这句话/它"之类的指代时，说的就是引用内容而不是泛指整节课。引用的文字可能选多或选少，按最合理的读法理解，必要时说明你的理解。`,
+      );
+    }
     if (shotCount && shotCount > 0) {
       rules.push(
         `本轮用户附带了 ${shotCount} 张截图，正文前会以 [截图@mm:ss]（多张时另有「画面：…」描述）标出。截图是最高优先级的证据：先按画面实际内容作答，再用字幕补充背景；截图与字幕/描述冲突时一律以截图为准。画面看不清的部分明说看不清，不要用常识补全。`,
@@ -169,8 +197,9 @@ ${transcript}
     }
     rules.push(
       '回答中引用具体内容时，在句末标注时间戳，格式为 [mm:ss]（例如 [03:25]），学生可以点击跳转到视频对应位置。时间戳必须来自工具返回的结果。',
+      DIAGRAM_RULE,
       '回答简洁有条理，适当使用分条列表。用中文回答。',
-      '用户要求出题、测验或"考考我"时：先用 search_transcript 检索相关字幕（用户指定范围就覆盖该范围，未指定则检索多个核心知识点），再调用 present_quiz 工具展示题卡。题目必须基于字幕实际讲到的内容；选项要有干扰性（常见误解、相近概念）；解析中引用内容时标注 [mm:ss] 时间戳。调用后用一句话说明考查点，不要重复题目。',
+      '用户要求出题、测验或"考考我"时：先用 search_transcript 检索相关字幕（用户指定范围就覆盖该范围，未指定则检索多个核心知识点），再调用 present_quiz 工具展示题卡。题目必须基于字幕实际讲到的内容；选项要有干扰性（常见误解、相近概念）；解析中引用内容时标注 [mm:ss] 时间戳，解析涉及流程、结构、对比、关系时在解析里用 ```mermaid 围栏画一张图，函数图像、几何图形这类 mermaid 画不出的用 ```svg 围栏（解析支持 Markdown 与两种图表围栏，前端会渲染成图）。调用后用一句话说明考查点，不要重复题目。',
     );
     if (skillMetaList) {
       rules.push(
@@ -183,6 +212,56 @@ ${transcript}
       );
     }
     return `你是网课《${videoName}》的学习助教。请根据课程字幕内容回答学生的问题。
+
+规则：
+${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
+  },
+
+  /**
+   * 阅读材料（PDF / Word）的问答系统提示词。与 `qaSystem` 同构，只换四件事：
+   *
+   * 1. 检索工具换成 `search_material` / `get_material_range`；
+   * 2. 引用标记从 `[mm:ss]` 换成 `[第N页]` / `[第N段]`；
+   * 3. **不注入 `list_frames` 规则** —— 材料没有画面可引用；
+   * 4. **全文不提时间戳** —— 材料没有播放器，模型若输出 `[03:25]` 会渲染成一个
+   *    点了没反应的死链（渲染层在材料模式下也不跑 `linkifyTimestamps`，这是双保险）。
+   */
+  qaSystemMaterial: (
+    materialName: string,
+    kind: 'page' | 'para',
+    skillMetaList?: string,
+    shotCount?: number,
+    selectionCount?: number,
+  ) => {
+    const noun = kind === 'page' ? '页' : '段';
+    const docType = kind === 'page' ? 'PDF 文档' : 'Word 文档';
+    const rules = [
+      `回答前先用 search_material 工具检索材料的相关段落；需要更多上下文时用 get_material_range 工具查看指定${noun}范围的原文。`,
+      '检索有预算：通常 1~3 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',
+      '回答必须基于材料内容，不要编造。材料中没有涉及的内容，明确说明"材料中未提及"。',
+    ];
+    if (selectionCount && selectionCount > 0) {
+      rules.push(
+        `本轮用户**划词引用了 ${selectionCount} 段材料原文**（消息开头的 > 引用块，带 [选自 第N${noun}] 标注）。引用内容是提问的**主要对象**：请优先围绕它作答；引用里出现"这段/这句话/它"之类的指代时，说的就是引用内容而不是泛指整份材料。引用的文字可能选多或选少，按最合理的读法理解，必要时说明你的理解。`,
+      );
+    }
+    if (shotCount && shotCount > 0) {
+      rules.push(
+        `本轮用户附带了 ${shotCount} 张选区截图（在${docType}上用鼠标/手指框出来的区域，正文前以 [选区@第N${noun}] 标出，可能另有视觉模型对画面的逐字转述）。截图是最高优先级的证据：先按画面实际内容作答，再结合材料文字补充；两者冲突时以截图为准。画面看不清的部分明说看不清，不要用常识补全。`,
+      );
+    }
+    rules.push(
+      `回答中引用具体内容时，在句末标注位置，格式为 [第N${noun}]（例如 [第3${noun}]），学生可以点击跳转到材料对应位置。位置必须来自工具返回的结果。`,
+      DIAGRAM_RULE,
+      '回答简洁有条理，适当使用分条列表。用中文回答。',
+      `用户要求出题、测验或"考考我"时：先用 search_material 检索相关内容，再调用 present_quiz 工具展示题卡。题目必须基于材料实际写到的内容；选项要有干扰性（常见误解、相近概念）；解析中引用内容时标注 [第N${noun}]，解析涉及流程、结构、对比、关系时在解析里用 \`\`\`mermaid 围栏画一张图，函数图像、几何图形这类 mermaid 画不出的用 \`\`\`svg 围栏（解析支持 Markdown 与两种图表围栏，前端会渲染成图）。调用后用一句话说明考查点，不要重复题目。`,
+    );
+    if (skillMetaList) {
+      rules.push(
+        `可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及某技能的用途领域时，先用 use_skill 工具加载该技能正文，再按其规范回答；需要技能附带的参考文档时，用 read_skill_reference 工具读取。`,
+      );
+    }
+    return `你是阅读材料《${materialName}》的学习助教。请根据材料内容回答学生的问题。
 
 规则：
 ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;

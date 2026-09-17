@@ -294,6 +294,27 @@
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
+/* 解析正文：与问答正文共用 XMarkdown（.x-markdown 自带标签样式，段落/列表边距全走 CSS 变量）。
+   这里只改变量、不覆盖元素规则 —— x-markdown 的 p / ul / li 规则带
+   `:not(.x-md-disable-all):not(.x-md-disable-p)` 一类前缀，硬拼权重很脆；变量是它留的正规口子。 */
+.quiz-explain__md {
+  margin-top: 4px;
+}
+
+.quiz-explain__md .x-markdown {
+  --margin-block: 0 0 0.6em 0;
+  --margin-ul-ol: 0 0 0.6em 1.2em;
+  --margin-li: 0.15em 0;
+  --margin-pre: 0.6em 0;
+  --table-margin: 0.6em 0;
+  --td-th-padding: 0.35em 0.5em;
+}
+
+/* 题卡比问答气泡窄得多：图块上下留白收一点，宽度交给 .xmd-mermaid-canvas 自己横向滚动 */
+.quiz-explain__md .xmd-mermaid {
+  margin: 6px 0;
+}
+
 .quiz-result--ok {
   color: rgb(var(--app-color-success));
   font-weight: 500;

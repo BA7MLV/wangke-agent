@@ -119,6 +119,19 @@ export interface CueRowProps {
   onClick?: () => void;
   testId?: string;
   children: ReactNode;
+  /**
+   * 选区提问的定位信息（可选）。带上后这一行就支持划词提问 ——
+   * 全局浮层（SelectionAsk）靠这几个 data 属性反查「选中的是哪一段、在什么位置」，
+   * 不需要把回调一层层传上去。不带则行为与从前完全一致。
+   */
+  ask?: {
+    /** 来源标识：subtitle / handout */
+    source: string;
+    /** 定位值（字幕是秒） */
+    time?: number;
+    /** 展示用位置描述（如 03:25） */
+    label?: string;
+  };
 }
 
 /**
@@ -127,12 +140,15 @@ export interface CueRowProps {
  * 高亮走 MD3 的 `primary-container` 语义色（原来是 antd 的 `#e6f4ff` 浅蓝），
  * 时间戳用 `primary`。深浅色由令牌自己解决。
  */
-export function CueRow({ time, active, onClick, testId, children }: CueRowProps) {
+export function CueRow({ time, active, onClick, testId, children, ask }: CueRowProps) {
   const cls = active ? 'sub-item sub-item--active' : 'sub-item';
   return (
     <div
       className={cls}
       data-testid={testId}
+      data-askable={ask?.source}
+      data-ask-time={ask?.time}
+      data-ask-label={ask?.label}
       onClick={onClick}
       role={onClick ? 'button' : undefined}
       tabIndex={onClick ? 0 : undefined}

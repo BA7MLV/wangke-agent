@@ -10,6 +10,7 @@
 import assert from 'node:assert/strict';
 import { linkifyFrames, linkifyTimestamps, formatFrameList } from '../src/utils/linkify.ts';
 import { PROMPTS } from '../src/harness/prompts.ts';
+import { diagramKindOf } from '../src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];
@@ -80,9 +81,9 @@ test('qaSystem hasFrames=true 时注入 list_frames 与 [图@mm:ss] 规则', () 
 
 test('qaSystem 技能与画面规则可共存且编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true);
-  assert.match(p, /6\. .*present_quiz/);
-  assert.match(p, /7\. 可用的技能/);
-  assert.match(p, /8\. .*list_frames/);
+  assert.match(p, /7\. .*present_quiz/);
+  assert.match(p, /8\. 可用的技能/);
+  assert.match(p, /9\. .*list_frames/);
 });
 
 // —— 2026-09-10 新增：代码块内的标记不得被改写（否则 mermaid / 普通代码源码被破坏） ——
@@ -131,7 +132,82 @@ test('qaSystem 无截图时不注入该规则', () => {
 test('qaSystem 截图规则与画面引用规则编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true, 1);
   assert.match(p, /4\. 本轮用户附带了 1 张截图/);
-  assert.match(p, /9\. .*list_frames/);
+  assert.match(p, /10\. .*list_frames/);
+});
+
+// —— 2026-09-17 新增：讲不清就画图（问答正文与题卡解析共用同一句话术） ——
+// 前端只认 mermaid 与 svg 两个语言标记（components/mermaid/fence.ts 的 LANG_RULES），
+// 提示词里写错围栏名，模型就会输出一坨源码；节点上限那句是防模型画出手机屏放不下的大图。
+
+test('qaSystem 注入出图规则（围栏名 + 节点上限 + 防滥画）', () => {
+  const p = PROMPTS.qaSystem('测试课程');
+  assert.match(p, /```mermaid 围栏/);
+  assert.match(p, /不超过 10 个节点/);
+  assert.match(p, /一句话能说清的就别画/);
+});
+
+test('qaSystemMaterial 同样注入出图规则，且不引入时间戳口径', () => {
+  const p = PROMPTS.qaSystemMaterial('阅读材料', 'page');
+  assert.match(p, /```mermaid 围栏/);
+  assert.ok(!p.includes('[mm:ss]'), '材料提示词不应出现时间戳口径');
+});
+
+// —— 2026-09-18 新增：原生 svg 围栏（mermaid 画不出的自由图形） ——
+// 两条链路共用一句话术，所以两处都要点到 svg，否则问答能画、题卡不能。
+
+test('出图规则点明 svg 围栏，并写死「mermaid 优先、svg 兜底」的分工', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
+    assert.match(p, /```svg 围栏/, '必须点明 svg 围栏名（前端只认这一个标记）');
+    // 分工不能省：不写「mermaid 画不出的才用 svg」，模型会放着现成图种不用去手搓 SVG
+    assert.match(p, /mermaid 画不出的[^。]*```svg/);
+    assert.match(p, /不写 script/);
+  }
+});
+
+test('出题规则点明解析支持 markdown 与两种图表围栏', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'para')]) {
+    assert.match(p, /解析涉及流程[\s\S]*```mermaid 围栏/);
+    assert.match(p, /```svg 围栏/);
+  }
+});
+
+test('技能路由排除出图类技能：讲义按 IR 渲染，不解析图表围栏', () => {
+  const p = PROMPTS.routeSkills('测试课程', '字幕片段', '- 讲解配图：出图规范');
+  assert.match(p, /不解析图表围栏/);
+  assert.match(p, /出图类技能不要选/);
+  // 输出契约仍在（新增规则不能把 JSON 那条挤掉）
+  assert.match(p, /严格输出 JSON：\{"skills": \[/);
+});
+
+// —— 围栏判定：这是「提示词 ↔ 渲染层」的硬契约，写错一个字母模型就白画 ——
+
+test('diagramKindOf 只认 mermaid / svg 两种块级围栏', () => {
+  assert.equal(diagramKindOf({ block: true, lang: 'mermaid' }), 'mermaid');
+  assert.equal(diagramKindOf({ block: true, lang: 'svg' }), 'svg');
+});
+
+test('diagramKindOf 容忍围栏参数与前导空白（```mermaid title=xx）', () => {
+  assert.equal(diagramKindOf({ block: true, lang: 'mermaid title=架构图' }), 'mermaid');
+  assert.equal(diagramKindOf({ block: true, lang: '  SVG  ' }), 'svg');
+  assert.equal(diagramKindOf({ block: true, lang: 'Mermaid' }), 'mermaid');
+});
+
+test('diagramKindOf 不吃前缀相近的语言名（svgb / mermaids 都不是图表围栏）', () => {
+  assert.equal(diagramKindOf({ block: true, lang: 'svgb' }), null);
+  assert.equal(diagramKindOf({ block: true, lang: 'mermaids' }), null);
+});
+
+test('diagramKindOf 不认其他画图语言：写 dot / plantuml 会落回普通代码块', () => {
+  for (const lang of ['dot', 'graphviz', 'plantuml', 'js', 'jsx', 'ts', 'json', 'html', 'xml']) {
+    assert.equal(diagramKindOf({ block: true, lang }), null, `${lang} 不该被当成图表围栏`);
+  }
+});
+
+test('diagramKindOf 不认行内 code 与缺 lang 的围栏', () => {
+  assert.equal(diagramKindOf({ block: false, lang: 'mermaid' }), null, '行内 code 不该建图块');
+  assert.equal(diagramKindOf({ block: true }), null, '无 lang 的围栏是普通代码块');
+  assert.equal(diagramKindOf({ block: true, lang: '' }), null);
+  assert.equal(diagramKindOf({ block: true, lang: undefined }), null);
 });
 
 test('shotDescribe 带上下文时声明「以画面为准」，不带上下文也可用', () => {

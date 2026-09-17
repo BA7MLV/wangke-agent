@@ -31,13 +31,13 @@ const info = await page.evaluate(() => {
 });
 console.log('2. 内容:', JSON.stringify(info, null, 2));
 
-// 五个分类行齐全
-const labels = ['视频文件', '抽帧图片', '字幕与向量', '讲义文档', '浏览器存储开销'];
+// 六个分类行齐全（阅读材料是 v9 起新增的一类：不单独统计的话材料体积会被算进「视频文件」）
+const labels = ['视频文件', '阅读材料', '抽帧图片', '字幕与向量', '讲义文档', '浏览器存储开销'];
 const missing = labels.filter((l) => !info || !info.rows.some((r) => r.includes(l)));
 if (missing.length) {
   console.log(`   ✗ 缺少分类行: ${missing.join('、')}`);
   process.exitCode = 1;
-} else console.log('3. ✓ 五个分类行齐全');
+} else console.log('3. ✓ 六个分类行齐全');
 
 // 回归断言（2026-09-10）：分类名曾经整列不渲染 —— mdui-list-item 没有 `slot="headline"`
 // 这个命名插槽（官方 JSX 注释里却写着有），内容会被静默丢弃。这里显式守住「标签真的在」。

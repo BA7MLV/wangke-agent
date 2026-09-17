@@ -6,6 +6,7 @@
  */
 import assert from 'node:assert/strict';
 import { validateQuiz } from '../src/harness/quiz.ts';
+import { linkifyTimestamps } from '../src/utils/linkify.ts';
 
 let passed = 0;
 const failures = [];
@@ -106,6 +107,43 @@ test('多余字段被忽略', () => {
   assert.equal('foo' in r.quiz.questions[0], false);
 });
 
+// ── 解析支持 Markdown / mermaid 围栏（2026-09-17） ───────────────────────────
+// 校验层不做任何 markdown 解析，只要求**原样保留**：围栏换行被吃掉、反引号被转义，
+// 解析里那张图就没了（渲染层认的是完整的三反引号围栏）。
+
+const FENCED_EXPLANATION = [
+  '进程与线程的区别在于资源归属 [03:25]。',
+  '',
+  '```mermaid',
+  'flowchart LR',
+  '  A[进程：资源分配单位] --> B[线程：调度单位]',
+  '```',
+  '',
+  '所以选 B。',
+].join('\n');
+
+test('解析含 mermaid 围栏：换行与反引号原样保留', () => {
+  const r = validateQuiz({ questions: [{ ...GOOD_Q, explanation: FENCED_EXPLANATION }] });
+  assert.equal(r.ok, true);
+  assert.equal(r.quiz.questions[0].explanation, FENCED_EXPLANATION, '解析内容必须逐字保留');
+  assert.match(r.quiz.questions[0].explanation, /\n```mermaid\n/, '围栏标记与前后换行都必须在');
+});
+
+test('解析里的时间戳：围栏外可跳转、围栏内原样（图源码不被 linkify 破坏）', () => {
+  const md = [
+    '先看 [00:10] 这段。',
+    '```mermaid',
+    'flowchart LR',
+    '  A[00:10] --> B[结束]',
+    '```',
+    '再看 [01:20]。',
+  ].join('\n');
+  const out = linkifyTimestamps(md);
+  assert.ok(out.includes('[[00:10]](#seek-10)'), `围栏外应转成可跳转链接：${out}`);
+  assert.ok(out.includes('[[01:20]](#seek-80)'), `围栏后正文应恢复转换：${out}`);
+  assert.ok(out.includes('A[00:10] --> B[结束]'), `围栏内必须原样：${out}`);
+});
+
 // ── 组件契约：判定图标槽位必须常驻 ───────────────────────────────────────────
 // 点完选项整块 UI 会跳一下的根因之一，就是「图标只在作答那一刻才插进行内」：
 // 实测行高 40→42（min-height:40 减掉 padding 后内容盒只有 22px，装不下 24px 图标），
@@ -136,16 +174,44 @@ test('多余字段被忽略', () => {
   mkdirSync(dir, { recursive: true });
   const entry = join(dir, 'quiz-dom-entry.tsx');
   const outfile = join(dir, 'quiz-dom-bundle.mjs');
+  /**
+   * SSR 下把「浏览器专用渲染件」换成替身。两级原因都躲不掉：
+   * 1. XMarkdown 的 CJS 构建（lib/）顶层 `require('./DebugPanel.css')`，Node 拿 CSS 当 JS 解析直接 SyntaxError；
+   *    就算绕开，它的 processHtml 依赖 DOMPurify + window，无 window 时 `sanitize` 不是函数，
+   *    走的是「SSR 先不渲染、交给客户端 hydrate」分支 —— 也就是 SSR 下它本来就不产出内容。
+   * 2. 题卡用的 mermaid 套件（components/mermaid/）会把 mdui 的自定义元素链拉进来，
+   *    那套模块在 Node 里连 import 都过不去（`window is not defined` / 未注册的 customElements）。
+   *
+   * 于是 SSR 只守 QuizCard **自己**那部分契约：解析容器何时出现、交给渲染器的文本有没有先 linkify、
+   * 材料模式下跳转有没有关掉。markdown 与 mermaid 的真实渲染由浏览器 e2e 守
+   * （scripts/e2e-quiz-mermaid.mjs）—— 那是唯一能真跑 DOMPurify + mermaid 的地方。
+   */
+  const mdStub = join(dir, 'x-markdown-stub.mjs');
+  const mermaidKitStub = join(dir, 'mermaid-kit-stub.mjs');
+  writeFileSync(
+    mdStub,
+    `import { createElement } from 'react';
+export const XMarkdown = ({ content }) => createElement('div', { 'data-md-stub': '' }, String(content ?? ''));
+`,
+  );
+  writeFileSync(
+    mermaidKitStub,
+    `export const MarkdownCode = () => null;
+export const MarkdownPre = () => null;
+`,
+  );
   // 组件是 .tsx：Node 的类型擦除不处理 JSX，先 esbuild 打成一个包再 import
   writeFileSync(
     entry,
     `import { renderToStaticMarkup } from 'react-dom/server';
 import QuizCard from ${JSON.stringify(join(here, '../src/components/QuizCard.tsx'))};
 const quiz = { questions: [
-  { stem: '题干一', options: ['甲', '乙', '丙', '丁'], answer: 1, explanation: '解析一' },
+  { stem: '题干一', options: ['甲', '乙', '丙', '丁'], answer: 1, explanation: '解析一 [03:25]', time: '03:25' },
   { stem: '题干二', options: ['甲', '乙', '丙', '丁'], answer: 2, explanation: '解析二' },
 ] };
-export const render = (picks) => renderToStaticMarkup(<QuizCard quiz={quiz} picks={picks} onAnswer={() => {}} />);
+export const render = (picks, seekable = true, withSeek = false) => renderToStaticMarkup(
+  <QuizCard quiz={quiz} picks={picks} onAnswer={() => {}} onSeek={withSeek ? () => {} : undefined} seekable={seekable} />,
+);
 `,
   );
   await build({
@@ -157,6 +223,19 @@ export const render = (picks) => renderToStaticMarkup(<QuizCard quiz={quiz} pick
     packages: 'external', // react / react-dom / jsx-runtime 交给运行时解析
     outfile,
     logLevel: 'silent',
+    plugins: [
+      {
+        name: 'stub-browser-only',
+        setup(b) {
+          // 裸包名与相对路径两种写法都要拦：filter 按「规格尾巴」匹配，免得写死去几层 ../
+          b.onResolve({ filter: /^@ant-design\/x-markdown$/ }, () => ({ path: mdStub }));
+          b.onResolve({ filter: /mermaid\/markdown$/ }, () => ({ path: mermaidKitStub }));
+          // 样式同理：Node 既不能 import .css，也过不了 external
+          b.onResolve({ filter: /\.css$/ }, (args) => ({ path: args.path, namespace: 'empty-stub' }));
+          b.onLoad({ filter: /.*/, namespace: 'empty-stub' }, () => ({ contents: '', loader: 'js' }));
+        },
+      },
+    ],
   });
   const { render } = await import(pathToFileURL(outfile).href);
 
@@ -183,8 +262,40 @@ export const render = (picks) => renderToStaticMarkup(<QuizCard quiz={quiz} pick
     assert.equal(html.includes('正确答案：B'), true, '应提示正确答案');
   });
 
+  // 解析正文现在走「先 linkify 再交给 markdown 渲染器」两步。这里靠替身把**交给渲染器的文本**
+  // 捞出来看：XMarkdown 本体在 Node 下不产出内容（见上面的替身说明），
+  // 所以渲染结果与出图交给浏览器 e2e（scripts/e2e-quiz-mermaid.mjs）。
+  await testAsync('未作答不渲染解析，作答后解析容器出现', () => {
+    const before = render([-1, -1]);
+    assert.equal(before.includes('quiz-explain'), false, '未作答不该出现解析');
+    const after = render([3, -1]);
+    assert.ok(after.includes('data-testid="quiz-explain"'), '作答后应出现解析块');
+    assert.ok(after.includes('data-testid="quiz-explain-md"'), '解析正文容器应在');
+  });
+
+  await testAsync('解析交给渲染器前已 linkify 时间戳', () => {
+    const html = render([0, -1]); // 作答后解析才展开
+    assert.ok(html.includes('[[03:25]](#seek-205)'), `解析里的时间戳应转成跳转链接：${html.slice(0, 300)}`);
+  });
+
+  await testAsync('材料模式（seekable=false）不产生跳转链接', () => {
+    const html = render([0, -1], false);
+    assert.ok(html.includes('[03:25]'), '时间戳应原样保留');
+    assert.ok(!html.includes('#seek-'), '不该出现点了没反应的 #seek- 链接');
+  });
+
+  // 题干右上角的考点标记与解析里的时间戳是同一类死链，同受 seekable 管
+  await testAsync('材料模式下题干考点标记也不渲染', () => {
+    assert.ok(render([-1, -1], true, true).includes('quiz-ts--stem'), '视频模式应渲染考点标记');
+    assert.ok(!render([-1, -1], false, true).includes('quiz-ts--stem'), '材料模式应隐藏考点标记');
+  });
+
   rmSync(entry, { force: true });
   rmSync(outfile, { force: true });
+  rmSync(mdStub, { force: true });
+  rmSync(mermaidKitStub, { force: true });
+  // esbuild 会把入口涉及的样式单独吐一个 .css（内容与断言无关），一并清掉
+  rmSync(join(dir, 'quiz-dom-bundle.css'), { force: true });
 }
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

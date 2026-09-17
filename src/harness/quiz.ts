@@ -7,7 +7,11 @@ export interface QuizQuestion {
   options: string[];
   /** 正确选项下标 0~3 */
   answer: number;
-  /** 解析（可含 [mm:ss] 时间戳） */
+  /**
+   * 解析。渲染层按 Markdown 处理（bold/列表/代码块），并可含：
+   * - `[mm:ss]` 时间戳（视频课程，渲染成可点击跳转；材料场景不 linkify）
+   * - ` ```mermaid ` 围栏 —— 由 components/mermaid/ 渲染成图（流程/结构/对比/关系类解析）
+   */
   explanation: string;
   /** 考点对应的字幕时间戳（mm:ss 或 h:mm:ss），可选 */
   time?: string;

@@ -8,15 +8,19 @@ import '../player-enhance.css';
 import { db, type VideoRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { useSettings } from '../store/settings';
+import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
 import { useIsMobile, useIsPhoneLandscape } from '../utils/useMobile';
 import { PageShell, EmptyState, useDynamicColor, useMduiEvent, toast } from '../ui';
 import { useAppNav } from '../components/appNav';
+import type { MaterialReaderHandle } from '../materials/types';
 import SubtitlePanel from '../components/SubtitlePanel';
 import HandoutPanel from '../components/HandoutPanel';
 import ChatPanel from '../components/ChatPanel';
 import DanmakuPanel from '../components/DanmakuPanel';
 import CardsPanel from '../components/CardsPanel';
+import MaterialReader from '../components/MaterialReader';
+import SelectionAsk from '../components/SelectionAsk';
 import RateButtons from '../components/RateButtons';
 import CaptionSizeButton from '../components/CaptionSizeButton';
 import DanmakuToggleButton from '../components/DanmakuToggleButton';
@@ -48,6 +52,15 @@ function toPlayerMime(mime: string): 'video/mp4' | 'video/webm' | 'video/ogg' | 
 type PanelKey = 'subs' | 'handout' | 'chat' | 'dm' | 'cards';
 
 const PANEL_KEYS: readonly PanelKey[] = ['subs', 'handout', 'chat', 'dm', 'cards'];
+
+/**
+ * 阅读材料只保留「问答」面板。
+ *
+ * 其余四个面板都以字幕为输入（字幕轨/讲义/弹幕/制卡），材料没有字幕 ——
+ * 留着它们只会显示「请先生成字幕」，而那个按钮点下去会对着 PDF 起一次转写，
+ * 属于**看起来能用、实际是错的**入口，必须挡掉。
+ */
+const MATERIAL_PANEL_KEYS: readonly PanelKey[] = ['chat'];
 
 /**
  * 五个面板的切换项。桌面（`mdui-tabs`）用 label，窄屏（`mdui-navigation-bar`）用图标 + label。
@@ -89,12 +102,25 @@ export default function Player() {
   const useBottomNav = isMobile && !isPhoneLandscape;
   // 窄屏底部导航 / 桌面 Tabs 当前面板
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
+  // 阅读器命令式句柄：问答里的「[第3页]」引用点一下就靠它跳过去
+  const readerRef = useRef<MaterialReaderHandle | null>(null);
+  // 选区提问投递：浮层点完必须让用户看到问答面板（窄屏下面板可能是隐藏的）
+  const pendingAsk = useSelectionAsk((s) => s.pending);
+  useEffect(() => {
+    if (pendingAsk) setActiveTab('chat');
+  }, [pendingAsk]);
 
   /**
    * Material You 动态取色：以「课程封面」为色彩来源。
    *
-   * 这个应用没有封面字段，最接近封面的是抽帧里的**幻灯片帧**（`frames.kind === 'slide'`，
-   * 通常是课件首页）；没有幻灯片帧就退而用最早的一帧；一帧都没有就保持默认配色。
+   * ⚠️ 这里取的是 `db.frames` 里的幻灯片帧（`frames.kind === 'slide'`，通常是课件首页），
+   * 没有幻灯片帧就退而用最早的一帧；一帧都没有就保持默认配色。
+   *
+   * 这是**旧路径**：v10 起封面已经是入库即生成的独立资源（`pipelines/cover.ts`，
+   * `covers` 表对所有视频都有），换成它会让动态取色对所有视频生效，而且配色会和
+   * 资料库卡片缩略图一致。之所以还没换：`scripts/e2e-material-you.mjs` 是按
+   * 「种一帧 frames」来验这条链路的，改行为要同步改那个脚本的播种方式，
+   * 属于独立一笔改动 —— 别只改这一处，会静默打掉那条 e2e。
    *
    * 这里只负责「取帧 → 建 blob URL → 用完回收」，真正的取色与上色在 useDynamicColor 里
    * （那一层刻意不依赖数据层，才能留在通用的 ui/ 适配层）。
@@ -312,22 +338,49 @@ export default function Player() {
     );
   }
 
-  // 五个面板只实例化一份：桌面挂进 mdui-tabs 的 tab-panel，窄屏挂进 panel-host（hidden 保活切换）
-  const panels: Record<PanelKey, ReactNode> = {
-    subs: (
-      <SubtitlePanel
-        videoId={id}
-        playerRef={playerRef}
-        currentTime={currentTime}
-        onSegmentsChange={onSegmentsChange}
-        onRunningChange={setSubsRunning}
-      />
-    ),
-    handout: <HandoutPanel videoId={id} hasSubtitles={hasSubtitles} />,
-    chat: <ChatPanel videoId={id} videoName={video.name} playerRef={playerRef} />,
-    dm: <DanmakuPanel videoId={id} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
-    cards: <CardsPanel videoId={id} videoName={video.name} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
-  };
+  // 阅读材料：面板只剩问答，左侧渲染阅读器而不是播放器
+  const isMaterial = video.kind === 'material';
+  const panelKeys = isMaterial ? MATERIAL_PANEL_KEYS : PANEL_KEYS;
+  const panelTabs = isMaterial ? PANEL_TABS.filter((t) => t.key === 'chat') : PANEL_TABS;
+  /**
+   * 实际生效的面板。不直接把 activeTab 塞进 mdui-tabs 的 value：
+   * 材料页的 activeTab 初值仍是 'subs'（面板里没有这一项），直接传会让 mdui-tabs 处于
+   * 「value 指向不存在的 tab」的状态；用派生值可以让首帧就落在问答上，不需要等一个 effect。
+   */
+  const effTab: PanelKey = panelKeys.includes(activeTab) ? activeTab : panelKeys[0];
+
+  // 五个面板只实例化一份：桌面挂进 mdui-tabs 的 tab-panel，窄屏挂进 panel-host（hidden 保活切换）。
+  // 材料只实例化问答：其余面板都以字幕为输入，挂上去只会给出「先生成字幕」的错误入口。
+  const panels: Partial<Record<PanelKey, ReactNode>> = isMaterial
+    ? {
+        chat: (
+          <ChatPanel
+            videoId={id}
+            videoName={video.name}
+            // 材料没有播放器：playerRef 留空（ChatPanel 据此隐藏截图按钮、不渲染 #seek- 链接）
+            playerRef={playerRef}
+            readerRef={readerRef}
+            materialKind={video.materialFormat === 'docx' ? 'para' : 'page'}
+          />
+        ),
+      }
+    : {
+        subs: (
+          <SubtitlePanel
+            videoId={id}
+            playerRef={playerRef}
+            currentTime={currentTime}
+            onSegmentsChange={onSegmentsChange}
+            onRunningChange={setSubsRunning}
+          />
+        ),
+        handout: <HandoutPanel videoId={id} hasSubtitles={hasSubtitles} />,
+        chat: (
+          <ChatPanel videoId={id} videoName={video.name} playerRef={playerRef} readerRef={readerRef} />
+        ),
+        dm: <DanmakuPanel videoId={id} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
+        cards: <CardsPanel videoId={id} videoName={video.name} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
+      };
 
   return (
     <PageShell
@@ -340,8 +393,8 @@ export default function Player() {
       bottomNav={
         useBottomNav
           ? {
-              value: activeTab,
-              items: PANEL_TABS.map((t) => ({
+              value: effTab,
+              items: panelTabs.map((t) => ({
                 value: t.key,
                 label: t.label,
                 icon: t.icon,
@@ -356,8 +409,13 @@ export default function Player() {
       <div className="player-layout">
         {/* 字幕字号变量设在普通容器上（不 media-player host：它 upgrade 时会重写内联样式），
             经继承传递给内部的 .vds-captions */}
-        <div className="video-pane" style={{ '--media-user-font-size': captionScale } as CSSProperties}>
-          {fileMissing ? (
+        <div
+          className={isMaterial ? 'video-pane video-pane--reading' : 'video-pane'}
+          style={{ '--media-user-font-size': captionScale } as CSSProperties}
+        >
+          {isMaterial ? (
+            <MaterialReader material={video} handleRef={readerRef} />
+          ) : fileMissing ? (
             <div className="video-pane__missing">
               <EmptyState
                 testId="player-file-missing"
@@ -394,7 +452,7 @@ export default function Player() {
 
         {useBottomNav ? (
           <div className="panel-host">
-            {PANEL_KEYS.map((key) => (
+            {panelKeys.map((key) => (
               <div
                 key={key}
                 className="panel-slot"
@@ -403,7 +461,7 @@ export default function Player() {
                 // 这样同一个选择器在桌面 mdui-tab-panel 与窄屏 .panel-slot 下都成立。
                 role="tabpanel"
                 data-testid={`panel-slot-${key}`}
-                hidden={activeTab !== key}
+                hidden={effTab !== key}
               >
                 {panels[key]}
               </div>
@@ -419,18 +477,18 @@ export default function Player() {
               className="panel-tabs"
               placement="top-start"
               variant="secondary"
-              value={activeTab}
+              value={effTab}
               role="tablist"
               data-testid="panel-tabs"
             >
               {/* mdui 的 tabs 组件不带任何 ARIA 角色（实测 manifest 与实现里都没有），
                   这里手动补齐 tablist / tab —— e2e 的 getByRole('tab') 也依赖它。 */}
-              {PANEL_TABS.map((t) => (
+              {panelTabs.map((t) => (
                 <mdui-tab key={t.key} value={t.key} role="tab" data-testid={`panel-tab-${t.key}`}>
                   {t.label}
                 </mdui-tab>
               ))}
-              {PANEL_KEYS.map((key) => (
+              {panelKeys.map((key) => (
                 <mdui-tab-panel
                   key={key}
                   slot="panel"
@@ -445,6 +503,9 @@ export default function Player() {
           </div>
         )}
       </div>
+
+      {/* 全局选区浮层：挂在播放页根上，跨越阅读器与面板两棵子树 */}
+      <SelectionAsk />
     </PageShell>
   );
 }

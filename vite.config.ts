@@ -60,10 +60,74 @@ function serveUserscript(): Plugin {
   };
 }
 
+/**
+ * pdf.js 的 CJK 字体映射表（cmaps，169 个 .bcmap）与标准字体（standard_fonts，16 个 .pfb/.ttf）
+ * 合计约 2.4MB，**不进仓库也不手抄进 public/**，直接从 node_modules 供给：
+ * dev / preview 用中间件直出，build 时拷进 dist。
+ *
+ * 为什么不用「拷进 public/」这个更直白的做法：手抄的副本会在升级 pdfjs-dist 时静默过期，
+ * 现象是「换了版本后某些中文 PDF 变成空白/方块」——极难定位。从 node_modules 读则天然同步。
+ *
+ * 不配这两项的话：**未内嵌字体的中文 PDF 渲染不出来**（很多教材用系统字体而非内嵌字体），
+ * 这类 PDF 在中文场景里占比很高，不是边角情况。
+ */
+function pdfjsAssets(): Plugin {
+  const srcDir = path.resolve(__dirname, 'node_modules/pdfjs-dist');
+  const SUBS = ['cmaps', 'standard_fonts'];
+  /** 真实输出目录。**不能写死 'dist'**：`--outDir` 或将来换目录时，
+   *  copy 会落到一个没人访问的地方，现象是「构建成功但 PDF 里中文全空白」。
+   *  configResolved 拿到的是已解析的绝对路径。 */
+  let outDir = path.resolve(__dirname, 'dist');
+  const contentType = (f: string) => {
+    if (f.endsWith('.ttf')) return 'font/ttf';
+    if (f.endsWith('.otf')) return 'font/otf';
+    return 'application/octet-stream'; // .bcmap / .pfb
+  };
+  const middleware = (
+    req: { url?: string },
+    res: { setHeader: (k: string, v: string) => void },
+    next: () => void,
+  ) => {
+    const m = req.url?.match(/^\/pdfjs\/(cmaps|standard_fonts)\/([\w.\-]+)(?:\?.*)?$/);
+    if (!m) return next();
+    const file = path.join(srcDir, m[1], m[2]);
+    if (!fs.existsSync(file)) return next();
+    res.setHeader('Content-Type', contentType(m[2]));
+    fs.createReadStream(file).pipe(res as unknown as NodeJS.WritableStream);
+  };
+  return {
+    name: 'serve-pdfjs-assets',
+    configResolved(config) {
+      if (config.build.outDir) outDir = config.build.outDir;
+    },
+    configureServer(server) {
+      server.middlewares.use(middleware);
+    },
+    configurePreviewServer(server) {
+      server.middlewares.use(middleware);
+    },
+    closeBundle() {
+      // 放在 closeBundle：这些文件走 SW 的**运行时缓存**（不是预缓存），
+      // 与 vite-plugin-pwa 的 SW 生成顺序无关（且扩展名不落在 globPatterns 里，互不干扰）
+      for (const sub of SUBS) {
+        const from = path.join(srcDir, sub);
+        if (!fs.existsSync(from)) continue;
+        const to = path.join(outDir, 'pdfjs', sub);
+        fs.mkdirSync(to, { recursive: true });
+        // 连同 LICENSE 一起拷（Apache-2.0 / Foxit / Liberation 的许可要求）
+        for (const f of fs.readdirSync(from)) {
+          fs.copyFileSync(path.join(from, f), path.join(to, f));
+        }
+      }
+    },
+  };
+}
+
 export default defineConfig({
   plugins: [
     serveOrt(),
     serveUserscript(),
+    pdfjsAssets(),
     react(),
     VitePWA({
       registerType: 'autoUpdate',
@@ -85,6 +149,13 @@ export default defineConfig({
         // ffmpeg.wasm / onnxruntime 的 wasm 文件较大
         maximumFileSizeToCacheInBytes: 48 * 1024 * 1024,
         // 不预缓存 html：否则 SW 回放时会丢掉 Cloudflare 下发的 COOP/COEP，VAD wasm 无法用 SharedArrayBuffer
+        //
+        // ⚠️ 这里**刻意不加 `mjs`**（pdf.js 的 worker 是 .mjs）：
+        // globPatterns 是「必须有匹配」的语义 —— workbox 遇到匹配不到的模式会**直接让构建失败**
+        // （实测：`**/pdf.worker*.mjs` 在产物没写全时就报
+        //   "One of the glob patterns doesn't match any files" 并中断构建）。
+        // 而 worker 的文件名带内容哈希、由 Vite 在打包期才定，配置期没法确定它一定存在。
+        // 改成下面的**运行时 CacheFirst**：正则匹配不到只是不缓存，绝不会让构建挂掉。
         globPatterns: ['**/*.{js,css,svg,wasm}'],
         navigateFallback: undefined,
         cleanupOutdatedCaches: true,
@@ -96,6 +167,27 @@ export default defineConfig({
             options: {
               cacheName: 'handout-preview-fonts',
               expiration: { maxEntries: 300, maxAgeSeconds: 365 * 24 * 3600 },
+            },
+          },
+          {
+            // pdf.js 的 CJK 字体映射表与标准字体：209 个文件、2.4MB，
+            // 预缓存会拖慢首次安装（且多数用户根本不看 PDF），改为用到才下、下过长留
+            urlPattern: /\/pdfjs\/(cmaps|standard_fonts)\/.+$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'pdfjs-cmaps-fonts',
+              expiration: { maxEntries: 300, maxAgeSeconds: 365 * 24 * 3600 },
+            },
+          },
+          {
+            // pdf.js 的 worker（.mjs，文件名带哈希）。**离线打开 PDF 的必要条件**：
+            // 不缓存它的话，离线时 worker 拉不到 → new TextLayer/getDocument 直接失败。
+            // 只在真正打开过 PDF 之后才会被缓存到（首次安装不为它付体积）。
+            urlPattern: /\/pdf\.worker[^/]*\.mjs$/,
+            handler: 'CacheFirst',
+            options: {
+              cacheName: 'pdfjs-worker',
+              expiration: { maxEntries: 4, maxAgeSeconds: 365 * 24 * 3600 },
             },
           },
         ],
@@ -126,7 +218,9 @@ export default defineConfig({
       'Cross-Origin-Embedder-Policy': 'require-corp',
     },
   },
-  // sql.js 供 .apkg 导出用：预打包避免首次导出时 dev 服务器中途重优化依赖导致整页刷新
-  optimizeDeps: { include: ['sql.js', 'onnxruntime-web'] },
+  // sql.js 供 .apkg 导出用：预打包避免首次导出时 dev 服务器中途重优化依赖导致整页刷新。
+  // pdfjs-dist 同理（材料阅读器是动态 import 的，不预打包会在首次打开 PDF 时触发依赖重优化 → 整页刷新，
+  // 而那时用户正等着看文件，体验最差）。
+  optimizeDeps: { include: ['sql.js', 'onnxruntime-web', 'pdfjs-dist'] },
   build: { target: 'es2020', chunkSizeWarningLimit: 2000 },
 });

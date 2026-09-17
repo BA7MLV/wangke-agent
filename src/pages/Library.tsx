@@ -4,7 +4,7 @@ import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import { Banner, EmptyState, PageShell, alertDialog, confirmDialog, toast, useMduiEvent } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { db, type FolderRow, type VideoRow } from '../store/db';
-import { deleteVideoFile, saveVideoFile } from '../store/fileStore';
+import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { useIsMobile } from '../utils/useMobile';
@@ -17,6 +17,10 @@ import { getSettings } from '../store/settings';
 import { describeTransport, isBiliBridgeAvailable, isBridgePostCapable } from '../bilibili/transport';
 import { isJobActive, libraryJobCopy, useJobStore, useTranscribeJob } from '../store/jobs';
 import { cancelTranscription } from '../pipelines/transcribeQueue';
+import { startMaterialJob } from '../pipelines/materialJob';
+import { enqueueCover } from '../pipelines/coverQueue';
+import { useCoverRevision } from '../store/covers';
+import { detectMaterialFormat, isLegacyDocFile, isMaterialFile } from '../materials/parse';
 import { formatCaughtError } from '../utils/errorText';
 
 function formatDuration(sec: number): string {
@@ -41,6 +45,17 @@ function isVideoFile(file: File): boolean {
   if (file.type.startsWith('video/')) return true;
   const ext = file.name.split('.').pop()?.toLowerCase() ?? '';
   return VIDEO_EXTS.has(ext);
+}
+
+/**
+ * 可导入的文件 = 视频 或 阅读材料（PDF / Word）。
+ *
+ * `.doc`（旧版二进制）也算「可导入」—— 但不是在导入时静默忽略，而是在
+ * `importMaterial` 里**明确报错并给出「另存为 .docx」的提示**。
+ * 让用户知道「这个格式我认识但处理不了」比让他猜「为什么文件选不上」强得多。
+ */
+function isImportable(file: File): boolean {
+  return isVideoFile(file) || isMaterialFile(file);
 }
 
 /**
@@ -125,6 +140,12 @@ const TASK_STATUS_TEXT: Record<ImportTask['status'], string> = {
   writing: '写入中',
   done: '已导入',
   error: '失败',
+};
+
+/** 材料写入的提示文案与视频不同（材料不做容器探测，直接就是写文件） */
+const MATERIAL_MIME: Record<'pdf' | 'docx', string> = {
+  pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
 };
 
 /** 「未分类」虚拟组的 key（折叠状态持久化用） */
@@ -221,6 +242,35 @@ export default function Library() {
     reload();
   }, []);
 
+  /**
+   * 任务跑到终态时刷新列表。
+   *
+   * 材料的解析/建索引是**后台任务**：`parseMaterial` 会回写 `videos.unitCount` / `scanned`，
+   * 但库页的 `videos` 是导入那一刻读出来的快照，不会自己更新 ——
+   * 于是一份已经解析好的 PDF 在列表里一直挂着「待解析」标签。
+   * 这里订阅 job store，任务到 done/error 时重读一次。
+   *
+   * `settledRef` 记住已处理过的 id，避免每次渲染重复 reload；
+   * 非活动任务（done/error）也顺手从集合里摘掉，重启同名任务时能再次触发。
+   */
+  const jobs = useJobStore((s) => s.jobs);
+  const settledJobs = useRef(new Set<string>());
+  useEffect(() => {
+    let needReload = false;
+    for (const [id, job] of Object.entries(jobs)) {
+      const settled = job.phase === 'done' || job.phase === 'error';
+      if (!settled) {
+        settledJobs.current.delete(id);
+        continue;
+      }
+      if (!settledJobs.current.has(id)) {
+        settledJobs.current.add(id);
+        needReload = true;
+      }
+    }
+    if (needReload) void reload();
+  }, [jobs]);
+
   /** 视频按文件夹分组：文件夹组按创建时间在前，未分类固定最后 */
   const groups = useMemo(() => {
     const folderIds = new Set(folders.map((f) => f.id));
@@ -265,10 +315,56 @@ export default function Library() {
     void alertDialog({ headline, description: text, copyText: text });
   };
 
+  /**
+   * 导入阅读材料（PDF / Word）。
+   *
+   * 与视频导入的差别：
+   * - **不做容器探测**（没有时长可探，`duration` 恒为 0）；
+   * - 文件进 OPFS 的 `materials/` 目录（与视频分开放，便于各自清理）；
+   * - 写盘成功即视为导入完成，**解析与建索引丢到后台 job** —— 三百页 PDF 要几十秒，
+   *   卡在导入队列里会让「导入 5 个文件」变成一次要等好几分钟。
+   */
+  const importMaterial = async (file: File, key: string) => {
+    if (isLegacyDocFile(file)) {
+      throw new Error('这是旧版 .doc 格式，暂不支持。请在 Word / WPS 里「另存为 .docx」后重新导入。');
+    }
+    const format = detectMaterialFormat(file);
+    patchTask(key, { status: 'writing', percent: 0 });
+    const id = uuid();
+    await saveMaterialFile(id, file, (ratio) => patchTask(key, { percent: Math.round(ratio * 100) }));
+    await db.videos.put({
+      id,
+      name: file.name.replace(/\.[^.]+$/, ''),
+      size: file.size,
+      mimeType: file.type || MATERIAL_MIME[format],
+      duration: 0,
+      createdAt: Date.now(),
+      status: 'new',
+      kind: 'material',
+      materialFormat: format,
+      coverState: 'pending',
+    });
+    // 封面与解析各走各的队列：PDF 的封面要渲染首页，Word 的会直接标成完成
+    // （没有可渲染的首页，保留文档图标占位），两种都不阻塞导入后的解析。
+    enqueueCover(id);
+    await reload();
+    setTasks((prev) => prev.filter((t) => t.key !== key));
+    toast.success(`已导入《${file.name}》，正在解析…`);
+    // 不 await：解析在后台跑（进度在列表行的 job 区域可见），用户可以继续导入下一个
+    void startMaterialJob(id, format).catch((e) => {
+      toast.error(`解析《${file.name}》失败：${formatCaughtError(e)}`);
+      showError(`解析《${file.name}》失败`, formatCaughtError(e));
+    });
+  };
+
   const importOne = async (file: File, key: string, subtitles?: SubtitleBundle) => {
     // 大视频拷入 OPFS 要数分钟，持 Wake Lock 防熄屏后 tab 被挂起中断导入
     await acquireWakeLock();
     try {
+      if (isMaterialFile(file)) {
+        await importMaterial(file, key);
+        return;
+      }
       patchTask(key, { status: 'probing' });
       const duration = await probeDuration(file);
 
@@ -285,7 +381,11 @@ export default function Library() {
         duration,
         createdAt: Date.now(),
         status: 'new',
+        coverState: 'pending',
       });
+      // 封面入库即入队（不 await）：它是派生资源，晚一两秒出现没关系，
+      // 但绝不该再像以前那样「只有跑过讲义的视频才有」——详见 pipelines/cover.ts
+      enqueueCover(id);
       // B 站自带字幕：主语言写 segments、全部语言写 subtitleTracks，并直接置为已转写
       if (subtitles) await saveImportedSubtitles(id, subtitles);
       await reload();
@@ -498,10 +598,10 @@ export default function Library() {
       toast.warning('系统没有返回任何文件，请改用 Safari 标签页打开后再试');
       return;
     }
-    const accepted = files.filter(isVideoFile);
-    const skipped = files.filter((f) => !isVideoFile(f));
-    if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个非视频文件`);
-    if (files.length > 1) toast.info(`已选择 ${accepted.length} 个视频，开始逐个导入`);
+    const accepted = files.filter(isImportable);
+    const skipped = files.filter((f) => !isImportable(f));
+    if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个不支持的文件（只支持视频与 PDF/Word）`);
+    if (files.length > 1) toast.info(`已选择 ${accepted.length} 个文件，开始逐个导入`);
     for (const f of accepted) enqueue(f);
   };
 
@@ -512,8 +612,8 @@ export default function Library() {
     const files = Array.from(e.dataTransfer?.files ?? []);
     if (files.length === 0) return;
     for (const f of files) {
-      if (!isVideoFile(f)) {
-        toast.warning(`《${f.name}》不是支持的视频格式，已跳过`);
+      if (!isImportable(f)) {
+        toast.warning(`《${f.name}》不是支持的格式（只支持视频与 PDF/Word），已跳过`);
         continue;
       }
       enqueue(f);
@@ -540,11 +640,13 @@ export default function Library() {
     await reload();
   };
 
-  /** 第一步删除：只删视频文件本体释放空间，字幕/讲义/问答等内容保留 */
+  /** 第一步删除：只删文件本体释放空间，字幕/讲义/问答等内容保留 */
   const handleDeleteFile = async (row: VideoRow) => {
-    await deleteVideoFile(row.id);
+    const isMaterial = row.kind === 'material';
+    if (isMaterial) await deleteMaterialFile(row.id);
+    else await deleteVideoFile(row.id);
     await db.videos.update(row.id, { fileDeleted: 1 });
-    toast.success('已删除视频文件，字幕/讲义/问答仍保留');
+    toast.success(isMaterial ? '已删除材料文件，问答记录仍保留' : '已删除视频文件，字幕/讲义/问答仍保留');
     await reload();
   };
 
@@ -555,7 +657,21 @@ export default function Library() {
     useJobStore.getState().drop(row.id);
     await db.transaction(
       'rw',
-      [db.videos, db.segments, db.subtitleTracks, db.frames, db.handouts, db.chats, db.chatSessions, db.embeddings],
+      [
+        db.videos,
+        db.segments,
+        db.subtitleTracks,
+        db.frames,
+        db.handouts,
+        db.chats,
+        db.chatSessions,
+        db.embeddings,
+        // v9：材料的文本块与向量，不一起清会留下孤儿数据占空间
+        db.materialBlocks,
+        db.materialEmbeddings,
+        // v10：封面（主键就是 videoId）
+        db.covers,
+      ],
       async () => {
         await db.videos.delete(row.id);
         await db.segments.where('videoId').equals(row.id).delete();
@@ -565,11 +681,38 @@ export default function Library() {
         await db.chats.where('videoId').equals(row.id).delete();
         await db.chatSessions.where('videoId').equals(row.id).delete();
         await db.embeddings.where('videoId').equals(row.id).delete();
+        await db.materialBlocks.where('materialId').equals(row.id).delete();
+        await db.materialEmbeddings.where('materialId').equals(row.id).delete();
+        await db.covers.delete(row.id);
       },
     );
-    await deleteVideoFile(row.id);
+    // 材料在 materials/ 目录下，用视频的删除函数会清不掉（OPFS 里两份文件各自独立）
+    if (row.kind === 'material') await deleteMaterialFile(row.id);
+    else await deleteVideoFile(row.id);
     toast.success('已删除');
     await reload();
+  };
+
+  /** 重新解析材料（换索引、修解析失败）：清掉旧块与旧向量再走一遍完整流水线 */
+  const reparseMaterial = (row: VideoRow) => {
+    const format = row.materialFormat ?? 'pdf';
+    useJobStore.getState().drop(row.id);
+    toast.info(`开始重新解析《${row.name}》…`);
+    void startMaterialJob(row.id, format)
+      .then(async (res) => {
+        toast.success(
+          res.scanned
+            ? `《${row.name}》没有文本层（扫描件），只能划词/框选提问`
+            : res.empty
+              ? `《${row.name}》没有正文，无法参与问答检索`
+              : `《${row.name}》解析完成（${res.parsed} 个文本块${res.indexed ? '，索引已更新' : ''}）`,
+        );
+        await reload();
+      })
+      .catch((e) => {
+        const text = formatCaughtError(e);
+        showError(`解析《${row.name}》失败`, text);
+      });
   };
 
   /**
@@ -816,6 +959,7 @@ export default function Library() {
       onRename={() => openRename(v)}
       onMove={() => openMove(v)}
       onDelete={() => askDeleteVideo(v)}
+      onReparse={v.kind === 'material' ? () => reparseMaterial(v) : undefined}
       onDragStart={(e) => startDrag(e, v)}
       onDragMove={moveDrag}
       onDragEnd={() => void endDrag()}
@@ -1256,37 +1400,59 @@ export default function Library() {
  * 而 mdui-list-item 的 custom 插槽是覆盖式的，塞不下（详见 layout.css 的注释）。
  */
 /**
- * 卡片封面：取该视频在 `db.frames` 里的第一帧当缩略图（YouTube 风格卡片的核心元素）。
- * 帧是「截图理解」流程的产物，没跑过就没有 —— 此时返回 null，由调用方出占位图。
+ * 卡片缩略图：读 `covers` 表里那份**派生封面**（生成逻辑见 `pipelines/cover.ts`）。
  *
- * 两个刻意的做法：
- *   1. 用 `where('videoId')` 走索引游标 + `first()`，**只读一条记录**；直接 `toArray()` 会把
- *      整表的 blob（几十上百张图）拉进内存，列表一长就顶不住。
- *   2. 换视频 / 卸载时 `revokeObjectURL`，否则 object URL 会一直占着图不放（列表滚动会累积）。
+ * 与上一版的差别：那版直接取 `db.frames` 的第一帧，于是「只有跑过讲义的视频才有封面」
+ * 成了默认行为，讲义重生成时封面还会短暂消失。现在封面是入库即生成的独立资源，
+ * 帧池归讲义用、封面归列表用，各管各的。
+ *
+ * 四处刻意的做法：
+ *   1. `covers.get(videoId)` 是**主键查询、只读一条**。封面之所以不挂在 `videos` 行上，
+ *      就是为了让列表页那句 `videos.toArray()` 不会把几十上百张图的 blob 一并拉进内存。
+ *   2. 订阅 `useCoverRevision`：封面是异步补上的，靠它把新生成的图换上，
+ *      而不用为一张缩略图去调整个列表的 reload。
+ *   3. 用 `createdAt` 判断「是不是同一版封面」——IndexedDB 每次读都会重新反序列化，
+ *      Blob 的对象身份稳定不了，比不了引用只能比这个。
+ *   4. 先建好新的 object URL 再回收旧的，中间不留「指向已撤销 URL」的空窗；
+ *      组件卸载时才做最后一次回收。
  */
-function useCover(videoId: string): string | null {
+function useThumb(videoId: string): string | null {
+  const revision = useCoverRevision();
   const [url, setUrl] = useState<string | null>(null);
+  const created = useRef<string | null>(null);
+  const shownAt = useRef<number | null>(null);
 
   useEffect(() => {
-    let created: string | null = null;
     let cancelled = false;
-    db.frames
-      .where('videoId')
-      .equals(videoId)
-      .first()
-      .then((frame) => {
-        if (cancelled || !frame?.blob) return;
-        created = URL.createObjectURL(frame.blob);
-        setUrl(created);
+    db.covers
+      .get(videoId)
+      .then((row) => {
+        if (cancelled) return;
+        const at = row?.createdAt ?? null;
+        // 同一版封面（别的卡片触发了 revision 变化）：不重建、不撤销，免得图标闪一下
+        if (at === shownAt.current) return;
+        const next = row?.blob ? URL.createObjectURL(row.blob) : null;
+        if (created.current) URL.revokeObjectURL(created.current);
+        created.current = next;
+        shownAt.current = at;
+        setUrl(next);
       })
       .catch(() => {
-        /* 取帧失败只是「没有封面」，静默走占位，不影响列表 */
+        /* 读封面失败只是「这次没图」，静默走占位，不影响列表 */
       });
     return () => {
       cancelled = true;
-      if (created) URL.revokeObjectURL(created);
     };
-  }, [videoId]);
+  }, [videoId, revision]);
+
+  useEffect(
+    () => () => {
+      if (created.current) URL.revokeObjectURL(created.current);
+      created.current = null;
+      shownAt.current = null;
+    },
+    [],
+  );
 
   return url;
 }
@@ -1299,6 +1465,7 @@ function VideoRow({
   onRename,
   onMove,
   onDelete,
+  onReparse,
   onDragStart,
   onDragMove,
   onDragEnd,
@@ -1311,14 +1478,38 @@ function VideoRow({
   onRename: () => void;
   onMove: () => void;
   onDelete: () => void;
+  /** 只有阅读材料有：重新解析 + 重建索引 */
+  onReparse?: () => void;
   onDragStart: (e: React.PointerEvent<HTMLElement>) => void;
   onDragMove: (e: React.PointerEvent<HTMLElement>) => void;
   onDragEnd: () => void;
   onDragCancel: () => void;
 }) {
-  const status = STATUS_TAG[v.status];
-  const meta = `${formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
-  const cover = useCover(v.id);
+  const isMaterial = v.kind === 'material';
+  const matKind: 'page' | 'para' = v.materialFormat === 'docx' ? 'para' : 'page';
+  const noun = matKind === 'page' ? '页' : '段';
+  const unitText = v.unitCount
+    ? `${v.unitCount} ${noun}`
+    : v.empty === 1
+      ? '无正文'
+      : '未解析';
+  /**
+   * 材料的状态标签与视频不是一套语义：
+   * 已解析 / 待解析 / 扫描件（不可检索）/ 无正文（不可检索）/ 文件已删。
+   * 「扫描件」与「无正文」都用 error 色的理由：它们不是失败，但**功能确实受限**，必须显眼。
+   * 两者必须分开：扫描件是「有页面但取不到字」（只可能是 PDF），无正文是「压根没内容」。
+   */
+  const status = isMaterial
+    ? v.scanned === 1
+      ? { variant: 'error' as const, text: '扫描件·不可检索' }
+      : v.empty === 1
+        ? { variant: 'error' as const, text: '无正文·不可检索' }
+        : v.unitCount
+          ? { variant: 'primary' as const, text: `已解析 ${v.unitCount} ${noun}` }
+          : { variant: '' as const, text: '待解析' }
+    : STATUS_TAG[v.status];
+  const meta = `${isMaterial ? unitText : formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
+  const cover = useThumb(v.id);
   // 转写是全局队列里的后台任务：在播放页、在别处、刷新后续跑的，列表上都要看得到
   const job = useTranscribeJob(v.id);
   const activeJob = isJobActive(job) ? job : undefined;
@@ -1353,13 +1544,24 @@ function VideoRow({
         onClick={onPlay}
       >
         {cover ? (
-          <img src={cover} alt="" loading="lazy" />
+          // 视频与 PDF 共用同一条封面链路，所以这里不再按类型分叉
+          <img src={cover} alt="" loading="lazy" decoding="async" />
         ) : (
-          <div className="video-row__thumb-empty">
-            <mdui-sym-play-circle />
+          // 没有画面时：先用主色铺底（LQIP），连主色都没有才落到主题色底
+          <div
+            className="video-row__thumb-empty"
+            style={v.dominantColor ? { background: v.dominantColor } : undefined}
+          >
+            {isMaterial ? (
+              v.materialFormat === 'pdf' ? <mdui-sym-picture-as-pdf /> : <mdui-sym-description />
+            ) : (
+              <mdui-sym-play-circle />
+            )}
           </div>
         )}
-        <span className="video-row__duration">{formatDuration(v.duration)}</span>
+        <span className="video-row__duration">
+          {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
+        </span>
       </div>
       <div className="video-row__main">
         <div className="video-row__name" title={v.name}>
@@ -1373,9 +1575,13 @@ function VideoRow({
             <mdui-linear-progress
               max={100}
               value={
-                activeJob.phase === 'asr'
+                // 只有「按份数推进」的两类任务有确定百分比：转写（按段）与建索引（按块）。
+                // 解析是逐页/逐段推进的，同样有确定进度；其余（排队/抽取/VAD）走不确定态。
+                activeJob.phase === 'asr' || activeJob.phase === 'index'
                   ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
-                  : undefined
+                  : activeJob.phase === 'parse' && activeJob.total > 1
+                    ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
+                    : undefined
               }
             />
             <span>{jobCopy?.detail}</span>
@@ -1391,7 +1597,7 @@ function VideoRow({
       <div className="video-row__actions">
         <mdui-button data-testid="btn-play" variant="tonal" onClick={onPlay}>
           <mdui-sym-play-circle slot="icon" />
-          学习
+          {isMaterial ? '阅读' : '学习'}
         </mdui-button>
         {isMobile ? (
           <mdui-dropdown>
@@ -1407,9 +1613,16 @@ function VideoRow({
                 <mdui-sym-folder-open slot="icon" />
                 移动到文件夹
               </mdui-menu-item>
+              {/* 解析失败/想换索引重来时用得上；参数化重试比隐式后台扫描可控 */}
+              {isMaterial && onReparse && (
+                <mdui-menu-item data-testid="menu-reparse" onClick={onReparse}>
+                  <mdui-sym-refresh slot="icon" />
+                  重新解析
+                </mdui-menu-item>
+              )}
               <mdui-menu-item data-testid="menu-delete" onClick={onDelete}>
                 <mdui-sym-delete slot="icon" />
-                {v.fileDeleted ? '彻底删除记录' : '删除视频文件'}
+                {v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
               </mdui-menu-item>
             </mdui-menu>
           </mdui-dropdown>
@@ -1421,6 +1634,11 @@ function VideoRow({
             <mdui-button-icon data-testid="btn-move" aria-label="移动到文件夹" onClick={onMove}>
               <mdui-sym-folder-open />
             </mdui-button-icon>
+            {isMaterial && onReparse && (
+              <mdui-button-icon data-testid="btn-reparse" aria-label="重新解析" onClick={onReparse}>
+                <mdui-sym-refresh />
+              </mdui-button-icon>
+            )}
             <mdui-button-icon data-testid="btn-delete" aria-label="删除" onClick={onDelete}>
               <mdui-sym-delete />
             </mdui-button-icon>

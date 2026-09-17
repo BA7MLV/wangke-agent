@@ -141,12 +141,23 @@ export function svgIntrinsicSize(svg: string): { width: number; height: number }
   return { width: 800, height: 600 };
 }
 
-/** 从渲染后的 SVG 字符串导出可独立打开的 .svg 文件内容（补 xml 头 + 显式尺寸） */
+/**
+ * 从渲染后的 SVG 字符串导出可独立打开的 .svg 文件内容（补 xml 头 + 显式尺寸）。
+ *
+ * 只在**根标签内部**改 width / height / xmlns —— 不能全串替换：
+ * mermaid 的产出根节点必然带 width，全串 `\swidth="…"` 恰好命中的就是它；
+ * 但模型手写的 SVG 经常**根节点不写 width**（只给 viewBox），此时全串替换会打到
+ * 某个子元素（如 `<rect width="100">`）上，把图形几何改坏。
+ */
 export function toStandaloneSvg(svg: string): string {
   const { width, height } = svgIntrinsicSize(svg);
-  const withSize = svg
-    .replace(/\swidth="[^"]*"/, '')
-    .replace(/\sheight="[^"]*"/, '')
-    .replace(/<svg([^>]*)>/, `<svg$1 width="${Math.round(width)}" height="${Math.round(height)}" xmlns="http://www.w3.org/2000/svg">`);
-  return `<?xml version="1.0" encoding="UTF-8"?>\n${withSize}`;
+  const sized = svg.replace(/<svg\b[^>]*>/i, (tag) => {
+    const attrs = tag
+      .replace(/\swidth\s*=\s*"[^"]*"/i, '')
+      .replace(/\sheight\s*=\s*"[^"]*"/i, '');
+    // 缺 xmlns 时补上：独立打开的文件必须是 SVG 命名空间，靠 HTML 解析器兜底的那套在这里不成立
+    const head = /xmlns\s*=/i.test(attrs) ? '<svg' : '<svg xmlns="http://www.w3.org/2000/svg"';
+    return attrs.replace(/<svg\b/i, `${head} width="${Math.round(width)}" height="${Math.round(height)}"`);
+  });
+  return `<?xml version="1.0" encoding="UTF-8"?>\n${sized}`;
 }

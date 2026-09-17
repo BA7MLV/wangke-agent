@@ -50,6 +50,8 @@ const META = {
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
+  // 图表导出：只改根标签，不碰子元素几何（原生 svg 围栏的根节点常常不带 width）
+  'test-diagram-export': { service: 'none', antd: false, timeout: 120 },
   'test-error-text': { service: 'none', antd: false, timeout: 120 },
   'test-handout-ir': { service: 'none', antd: false, timeout: 120 },
   'test-handout-prompts': { service: 'none', antd: false, timeout: 120 },
@@ -73,6 +75,9 @@ const META = {
   'e2e-chat-image': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat-mermaid': { service: 'preview', antd: true, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-mermaid-test.mp4' },
+  // 题卡解析的出图链路：mermaid 与 svg 两种围栏各一个脚本（自播种题卡，不调真实 API）
+  'e2e-quiz-mermaid': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
+  'e2e-svg-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   // mdui 迁移基建验收（React 19 生效 / 46 个自定义元素已注册 / 设计令牌可用 / 未污染 antd 界面）。
   // 本档验不了「React 版本」与「中文语言包」两项（生产构建拿不到模块句柄），
   // 需要时手动补跑 dev 档：BASE_URL=http://localhost:5173 node scripts/e2e-mdui-adapter.mjs
@@ -111,6 +116,8 @@ const META = {
   'e2e-material-you': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'probe': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
   'probe-mermaid': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '缺失 public/probe-mermaid.html，页面 404，无法加载' },
+  // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
+  'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
 };
 
 // ───────────────────────────── 参数解析 ─────────────────────────────

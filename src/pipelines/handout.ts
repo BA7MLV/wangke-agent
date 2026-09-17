@@ -7,6 +7,7 @@ import { PROMPTS } from '../harness/prompts';
 import { buildHandoutDocx, segmentsToTranscript, type HandoutSection } from '../handout/docx';
 import { parseSectionBlocks, salvageBlocks, collectFigureTimestamps, type Block } from '../handout/ir';
 import { routeHandoutSkills } from '../skills/router';
+import { enqueueCover } from './coverQueue';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { AdaptiveLimit, withAdaptiveRetry, adaptivePool } from '../utils/concurrency';
 
@@ -172,11 +173,26 @@ async function runHandoutInner(
   });
   const slides = captioned.filter((f) => f.isSlide);
 
-  // 保存帧到 DB（供问答时查看）
-  await db.frames.where('videoId').equals(videoId).delete();
-  await db.frames.bulkAdd(
-    slides.map<FrameRow>((f) => ({ videoId, ts: f.ts, blob: f.blob, kind: 'slide', caption: f.caption })),
-  );
+  // 保存帧到 DB（供问答时查看，也给封面当素材）
+  //
+  // 必须**先写新的、再删旧的，且放在同一个事务里**。原先的「先 delete 再 bulkAdd」
+  // 有一个真实后果：bulkAdd 之前一旦抛错（配额、中断），旧的帧已经删掉了，
+  // 讲义配图和「复用 slide 帧当封面」的素材就一起永久丢失。
+  await db.transaction('rw', db.frames, async () => {
+    const old = await db.frames.where('videoId').equals(videoId).toArray();
+    if (slides.length > 0) {
+      await db.frames.bulkAdd(
+        slides.map<FrameRow>((f) => ({ videoId, ts: f.ts, blob: f.blob, kind: 'slide', caption: f.caption })),
+      );
+    }
+    // 新的写成功了才删旧的（新增的行 id 与旧的不同，不会互相误删）
+    if (old.length > 0) await db.frames.bulkDelete(old.map((f) => f.id!));
+  });
+
+  // 讲义跑完，手上这批幻灯片帧比入库时自动抽的那张更贴课件首页，所以让封面重做一次
+  // （`ensureCover` 会挑最早的 slide 帧，并拒绝覆盖用户手选的封面）。
+  // 不 await：封面是派生资源，晚一两秒换掉没影响，队列内部串行也不会和后面的写作抢解码器。
+  enqueueCover(videoId, { force: true });
 
   // 3. 大纲（长文本先分块摘要）
   onProgress({ phase: 'outline', done: 0, total: 1, message: '选择写作技能…' });

@@ -29,13 +29,17 @@ export interface StorageStats {
 
 export async function getStorageStats(): Promise<StorageStats> {
   let videos = 0;
+  let materials = 0;
   let frames = 0;
   let textAndVectors = 0;
   let handouts = 0;
 
-  // 视频：元数据里的 size 即 OPFS 原始文件大小；files 表为旧版遗留副本
+  // 视频与阅读材料按 kind 分流：不分开的话材料体积会被算进「视频文件」，
+  // 用户看着「视频占 800MB」却找不到对应的大视频，只会以为统计坏了。
+  // files 表是旧版遗留的 IndexedDB 副本（OPFS 不可用时的回退），无法区分类型，仍归入视频。
   await db.videos.each((v) => {
-    videos += v.size;
+    if (v.kind === 'material') materials += v.size;
+    else videos += v.size;
   });
   await db.files.each((f) => {
     videos += f.blob.size;
@@ -53,11 +57,18 @@ export async function getStorageStats(): Promise<StorageStats> {
   await db.embeddings.each((e) => {
     textAndVectors += e.vector.byteLength;
   });
+  // 材料的文本块与向量：与字幕同属「文本与向量」一类（都是为检索服务的小块数据）
+  await db.materialBlocks.each((b) => {
+    textAndVectors += b.text.length * 2;
+  });
+  await db.materialEmbeddings.each((e) => {
+    textAndVectors += e.vector.byteLength;
+  });
   await db.handouts.each((h) => {
     handouts += h.blob.size;
   });
 
-  const known = videos + frames + textAndVectors + handouts;
+  const known = videos + materials + frames + textAndVectors + handouts;
 
   let usage = 0;
   let quota = 0;
@@ -81,6 +92,7 @@ export async function getStorageStats(): Promise<StorageStats> {
     persisted,
     categories: [
       { key: 'videos', label: '视频文件', bytes: videos },
+      { key: 'materials', label: '阅读材料', bytes: materials },
       { key: 'frames', label: '抽帧图片', bytes: frames },
       { key: 'text', label: '字幕与向量', bytes: textAndVectors },
       { key: 'handouts', label: '讲义文档', bytes: handouts },

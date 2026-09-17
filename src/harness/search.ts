@@ -7,7 +7,11 @@ export interface SearchHit {
   score: number;
 }
 
-function cosine(a: Float32Array, b: Float32Array): number {
+/**
+ * 余弦相似度。导出给 `searchMaterial` 复用 —— 材料检索与字幕检索走**同一套打分**，
+ * 免得两边各写一份、日后调参只改一处。
+ */
+export function cosine(a: Float32Array, b: Float32Array): number {
   let dot = 0;
   let na = 0;
   let nb = 0;

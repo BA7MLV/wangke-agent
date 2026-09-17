@@ -1,12 +1,17 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
 
+/**
+ * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
+ * `kind` 区分视频与阅读材料（PDF / Word）。改名要动 30+ 个文件，不值当，
+ * 因此只在类型名与注释上澄清。
+ */
 export interface VideoRow {
   id: string;
   name: string;
   size: number;
   mimeType: string;
-  duration: number; // 秒
+  duration: number; // 秒（材料恒为 0）
   createdAt: number;
   status: 'new' | 'transcribing' | 'transcribed' | 'error';
   /** 上次播放位置（秒），用于断点续播；播完归零。非索引字段 */
@@ -17,6 +22,35 @@ export interface VideoRow {
   skillOverride?: { pin: number[]; drop: number[] };
   /** 所属文件夹 id（folders 表）；不设则在「未分类」组。非索引字段 */
   folderId?: number;
+  // ── 阅读材料（kind === 'material'）专属，全部为非索引字段（老数据零迁移、无需升版本）
+  /** 资源类型；不设视为 'video' */
+  kind?: 'video' | 'material';
+  /** 材料格式，决定用哪个阅读器 */
+  materialFormat?: 'pdf' | 'docx';
+  /** 材料定位单元总数：PDF=页数，Word=段落数 */
+  unitCount?: number;
+  /** 上次阅读到的单元（断点续读），与视频的 lastPosition 对称 */
+  lastUnit?: number;
+  /** 解析判定为扫描件（**仅 PDF**：有页面但没有文本层）：不建检索索引，只能划词/框选提问 */
+  scanned?: 1;
+  /** 解析后没有任何正文单元（空文档 / 只有图片的 Word）：同样不建索引，但与扫描件是两回事 */
+  empty?: 1;
+  // ── 封面（派生资源），全部为非索引字段
+  /**
+   * 封面主色 `#RRGGBB`，由生成封面时顺带提取，用作读取侧的 LQIP 占位底。
+   *
+   * 生效时机要说清楚：它与封面在**同一个事务**里写入，所以能看到的场景是
+   * 「封面读取还没 resolve」或「封面读取失败」——把灰格子换成一块属于这门课的色。
+   * 它**不是**「生成中」的进度指示（那要把主色提前落库并让列表重读整行，
+   * 代价大于收益）。只存 7 个字符，放主表毫无压力；真正的图在 `covers` 表里。
+   */
+  dominantColor?: string;
+  /**
+   * 封面生成状态。`done` = 已有封面，或已判定这份资源不需要封面；
+   * `pending` = 已入队/生成中；`skipped` = 文件本体已删等根本没法生成。
+   * UI 只认这三个值，不再自己猜「没有封面是不是因为还没轮到」。
+   */
+  coverState?: 'pending' | 'done' | 'skipped';
 }
 
 /** 首页视频分组文件夹（单层） */
@@ -69,6 +103,34 @@ export interface FrameRow {
   caption?: string;
 }
 
+/**
+ * 封面（派生资源）。**三类内容共用一张表**：视频、PDF、Word 的主键都是 `videos.id`，
+ * 所以这里直接用 `videoId` 当主键 —— `covers.get(id)` 是 O(1)、只读一条记录。
+ *
+ * 为什么不把封面 blob 挂在 `VideoRow` 上（这是最容易犯的错）：
+ * 资料库列表要 `db.videos.toArray()`，blob 若在行上就会被整表读进内存，
+ * 视频一多直接顶不住。这正是 `Library.tsx` 里 `useCover` 那条「不要 toArray」注释
+ * 躲了半天的坑 —— 把封面拆成独立表，才是从根上消掉它。
+ *
+ * 为什么不存原尺寸：1080p 单帧 PNG 有 1~3MB，480px WebP 只要 15~30KB，差两个数量级。
+ */
+export interface CoverRow {
+  /** 主键，同 `videos.id` */
+  videoId: string;
+  /** 480px 宽（16:9 即 480×270）WebP，编码器不支持时回退 JPEG。只存小图，不存原尺寸 */
+  blob: Blob;
+  w: number;
+  h: number;
+  /** 视频：取自第几秒；材料：页码（PDF 恒为 1） */
+  ts: number;
+  /**
+   * 来源。读取端不区分来源（有记录就用），这个字段只用于排查与「用户手选不被覆盖」：
+   * `user` 手选 > `slide` 讲义抽帧 > `auto` 自动抽样 > `material-*` 文档类。
+   */
+  source: 'user' | 'slide' | 'auto' | 'material-page' | 'material-title';
+  createdAt: number;
+}
+
 export interface HandoutRow {
   id?: number;
   videoId: string;
@@ -92,8 +154,16 @@ export interface ChatSessionRow {
 
 /** 聊天消息附带的截图（仅存缩略图，大图随发随弃） */
 export interface ChatImage {
+  /**
+   * 锚点：视频截图是秒；材料选区截图是页码。
+   * 语义由 `kind` 决定（沿用同一字段以免迁移）。
+   */
   ts: number;
   thumb: string; // 320px dataURL
+  /** 非索引字段：材料选区的定位标签，如「第 3 页选区」。不设 = 视频截图 */
+  label?: string;
+  /** 非索引字段：区分截图来源；不设视为视频截图 */
+  kind?: 'video' | 'page-selection';
 }
 
 /** 答题卡状态（非索引字段）：题目 JSON + 用户作答 */
@@ -122,6 +192,36 @@ export interface EmbeddingRow {
   id?: number;
   videoId: string;
   segmentId: number;
+  vector: ArrayBuffer; // Float32Array
+}
+
+/**
+ * 阅读材料的可检索文本块。
+ *
+ * 为什么不复用 `segments`：那边的 `start`/`end` 是**秒**，`get_transcript_range` 按秒检索、
+ * 字幕面板按时间轴跳转；把页码塞进秒字段会让两套语义互相污染，之后每个读该表的地方
+ * 都要先判断 kind。平行表 + 平行检索函数更安全，也让「视频链路零回归」自动成立。
+ */
+export interface MaterialBlockRow {
+  id?: number;
+  /** 即 videos.id（材料与视频共用同一 id 空间） */
+  materialId: string;
+  /** 文档内线性顺序，0 起（排序用） */
+  idx: number;
+  /** 定位单元：PDF=页码（1 起），Word=段落序号（1 起） */
+  unit: number;
+  /** 展示用位置描述：「第 3 页」/「§2.1 第 4 段」 */
+  unitLabel: string;
+  text: string;
+  /** 供检索加权与下游裁剪；PDF 用字号启发式判标题 */
+  kind: 'body' | 'title' | 'table' | 'caption';
+}
+
+/** 材料文本块的向量（与 EmbeddingRow 对称，只是外键换成 blockId） */
+export interface MaterialEmbeddingRow {
+  id?: number;
+  materialId: string;
+  blockId: number;
   vector: ArrayBuffer; // Float32Array
 }
 
@@ -181,6 +281,9 @@ class WangkeDB extends Dexie {
   folders!: Table<FolderRow, number>;
   cards!: Table<CardRow, number>;
   subtitleTracks!: Table<SubtitleTrackRow, number>;
+  materialBlocks!: Table<MaterialBlockRow, number>;
+  materialEmbeddings!: Table<MaterialEmbeddingRow, number>;
+  covers!: Table<CoverRow, string>;
 
   constructor() {
     super('wangke');
@@ -236,6 +339,19 @@ class WangkeDB extends Dexie {
     // v8：B 站多语言字幕（对照显示用）
     this.version(8).stores({
       subtitleTracks: '++id, videoId, lang',
+    });
+    // v9：阅读材料（PDF / Word）的文本块与向量。
+    // videos 上的 kind / materialFormat / unitCount / lastUnit / scanned 都是**非索引字段**，
+    // 沿用 cues / images / sectionsJson 的先例，不需要升版本。
+    this.version(9).stores({
+      materialBlocks: '++id, materialId, idx',
+      materialEmbeddings: '++id, materialId, blockId',
+    });
+    // v10：封面。独立成表而不是挂在 videos 行上——列表页会整表读 videos，
+    // 封面 blob 一旦在行上就会被一并拉进内存（详见 CoverRow 的注释）。
+    // videos 上的 dominantColor / coverState 是非索引字段，同样沿用先例、不需要升版本。
+    this.version(10).stores({
+      covers: 'videoId',
     });
   }
 }

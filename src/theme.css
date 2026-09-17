@@ -93,6 +93,28 @@ html.mdui-theme-dark {
   justify-content: center;
 }
 
+/* 阅读材料：阅读器要**填满**整块区域，而不是像视频那样按比例居中留白。
+   视频的高度由 16:9 宽度反推，在更高的视口里居中才不显空；阅读器则是「越满越好」，
+   而且它自己内部滚动，不参与居中。 */
+.player-layout .video-pane--reading {
+  align-items: stretch;
+  justify-content: stretch;
+}
+
+/* 阅读器外壳：提示条在上，阅读区吃掉剩余高度（否则提示条会把阅读区挤出可视区） */
+.mr-shell {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.mr-shell > .mr-root {
+  flex: 1;
+  min-height: 0;
+}
+
 .player-layout .side-pane {
   flex: 1;
   min-width: 0;
@@ -126,6 +148,14 @@ html.mdui-theme-dark {
   /* 矮屏时按 16:9 反推宽度上限，防止视频占满高度挤压面板区域 */
   .player-layout .video-pane [data-media-player] {
     width: min(100%, calc(45vh * 16 / 9));
+  }
+  /* 阅读材料：窄屏下阅读区与面板区各分一块（阅读区略多），
+     视频那种「固定高度 + 居中」不适用 —— 阅读器要能滚，所以给高度上限而不是固定高。 */
+  .player-layout .video-pane--reading {
+    flex: 1.3 1 0;
+    max-height: 62vh;
+    align-items: stretch;
+    justify-content: stretch;
   }
   .player-layout .side-pane {
     flex: 1;
@@ -210,6 +240,12 @@ html.mdui-theme-dark {
      不会把控制栏顶出可视区。64px ≈ 标题栏 64 - 容器上下 padding 16（回退 60vh 只求量级） */
   .player-layout .video-pane [data-media-player] {
     width: min(100%, calc((var(--vvh, 60vh) - 64px) * 16 / 9));
+  }
+
+  /* 阅读材料：横屏同在左栏，但填满而不是居中（阅读器自己内部滚动） */
+  .player-layout .video-pane--reading {
+    align-items: stretch;
+    justify-content: stretch;
   }
 
   .player-layout .side-pane {
