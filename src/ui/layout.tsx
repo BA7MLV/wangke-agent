@@ -240,12 +240,53 @@ export function EmptyState({ icon, title, description, action, testId }: EmptySt
   );
 }
 
+export interface HelpTipProps {
+  /** 气泡标题（rich 变体才有的第一行） */
+  headline: string;
+  /** 气泡正文，可多段（用 <p>） */
+  children: ReactNode;
+  /** 触发按钮的无障碍标签，默认「说明」 */
+  label?: string;
+  /** 给 e2e 用的稳定选择器（挂在触发按钮上） */
+  testId?: string;
+}
+
+/**
+ * 问号图标 + 点击展开的富文本气泡 —— 长说明的收纳处。
+ *
+ * 手机上把补充说明整段铺开会把版面吃掉好几行（甚至像投放区那样被挤成竖排），
+ * 所以约定：**当场要决策的留正文，解释性的收进这里**。
+ *
+ * 两个已实测的坑，改这个组件前先看：
+ * 1. `trigger` 是触发**方式**（click / hover / focus），不是选择器；默认是 hover focus，
+ *    手机上悬浮不存在，所以这里必须显式写 click。
+ * 2. `placement` 不能交给 auto，正文也**必须给确定宽度**（见 layout.css 的 .help-tip__body）。
+ *    mdui 在算位置之前先量气泡的 offsetWidth，那一刻气泡还停在触发元素的静态位置上，
+ *    可用宽度只有「视口 − 触发元素左边距」；问号通常落在偏右的位置，手机上只剩一百来像素，
+ *    正文会被压成一条竖条。
+ */
+export function HelpTip({ headline, children, label = '说明', testId }: HelpTipProps) {
+  return (
+    <mdui-tooltip variant="rich" trigger="click" placement="bottom-end" className="help-tip">
+      <mdui-button-icon data-testid={testId} aria-label={label} onClick={(e) => e.stopPropagation()}>
+        <mdui-sym-help />
+      </mdui-button-icon>
+      <div slot="headline">{headline}</div>
+      <div slot="content" className="help-tip__body">
+        {children}
+      </div>
+    </mdui-tooltip>
+  );
+}
+
 export interface BannerProps {
   /** 语义：info 用主色，warning / error 用对应的会话色 */
   variant?: 'info' | 'warning' | 'error';
   /** 左侧图标（放 mdui-icon-* 元素） */
   icon?: ReactNode;
   title: ReactNode;
+  /** 标题右侧的问号（放 <HelpTip>）；解释性文案收在这里，正文只留结论 */
+  help?: ReactNode;
   description?: ReactNode;
   /** 右下角操作区 */
   action?: ReactNode;
@@ -258,12 +299,15 @@ export interface BannerProps {
  * 为什么不用 snackbar：这个提示需要**常驻**（PWA 存储可能被清理的提醒），
  * 而 mdui 的 snackbar 是短暂的浮层，还会和别的提示抢队列。
  */
-export function Banner({ variant = 'info', icon, title, description, action, testId }: BannerProps) {
+export function Banner({ variant = 'info', icon, title, help, description, action, testId }: BannerProps) {
   return (
     <div className={`banner banner--${variant}`} data-testid={testId} role="note">
       {icon && <div className="banner__icon">{icon}</div>}
       <div className="banner__main">
-        <div className="banner__title">{title}</div>
+        <div className="banner__title">
+          <span className="banner__title-text">{title}</span>
+          {help}
+        </div>
         {description && <div className="banner__desc">{description}</div>}
       </div>
       {action && <div className="banner__action">{action}</div>}

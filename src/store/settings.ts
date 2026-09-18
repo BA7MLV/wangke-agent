@@ -43,6 +43,10 @@ export interface Settings {
   theme: AppTheme;
   /** Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化 */
   dynamicColor: boolean;
+  /** 学习时长自动记录（关掉后不再累计，已有记录保留） */
+  studyTrackingEnabled: boolean;
+  /** 多久没操作就算「人不在」（分钟）。播放视频时不计入空闲判定 */
+  studyIdleMinutes: number;
 }
 
 export const DEFAULT_MODELS = {
@@ -76,6 +80,8 @@ export const useSettings = create<SettingsStore>()(
       customRates: [],
       theme: 'auto',
       dynamicColor: true,
+      studyTrackingEnabled: true,
+      studyIdleMinutes: 5,
       update: (patch) => set(patch),
     }),
     {
@@ -115,5 +121,7 @@ export function getSettings(): Settings {
     customRates: [...s.customRates],
     theme: s.theme,
     dynamicColor: s.dynamicColor,
+    studyTrackingEnabled: s.studyTrackingEnabled,
+    studyIdleMinutes: s.studyIdleMinutes,
   };
 }

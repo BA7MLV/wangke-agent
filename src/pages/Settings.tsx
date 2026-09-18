@@ -9,6 +9,7 @@ import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate }
 import { SuccessCheck, ms } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
+import StudyTimeCard from '../components/StudyTimeCard';
 import MigrationCard from '../components/MigrationCard';
 import { Field, PageShell, SectionCard, confirmDialog, toast, useMduiEvent } from '../ui';
 import { useAppNav } from '../components/appNav';
@@ -860,6 +861,8 @@ export default function Settings() {
           </div>
         </Field>
       </SectionCard>
+
+      <StudyTimeCard />
 
       <StorageCard />
 

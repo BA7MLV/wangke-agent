@@ -479,6 +479,37 @@
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
+/* ── 问号说明气泡（<HelpTip>，src/ui/layout.tsx）───────────────────────────
+   长说明的收纳处：正文只留当场要决策的结论，解释性文字收进这里，点击问号才展开。 */
+
+/* 触发按钮不参与收缩，否则窄屏上会被压扁。
+   ⚠️ mdui-tooltip 的 :host 是 display:contents（自己不出盒子），所以这里的 flex 项
+   是它插槽里的那个 mdui-button-icon，得从后代选它。 */
+.help-tip mdui-button-icon {
+  flex: none;
+}
+
+/* rich tooltip 的 .content 插槽在 shadow 里是 display:flex（横向），多段落会并排；
+   自己包一层块级容器，段落才按正常的上下顺序流。
+   ⚠️ 必须给一个**确定的宽度**：mdui 在算位置之前先量 popup 的 offsetWidth，而那一刻
+   popup 还停在触发元素的静态位置上，可用宽度只有「视口 − 触发元素左边距」。问号通常落在
+   整行偏右，手机上只剩 116px，正文会被压成一条竖条（实测：宽 116 / 高 556）。
+   写死宽度后每次量到的值都一样，再靠 placement="bottom-end" 让它从右边对齐展开。
+   100vw - 6rem 那一道是兜底：极窄屏（320px）上别把气泡顶出屏幕左边。
+   17rem + popup 左右各 1rem 内边距 = 19rem，仍在 mdui 的 max-width: 20rem 之内。 */
+.help-tip__body {
+  display: block;
+  width: min(17rem, calc(100vw - 6rem));
+}
+
+.help-tip__body p {
+  margin: 0 0 8px;
+}
+
+.help-tip__body p:last-child {
+  margin-bottom: 0;
+}
+
 /* ── 页面内提示条（替 antd Alert） ───────────────────────────────────────── */
 .banner {
   display: flex;
@@ -514,10 +545,18 @@
   min-width: 0;
 }
 
+/* 标题 + 问号同一行：问号紧跟在标题文字后面，标题可换行收缩、问号不缩 */
 .banner__title {
+  display: flex;
+  align-items: center;
+  gap: 2px;
   font-size: var(--mdui-typescale-body-medium-size);
   font-weight: 500;
   line-height: 1.5;
+}
+
+.banner__title-text {
+  min-width: 0;
 }
 
 .banner__desc {
@@ -604,11 +643,22 @@
   color: rgb(var(--mdui-color-on-surface));
 }
 
+/* 说明文案 + 问号按钮：一行，问号紧跟在句子后面（不换行）。
+   窄屏纵向布局时整行居中，宽屏横排时靠左——见下面 .page-library 那档。 */
 .drop-zone__hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
   max-width: 520px;
   font-size: 12px;
   line-height: 1.6;
   color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* 文案可换行收缩（flex 项默认 min-width:auto 会顶住不缩） */
+.drop-zone__hint > span {
+  min-width: 0;
 }
 
 .drop-zone__actions {
@@ -933,34 +983,40 @@
 }
 
 /* 导入区：原来的纵向大虚线块在放宽后的容器里很占地方，收成一条横排提示条
-   （图标 + 文案 + 按钮一行），仍是同一个 drop-zone（testid 与整页拖拽投放都不动）。 */
-.page-library .drop-zone {
-  flex-direction: row;
-  align-items: center;
-  gap: 14px;
-  max-width: none;
-  padding: 14px 18px;
-  text-align: left;
-}
+   （图标 + 文案 + 按钮一行），仍是同一个 drop-zone（testid 与整页拖拽投放都不动）。
+   ⚠️ 横排只在宽屏成立。手机上这一条挤不下：图标 + 标题 + 文案 + 两个按钮横向相加远超
+   390px，文案会被压成每行一两个字的竖排（见 e2e-shots/mobile-library.png 的旧版），
+   读不成句。所以窄屏回落到 .drop-zone 基类的纵向居中布局。 */
+@media (min-width: 641px) {
+  .page-library .drop-zone {
+    flex-direction: row;
+    align-items: center;
+    gap: 14px;
+    max-width: none;
+    padding: 14px 18px;
+    text-align: left;
+  }
 
-.page-library .drop-zone__icon {
-  font-size: 28px;
-}
+  .page-library .drop-zone__icon {
+    font-size: 28px;
+  }
 
-.page-library .drop-zone__title {
-  flex: none;
-  margin-top: 0;
-  font-size: 14px;
-}
+  .page-library .drop-zone__title {
+    flex: none;
+    margin-top: 0;
+    font-size: 14px;
+  }
 
-.page-library .drop-zone__hint {
-  flex: 1 1 auto;
-  max-width: none;
-}
+  .page-library .drop-zone__hint {
+    flex: 1 1 auto;
+    justify-content: flex-start;
+    max-width: none;
+  }
 
-.page-library .drop-zone__actions {
-  flex: none;
-  margin-top: 0;
+  .page-library .drop-zone__actions {
+    flex: none;
+    margin-top: 0;
+  }
 }
 
 /* 静态语义标记：刻意不用 mdui-chip —— 它会带涟漪与可交互语义，

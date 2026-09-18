@@ -19,11 +19,13 @@ export {
   Field,
   EmptyState,
   Banner,
+  HelpTip,
   type PageShellProps,
   type SectionCardProps,
   type FieldProps,
   type EmptyStateProps,
   type BannerProps,
+  type HelpTipProps,
   type NavItem,
   type NavConfig,
 } from './layout';

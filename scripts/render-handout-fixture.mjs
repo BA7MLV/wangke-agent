@@ -2,12 +2,33 @@
 /**
  * 讲义 DOCX 渲染 fixture 测试：固定 IR 假数据 → buildHandoutDocx → 解包断言 XML。
  * 不依赖 API；同时输出 scripts/out/handout-fixture.docx 供人工检查。
- * 运行：node scripts/render-handout-fixture.mjs
+ *
+ * 运行（讲义渲染链用的是**无扩展名**相对导入 —— `src/handout/docx.ts` 里写着
+ * `import { fmtTime } from '../utils/vtt'`，Vite/TS 认，裸 Node ESM 不认。
+ * 直接 import 源码会挂在解析阶段，报的却是「找不到 vtt」这种看不出病因的错：
+ *   ERR_MODULE_NOT_FOUND: Cannot find module '.../src/utils/vtt'
+ *     imported from '.../src/handout/docx.ts'
+ * 所以先用 esbuild 打包再执行 —— 与 scripts/test-migration.mjs 同一套做法，
+ * 脚本会自检并自动完成这两步）：
+ *   node scripts/render-handout-fixture.mjs
  */
 import assert from 'node:assert/strict';
+import { execSync } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { unzipSync } from 'fflate';
-import { buildHandoutDocx } from '../src/handout/docx.ts';
+
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const entry = path.join(os.tmpdir(), `render-handout-entry-${Date.now()}.ts`);
+const bundle = path.join(os.tmpdir(), `render-handout-bundle-${Date.now()}.mjs`);
+writeFileSync(entry, `export * from '${root}/src/handout/docx';\n`);
+execSync(`node_modules/.bin/esbuild ${entry} --bundle --platform=node --format=esm --outfile=${bundle}`, {
+  cwd: root,
+  stdio: 'inherit',
+});
+const { buildHandoutDocx } = await import(bundle);
 
 // 1x1 PNG
 const PNG = new Uint8Array(

@@ -80,6 +80,8 @@ const META = {
   'test-ort-config': { service: 'none', antd: false, timeout: 120 },
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
   'test-rate': { service: 'none', antd: false, timeout: 120 },
+  // 学习时长纯逻辑：本地日期键（UTC 陷阱）/ 跨零点切分 / 热力图网格几何 / 统计与连续天数
+  'test-study-log': { service: 'none', antd: false, timeout: 120 },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
   // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
@@ -120,6 +122,9 @@ const META = {
   'e2e-import': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   // 首页自身交互（分组 / 移动 / 折叠 / 两步删除 / 拖拽）—— 既有脚本只把首页当跳板，没覆盖这些
   'e2e-library': { service: 'preview', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
+  // 库页「长说明收进问号」：点问号不能冒泡开文件选择器 / 气泡不能塌成竖条 / 长说明不能铺回正文。
+  // 不需要 key，也不需要测试视频（空库就能验），所以不带 testFile。
+  'e2e-library-copy': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-mobile': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-player-enhance': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-quiz': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
@@ -128,7 +133,21 @@ const META = {
   'e2e-bili-cookie': { service: 'preview', antd: false, timeout: 120 },
   'e2e-userscript-charset': { service: 'preview', antd: false, timeout: 60 },
   'e2e-storage-card': { service: 'preview', antd: true, timeout: 300 },
-  'motion-components-test': { service: 'preview', antd: false, timeout: 120 },
+  // 学习时长热力图：网格几何 / 档位 / 悬浮提示 / 区间切换 / 最近 30 天 / **真等 80s 验计时与落库** /
+  // 设置页卡片。自播种 studyDays（原生 IndexedDB），不需要 key，也不需要 dev 档。
+  'e2e-study': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 动效组件（TextSwap / ThinkLine / StreamParagraph / SuccessCheck）的 DOM 断言。
+  // ⚠️ 暂 skip：脚本打开 `/#/motion-test`，而这个路由在 src 里**从未存在**过 ——
+  //    `src/components/motion.tsx` 是动效组件本身，没有与之对应的页面组件；
+  //    `git log -S "/motion-test"` 只能查到本脚本自己，App.tsx 的历史里没有注册记录。
+  //    页面空渲染 → `.t-text-swap` 必然等到超时，红得没有信息量。
+  //    它是**阶段 0 就存在的已知失败**（docs/plans/2026-09-10-mdui-phase0-e2e-baseline.md
+  //    第 115 行），不是回归 —— 别把这条红算到新改动头上。
+  //    真修有两条路，都需要先做决定：① 补一个只给测试用的 `/#/motion-test` 页面（会进生产包）；
+  //    ② 让脚本自带 fixture 页面、不依赖生产路由（改脚本，更像组件测试该有的样子）。
+  //    决定前让它红着只会训练人忽略红色，所以照 probe-mermaid 的先例显式跳过。
+  //    **那两条路任选其一落地后，请把这个 skip 去掉。**
+  'motion-components-test': { service: 'preview', antd: false, timeout: 120, skip: '缺失 /#/motion-test 路由（src 中从未有过该页面组件），页面空渲染、.t-text-swap 必然超时；阶段 0 基线已知失败' },
   'motion-smoke': { service: 'preview', antd: true, timeout: 120 },
 
   // ── dev(5173)：从 node_modules 重编译，当前已是 React 19，非升级前基线 ──

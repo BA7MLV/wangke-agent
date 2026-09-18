@@ -8,6 +8,7 @@ import '../player-enhance.css';
 import { db, type VideoRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { useSettings } from '../store/settings';
+import { setStudyMediaPlaying } from '../store/studyTime';
 import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
 import { useIsMobile, useIsPhoneLandscape } from '../utils/useMobile';
@@ -109,6 +110,15 @@ export default function Player() {
   useEffect(() => {
     if (pendingAsk) setActiveTab('chat');
   }, [pendingAsk]);
+
+  /**
+   * 离开播放页 / 换视频时清掉「正在播放」标记。
+   *
+   * 学习时长追踪靠这个标记来豁免空闲判定（看课不必一直动键鼠）。
+   * 不清的后果很具体：从播放页返回课程库后，标记还是 true —— 人去吃饭了，
+   * 库页照样一直记时长。清理放在 `id` 的依赖上，换视频时同样会先清一次。
+   */
+  useEffect(() => () => setStudyMediaPlaying(false), [id]);
 
   /**
    * Material You 动态取色：以「课程封面」为色彩来源。
@@ -437,6 +447,12 @@ export default function Player() {
               // 「未播放过」那段 vds 不注册鼠标监听，由 player-enhance.css 的 :hover 兜住。
               hideControlsOnMouseLeave
               controlsDelay={CONTROLS_IDLE_DELAY}
+              // 学习时长追踪：播放中不做「人走开了」的空闲判定（看课不用一直操作键鼠）。
+              // 暂停/播完/卸载都恢复普通判定，见 store/studyTime.ts。
+              onPlay={() => setStudyMediaPlaying(true)}
+              onPlaying={() => setStudyMediaPlaying(true)}
+              onPause={() => setStudyMediaPlaying(false)}
+              onEnded={() => setStudyMediaPlaying(false)}
               style={{ borderRadius: 12, overflow: 'hidden' }}
             >
               <MediaProvider>

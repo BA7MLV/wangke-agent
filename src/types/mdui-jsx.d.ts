@@ -3377,6 +3377,7 @@ declare module 'react' {
       'mdui-sym-add-photo-alternate': MduiSymbolProps;
       'mdui-sym-arrow-back': MduiSymbolProps;
       'mdui-sym-article': MduiSymbolProps;
+      'mdui-sym-calendar-month': MduiSymbolProps;
       'mdui-sym-chat': MduiSymbolProps;
       'mdui-sym-check': MduiSymbolProps;
       'mdui-sym-chevron-right': MduiSymbolProps;
@@ -3397,11 +3398,13 @@ declare module 'react' {
       'mdui-sym-folder-open': MduiSymbolProps;
       'mdui-sym-format-size': MduiSymbolProps;
       'mdui-sym-graphic-eq': MduiSymbolProps;
+      'mdui-sym-help': MduiSymbolProps;
       'mdui-sym-home': MduiSymbolProps;
       'mdui-sym-image': MduiSymbolProps;
       'mdui-sym-keyboard-arrow-down': MduiSymbolProps;
       'mdui-sym-lightbulb': MduiSymbolProps;
       'mdui-sym-link': MduiSymbolProps;
+      'mdui-sym-local-fire-department': MduiSymbolProps;
       'mdui-sym-mic': MduiSymbolProps;
       'mdui-sym-more-vert': MduiSymbolProps;
       'mdui-sym-neurology': MduiSymbolProps;

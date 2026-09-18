@@ -1,7 +1,16 @@
 import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
-import { Banner, EmptyState, PageShell, alertDialog, confirmDialog, toast, useMduiEvent } from '../ui';
+import {
+  Banner,
+  EmptyState,
+  HelpTip,
+  PageShell,
+  alertDialog,
+  confirmDialog,
+  toast,
+  useMduiEvent,
+} from '../ui';
 import { useAppNav } from '../components/appNav';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
@@ -976,12 +985,21 @@ export default function Library() {
       bottomNav={nav.bottom}
     >
       {SHOW_PWA_HINT && (
+        // 标题留结论（该做什么），「为什么」收进问号——那段解释在手机上要占四行，
+        // 而它只在 iOS 非独立模式下出现，正好是最缺横向空间的那一档。
         <Banner
           variant="warning"
           testId="pwa-hint"
           icon={<mdui-sym-warning />}
           title="建议用 Safari 将本页「添加到主屏幕」后使用"
-          description="在普通标签页中，若连续 7 天未打开，系统可能自动清除已导入的视频和字幕；从主屏幕打开则不会被清理。"
+          help={
+            <HelpTip headline="为什么要添加到主屏幕" label="说明" testId="pwa-hint-help">
+              <p>
+                在普通标签页中，若连续 7 天未打开，系统可能自动清除已导入的视频和字幕；
+                从主屏幕打开则不会被清理。
+              </p>
+            </HelpTip>
+          }
         />
       )}
 
@@ -1003,13 +1021,23 @@ export default function Library() {
       >
         <mdui-sym-cloud-upload className="drop-zone__icon" />
         <div className="drop-zone__title">点击或拖拽视频到此处导入</div>
+        {/* 说明文案：只留「用哪个 App 选 + 存哪儿」这两件当场要决策的事，
+            相册会转码 / iCloud 要先下载 / 导入后删原片释放空间这些补充说明收进问号里。
+            原因见 layout.css 里 .page-library .drop-zone 的注释：手机上两段长文会被挤成竖排。 */}
         <div className="drop-zone__hint">
-          请从「文件」App 中选择视频——从相册选择系统可能先转码，大视频会长时间无进度；iCloud
-          文件请先在「文件」App 中下载到本机
-        </div>
-        <div className="drop-zone__hint">
-          视频只保存在本机浏览器存储中，不会上传到任何服务器；导入完成后可在「文件」App
-          中删除原视频释放空间
+          <span>用「文件」App 选视频，只存本机、不上传</span>
+          {/* HelpTip 内部已经 stopPropagation —— 这里整块是可点击的投放区，
+              不拦住会顺手弹出文件选择器。 */}
+          <HelpTip headline="导入说明" label="导入说明" testId="import-help">
+            <p>
+              请从「文件」App 中选择视频。从「相册」选择时系统会先转码，大视频可能长时间没有进度；
+              存在 iCloud 里的文件，请先在「文件」App 中下载到本机。
+            </p>
+            <p>
+              视频只保存在本机浏览器存储中，不会上传到任何服务器。导入完成后，可以在「文件」App
+              中删除原视频来释放空间。
+            </p>
+          </HelpTip>
         </div>
         <div className="drop-zone__actions">
           <mdui-button
@@ -1104,11 +1132,9 @@ export default function Library() {
 
       <div data-testid="video-list">
         {videos.length === 0 && folders.length === 0 ? (
-          <EmptyState
-            testId="empty-state"
-            title="还没有视频"
-            description="点上方投放区选择本机视频，或从 B 站链接导入。视频只保存在这台设备上，不会上传。"
-          />
+          // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
+          // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
+          <EmptyState testId="empty-state" title="还没有视频" />
         ) : (
           groups
             .filter((g) => g.videos.length > 0 || g.folder != null)

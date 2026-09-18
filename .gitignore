@@ -13,5 +13,8 @@ scripts/out
 .playwright-browsers
 e2e-shots
 scripts/.tmp-*
+# 根目录下的临时件（目前是 e2e-frames-hires 现造的抽帧 fixture .tmp-frames.mp4；
+# 它与 scripts/.tmp-* 是同一类东西，只是要给 dev server 当静态根，所以放在根目录）
+/.tmp-*
 .workbuddy/
 vite.config.ts.timestamp-*

@@ -133,6 +133,7 @@ export default function MigrationCard() {
             <div className="text-secondary" style={{ fontSize: 13 }}>
               {c.videos ?? 0} 个视频 · {c.segments ?? 0} 条字幕 · {c.handouts ?? 0} 份讲义 ·{' '}
               {c.frames ?? 0} 张帧 · {c.chatSessions ?? 0} 个会话 · {c.cards ?? 0} 张卡片
+              {c.studyDays ? ` · ${c.studyDays} 天学习记录` : ''}
             </div>
             {pending.preview.existingVideos > 0 && (
               <div style={{ fontSize: 13, color: 'rgb(var(--mdui-color-error))' }}>

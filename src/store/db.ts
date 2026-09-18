@@ -248,6 +248,25 @@ export interface CardRow {
   createdAt: number;
 }
 
+/**
+ * 每日学习时长（在线时长）。**一天一行，主键就是本地日期** `YYYY-MM-DD`。
+ *
+ * 为什么主键用日期字符串而不是自增 id：热力图是「按区间取一段」，字符串主键上
+ * `between(start, end)` 就是天然有序的范围查询；按 id 就得再建一个索引，白搭。
+ * 而且一天一行的语义下，「今天那行」的 upsert 天然幂等，多标签页同时写也只是累加。
+ *
+ * 为什么不存在 settings 里（localStorage）：一天一行、一年 365 行，随着使用会持续增长，
+ * 这是**数据**不是**配置**；localStorage 只有几 MB 且是同步写，放久了会拖慢启动。
+ */
+export interface StudyDayRow {
+  /** 主键：本地日期 `YYYY-MM-DD`（本地时区，跨天按本地零点切，见 utils/studyLog.ts） */
+  date: string;
+  /** 当日累计秒数（只增不减） */
+  seconds: number;
+  /** 最后一次累计的时刻，排查用 */
+  updatedAt: number;
+}
+
 export interface SkillRow {
   id?: number;
   name: string;
@@ -284,6 +303,7 @@ class WangkeDB extends Dexie {
   materialBlocks!: Table<MaterialBlockRow, number>;
   materialEmbeddings!: Table<MaterialEmbeddingRow, number>;
   covers!: Table<CoverRow, string>;
+  studyDays!: Table<StudyDayRow, string>;
 
   constructor() {
     super('wangke');
@@ -352,6 +372,10 @@ class WangkeDB extends Dexie {
     // videos 上的 dominantColor / coverState 是非索引字段，同样沿用先例、不需要升版本。
     this.version(10).stores({
       covers: 'videoId',
+    });
+    // v11：每日学习时长（热力图）。主键即日期，见 StudyDayRow 的注释。
+    this.version(11).stores({
+      studyDays: 'date',
     });
   }
 }

@@ -37,6 +37,8 @@ const TABLES = [
   'cards',
   'skills',
   'skillRefs',
+  // 学习时长（v11）。它不是视频的子表（一天一行、与课程无关），导入侧单独合并，见 importMigrationZip
+  'studyDays',
 ] as const;
 
 export interface MigrationManifest {
@@ -301,7 +303,24 @@ export async function importMigrationZip(
     }
   }
 
-  // 4) chatSessions → chats：sessionId 链经 旧id→新id 映射重挂
+  // 4) 学习时长：与课程无关的全局表，按日期合并。
+  //    同一天两台设备都学过时**取较大值**而不是相加 —— 相加会把同一天的时长算两遍，
+  //    而直接跳过又会丢掉「另一台学得更久」的那一半。
+  onStep?.('正在导入学习时长…');
+  for (const raw of data.studyDays ?? []) {
+    const row = decodeRow(raw) as { date?: string; seconds?: number; updatedAt?: number };
+    if (!row.date || typeof row.seconds !== 'number') continue;
+    const exists = await db.studyDays.get(row.date);
+    if (exists && exists.seconds >= row.seconds) continue;
+    await db.studyDays.put({
+      date: row.date,
+      seconds: row.seconds,
+      updatedAt: row.updatedAt ?? Date.now(),
+    });
+    bump('studyDays', 1);
+  }
+
+  // 5) chatSessions → chats：sessionId 链经 旧id→新id 映射重挂
   onStep?.('正在导入问答会话…');
   const sessionIdMap = new Map<number, number>();
   for (const raw of data.chatSessions ?? []) {

@@ -117,6 +117,11 @@ await db.cards.add({ videoId: VID_A, q: '间隔增长率', a: 'r1+r2+r1r2', time
 await db.skills.add({ name: '我的自定义技能', description: 'd', body: '正文', enabled: 1, builtin: 0, updatedAt: 60 });
 const skillId = (await db.skills.toArray())[0].id;
 await db.skillRefs.add({ skillId, path: 'references/notes.md', body: '参考内容' });
+// 学习时长（v11）：与课程无关的全局表，按日期合并
+await db.studyDays.bulkAdd([
+  { date: '2026-09-18', seconds: 3600, updatedAt: 70 },
+  { date: '2026-09-17', seconds: 600, updatedAt: 70 },
+]);
 
 // ---------- 导出 ----------
 const zipBlob = await exportMigrationZip();
@@ -133,6 +138,7 @@ await test('zip 含 manifest/db/settings 三件', () => {
   assert.equal(m.counts.segments, 3);
   assert.equal(m.counts.subtitleTracks, 1);
   assert.equal(m.counts.frames, 1);
+  assert.equal(m.counts.studyDays, 2);
 });
 
 await test('settings.json 不含 apiKey', () => {
@@ -221,7 +227,16 @@ await test('全新导入：folder 重挂、skill+ref 重挂', async () => {
   assert.equal(refs[0].body, '参考内容');
 });
 
+await test('全新导入：学习时长按日期迁入（不属于任何视频）', async () => {
+  assert.equal((await db.studyDays.get('2026-09-18')).seconds, 3600);
+  assert.equal((await db.studyDays.get('2026-09-17')).seconds, 600);
+  assert.equal(await db.studyDays.count(), 2);
+});
+
 // ---------- 冲突场景：同包二次导入应全部跳过 ----------
+// 本机把 18 日学得更久、另有一天是迁移包里没有的 —— 用来验「取较大值」而不是相加
+await db.studyDays.put({ date: '2026-09-18', seconds: 7200, updatedAt: 80 });
+await db.studyDays.put({ date: '2026-09-16', seconds: 300, updatedAt: 80 });
 const r2 = await importMigrationZip(new Blob([zipBytes]), { restoreSettings: false });
 await test('二次导入：视频全部跳过，无重复写入', async () => {
   assert.equal(r2.videosAdded, 0);
@@ -231,6 +246,12 @@ await test('二次导入：视频全部跳过，无重复写入', async () => {
   assert.equal(await db.chats.count(), 2);
   assert.equal(await db.folders.count(), 1); // 同名 folder 合并
   assert.equal(await db.skills.count(), 1); // 同名 skill 跳过
+});
+
+await test('二次导入：学习时长按日期取较大值（不相加、不覆盖更久的）', async () => {
+  assert.equal((await db.studyDays.get('2026-09-18')).seconds, 7200); // 本机更久 → 保留本机
+  assert.equal((await db.studyDays.get('2026-09-17')).seconds, 600); // 本机没有 → 迁入
+  assert.equal((await db.studyDays.get('2026-09-16')).seconds, 300); // 本机独有 → 不动
 });
 
 // ---------- 部分冲突：本机已有 VID_A，只迁 VID_B ----------
