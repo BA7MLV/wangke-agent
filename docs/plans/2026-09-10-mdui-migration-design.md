@@ -31,7 +31,7 @@
 
 ## 二、阶段 0 可行性验证结论（已实测）
 
-验证装置：`/Users/ba7mlv/.workbuddy/binaries/node/workspace/mdui-check/`（React 18 与 React 19 两个对照工程 + Playwright 驱动脚本，可重复执行）。
+验证装置：本机 WorkBuddy 工作区下的 `binaries/node/workspace/mdui-check/`（React 18 与 React 19 两个对照工程 + Playwright 驱动脚本，可重复执行）。
 
 ### 2.1 React 19 让 Web Components 的绑定税大幅下降
 

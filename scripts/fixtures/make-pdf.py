@@ -13,7 +13,7 @@
 3. **带书签目录**：用来验证阅读器的目录导航与「章节 → unitLabel」的 section 归属。
 
 运行（一次性，产物提交进仓库）：
-    /Users/ba7mlv/.workbuddy/binaries/python/envs/default/bin/python scripts/fixtures/make-pdf.py
+    python3 scripts/fixtures/make-pdf.py
 
 依赖：reportlab（见 README 测试一节）。
 """

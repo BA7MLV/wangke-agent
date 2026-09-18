@@ -499,7 +499,7 @@ node scripts/e2e-all.mjs --only=e2e-materials
 用 Python `reportlab` **一次性生成**并提交，生成脚本 `make-pdf.py` 一并提交以保证可复现：
 
 ```bash
-/Users/ba7mlv/.workbuddy/binaries/python/envs/default/bin/python scripts/fixtures/make-pdf.py
+python3 scripts/fixtures/make-pdf.py
 ```
 
 - `sample-zh.pdf`（约 5KB）：3 页、**未内嵌** CJK 字体（STSong-Light）、带书签；
