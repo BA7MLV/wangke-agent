@@ -138,6 +138,31 @@ finished?: 0 | 1;
 现在语义变了（播完写真实位置 + `finished`），注释与实现不符就是误导。断言本身不用动 ——
 它验的是「seek 到 10s 播放几秒后 `lastPosition` ≥ 9」，新语义下依然成立。
 
+### 实测（2026-09-18，提交后复验）
+
+- `npx tsc -b` → 通过（exit 0）
+- `node scripts/test-video-progress.mjs` → **11 通过 / 0 失败**
+- `BASE_URL=http://localhost:5173 node scripts/e2e-library-progress.mjs` → **exit 0，全绿**：
+  `pg-half` 实测填充占比 **0.62**、条高 4px、贴底边；`pg-done` 满条 + `data-finished="1"`；
+  没看过 / 只看了 5 秒（0.42%）/ 阅读材料**三条都不画条**；无 console 错误。
+  截图 `e2e-shots/library-progress.png`。
+- `BASE_URL=http://localhost:5173 node scripts/e2e-materials.mjs` → **exit 0，32 ✅ / 0 ❌**
+  （顺带复验了划词那三条新用例，与
+  `2026-09-18-selection-ask-scroll-design.md` 记的 dev 档结果一致）。
+
+⚠️ **跑的是 dev 档（5173），不是上面写的 preview 档。** 原因是 `npm run build`
+被宿主文件审批拦着（`pdfjs-dist/build/pdf.mjs` 与 `@mdui/jq/functions/param.js` 同一类，
+非代码问题），dist 停在 10:06 那一版、**不含本次改动** —— preview 档跑这个脚本
+**必然假红**，红的不是代码。所以**产物形态验收仍是欠账**，与划词修复那笔是同一笔账：
+待审批放行后 `npm run build` + `node scripts/e2e-all.mjs --only=e2e-library-progress`
+补上。这次没做，别把它读成「已验」。
+
+环境备注（与代码无关，但会绊住下一次复跑）：沙箱的透明代理连 `localhost` 也拦
+（`curl http://localhost:5173/` 返回 502，加 `--noproxy '*'` 或绕过沙箱才是 200），
+所以 e2e 得在放行沙箱的前提下跑；Playwright 启动时沙箱会拒 Chrome 的签名克隆与
+`RlzStore.plist` 写入。拦截发生在 shell 层，两个脚本自身的退出码与断言都干净 ——
+**看到 "failed" 先看脚本退出码，别被外层状态骗了**。
+
 ## 5. 已知未做 / 取舍
 
 1. **老数据无法回溯**。改动之前已经播完的视频，`lastPosition` 被写成了 0 且没有
