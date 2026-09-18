@@ -11,6 +11,7 @@ import {
   searchMaterial,
 } from './searchMaterial';
 import { fmtUnitRef, unitNoun, type UnitKind } from '../materials/units.ts';
+import { isSkillAllowed } from '../skills/scope';
 
 /** 一次范围取数的单元数上限：防止模型一次要 200 页把上下文吃光 */
 const MAX_RANGE_UNITS = 20;
@@ -204,11 +205,30 @@ export interface ToolExecutorOptions {
   kind?: UnitKind;
   /** present_quiz 校验通过后的题卡透传回调 */
   onQuiz?: (quiz: QuizData) => void;
+  /**
+   * 会话级技能白名单（问答面板的「技能范围」限定）。
+   *
+   * ⚠️ **`undefined` 与 `[]` 不同**：`undefined` = 不限制；`[]` = 全部拒绝。
+   * 判定统一走 `skills/scope.ts` 的 `isSkillAllowed`，不要在这里另写一份 ——
+   * 两份判定迟早会不一致，而不一致就是漏洞口子。
+   */
+  allowedSkillIds?: number[];
 }
 
 /** 构造绑定到某个课程的工具执行器；`kind` 决定走字幕检索还是材料检索 */
 export function createToolExecutor(courseId: string, opts: ToolExecutorOptions = {}) {
-  const { kind, onQuiz } = opts;
+  const { kind, onQuiz, allowedSkillIds } = opts;
+
+  /**
+   * 技能是否在本次会话的可选范围内。
+   *
+   * 这是白名单的**唯一执行点**：提示词里收窄清单只是「告诉模型有哪些」，
+   * 模型仍可能凭历史消息里的印象去调一个已不在清单里的技能 —— 只在提示词层收窄，
+   * 白名单就形同虚设。这里拒绝掉，才算是硬边界。
+   */
+  const skillAllowed = (id: number | undefined) =>
+    allowedSkillIds === undefined || (id != null && allowedSkillIds.includes(id));
+
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (name === 'search_transcript') {
       const query = String(args.query ?? '');
@@ -261,6 +281,11 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const skillName = String(args.name ?? '');
       const skill = await db.skills.where('name').equals(skillName).first();
       if (!skill || !skill.enabled) return `未找到技能：${skillName}（名称需与技能列表完全一致）`;
+      // 文案要指向「可选范围」而不是含糊的「不允许」：模型收到「未找到」会换个名字再试，
+      // 收到「不在范围内」才知道该收手 —— 否则会白烧好几轮工具调用。
+      if (!skillAllowed(skill.id)) {
+        return `技能「${skillName}」不在本次会话的可选技能范围内。请改用系统提示词中列出的技能，或直接依据课程内容回答。`;
+      }
       const refs = await db.skillRefs.where('skillId').equals(skill.id!).toArray();
       const refList =
         refs.length > 0
@@ -273,6 +298,11 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const path = String(args.path ?? '');
       const skill = await db.skills.where('name').equals(skillName).first();
       if (!skill) return `未找到技能：${skillName}`;
+      // 边界与 use_skill 保持一致：它是 use_skill 的后续步骤，理论上不会绕过，
+      // 但两处判定不一致就是一个可利用的漏洞口子。
+      if (!skillAllowed(skill.id)) {
+        return `技能「${skillName}」不在本次会话的可选技能范围内，无法读取其参考文档。`;
+      }
       const ref = await db.skillRefs
         .where('skillId')
         .equals(skill.id!)

@@ -1,0 +1,58 @@
+/**
+ * 技能范围选择器（配 SkillPicker.tsx）。
+ *
+ * 颜色一律走 MD3 令牌（`rgb(var(--mdui-color-*))`，令牌值是 R,G,B 三元组必须包 rgb()）。
+ */
+
+.skill-picker {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  /* 技能可能有一二十个：对话框高度封顶、内部滚动，别让它撑满整屏 */
+  max-height: 52vh;
+  overflow: auto;
+}
+
+.skill-picker__hint {
+  margin-bottom: 8px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.skill-picker__empty {
+  padding: 12px 0;
+  font-size: 13px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.skill-picker__row {
+  display: flex;
+  flex-direction: column;
+  padding: 3px 0;
+}
+
+.skill-picker__name {
+  font-size: var(--mdui-typescale-body-medium-size);
+}
+
+/* 缩进对齐到复选框文字起始处（mdui-checkbox 的框宽 + 间隙）。
+   这个值不是令牌，是对齐用的目测值 —— 改动 checkbox 尺寸时这里要跟着调。 */
+.skill-picker__desc {
+  padding-left: 34px;
+  font-size: 11px;
+  line-height: 1.4;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* 「一个都没勾」的提醒：不是错误，用中性容器色而不是 error 色 ——
+   空集是个合法选择，只是值得让用户确认一下自己在做什么。 */
+.skill-picker__warn {
+  margin-top: 10px;
+  padding: 8px 10px;
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-surface-container-high));
+  font-size: 12px;
+  line-height: 1.5;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}

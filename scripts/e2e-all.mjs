@@ -89,6 +89,9 @@ const META = {
   'test-video-progress': { service: 'none', antd: false, timeout: 120 },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
+  // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
+  // 全是零依赖纯函数，所以能进这一档 —— 拆出 skills/scope.ts 就是为了这个。
+  'test-qa-skill-scope': { service: 'none', antd: false, timeout: 120 },
   // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
   'e2e-audio-corrupt-frame': { service: 'none', antd: false, timeout: 300 },
 
@@ -174,6 +177,10 @@ const META = {
   'e2e-preview-fonts': { service: 'dev', antd: true, timeout: 300 },
   // 只能跑 dev：守的是 StrictMode 双调用引发的并发竞态，生产构建不触发（见脚本头注释）
   'e2e-skills-dedupe': { service: 'dev', antd: false, timeout: 120 },
+  // 用 dev 而不是 preview：脚本只覆盖 UI 与持久化，不依赖生产构建的任何差异，
+  // 这样免掉「先 npm run build」。它自己造样片、自己播种字幕（没有字幕时问答面板
+  // 只渲染占位符，工具条整个不出现），所以不注入 key、不调真实 API。
+  'e2e-chat-skill-scope': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-skill-scope-test.mp4' },
   // 只能跑 dev：动态取色那段要往 IndexedDB 种封面帧，得拿应用同一份 Dexie 实例
   'e2e-material-you': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'probe': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },

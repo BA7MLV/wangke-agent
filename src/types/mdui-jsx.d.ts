@@ -3394,6 +3394,7 @@ declare module 'react' {
       'mdui-sym-drag-indicator': MduiSymbolProps;
       'mdui-sym-edit': MduiSymbolProps;
       'mdui-sym-error': MduiSymbolProps;
+      'mdui-sym-extension': MduiSymbolProps;
       'mdui-sym-folder': MduiSymbolProps;
       'mdui-sym-folder-open': MduiSymbolProps;
       'mdui-sym-format-size': MduiSymbolProps;

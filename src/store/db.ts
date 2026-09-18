@@ -166,6 +166,18 @@ export interface ChatSessionRow {
   videoId: string;
   title: string;
   createdAt: number;
+  /**
+   * 会话级技能白名单（非索引字段，无需升级版本）。
+   *
+   * ⚠️ **`undefined` 与 `[]` 语义不同，不能合并判断**：
+   * - `undefined`（不设）= 不限定，全部启用技能可用 —— 默认值，老会话零迁移；
+   * - `[]` = 限定，且一个技能都不给；
+   * - `[id, ...]` = 限定为该集合（与技能启用状态取交集后才生效）。
+   *
+   * 判定统一走 `isSkillLimited()`（skills/store.ts），不要在调用点写 `if (ids?.length)` ——
+   * 那会把「用户明确禁用了全部技能」静默退化成「全部可用」。
+   */
+  skillIds?: number[];
 }
 
 /** 聊天消息附带的截图（仅存缩略图，大图随发随弃） */

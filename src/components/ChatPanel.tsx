@@ -9,7 +9,7 @@ import { runAgentLoop } from '../harness/agent';
 import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
-import { loadEnabledSkillMeta, skillMetaBlock } from '../skills/store';
+import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
@@ -25,6 +25,7 @@ import { Panel, PanelBar, PanelSpacer, PanelProgress, PanelBody, PanelPlaceholde
 import { ThinkLine, StreamParagraph } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import ModelPicker from './ModelPicker';
+import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
 import './chat-panel.css';
 
@@ -221,6 +222,14 @@ export default function ChatPanel({
   const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  /**
+   * 当前会话的技能白名单（`undefined` = 不限定，见 `ChatSessionRow.skillIds`）。
+   *
+   * 与 `activeId` 同步切换，**不做跨会话记忆**：它是会话的属性，不是面板的属性。
+   * 发送时这个值要同时喂给「提示词清单」和「工具白名单」两处，只改一处会得到
+   * 「模型看不到某技能、但调了却能成功」的错配。
+   */
+  const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
   const [shots, setShots] = useState<Snapshot[]>([]);
   /**
    * 划词/框选带进来的引用条（最多 MAX_REFS 条）。
@@ -485,15 +494,20 @@ export default function ChatPanel({
     void loadFramesMeta();
   }, [loadFramesMeta]);
 
-  // 切换会话时加载该会话的历史消息
+  // 切换会话时加载该会话的历史消息与技能范围
   useEffect(() => {
     if (activeId == null) {
       setMsgs([]);
+      setSkillIds(undefined);
       return;
     }
     let cancelled = false;
     (async () => {
+      // 技能范围从库里现查而不是读 sessions state：会话行可能刚被别处改过，
+      // 且这样 effect 只依赖 activeId，不会因为 sessions 数组变化而重载整个历史。
+      const row = await db.chatSessions.get(activeId);
       const history = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+      if (!cancelled) setSkillIds(row?.skillIds);
       if (!cancelled) {
         setMsgs(history.map((r) => ({
           key: `h-${r.id}`,
@@ -544,6 +558,26 @@ export default function ChatPanel({
     a.click();
     URL.revokeObjectURL(url);
     toast.success('已导出 Markdown 文件');
+  };
+
+  /**
+   * 改当前会话的技能范围。
+   *
+   * UI 先落地、库写异步补上：勾选框是「点一下就该有反馈」的控件，等 IndexedDB 回来再重渲染
+   * 会有一帧迟滞。写失败也只是下次切回来时回到旧范围，不会留下坏状态。
+   */
+  const updateSkillIds = (next: number[] | undefined) => {
+    if (activeId == null) return;
+    setSkillIds(next);
+    void db.chatSessions
+      .where('id')
+      .equals(activeId)
+      .modify((row) => {
+        // 「不限定」= 字段不存在，而不是「字段值为 undefined」—— 后者经过结构化克隆后
+        // 到底留下 undefined 还是 null 依赖实现，删掉字段最干净、读回来必然 undefined。
+        if (next === undefined) delete row.skillIds;
+        else row.skillIds = next;
+      });
   };
 
   /** 新开会话 */
@@ -764,8 +798,11 @@ export default function ChatPanel({
       }
 
       // 构造上下文：system + 按 token 预算截取的历史 + 当前问题
-      // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文
-      const skillMetas = await loadEnabledSkillMeta();
+      // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文。
+      // 走 loadSessionSkillMeta：会话限定了范围时，清单只列范围内的技能（未限定则等价于全量）。
+      // ⚠️ 这里与下方 executeTool 的 allowedSkillIds 必须传同一个 skillIds —— 清单收窄与
+      // 工具放行是同一件事的两面，只改一处会造成「看不到却能调通」或「看得到却被拒」的错配。
+      const skillMetas = await loadSessionSkillMeta(skillIds);
       // 每次发送前刷新帧元数据（讲义可能在本面板挂载后生成）：有帧才注册 list_frames 工具并注入引用规则
       // 材料没有画面可引用，直接跳过这次查询
       const meta = isMaterial ? [] : await loadFramesMeta();
@@ -1014,6 +1051,7 @@ export default function ChatPanel({
 
       <PanelBar wrap={false} testId="chat-model-bar">
         <ModelPicker slot="chat" field="llmModel" />
+        <SkillPicker value={skillIds} onChange={updateSkillIds} />
         <PanelSpacer />
         {supportsThinking(llmModel) && !isMobile && (
           <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>

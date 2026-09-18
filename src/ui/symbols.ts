@@ -41,6 +41,9 @@ export const SYMBOL_NAMES = [
   'drag_indicator',
   'edit',
   'error',
+  // 问答面板的「技能范围」按钮。不复用 tune：那个图标在讲义面板已经代表
+  // 「生成参数（模型 + 技能覆盖）」，同一图标两种含义会让人以为点开是同一类东西。
+  'extension',
   'folder',
   'folder_open',
   'format_size',

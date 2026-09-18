@@ -1,5 +1,6 @@
 import { db, type SkillRow } from '../store/db';
 import { BUILTIN_SKILLS } from './builtin';
+import { intersectSkillIds } from './scope';
 import { parseSkillMarkdown } from './types';
 import { parseSkillZip, type ParsedSkillPackage } from './zip';
 
@@ -83,6 +84,20 @@ export async function loadEnabledSkillMeta(): Promise<SkillMeta[]> {
   await ensureBuiltinSkills();
   const skills = await db.skills.filter((s) => !!s.enabled).sortBy('id');
   return skills.map((s) => ({ id: s.id!, name: s.name, description: s.description }));
+}
+
+/**
+ * 会话白名单 → 实际可用的技能元数据（问答侧取数入口）。
+ *
+ * 三态判定与求交在 `./scope`（零依赖，Node 可直接单测）；这里只负责把启用集合喂进去。
+ * **顺序不能反**：先取启用集合、再按白名单求交，天然满足「技能被禁用后，白名单里的
+ * 残留 id 自动失效」，不需要另写一套 enabled 判断。
+ * 未限定（`undefined`）时结果等价于 `loadEnabledSkillMeta()`，即改动前的行为。
+ */
+export async function loadSessionSkillMeta(skillIds?: number[]): Promise<SkillMeta[]> {
+  const enabled = await loadEnabledSkillMeta();
+  const usable = new Set(intersectSkillIds(enabled.map((m) => m.id), skillIds));
+  return enabled.filter((m) => usable.has(m.id));
 }
 
 /** Level 2：按 id 加载技能正文并拼接（带总预算截断） */
