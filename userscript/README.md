@@ -1,5 +1,7 @@
 # B 站导入 · 油猴桥
 
+> ⚠️ 仅供个人学习使用。请遵守哔哩哔哩用户协议，勿用于批量抓取或下载付费 / 会员内容。详见项目根目录 README 的「免责声明」一节。
+
 Cloudflare Worker 的出口 IP 常被 B 站拒绝。这支脚本挂在**网课学习助手页面**上，用 `GM_xmlhttpRequest` 从**本机 IP**直连 B 站 API / CDN，并带上 `Referer: https://www.bilibili.com`。
 
 ## 安装
@@ -7,7 +9,7 @@ Cloudflare Worker 的出口 IP 常被 B 站拒绝。这支脚本挂在**网课�
 1. 浏览器装 [Tampermonkey](https://www.tampermonkey.net/)（Chrome / Edge / Firefox / Safari 桌面端）
 2. 打开网课助手 → **设置 → 哔哩哔哩导入**，点「安装油猴脚本」；或把 `wangke-bili-bridge.user.js` 拖进 Tampermonkey
 3. 刷新网课助手。设置页应显示「油猴桥已连接」
-4. 库页粘贴 BV / 链接即可导入。可选：在设置里贴自己的 `SESSDATA` 解锁更高清晰度
+4. 库页粘贴 BV / 链接即可导入。可选：在设置里贴自己的 `SESSDATA` 以带上登录态（清晰度由 B 站按你的账号权限决定）
 
 ## 脚本升级（重要）
 
