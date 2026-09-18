@@ -14,8 +14,24 @@ export interface VideoRow {
   duration: number; // 秒（材料恒为 0）
   createdAt: number;
   status: 'new' | 'transcribing' | 'transcribed' | 'error';
-  /** 上次播放位置（秒），用于断点续播；播完归零。非索引字段 */
+  /**
+   * 上次播放位置（秒），**永远是真实播放位置**（播完也停在结尾，不归零）。
+   *
+   * 「播完后再打开要从头开始」这件事不在这里表达，而是由 `finished` 标记 + 播放页的
+   * `getTime()` 负责翻译 —— 这样主页的进度条直接 `lastPosition / duration` 就能画出满条，
+   * 不需要特判。详见 docs/plans/2026-09-18-home-progress-bar-design.md §3.2。
+   * 非索引字段。
+   */
   lastPosition?: number;
+  /**
+   * 本轮已播完（看到结尾）。`1` = 已看完，主页显示满条；不设或 `0` = 未看完。
+   *
+   * 用 `0 | 1` 而不是「有就 true、清就 delete」：清除要靠 `Table.update()` 写回，
+   * 而 `update` 收到 `undefined` 时是删字段还是写 undefined 属于 Dexie 的实现细节，
+   * 写成 `0` 语义显式、行为可测。判断一律用 `=== 1`（老数据没有这个字段，
+   * `undefined === 1` 为 false，天然算「未看完」）。非索引字段。
+   */
+  finished?: 0 | 1;
   /** 视频文件本体已删（释放空间），字幕/讲义/问答等内容保留 */
   fileDeleted?: 1;
   /** 讲义技能手动覆盖：pin=必用，drop=排除（skill id 列表）；不设则由路由器自动选 */

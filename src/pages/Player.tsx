@@ -166,17 +166,47 @@ export default function Player() {
   // 配色挂在整页根节点上（Player 的根元素），离开播放页自动失效
   const colorSchemeRef = useDynamicColor({ sourceUrl: coverUrl, enabled: dynamicColor });
 
-  // 断点续播：Vidstack 原生 MediaStorage 机制——打开时 getTime 恢复进度，
-  // 播放中自动节流 setTime 落盘（含暂停/页面隐藏），播完 ended=true 归零
+  /**
+   * 断点续播 + 主页进度条：Vidstack 原生 MediaStorage 机制——打开时 getTime 恢复进度，
+   * 播放中 setTime 落盘（含暂停/页面隐藏）。
+   *
+   * 「位置」与「看没看完」分开存：`lastPosition` 永远写**真实位置**（播完停在结尾），
+   * 「播完后再打开要从头开始」由 `finished` 标记 + 这里的 getTime 翻译。
+   * 这样主页凭 `lastPosition / duration` 就能直接画出满条，不需要特判。
+   * 详见 docs/plans/2026-09-18-home-progress-bar-design.md §3.2。
+   */
   const resumeStorage = useMemo<MediaStorage>(
     () => ({
       async getTime() {
         if (!id) return null;
-        return (await db.videos.get(id))?.lastPosition ?? null;
+        const row = await db.videos.get(id);
+        if (!row) return null;
+        if (row.finished === 1) {
+          // 上一轮看完了：本次打开即新一轮观看，清掉标记并把位置归零。
+          //
+          // 必须真写库，而不是「读到 finished 就返回 0」糊弄过去：播完 → 打开 →
+          // 拖到 90% 看一段 → 退出，读时糊弄的版本会让标记一直留着，
+          // 下次又从头开始，刚看的那段进度白丢。
+          //
+          // 读进度失败不该拦住播放，所以吞掉异常、照样返回 0（从头上放）。
+          try {
+            await db.videos.update(id, { finished: 0, lastPosition: 0 });
+          } catch {
+            /* 落库失败只影响主页那根条，不影响本次从头播放 */
+          }
+          return 0;
+        }
+        return row.lastPosition ?? null;
       },
       async setTime(time, ended) {
-        if (!id) return;
-        await db.videos.update(id, { lastPosition: ended ? 0 : time });
+        // 时长没探到等情况下 vidstack 会传 NaN，别把垃圾写进库
+        if (!id || !Number.isFinite(time)) return;
+        // 播完时 vidstack 传的是 duration（其 #onEnded 里 `setTime(duration(), true)`），
+        // 正好就是「看到哪儿了」的真实位置，直接落盘
+        await db.videos.update(
+          id,
+          ended ? { lastPosition: time, finished: 1 } : { lastPosition: time },
+        );
       },
       // 其余 getter 返回 null（无保存值），音量/字幕/倍率等行为与之前一致
       async getVolume() { return null; },

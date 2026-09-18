@@ -1,6 +1,12 @@
 /* eslint-disable no-console */
 // 断点续播链路：导入视频 → 播放页 seek 到 10s 并播放几秒 → IndexedDB 落盘 lastPosition
-// → 刷新页面 → 播放器自动恢复到上次位置（播完归零逻辑由 ended 回调保证，不在本脚本覆盖）
+// → 刷新页面 → 播放器自动恢复到上次位置。
+//
+// ⚠️ 「播完」那一路**不在本脚本覆盖**：现在 ended 时写的是**真实位置**（停在结尾）+
+//    `finished: 1`，「播完后再打开要从头开始」由播放页 getTime() 翻译 ——
+//    见 docs/plans/2026-09-18-home-progress-bar-design.md §3.2。
+//    真验那条要等视频播到底，本脚本用的是短片所以没做；主页那根满条由
+//    e2e-library-progress 覆盖（自播种 finished 数据，不需要视频）。
 // 用法：TEST_FILE=/path/to/video.mp4 node scripts/e2e-resume.mjs（需先 npm run preview）
 import { chromium } from 'playwright';
 

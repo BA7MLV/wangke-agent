@@ -24,7 +24,8 @@ import './selection-ask.css';
  *    → 浮层在 click 之前就自己消失了。对策：`mousedown.preventDefault()`（保住选区）+
  *    「刚点过浮层」的抑制窗口兜底触摸端。
  * 2. **移动端原生选择菜单会挡住浮层** → 移动端不用跟随选区，改成贴底固定条。
- * 3. **滚动后锚点失效** → 滚动直接收起（选区本身还在，重选成本很低）。
+ * 3. **滚动后锚点失效** → 锚点是视口坐标、不跟着走，但**选区本身往往还在**，
+ *    所以不能一滚就永久收起（触摸端尤其致命，见 `onScroll` 的注释）。
  */
 
 interface Hit {
@@ -77,6 +78,7 @@ export default function SelectionAsk() {
 
   useEffect(() => {
     let timer = 0;
+    let scrollTimer = 0;
     const onChange = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
@@ -101,10 +103,30 @@ export default function SelectionAsk() {
       setHit(null);
       hideBar();
     };
-    // 滚动后锚点就没意义了（锚点是视口坐标，不跟着走），直接收起
+    /**
+     * 滚动后锚点就没意义了（锚点是视口坐标，不跟着走），但**选区本身往往还在**。
+     *
+     * 不能像原来那样直接清空：浮层只在 `selectionchange` 时重算，而滚动之后不会再有
+     * 该事件（选区没变），于是它永久消失 —— 用户看到的是「划了词没反应」。
+     *
+     * 触摸端尤其致命：iOS 长按划词本身就会带动滚动（选区贴边时 auto-scroll、
+     * 原生选择菜单弹出时调整视口），连「重新划一次」这个退路都被堵死（每次重选又会再滚一次）。
+     * 这也解释了为什么表现为「只有第一页能划词」—— 容器在顶部时无处可滚，压根没有 scroll 事件。
+     *
+     * 所以改成**滚动停止后重算一次**：`readSelection()` 每次都重取 `getBoundingClientRect()`，
+     * 位置天然跟着更新，不需要另外记滚动偏移。
+     * 滚动中仍然先收起：否则浮层会停在旧锚点上，快速滚动时表现为在页面上乱飘。
+     */
     const onScroll = () => {
-      setHit(null);
+      // 框选浮层是「一次性投递」，没有 DOM 选区可重算 —— 滚动后照旧收起、不恢复。
+      // 少了这一句：框选前划过的那段文字会被重新弹出来，浮层变成一次莫名其妙的「变身」
+      // （划词后直接点框选时，旧选区并没有被清掉）。
+      const wasRegionBar = !!useSelectionAsk.getState().bar;
       hideBar();
+      setHit(null);
+      window.clearTimeout(scrollTimer);
+      if (wasRegionBar) return;
+      scrollTimer = window.setTimeout(() => setHit(readSelection()), 120);
     };
 
     document.addEventListener('selectionchange', onChange);
@@ -113,6 +135,7 @@ export default function SelectionAsk() {
     document.addEventListener('scroll', onScroll, true);
     return () => {
       window.clearTimeout(timer);
+      window.clearTimeout(scrollTimer);
       document.removeEventListener('selectionchange', onChange);
       document.removeEventListener('pointerdown', onPointerDown, true);
       document.removeEventListener('keydown', onKey);

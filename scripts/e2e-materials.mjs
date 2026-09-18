@@ -267,6 +267,49 @@ await check('引用条可单条删除', async () => {
   await page.waitForFunction(() => !document.querySelector('[data-testid="chat-ref-chip"]'), { timeout: 5000 });
 });
 
+/**
+ * 回归：一次 `scroll` 曾经把浮层永久吃掉。
+ *
+ * 原实现是 `onScroll = () => { setHit(null); hideBar(); }`，而浮层只在 `selectionchange`
+ * 时重算 —— 滚动之后不会再有该事件（选区没变），于是浮层再也不回来。
+ * 触摸端表现为「只有第一页能划词」：容器在顶部时无处可滚，压根不产生 scroll 事件。
+ * 上面那两条用例测不出来 —— 它们只划第 1 页，而且 Selection API 本身不产生滚动。
+ * 详见 docs/plans/2026-09-18-selection-ask-scroll-design.md
+ */
+await check('滚动到第 2 页后仍能划词（非首屏页的划词入口）', async () => {
+  await page.click('[data-testid="reader-next"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="reader-page-indicator"]')?.textContent.trim() === '2 / 3',
+    { timeout: 10000 },
+  );
+  // goto() 用的是 smooth 滚动，等它落定再建选区，否则量到的锚点还在动
+  await page.waitForTimeout(600);
+  const r = await selectPageText(1);
+  assert.equal(r, 'ok', r);
+  await page.waitForSelector('[data-testid="ask-float"]', { timeout: 5000 });
+  const where = await page.textContent('.ask-float__where');
+  assert.equal(where.trim(), '第 2 页');
+});
+
+await check('划词后滚动：浮层跟随重算，而不是被永久吃掉', async () => {
+  const before = await page.locator('[data-testid="ask-float"]').boundingBox();
+  await page.evaluate(() => {
+    document.querySelector('.mr-scroll').scrollTop += 40;
+  });
+  await page.waitForTimeout(600); // 滚动停止(120ms 防抖) + 一次重算
+  const after = await page.locator('[data-testid="ask-float"]').boundingBox();
+  assert.ok(after, '滚动后浮层不应永久消失');
+  // 只断言「还在」会在旧实现下漏报（旧实现里它已经消失），所以再断言位置确实跟着滚动变了 ——
+  // 位置变化才能证明「重算过」，而不只是「碰巧没被收起」
+  assert.ok(
+    Math.abs(after.y - before.y) > 20,
+    `浮层位置应跟着滚动重算：${Math.round(before.y)} → ${Math.round(after.y)}`,
+  );
+});
+
+// 复位到第 1 页：第 5 节的框选用例假设从第 1 页开始
+await gotoFirstPage();
+
 console.log('\n—— 5. 框选提问 ——');
 
 /**
@@ -331,6 +374,26 @@ await check('框选态下文本层让位（否则拖不出框）', async () => {
   await page.waitForFunction(() => !document.querySelector('[data-testid="reader-area-hint"]'), {
     timeout: 5000,
   });
+});
+
+await check('框选浮层滚动后收起，不会「变身」成划词浮层', async () => {
+  // 先留一个**残留选区**：划完词不点浮层按钮（直接去点框选是真实路径），选区就还在。
+  // 它是这条用例的关键 —— 没有它，滚动后的重算本来就返回 null，根本测不出这个守卫。
+  const r = await selectPageText(0);
+  assert.equal(r, 'ok', r);
+  await page.waitForTimeout(300);
+
+  await page.click('[data-testid="reader-tool-areaselect"]');
+  await page.waitForSelector('[data-testid="reader-area-hint"]', { timeout: 5000 });
+  await dragOnFirstPage();
+  await page.waitForSelector('[data-testid="ask-float"]', { timeout: 8000 });
+
+  await page.evaluate(() => {
+    document.querySelector('.mr-scroll').scrollTop += 40;
+  });
+  await page.waitForTimeout(600); // 滚动停止(120ms 防抖) + 一次重算
+  const f = await page.$('[data-testid="ask-float"]');
+  assert.equal(f, null, '框选浮层滚动后应收起，而不是把残留选区重新弹出来');
 });
 
 console.log('\n—— 6. 回答里的页码引用可跳页 ——');

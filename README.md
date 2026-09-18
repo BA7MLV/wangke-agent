@@ -4,7 +4,7 @@
 
 ## 功能
 
-- **库与文件夹**：首页视频按文件夹分组管理（新建/重命名/删除/折叠持久化，视频可移动归类，删文件夹视频回到未分类）
+- **库与文件夹**：首页视频按文件夹分组管理（新建/重命名/删除/折叠持久化，视频可移动归类，删文件夹视频回到未分类）；卡片缩略图底边显示**播放进度条**——看到一半的按比例画、看完的显示满条，扫一眼就知道哪些课还没刷完。没看过、以及进度不足 1% 的**不画**（不用 0 宽度的条冒充「看了一点」，那种精度下跟没看过本来也分不出来）
 - **阅读材料（PDF / Word）**：除视频外还能导入 PDF 与 .docx（旧版 .doc 会明确提示「另存为 .docx」）。导入后走「抽文本 → 归一化分块 → 向量化」流水线，产出一份**带页码（PDF）或段落号（Word）定位**的文本索引，与字幕**同等参与问答检索**。PDF 用 pdf.js 渲染（连续滚动 + 视口窗口化渲染，300 页不卡）、Word 用 docx-preview 渲染；两者都支持页码/段落导航、缩放、PDF 书签目录、断点续读。**扫描件会被显式识别并告知**（「没有文本层，无法参与检索，但仍可划词/框选提问」），不会让人误以为问答坏了
 - **选区提问（划词 / 框选）**：在 PDF、Word、字幕、讲义**任意一处**拖选文字，浮层即给「解释这段 / 就这段提问」；PDF 页面上还能切到「框选」态圈出一块区域当图片提问（裁图规格与视频截图同构，直接复用那条三级多模态降级链）。引用以**可堆叠、可单条删除的引用条**落在输入框上方，随消息一起发给模型（先检索、再围绕引用作答），用户消息气泡里也把「引的」与「问的」分区渲染。回答里的 `[第3页]` / `[第3段]` 可点击，阅读器会滚到对应位置并高亮
 - **B 站导入**：支持粘贴 B 站视频链接 / BV 号 / b23.tv 短链直接导入。优先走油猴脚本（Tampermonkey，`userscript/wangke-bili-bridge.user.js`）从本机直连 B 站 API/CDN（带 Referer、绕 CORS，不经过 Cloudflare）；没有脚本时才回退到自建代理。浏览器端用 mediabunny 把 DASH 音视频流重封装为 mp4（不重新编码、不丢画质），导入后与本地视频完全同权。清晰度：未登录 360P，粘贴自己账号 Cookie 可解锁更高清晰度（仅取决于账号权限，不破解任何限制）。iPad / 手机 PWA 无油猴，请改用本地文件导入
@@ -66,7 +66,7 @@ src/
   components/          # SubtitlePanel / HandoutPanel / HandoutDocView(IR 渲染+左滑编辑+AI 改写) / ChatPanel / MaterialReader(材料容器) / PdfReader / DocxReader / SelectionAsk(全局选区浮层) / mermaid/ / QuizCard / DanmakuPanel / DanmakuLayer / CardsPanel / SwipeDeck / SkillsCard / StorageCard / StudyTimeCard
   pages/               # Library / Player / Study(热力图) / Settings
   store/               # db.ts(Dexie schema) settings.ts(zustand persist) studyTime.ts(学习时长追踪) fileStore.ts(课程文件 OPFS) storageStats.ts jobs.ts selectionAsk.ts(选区提问投递)
-  utils/               # studyLog.ts(学习时长纯逻辑：日期键/跨天切分/热力图网格/统计，Node 可测) rate.ts cues.ts vtt.ts …
+  utils/               # studyLog.ts(学习时长纯逻辑：日期键/跨天切分/热力图网格/统计，Node 可测) videoProgress.ts(主页进度条纯逻辑：该不该画/画多长，Node 可测) rate.ts cues.ts vtt.ts …
 scripts/               # playwright e2e（真实 API）+ Node 单测，见下「测试」
   fixtures/make-pdf.py # 一次性生成 e2e 用的确定性 PDF（含未内嵌中文字体 + 书签版、无文本层版）
 cloudflare-worker/     # B 站导入代理（油猴不可用时的回退）：bili-proxy.js + README
@@ -98,6 +98,7 @@ node scripts/test-material-chunk.mjs    # 文本归一化与分块：中文空�
 node scripts/test-material-docx.mjs     # Word 文本抽取：段落/表格/三种标题写法/section 归属/实体解码/真 zip 解包与错误分支
 node scripts/test-material-region.mjs   # 框选区域纯逻辑：矩形规范化/误触判定/选区清洗与截断
 node scripts/test-study-log.mjs         # 学习时长纯逻辑：本地日期键（UTC 陷阱）/跨零点切分/热力图网格几何/统计与连续天数
+node scripts/test-video-progress.mjs    # 主页进度条纯逻辑：材料的 null/非法时长的 null/finished 优先于比例/1% 阈值两侧
 node_modules/.bin/esbuild scripts/render-handout-fixture.mjs --bundle --platform=node --format=esm --packages=external --outfile=scripts/.cache/render-handout-fixture.mjs && node scripts/.cache/render-handout-fixture.mjs   # DOCX 渲染 XML 断言 + 输出样本
 
 # 高清抽帧（无需 API key，需 dev server；先 ffmpeg 生成测试视频：ffmpeg -y -f lavfi -i "testsrc2=size=1920x1080:rate=30" -t 10 -c:v libx264 -pix_fmt yuv420p public/.tmp-frames.mp4）
@@ -118,8 +119,9 @@ TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-live-subs.mjs                 # 
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-danmaku.mjs                  # 弹幕链路：飘屏/开关持久化/seek 重发（无需 API key；加 SF_KEY 含 LLM 生成）
 BASE_URL=http://localhost:5173 node scripts/e2e-chat-mermaid.mjs              # 问答 Mermaid 渲染：出图/中文标签/失败回退源码/未闭合围栏挂起/代码块不被 linkify/导出 SVG（无需 API key，自播种数据）
 BASE_URL=http://localhost:5173 node scripts/e2e-quiz-mermaid.mjs              # 题卡解析出图：Markdown 渲染/围栏出图/时间戳跳转/失败回退源码/代码块不被 linkify（无需 API key，自播种题卡）
-node scripts/e2e-materials.mjs                 # 阅读材料链路：真实导入 PDF → 解析 → 阅读器/导航/缩放/目录 → 划词与框选提问 → 页码引用跳页 → 扫描件提示（无需 API key；默认打 4173，fixture 见 scripts/fixtures/）
+node scripts/e2e-materials.mjs                 # 阅读材料链路：真实导入 PDF → 解析 → 阅读器/导航/缩放/目录 → 划词与框选提问（含第 2 页划词、滚动后浮层跟随重算）→ 页码引用跳页 → 扫描件提示（无需 API key；默认打 4173，fixture 见 scripts/fixtures/）
 BASE_URL=http://localhost:5173 node scripts/e2e-study.mjs   # 学习时长热力图：网格几何/档位/悬浮提示/区间切换/最近 30 天/真等 80s 验计时与落库/设置页卡片（无需 API key，自播种 studyDays）
+node scripts/e2e-library-progress.mjs   # 主页卡片进度条：该画的不该画的（没看过/不足 1%/阅读材料）/实测填充宽度占比/贴缩略图底边（无需 API key，自播种 videos）
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-smoke.mjs    # 字幕链路
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-handout.mjs  # 讲义链路
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-chat.mjs     # 问答链路

@@ -16,6 +16,7 @@ import { db, type FolderRow, type VideoRow } from '../store/db';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
+import { progressRatio } from '../utils/videoProgress';
 import { useIsMobile } from '../utils/useMobile';
 import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget } from '../bilibili';
 import type { BiliSubtitleItem } from '../bilibili/dmview';
@@ -1536,6 +1537,14 @@ function VideoRow({
     : STATUS_TAG[v.status];
   const meta = `${isMaterial ? unitText : formatDuration(v.duration)} · ${formatSize(v.size)} · ${new Date(v.createdAt).toLocaleDateString()}`;
   const cover = useThumb(v.id);
+  /**
+   * 播放进度条的比例。`null` = 不该画这根条 —— 渲染条件就是它，而不是画一条 0 宽度的
+   * （否则「看了 2 秒」和「没看过」在页面上长得一样）。规则全在纯函数里，
+   * 见 utils/videoProgress.ts 与 docs/plans/2026-09-18-home-progress-bar-design.md。
+   *
+   * 数据不用额外查：列表页的 reload() 本来就把 videos 整行读进内存了。
+   */
+  const ratio = progressRatio(v);
   // 转写是全局队列里的后台任务：在播放页、在别处、刷新后续跑的，列表上都要看得到
   const job = useTranscribeJob(v.id);
   const activeJob = isJobActive(job) ? job : undefined;
@@ -1588,6 +1597,24 @@ function VideoRow({
         <span className="video-row__duration">
           {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
         </span>
+        {/* 播放进度条：贴缩略图底边（YouTube 卡片同款位置）。
+            与上面的时长徽标不冲突（条高 4px 贴底、徽标 bottom: 6px），
+            与主区的 .video-row__job 也不冲突 —— 那是转写/建索引的**后台任务**进度，
+            位置和颜色都不同，别混。 */}
+        {ratio != null && (
+          <div
+            className="video-row__progress"
+            data-testid="video-progress"
+            data-ratio={ratio.toFixed(3)}
+            data-finished={v.finished === 1 ? '1' : undefined}
+          >
+            <div
+              className="video-row__progress-fill"
+              data-testid="video-progress-fill"
+              style={{ width: `${ratio * 100}%` }}
+            />
+          </div>
+        )}
       </div>
       <div className="video-row__main">
         <div className="video-row__name" title={v.name}>

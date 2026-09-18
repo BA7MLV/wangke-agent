@@ -82,6 +82,8 @@ const META = {
   'test-rate': { service: 'none', antd: false, timeout: 120 },
   // 学习时长纯逻辑：本地日期键（UTC 陷阱）/ 跨零点切分 / 热力图网格几何 / 统计与连续天数
   'test-study-log': { service: 'none', antd: false, timeout: 120 },
+  // 主页进度条纯逻辑：材料的 null / 非法时长的 null / finished 优先于比例 / 1% 阈值两侧
+  'test-video-progress': { service: 'none', antd: false, timeout: 120 },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
   // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
@@ -125,6 +127,10 @@ const META = {
   // 库页「长说明收进问号」：点问号不能冒泡开文件选择器 / 气泡不能塌成竖条 / 长说明不能铺回正文。
   // 不需要 key，也不需要测试视频（空库就能验），所以不带 testFile。
   'e2e-library-copy': { service: 'preview', antd: false, base: true, timeout: 180 },
+  // 主页卡片进度条：该画的画、不该画的不画（没看过 / 不足 1% / 阅读材料），
+  // 并实测填充层宽度真的等于比例（只断言 data-ratio 抓不到 CSS 没生效）。
+  // 自播种 videos（原生 IndexedDB），不需要 key，也不需要测试视频。
+  'e2e-library-progress': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-mobile': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-player-enhance': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-quiz': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
