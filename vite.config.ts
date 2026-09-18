@@ -3,6 +3,8 @@ import react from '@vitejs/plugin-react';
 import { VitePWA } from 'vite-plugin-pwa';
 import fs from 'node:fs';
 import path from 'node:path';
+import { execFileSync } from 'node:child_process';
+import { formatBuildTime } from './src/utils/buildInfo';
 
 /**
  * dev 模式下直接以静态文件方式提供 onnxruntime-web 的 wasm/mjs。
@@ -123,6 +125,35 @@ function pdfjsAssets(): Plugin {
   };
 }
 
+/**
+ * 设置页页脚要展示的构建信息：版本 / 构建时间 / commit。
+ *
+ * 为什么在构建期算、而不是运行时取：运行时 `new Date()` 显示的是「现在」，每次打开都在变，
+ * 判断不了「这是哪个构建」—— 而那正是这个功能要回答的问题（PWA 的 autoUpdate 会在后台
+ * 更新 SW 但不刷新当前页面，iPad 上「改了怎么还是老的」需要一个可核对的依据）。
+ *
+ * 为什么带 commit 短哈希：只有一个时间戳是**缺参照物**的，除非记得住每次构建的分钟数；
+ * 有了短哈希，「页面显示 5ffa0c7 / 仓库是 abc1234」一眼就能得出「dist 是旧的」。
+ *
+ * 为什么版本号从 package.json 读：避免在源码里再抄一份、随版本升级静默漂移。
+ */
+function buildInfo() {
+  const pkg = JSON.parse(fs.readFileSync(path.resolve(__dirname, 'package.json'), 'utf8')) as {
+    version?: string;
+  };
+  let commit = '';
+  try {
+    commit = execFileSync('git', ['rev-parse', '--short', 'HEAD'], {
+      cwd: __dirname,
+      encoding: 'utf8',
+    }).trim();
+  } catch {
+    // 无 .git（CI 导出源码包）或本机没装 git —— 都是正常情况。
+    // 降级成不显示 commit 即可，不能因为一个页脚把构建搞挂。
+  }
+  return { version: pkg.version ?? '0.0.0', time: formatBuildTime(new Date()), commit };
+}
+
 export default defineConfig({
   plugins: [
     serveOrt(),
@@ -223,4 +254,10 @@ export default defineConfig({
   // 而那时用户正等着看文件，体验最差）。
   optimizeDeps: { include: ['sql.js', 'onnxruntime-web', 'pdfjs-dist'] },
   build: { target: 'es2020', chunkSizeWarningLimit: 2000 },
+  // 注入的是**对象字面量的源码文本**（define 做的是文本替换），故须 JSON.stringify。
+  // dev 下这个值同样会被替换成「配置加载时刻」—— 那是误导，所以展示侧用
+  // import.meta.env.DEV 分流，不读它（见 src/utils/buildInfo.ts 的 buildInfoLabel）。
+  define: {
+    __BUILD_INFO__: JSON.stringify(buildInfo()),
+  },
 });

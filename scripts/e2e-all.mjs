@@ -51,6 +51,9 @@ const META = {
   'test-bilibili-subtitle': { service: 'none', antd: false, timeout: 120 },
   'test-bilibili-transport': { service: 'none', antd: false, timeout: 120 },
   'test-bilingual': { service: 'none', antd: false, timeout: 120 },
+  // 构建信息纯逻辑：时间补零 / 本地时区（不是 UTC）/ commit 缺失降级 / dev 分支。
+  // 「注入有没有真的通到产物与 DOM」由 e2e-build-info 覆盖，两者不重叠。
+  'test-build-info': { service: 'none', antd: false, timeout: 120 },
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
@@ -116,6 +119,11 @@ const META = {
   // 需要时手动补跑 dev 档：BASE_URL=http://localhost:5173 node scripts/e2e-mdui-adapter.mjs
   'e2e-mdui-adapter': { service: 'preview', antd: false, base: true, timeout: 120 },
   // 阶段 1 起新增：设置页写作技能列表 + 新建对话框交互（不依赖 antd 选择器，全部 data-testid）
+  // 设置页页脚的构建信息：验证「构建期 define 注入 → 产物字面量 → DOM」这条链路。
+  // ⚠️ 跑的是**当前 dist**，改了注入逻辑要先 npm run build ——
+  //    它会断言页面显示的 commit 与 git HEAD 一致，dist 陈旧时会红并写明原因。
+  // 不需要 key，也不需要测试视频（空库就能验）。
+  'e2e-build-info': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-settings-skills': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-danmaku': { service: 'preview', antd: true, key: 'optional', testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-handout-edit': { service: 'preview', antd: true, base: true, timeout: 300 },

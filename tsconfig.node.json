@@ -10,5 +10,8 @@
     "noEmit": true,
     "types": ["node"]
   },
-  "include": ["vite.config.ts"]
+  // src/utils/buildInfo.ts 是**双环境共用**的：vite.config.ts 在构建期用它格式化时间，
+  // Settings 页在渲染期用它拼文案。它落在 src/ 下，但 node 侧的 project 也必须列出来，
+  // 否则 vite.config.ts 一 import 就报 TS6307（文件不在本 project 的文件列表里）。
+  "include": ["vite.config.ts", "src/utils/buildInfo.ts"]
 }

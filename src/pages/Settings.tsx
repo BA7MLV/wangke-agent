@@ -6,6 +6,7 @@ import { guessContextWindow, isVisionModel, supportsThinking } from '../api/mode
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
 import { db } from '../store/db';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
+import { buildInfoLabel } from '../utils/buildInfo';
 import { SuccessCheck, ms } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
@@ -869,6 +870,18 @@ export default function Settings() {
       <MigrationCard />
 
       <SkillsCard />
+
+      {/* 页脚：构建信息。用途是排障，不是装饰 —— PWA 的 autoUpdate 会在后台更新 SW
+          但不刷新当前页面，iPad 上「改了怎么还是老的」时，靠这一行判断当前跑的是哪个构建
+          （时间戳单独一个没有参照物，所以带上 commit 短哈希）。详见
+          docs/plans/2026-09-18-build-info-design.md */}
+      <div
+        className="text-secondary"
+        style={{ fontSize: 12, textAlign: 'center', margin: '4px 0 8px' }}
+        data-testid="build-info"
+      >
+        {buildInfoLabel(__BUILD_INFO__, import.meta.env.DEV)}
+      </div>
     </PageShell>
   );
 }
