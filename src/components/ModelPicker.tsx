@@ -6,7 +6,7 @@ import './subtitle-danmaku.css';
 interface Props {
   slot: ModelSlot;
   /** 当前值（对应的全局槽位字段名） */
-  field: 'asrModel' | 'llmModel' | 'embedModel' | 'visionModel';
+  field: 'asrModel' | 'llmModel' | 'visionModel';
 }
 
 /** 槽位 → 图标：面板头寸土寸金，图标至少要能一眼看出「这个按钮换的是哪个模型」。
@@ -15,7 +15,6 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
   asr: <mdui-sym-mic />,
   vision: <mdui-sym-visibility />,
   chat: <mdui-sym-neurology />,
-  embed: <mdui-sym-neurology />,
 };
 
 /** 槽位 → 中文名：不内联展示模型 id 之后，这个信息缺口由 tooltip 补上 */
@@ -23,7 +22,6 @@ const SLOT_LABEL: Record<ModelSlot, string> = {
   asr: '转写模型',
   vision: '视觉模型',
   chat: '文本模型',
-  embed: '向量模型',
 };
 
 /**

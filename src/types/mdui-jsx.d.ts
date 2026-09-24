@@ -3398,6 +3398,7 @@ declare module 'react' {
       'mdui-sym-folder': MduiSymbolProps;
       'mdui-sym-folder-open': MduiSymbolProps;
       'mdui-sym-format-size': MduiSymbolProps;
+      'mdui-sym-forum': MduiSymbolProps;
       'mdui-sym-graphic-eq': MduiSymbolProps;
       'mdui-sym-help': MduiSymbolProps;
       'mdui-sym-home': MduiSymbolProps;

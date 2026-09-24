@@ -4,7 +4,6 @@ import { useSettings, type AppTheme, type ModelSlot } from '../store/settings';
 import { listModels } from '../api/siliconflow';
 import { guessContextWindow, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
-import { db } from '../store/db';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
 import { buildInfoLabel } from '../utils/buildInfo';
 import { SuccessCheck, ms } from '../components/motion';
@@ -23,24 +22,20 @@ import {
 import { probeBiliLogin } from '../bilibili/api';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
-const EMBED_MODEL_RE = /embed|bge|gte/i;
-
 /** 各收藏槽位的相关性启发式：相关模型在列表中置顶 */
 const SLOT_RELEVANT: Record<ModelSlot, (id: string) => boolean> = {
   chat: (id) => supportsThinking(id) || isVisionModel(id),
   vision: isVisionModel,
   asr: (id) => ASR_MODEL_RE.test(id),
-  embed: (id) => EMBED_MODEL_RE.test(id),
 };
 
 const SLOT_TABS: { key: ModelSlot; label: string }[] = [
   { key: 'chat', label: '文本' },
   { key: 'vision', label: '视觉' },
   { key: 'asr', label: 'ASR' },
-  { key: 'embed', label: 'Embedding' },
 ];
 
-type ModelFieldName = 'asrModel' | 'llmModel' | 'embedModel' | 'visionModel';
+type ModelFieldName = 'asrModel' | 'llmModel' | 'visionModel';
 
 /**
  * 模型输入行。
@@ -185,11 +180,7 @@ export default function Settings() {
     chat: '',
     vision: '',
     asr: '',
-    embed: '',
   });
-  // embedModel 走本地草稿：逐键输入只改草稿不弹确认，下拉选择 / 失焦提交时才确认
-  const [embedDraft, setEmbedDraft] = useState(settings.embedModel);
-  const embedConfirmRef = useRef(false);
   /** 自定义倍速的输入草稿（null = 输入框为空，「添加」按钮置灰） */
   const [rateDraft, setRateDraft] = useState<number | null>(null);
   const [bridgeTick, setBridgeTick] = useState(0);
@@ -204,10 +195,6 @@ export default function Settings() {
   /** 油猴桥视角的登录态（进设置页探测一次；null = 探不到） */
   const [biliLogin, setBiliLogin] = useState<{ isLogin: boolean; uname?: string } | null>(null);
 
-  // 已提交值外部变化（确认写回 / 面板 ModelPicker 切换）时同步草稿
-  useEffect(() => {
-    setEmbedDraft(settings.embedModel);
-  }, [settings.embedModel]);
   const bridgeOk = isBiliBridgeAvailable();
   const advOpen = advOverride ?? !bridgeOk;
 
@@ -370,7 +357,6 @@ export default function Settings() {
       const result: Record<string, boolean> = {
         asrModel: ids.includes(settings.asrModel),
         llmModel: ids.includes(settings.llmModel),
-        embedModel: ids.includes(settings.embedModel),
         visionModel: ids.includes(settings.visionModel),
       };
       setCheckResult(result);
@@ -385,28 +371,6 @@ export default function Settings() {
     } finally {
       setChecking(false);
     }
-  };
-
-  /** embedModel 提交点：草稿与已提交值不同才弹确认；确认窗打开会夺走焦点触发 blur，用 ref 抑制重复弹窗 */
-  const commitEmbedModel = (draft: string) => {
-    if (draft === settings.embedModel || embedConfirmRef.current) return;
-    embedConfirmRef.current = true;
-    void confirmDialog({
-      headline: '更换向量模型需要重建问答索引',
-      description: '将清除所有视频已建立的向量索引，下次提问时自动重建。确定更换？',
-      confirmText: '更换',
-    }).then(async (ok) => {
-      try {
-        if (ok) {
-          await db.embeddings.clear();
-          settings.update({ embedModel: draft });
-        } else {
-          setEmbedDraft(settings.embedModel);
-        }
-      } finally {
-        embedConfirmRef.current = false;
-      }
-    });
   };
 
   /** 播放器倍速：内置档位之外再补几个常用档（0.25–4，存 settings.customRates） */
@@ -425,21 +389,15 @@ export default function Settings() {
     settings.update({ customRates: settings.customRates.filter((x) => !sameRate(x, r)) });
   };
 
-  /** 各槽位的模型值读写：embed 走草稿，其余直接落库 */
-  const modelValue = (name: ModelFieldName) => (name === 'embedModel' ? embedDraft : settings[name]);
+  /** 各槽位的模型值读写 */
+  const modelValue = (name: ModelFieldName) => settings[name];
   const setModelValue = (name: ModelFieldName, v: string) => {
-    if (name === 'embedModel') {
-      setEmbedDraft(v);
-    } else if (name === 'llmModel') {
+    if (name === 'llmModel') {
       // 切文本模型时按内置表回填上下文窗口默认值（仍可手改）
       settings.update({ llmModel: v, contextWindow: guessContextWindow(v) });
     } else {
       settings.update({ [name]: v });
     }
-  };
-  const pickModel = (name: ModelFieldName, v: string) => {
-    if (name === 'embedModel') commitEmbedModel(v);
-    else setModelValue(name, v);
   };
 
   const modelField = (name: ModelFieldName, label: string) => (
@@ -450,7 +408,7 @@ export default function Settings() {
       options={modelOptions}
       checkState={checkResult ? checkResult[name] : undefined}
       onValueChange={(v) => setModelValue(name, v)}
-      onPick={(v) => pickModel(name, v)}
+      onPick={(v) => setModelValue(name, v)}
       testId={`model-${name}`}
     />
   );
@@ -612,7 +570,6 @@ export default function Settings() {
       >
         {modelField('asrModel', '语音识别（ASR）')}
         {modelField('llmModel', '文本生成（讲义 / 问答）')}
-        {modelField('embedModel', '向量（Embedding）')}
         {modelField('visionModel', '视觉（截图理解）')}
         <Field label="上下文窗口（tokens）" hint={metaHint} testId="field-context-window">
           <mdui-text-field

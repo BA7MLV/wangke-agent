@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ReasoningEffort } from '../api/siliconflow';
 
-export type ModelSlot = 'chat' | 'vision' | 'asr' | 'embed';
+export type ModelSlot = 'chat' | 'vision' | 'asr';
 
 /**
  * 界面主题。`auto` = 跟随系统（MD3 / Material You 的默认行为）。
@@ -15,7 +15,6 @@ export interface Settings {
   baseUrl: string;
   asrModel: string;
   llmModel: string;
-  embedModel: string;
   visionModel: string;
   /** 按用途分组的收藏模型列表（面板下拉的候选） */
   favorites: Record<ModelSlot, string[]>;
@@ -47,12 +46,27 @@ export interface Settings {
   studyTrackingEnabled: boolean;
   /** 多久没操作就算「人不在」（分钟）。播放视频时不计入空闲判定 */
   studyIdleMinutes: number;
+  // ── 云端同步（docs/plans/2026-09-23-cloud-sync-design.md）──
+  /**
+   * 是否启用云端同步。**默认关闭**。
+   *
+   * 不是「保守起见」才默认关：这个开关一旦打开，视频之外的数据（字幕、讲义、问答、
+   * 卡片、向量、抽帧）就会离开本机，README 首页那句「数据不出本机」与免责声明第 3 条
+   * 随之失效。这种事必须由用户显式做，不能替他默认做。
+   */
+  syncEnabled: boolean;
+  /** 同步 Worker 地址，如 `https://wangke-sync.xxx.workers.dev` */
+  syncEndpoint: string;
+  /**
+   * 同步令牌。与 `apiKey` 同级的凭据 —— 泄漏等于全部学习数据泄漏，
+   * 因此**永不参与同步**（见 `src/sync/units.ts` 的 NON_SYNC_SETTINGS_KEYS）。
+   */
+  syncToken: string;
 }
 
 export const DEFAULT_MODELS = {
   asrModel: 'XingChenAGI/XingChenASR-V3.2-Ultra',
   llmModel: 'deepseek-ai/DeepSeek-V4-Flash',
-  embedModel: 'Qwen/Qwen3-VL-Embedding-8B',
   // Qwen3.6-35B-A3B：MoE 激活 3B，识图速度远快于稠密 32B，且支持 image/video 输入
   visionModel: 'Qwen/Qwen3.6-35B-A3B',
 };
@@ -67,7 +81,7 @@ export const useSettings = create<SettingsStore>()(
       apiKey: '',
       baseUrl: 'https://api.siliconflow.cn/v1',
       ...DEFAULT_MODELS,
-      favorites: { chat: [], vision: [], asr: [], embed: [] },
+      favorites: { chat: [], vision: [], asr: [] },
       contextWindow: 131072,
       asrConcurrency: 4,
       thinkingEnabled: false,
@@ -82,6 +96,9 @@ export const useSettings = create<SettingsStore>()(
       dynamicColor: true,
       studyTrackingEnabled: true,
       studyIdleMinutes: 5,
+      syncEnabled: false,
+      syncEndpoint: '',
+      syncToken: '',
       update: (patch) => set(patch),
     }),
     {
@@ -106,7 +123,6 @@ export function getSettings(): Settings {
     baseUrl: s.baseUrl.replace(/\/+$/, ''),
     asrModel: s.asrModel,
     llmModel: s.llmModel,
-    embedModel: s.embedModel,
     visionModel: s.visionModel,
     favorites: { ...s.favorites },
     contextWindow: s.contextWindow,
@@ -123,5 +139,8 @@ export function getSettings(): Settings {
     dynamicColor: s.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes,
+    syncEnabled: s.syncEnabled,
+    syncEndpoint: s.syncEndpoint,
+    syncToken: s.syncToken,
   };
 }

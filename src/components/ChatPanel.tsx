@@ -3,8 +3,6 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
 import { getSettings, useSettings } from '../store/settings';
-import { ensureEmbeddingIndex, type EmbedProgress } from '../pipelines/embedIndex';
-import { ensureMaterialIndex, materialIndexCount } from '../pipelines/embedMaterial';
 import { runAgentLoop } from '../harness/agent';
 import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
@@ -21,7 +19,7 @@ import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citatio
 import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
-import { Panel, PanelBar, PanelSpacer, PanelProgress, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
+import { Panel, PanelBar, PanelSpacer, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
 import { ThinkLine, StreamParagraph } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import ModelPicker from './ModelPicker';
@@ -207,13 +205,12 @@ export default function ChatPanel({
   readerRef,
   materialKind,
 }: Props) {
-  /** 材料课程（PDF / Word）：没有字幕、没有播放器，检索与引用都走材料那一套 */
+  /** 材料课程（PDF / Word / Markdown）：没有字幕、没有播放器，检索与引用都走材料那一套 */
   const isMaterial = materialKind !== undefined;
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [hasSubtitles, setHasSubtitles] = useState(isMaterial);
-  const [indexProgress, setIndexProgress] = useState<EmbedProgress | null>(null);
   const [indexReady, setIndexReady] = useState(false);
   /**
    * 索引为什么不可用（材料专属文案）。扫描件 / 空文档永远不会就绪，
@@ -375,7 +372,14 @@ export default function ChatPanel({
     return meta;
   }, [videoId]);
 
-  // 初始化会话列表 + 检查/建立问答索引
+  /**
+   * 初始化会话列表 + 判断「能不能提问」。
+   *
+   * 2026-09-24：检索改为词法后，这里**不再有建索引这一步**。原来是一段
+   * 「查向量计数 → 缺就建 → 建好才置 indexReady」的流程，也带来过一整类 bug
+   * （索引过期后计数仍然达标，于是永远不重建）。没有索引就没有这些问题。
+   * 现在只剩一件事：判断有没有可检索的正文。
+   */
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -389,7 +393,7 @@ export default function ChatPanel({
       setSessions(list);
       setActiveId(list[list.length - 1].id!);
 
-      // ── 阅读材料：索引的是文本块（materialBlocks / materialEmbeddings） ──
+      // ── 阅读材料：检索的是文本块（materialBlocks）──
       if (isMaterial) {
         // 材料没有「字幕」，但 hasSubtitles 在上游是「内容是否就绪」的语义，材料解析完就算就绪
         setHasSubtitles(true);
@@ -399,30 +403,14 @@ export default function ChatPanel({
         // 话术必须按格式分：扫描件只可能是 PDF（有页面但取不到字），
         // Word 取不到字就是「没有正文」—— 与 chunk.ts 的 judgeMaterialText 同一套区分。
         if (blockCount === 0) {
-          if (!cancelled) {
-            setIndexNote(
-              materialKind === 'page'
-                ? '这份材料没有文本层（扫描件），无法参与检索；可以在阅读区划词或框选区域提问'
-                : '这份材料没有正文，没有可供检索的内容',
-            );
-          }
+          setIndexNote(
+            materialKind === 'page'
+              ? '这份材料没有文本层（扫描件），无法参与检索；可以在阅读区划词或框选区域提问'
+              : '这份材料没有正文，没有可供检索的内容',
+          );
           return;
         }
-        const embCount = await materialIndexCount(videoId);
-        if (embCount >= blockCount) {
-          if (!cancelled) setIndexReady(true);
-          return;
-        }
-        try {
-          await ensureMaterialIndex(videoId, (p) => {
-            if (!cancelled) setIndexProgress(p);
-          });
-          if (!cancelled) setIndexReady(true);
-        } catch (e) {
-          if (!cancelled) toast.error(`建立材料索引失败：${e instanceof Error ? e.message : String(e)}`);
-        } finally {
-          if (!cancelled) setIndexProgress(null);
-        }
+        setIndexReady(true);
         return;
       }
 
@@ -435,22 +423,7 @@ export default function ChatPanel({
       setHasSubtitles(segCount > 0);
       if (segCount === 0) return;
 
-      const embCount = await db.embeddings.where('videoId').equals(videoId).count();
-      if (embCount >= segCount) {
-        if (!cancelled) setIndexReady(true);
-        return;
-      }
-      // 自动补建索引
-      try {
-        await ensureEmbeddingIndex(videoId, (p) => {
-          if (!cancelled) setIndexProgress(p);
-        });
-        if (!cancelled) setIndexReady(true);
-      } catch (e) {
-        if (!cancelled) toast.error(`建立问答索引失败：${e instanceof Error ? e.message : String(e)}`);
-      } finally {
-        if (!cancelled) setIndexProgress(null);
-      }
+      setIndexReady(true);
     })();
     return () => {
       cancelled = true;
@@ -1040,14 +1013,6 @@ export default function ChatPanel({
           </mdui-tooltip>
         )}
       </PanelBar>
-
-      {indexProgress && (
-        <PanelProgress
-          testId="chat-index-progress"
-          percent={Math.round((indexProgress.done / Math.max(1, indexProgress.total)) * 100)}
-          text={indexProgress.message}
-        />
-      )}
 
       <PanelBar wrap={false} testId="chat-model-bar">
         <ModelPicker slot="chat" field="llmModel" />

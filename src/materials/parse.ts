@@ -10,12 +10,13 @@ import { db } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { chunkUnits, countChars, judgeMaterialText, type MaterialBlock, type RawUnit } from './chunk.ts';
 import { isDocxFile, looksLikeLegacyDoc, readDocxUnits } from './docx.ts';
+import { extractMdUnits, isMarkdownFile, readMdText } from './md.ts';
 import { extractPdfUnits, openPdf } from './pdf.ts';
 import type { UnitKind } from './units.ts';
 
-export type MaterialFormat = 'pdf' | 'docx';
+export type MaterialFormat = 'pdf' | 'docx' | 'md';
 
-const MATERIAL_EXTS = new Set(['pdf', 'docx']);
+const MATERIAL_EXTS = new Set(['pdf', 'docx', 'md', 'markdown']);
 /** 旧版 .doc（OLE 复合文档）：明确不支持，但要在导入前就拦住并给出可操作的提示 */
 const LEGACY_DOC_EXTS = new Set(['doc']);
 
@@ -37,6 +38,7 @@ export function isMaterialFile(file: { name: string; type?: string }): boolean {
   return (
     t === 'application/pdf' ||
     isDocxFile({ name: file.name, type: t }) ||
+    isMarkdownFile({ name: file.name, type: t }) ||
     t === 'application/msword'
   );
 }
@@ -49,6 +51,7 @@ export function isLegacyDocFile(file: { name: string; type?: string }): boolean 
 export function detectMaterialFormat(file: { name: string; type?: string }): MaterialFormat {
   if (file.type === 'application/pdf' || extOf(file.name) === 'pdf') return 'pdf';
   if (isDocxFile(file)) return 'docx';
+  if (isMarkdownFile(file)) return 'md';
   throw new Error(`无法识别的材料格式：${file.name}`);
 }
 
@@ -113,6 +116,9 @@ export async function parseMaterial(
     } finally {
       URL.revokeObjectURL(url);
     }
+  } else if (format === 'md') {
+    onProgress?.({ phase: 'extract', done: 0, total: 1, message: '解析 Markdown…' });
+    units = extractMdUnits(await readMdText(blob));
   } else {
     onProgress?.({ phase: 'extract', done: 0, total: 1, message: '解析 Word 正文…' });
     units = await readDocxUnits(blob);

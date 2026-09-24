@@ -131,7 +131,7 @@ export interface MaterialTextVerdict {
  * 两者互斥：PDF 的 `contentUnits === 0` 已被 `looksScanned` 的 `unitCount <= 0` 分支吃掉。
  */
 export function judgeMaterialText(
-  format: 'pdf' | 'docx',
+  format: 'pdf' | 'docx' | 'md',
   totalChars: number,
   contentUnits: number,
 ): MaterialTextVerdict {

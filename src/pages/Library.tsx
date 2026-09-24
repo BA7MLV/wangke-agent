@@ -58,7 +58,7 @@ function isVideoFile(file: File): boolean {
 }
 
 /**
- * 可导入的文件 = 视频 或 阅读材料（PDF / Word）。
+ * 可导入的文件 = 视频 或 阅读材料（PDF / Word / Markdown）。
  *
  * `.doc`（旧版二进制）也算「可导入」—— 但不是在导入时静默忽略，而是在
  * `importMaterial` 里**明确报错并给出「另存为 .docx」的提示**。
@@ -153,9 +153,10 @@ const TASK_STATUS_TEXT: Record<ImportTask['status'], string> = {
 };
 
 /** 材料写入的提示文案与视频不同（材料不做容器探测，直接就是写文件） */
-const MATERIAL_MIME: Record<'pdf' | 'docx', string> = {
+const MATERIAL_MIME: Record<'pdf' | 'docx' | 'md', string> = {
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  md: 'text/markdown',
 };
 
 /** 「未分类」虚拟组的 key（折叠状态持久化用） */
@@ -326,7 +327,7 @@ export default function Library() {
   };
 
   /**
-   * 导入阅读材料（PDF / Word）。
+   * 导入阅读材料（PDF / Word / Markdown）。
    *
    * 与视频导入的差别：
    * - **不做容器探测**（没有时长可探，`duration` 恒为 0）；
@@ -610,7 +611,7 @@ export default function Library() {
     }
     const accepted = files.filter(isImportable);
     const skipped = files.filter((f) => !isImportable(f));
-    if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个不支持的文件（只支持视频与 PDF/Word）`);
+    if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个不支持的文件（只支持视频与 PDF/Word/Markdown）`);
     if (files.length > 1) toast.info(`已选择 ${accepted.length} 个文件，开始逐个导入`);
     for (const f of accepted) enqueue(f);
   };
@@ -623,7 +624,7 @@ export default function Library() {
     if (files.length === 0) return;
     for (const f of files) {
       if (!isImportable(f)) {
-        toast.warning(`《${f.name}》不是支持的格式（只支持视频与 PDF/Word），已跳过`);
+        toast.warning(`《${f.name}》不是支持的格式（只支持视频与 PDF/Word/Markdown），已跳过`);
         continue;
       }
       enqueue(f);
@@ -675,12 +676,18 @@ export default function Library() {
         db.handouts,
         db.chats,
         db.chatSessions,
-        db.embeddings,
-        // v9：材料的文本块与向量，不一起清会留下孤儿数据占空间
+        // v9：材料的文本块。不一起清会留下孤儿数据占空间
+        // （向量表已随稠密检索移除，见 2026-09-23-context-engineering-design.md §1.6）
         db.materialBlocks,
-        db.materialEmbeddings,
         // v10：封面（主键就是 videoId）
         db.covers,
+        // v12：评论区
+        db.comments,
+        // 弹幕与卡片：一直是漏的（本次一并补上）。
+        // 它们和评论一样都是「按字幕生成的派生物」，留着只是占空间 —— 而且视频没了之后
+        // 永远没有入口再看到，与 e2e-covers 守的「删除不残留」是同一条原则。
+        db.danmakus,
+        db.cards,
       ],
       async () => {
         await db.videos.delete(row.id);
@@ -690,10 +697,11 @@ export default function Library() {
         await db.handouts.where('videoId').equals(row.id).delete();
         await db.chats.where('videoId').equals(row.id).delete();
         await db.chatSessions.where('videoId').equals(row.id).delete();
-        await db.embeddings.where('videoId').equals(row.id).delete();
         await db.materialBlocks.where('materialId').equals(row.id).delete();
-        await db.materialEmbeddings.where('materialId').equals(row.id).delete();
         await db.covers.delete(row.id);
+        await db.comments.where('videoId').equals(row.id).delete();
+        await db.danmakus.where('videoId').equals(row.id).delete();
+        await db.cards.where('videoId').equals(row.id).delete();
       },
     );
     // 材料在 materials/ 目录下，用视频的删除函数会清不掉（OPFS 里两份文件各自独立）
@@ -715,7 +723,7 @@ export default function Library() {
             ? `《${row.name}》没有文本层（扫描件），只能划词/框选提问`
             : res.empty
               ? `《${row.name}》没有正文，无法参与问答检索`
-              : `《${row.name}》解析完成（${res.parsed} 个文本块${res.indexed ? '，索引已更新' : ''}）`,
+              : `《${row.name}》解析完成（${res.parsed} 个文本块）`,
         );
         await reload();
       })
@@ -1513,7 +1521,7 @@ function VideoRow({
   onDragCancel: () => void;
 }) {
   const isMaterial = v.kind === 'material';
-  const matKind: 'page' | 'para' = v.materialFormat === 'docx' ? 'para' : 'page';
+  const matKind: 'page' | 'para' = v.materialFormat === 'pdf' || !v.materialFormat ? 'page' : 'para';
   const noun = matKind === 'page' ? '页' : '段';
   const unitText = v.unitCount
     ? `${v.unitCount} ${noun}`
@@ -1628,9 +1636,9 @@ function VideoRow({
             <mdui-linear-progress
               max={100}
               value={
-                // 只有「按份数推进」的两类任务有确定百分比：转写（按段）与建索引（按块）。
-                // 解析是逐页/逐段推进的，同样有确定进度；其余（排队/抽取/VAD）走不确定态。
-                activeJob.phase === 'asr' || activeJob.phase === 'index'
+                // 只有「按份数推进」的任务才有确定百分比：转写（按段）与材料解析（按页/段）。
+                // 其余（排队/抽取/VAD）走不确定态。
+                activeJob.phase === 'asr'
                   ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
                   : activeJob.phase === 'parse' && activeJob.total > 1
                     ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)

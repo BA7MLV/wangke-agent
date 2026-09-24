@@ -1,19 +1,21 @@
-import { embed } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
 import { db, type MaterialBlockRow } from '../store/db';
-import { cosine } from './search';
+import { lexicalSearch } from './lexical';
 import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
 
 /**
- * 阅读材料的语义检索。
+ * 阅读材料的检索。
  *
- * 与 `search.ts` 的 `searchTranscript` 严格对称：同样的余弦打分（复用 `cosine`）、
- * 同样的 topK 默认值、同样的「向量 → 原文」两步取数。差异只有两处：
- * 外键是 `materialId`、命中返回的是 `MaterialBlockRow`（带页码/段落号而不是时间戳）。
+ * 与 `search.ts` 的 `searchTranscript` 严格对称：同一套词法打分（复用 `lexicalSearch`）、
+ * 同样的 topK 默认值。差异只有两处：外键是 `materialId`、命中返回的是
+ * `MaterialBlockRow`（带页码 / 段落号而不是时间戳）。
  *
- * **刻意不复用 `embeddings` 表**：那张表的 `segmentId` 是外键，且检索结果会被
- * `get_transcript_range`、字幕面板按「秒」消费；混进材料会让「秒」与「页」两套语义
- * 相互污染。平行表 + 平行函数，换来的是视频链路一行不用改。
+ * **与字幕分属两张平行的文本表**（`materialBlocks` vs `segments`），刻意不合并：
+ * 字幕的 `start`/`end` 是**秒**，会被 `get_transcript_range`、字幕面板按时间轴消费；
+ * 材料的 `unit` 是页 / 段。把页码塞进秒字段会让两套语义互相污染。
+ * 检索打分本身是共用的，取数条件各写一份（`status === 1` vs 全部块），
+ * 硬合并会变成一堆回调参数，反而更难读。
+ *
+ * 2026-09-24：原本的 `materialEmbeddings` 稠密检索已移除，同 `search.ts` 的理由。
  */
 
 export interface MaterialHit {
@@ -29,22 +31,12 @@ export async function searchMaterial(
   query: string,
   topK = DEFAULT_MATERIAL_TOP_K,
 ): Promise<MaterialHit[]> {
-  const settings = getSettings();
-  const [qv] = await embed(settings, settings.embedModel, [query]);
-  const queryVec = new Float32Array(qv);
-
-  const rows = await db.materialEmbeddings.where('materialId').equals(materialId).toArray();
-  if (rows.length === 0) return [];
-  const blocks = await db.materialBlocks.bulkGet(rows.map((r) => r.blockId));
-
-  const hits: MaterialHit[] = [];
-  for (let i = 0; i < rows.length; i++) {
-    const b = blocks[i];
-    if (!b || !b.text) continue;
-    hits.push({ block: b, score: cosine(queryVec, new Float32Array(rows[i].vector)) });
-  }
-  hits.sort((a, b) => b.score - a.score);
-  return hits.slice(0, topK);
+  const blocks = await db.materialBlocks.where('materialId').equals(materialId).sortBy('idx');
+  if (blocks.length === 0) return [];
+  return lexicalSearch(blocks, (b) => b.text, query, topK).map((h) => ({
+    block: h.doc,
+    score: h.score,
+  }));
 }
 
 /** 按单元范围取原文（`get_material_range` 工具用）：闭区间 [from, to] */

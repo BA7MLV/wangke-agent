@@ -12,7 +12,7 @@
 // 输出：scripts/.cache/e2e-report.json + scripts/.cache/e2e-report.md
 // 退出码：有 failed 则非 0。
 
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -57,17 +57,31 @@ const META = {
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
+  // 评论区（AI 生成的同学讨论）纯逻辑：模型输出解析 / 时间戳钳制 / 角色与作者归一 /
+  // 跨块去重 / 两档排序 / 两层分组（含孤儿回复）。提示词契约（角色名单同一份来源）也在里面。
+  // 「数据 → 渲染 → 时间戳跳转」由 e2e-comments 覆盖，两者不重叠。
+  'test-comments': { service: 'none', antd: false, timeout: 120 },
+  // Dexie 建表版本：v13 删除两张向量表。**删表是唯一会丢数据且改不回来的改动**，
+  // schema 写错会让整个库打不开（应用白屏而不是某个功能坏掉），所以必须有这道守卫。
+  // 覆盖全新安装（v1→v13 最终 schema）与老库升级（v12 带向量数据 → 表与数据一起消失）。
+  'test-db-schema': { service: 'none', antd: false, timeout: 120 },
   // 图表导出：只改根标签，不碰子元素几何（原生 svg 围栏的根节点常常不带 width）
   'test-diagram-export': { service: 'none', antd: false, timeout: 120 },
   'test-error-text': { service: 'none', antd: false, timeout: 120 },
   'test-handout-ir': { service: 'none', antd: false, timeout: 120 },
   'test-handout-prompts': { service: 'none', antd: false, timeout: 120 },
-  // 后台任务文案（转写 / 解析 / 建索引）—— 库页状态标签的纯函数部分
+  // 后台任务文案（转写 / 解析）—— 库页状态标签的纯函数部分
   'test-library-job-copy': { service: 'none', antd: false, timeout: 120 },
-  // 阅读材料的纯逻辑四件套：引用标记 / 分块与扫描件判定 / Word 抽取 / 框选几何。
-  // 都不依赖 DOM，所以能进这一档（materials/docx.ts 刻意与渲染分离，就是为了这个）
+  // 词法检索：分词（CJK unigram+bigram / 拉丁整段成词）、BM25 打分、覆盖率加成、排序稳定性。
+  // 守的是「稠密检索移除后检索仍然找得到东西」这条底线 ——
+  // 尤其是编号 / 英文缩写这类字面命中，以及单字查询能命中更长中文词。
+  // 「数据 → 渲染 → 时间戳跳转」由 e2e-chat / e2e-material-you 覆盖，两者不重叠。
+  'test-lexical': { service: 'none', antd: false, timeout: 120 },
+  // 阅读材料的纯逻辑：引用标记 / 分块与扫描件判定 / Word 抽取 / Markdown 抽取 / 框选几何。
+  // 都不依赖 DOM，所以能进这一档（materials/docx.ts、md.ts 刻意与渲染分离，就是为了这个）
   'test-material-chunk': { service: 'none', antd: false, timeout: 120 },
   'test-material-docx': { service: 'none', antd: false, timeout: 120 },
+  'test-material-md': { service: 'none', antd: false, timeout: 120 },
   'test-material-region': { service: 'none', antd: false, timeout: 120 },
   'test-material-units': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
@@ -92,6 +106,12 @@ const META = {
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
   // 全是零依赖纯函数，所以能进这一档 —— 拆出 skills/scope.ts 就是为了这个。
   'test-qa-skill-scope': { service: 'none', antd: false, timeout: 120 },
+  // 云端同步的单元寻址：id 构造/解析往返、名字编码无歧义、分片边界、畸形 id 不抛、
+  // 设置白名单与排除项无交集（含「apiKey / bilibiliCookie 永不可同步」）。零依赖纯函数。
+  // ⚠️ 它**不**覆盖「新字段有没有被归类」—— 那条由编译期守门员负责
+  // （src/sync/units.ts 的 ALL_SETTINGS_FIELDS_CLASSIFIED / ALL_VIDEO_FIELDS_CLASSIFIED，
+  // `npm run build` 的 tsc 会拦），两者不重叠。
+  'test-sync-units': { service: 'none', antd: false, timeout: 120 },
   // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
   'e2e-audio-corrupt-frame': { service: 'none', antd: false, timeout: 300 },
 
@@ -106,6 +126,10 @@ const META = {
   'e2e-chat-image': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat-mermaid': { service: 'preview', antd: true, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-mermaid-test.mp4' },
+  // 评论区（视频下方的讨论区）：折叠条 → 展开 → 渲染 → 点时间戳跳播放器 → 排序切换 →
+  // 展开时播放器让出高度 → 收起，外加移动端可达性。
+  // 自播种评论（不调真实 API）；需要真实视频是因为「点时间戳」那条断言要读 media-player.currentTime。
+  'e2e-comments': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   // 题卡解析的出图链路：mermaid 与 svg 两种围栏各一个脚本（自播种题卡，不调真实 API）
   'e2e-quiz-mermaid': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   'e2e-svg-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
@@ -186,6 +210,13 @@ const META = {
   'probe': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
   // 控制栏 hover 显隐（悬停出现 / 移出收起，含未播放过 / 播放中 / 暂停中三态），要 TEST_FILE
   'probe-controls-hover': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+  // 播放器的 YouTube 式细节第二档：中央大播放按钮（不随控制栏显隐、点完要交焦点给播放器）/
+  // 键盘步长（←/→ 5s、j/l 10s、Home/End、连按累加）/ 进度条 hover 缩略图预览 / 控制栏细节。
+  // 失效方式多为「看着还在但取错帧 / 焦点丢了」，所以必须用探针量而不是靠截图。
+  'probe-yt-player': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+  // 讨论区展开时的高度预算：视频栏内容溢出 / 整页被撑出滚动条 / 讨论区被裁掉，三种都要量到坐标。
+  // 失效方式是**静默裁切**（.player-layout 是 overflow:hidden），所以必须单独量几何。
+  'probe-comments-geometry': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
   // 题卡作答后的几何位移（作答前后各选项位置必须一致，守「整屏跳动」那个 bug）
   'probe-quiz-option-shift': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
   // 下面两个侧栏探针的地址走 `process.argv[2]`、默认 5174 / 4174（vite 抢不到 5173 时的备用端口），
@@ -250,6 +281,14 @@ async function waitForPort(port, ms = 120000) {
 }
 
 // 找一个现成的测试视频，没有就用 ffmpeg 造一个
+//
+// ⚠️ 必须用 node 的 `spawnSync`（真同步）。这里曾经套了个自写的 `spawnSyncSafe`，
+// 但它返回的是 **Promise**、却被当返回值用（`if (r !== 0)` 恒真）—— 结果就是
+// 兜底生成**从来没成功过**，只在日志里留一句「ffmpeg 生成失败」，然后所有
+// 声明了 testFile 的脚本被静默 skip。发现时已经影响 e2e-comments 的首次验证。
+//
+// `-t 40` 而不是 `-duration 40`：后者不是 ffmpeg 的 CLI 选项（本机 ffmpeg 8.1 直接
+// 报 `Unrecognized option 'duration'`），旧版也没有，属于一直写错但没被触发的那类。
 function resolveVideo(preferred) {
   const candidates = [preferred, '/tmp/wangke-test.mp4', '/tmp/e2e-live.mp4', '/tmp/wangke-mermaid-test.mp4']
     .filter(Boolean);
@@ -257,16 +296,14 @@ function resolveVideo(preferred) {
   // 兜底：ffmpeg 造 40s 测试视频
   const made = '/tmp/wangke-test.mp4';
   console.log(`  [video] 无现成测试视频，用 ffmpeg 生成 ${made}`);
-  const r = spawnSyncSafe('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-duration', '40',
-    '-f', 'lavfi', '-i', 'sine=frequency=440', '-duration', '40', '-c:v', 'libx264', '-preset', 'ultrafast',
-    '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', made]);
-  if (r !== 0) { console.error('  [video] ffmpeg 生成失败'); return null; }
+  const r = spawnSync('ffmpeg', ['-y', '-f', 'lavfi', '-i', 'testsrc=size=640x360:rate=25', '-t', '40',
+    '-f', 'lavfi', '-i', 'sine=frequency=440', '-t', '40', '-c:v', 'libx264', '-preset', 'ultrafast',
+    '-pix_fmt', 'yuv420p', '-c:a', 'aac', '-shortest', made], { stdio: 'ignore' });
+  if (r.status !== 0) {
+    console.error('  [video] ffmpeg 生成失败');
+    return null;
+  }
   return made;
-}
-
-function spawnSyncSafe(cmd, args) {
-  const p = spawn(cmd, args, { stdio: 'ignore' });
-  return new Promise((resolve) => p.on('exit', (c) => resolve(c ?? 0)));
 }
 
 // 启动服务；若端口已占用则复用，否则启动并返回子进程（需本脚本负责关闭）

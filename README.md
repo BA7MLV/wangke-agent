@@ -47,21 +47,21 @@
 flowchart LR
     IN["📥 导入<br/>本地视频 · PDF · Word · B 站"] --> SUB["📝 字幕<br/>抽音频 → VAD 分段 → ASR 转写"]
     SUB --> HO["📄 讲义<br/>抽帧 → 视觉筛选 → 公文 DOCX"]
-    SUB --> QA["💬 问答<br/>向量检索 + agent loop"]
+    SUB --> QA["💬 问答<br/>全文检索 + agent loop"]
     HO --> QA
-    SUB --> DM["🎯 弹幕 · 卡片"]
+    SUB --> DM["🎯 弹幕 · 讨论区 · 卡片"]
     QA --> ASK["✍️ 划词 / 框选 / 截图提问 · 出题"]
 ```
 
-**关键约束：全部在浏览器里跑，没有后端。** 视频存 OPFS、字幕与向量存 IndexedDB、设置存 localStorage，唯一出网的是发给模型 API 的文本与音频片段。所以它能装到 iPad 主屏、断网也能翻讲义。
+**关键约束：全部在浏览器里跑，没有后端。** 视频存 OPFS、字幕与正文存 IndexedDB、设置存 localStorage，唯一出网的是发给模型 API 的文本与音频片段。所以它能装到 iPad 主屏、断网也能翻讲义。
 
 ```mermaid
 flowchart TB
     UI["界面层 · React 19 + MD3 / mdui<br/>课程库 · 播放器 · 学习 · 设置"]
-    PIPE["流水线层 · pipelines/<br/>转写 · 讲义 · 索引 · 弹幕 · 制卡<br/>重试 / 并发池 / 断点续做"]
+    PIPE["流水线层 · pipelines/<br/>转写 · 讲义 · 弹幕 · 制卡<br/>重试 / 并发池 / 断点续做"]
     AGENT["agent 层 · harness/<br/>function calling 检索工具"]
-    STORE["本机存储<br/>OPFS（视频）· IndexedDB（字幕/讲义/向量/时长）· localStorage（设置）"]
-    API["硅基流动 API<br/>ASR · 文本 · 向量 · 视觉"]
+    STORE["本机存储<br/>OPFS（视频）· IndexedDB（字幕/讲义/正文/时长）· localStorage（设置）"]
+    API["硅基流动 API<br/>ASR · 文本 · 视觉"]
     UI --> PIPE --> AGENT
     PIPE --> STORE
     AGENT --> STORE
@@ -92,7 +92,7 @@ flowchart TB
 | | |
 |---|---|
 | **Node.js** | 22+（两个代码生成器用 Node 原生剥类型直接读 `.ts`，需要 22.6+） |
-| **API Key** | [硅基流动](https://cloud.siliconflow.cn/) 注册后申请，用于 ASR / 文本 / 向量 / 视觉四类模型 |
+| **API Key** | [硅基流动](https://cloud.siliconflow.cn/) 注册后申请，用于 ASR / 文本 / 视觉三类模型 |
 | **浏览器** | Chrome / Edge / Safari。PWA 安装与离线需要 HTTPS 或 localhost |
 
 ### 跑起来
@@ -118,7 +118,7 @@ npm run preview    # 本地预览生产构建（端口 4173）
 
 1. 填 **API Key** —— 只存本机 `localStorage`，不上传
 2. 点 **「检查模型可用性」** —— 拉取模型列表，并逐个核对四个槽位是否还在架上
-3. 四个槽位（ASR / 文本 / Embedding / 视觉）默认值见 [默认模型](#默认模型)，可在「模型配置」里改
+3. 三个槽位（ASR / 文本 / 视觉）默认值见 [默认模型](#默认模型)，可在「模型配置」里改
 4. 「模型收藏夹」里勾选的模型会出现在各面板头部下拉中（面板级切换模型）
 
 其余设置项都在同一页：字幕转写并发、问答检索轮次、上下文窗口、主题、动态取色、B 站导入通道、自定义倍速、学习时长、存储占用、数据迁移、写作技能。页面底部常驻一行「版本 · 构建时间 · commit」，用于排障。
@@ -145,7 +145,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 | 内容 | 位置 |
 |---|---|
 | 视频文件 | OPFS（流式写入，导入带进度） |
-| 元数据 / 字幕 / 讲义 / 向量索引 / 学习时长 | IndexedDB（Dexie） |
+| 元数据 / 字幕 / 讲义 / 正文 / 学习时长 | IndexedDB（Dexie） |
 | 设置 / API Key | `localStorage` |
 
 > [!CAUTION]
@@ -165,6 +165,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 | [提问 / 出题](#提问--出题) | 播放页 → 问答面板 |
 | [划词 / 框选提问](#划词--框选提问) | PDF、Word、字幕、讲义任意一处 |
 | [弹幕](#弹幕) | 播放页 → 弹幕面板 |
+| [讨论区（评论区）](#讨论区评论区) | 播放页 → 视频下方 |
 | [卡片（Anki）](#卡片anki) | 播放页 → 卡片面板 |
 | [播放器操作](#播放器操作) | 播放页 |
 | [看学习时长](#学习时长) | 左侧导航「学习」 |
@@ -189,7 +190,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 导入之后：
 
 - 视频卡片自动生成封面（抽帧里的幻灯片帧），底边按播放进度画进度条 —— **没看过、进度不足 1%、阅读材料都不画**；
-- 阅读材料**写盘成功即算导入完成**，解析与建索引在后台跑，列表行上能看到 job 进度，不阻塞你继续导入下一个。
+- 阅读材料**写盘成功即算导入完成**，解析在后台跑，列表行上能看到 job 进度，不阻塞你继续导入下一个。
 
 ### 生成字幕
 
@@ -217,7 +218,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 
 | 能力 | 说明 |
 |---|---|
-| **检索问答** | 字幕 + 阅读材料的向量索引，agent loop 流式回答；引用时间戳可点击跳播放器 |
+| **检索问答** | 字幕 + 阅读材料的**全文检索（BM25）**，agent loop 流式回答；引用时间戳可点击跳播放器 |
 | **截图提问** | 截图 + 时间轴上下文一起送模型，三级降级（多模态直读 → 视觉模型描述 → 拦截引导），明确**以图为准** |
 | **画面引用** | 已有讲义抽帧时，模型可用 `[图@mm:ss]` 引用画面，气泡内渲染缩略图 |
 | **出题** | 一键出题 / 对话式出题，生成可点选答题卡，点选即判、解析带时间戳、作答持久化 |
@@ -226,6 +227,8 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 | **思考深度** | 低 / 高 / 最大可调，可控制思考过程是否显示 |
 
 输入框下方有实时上下文用量；整会话可一键复制 Markdown / 导出 `.md`（含思考过程、题卡答案折叠与作答对错标记）。
+
+检索走**全文匹配（BM25）**：把字幕与阅读材料的正文直接分词打分，不需要向量索引 —— 因此**没有 API Key 也能检索**（原来完全不能），也不存在「索引过期」这一整类问题。代价是**问句用词与原文不一致时会搜不到**，所以工具与提示词都要求模型传关键词、一次不中就换一组说法重试。
 
 ### 划词 / 框选提问
 
@@ -237,7 +240,20 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 
 「**弹幕**」面板 → 基于字幕生成 AI 思考题弹幕（启发式为主、回忆式为辅，宁缺毋滥）。
 
-播放时在画面顶部记顶弹出（暂停跟随暂停，seek 回退可重看）；控制栏「弹」开关持久化；「弹幕」页可重新生成、点时间戳跳转。
+播放时自画面右侧向左侧飘过，恒定线速度（长句飘得久、短句不磨蹭）；暂停跟随暂停，seek 回退可重看；控制栏「弹」开关持久化；「弹幕」页可重新生成、点时间戳跳转。
+
+### 讨论区（评论区）
+
+**视频下方**一条「讨论区」折叠条 → 点开是一块 YouTube 式评论区：按课程内容生成的若干讨论串，每条锚定一个时间点，点时间戳跳回视频。
+
+- **点开就有内容**：一键生成 AI 的「同学讨论」——每串 1 条主贴 + 1~3 条回复，围绕容易栽跟头的地方（常见误解、易错点、为什么非得这么规定、和相近概念怎么区分），不是知识点复述
+- **两档排序**：热门（回复多的在前）/ 按进度（跟课程时间轴走）。**刻意没有「最新」**——内容是 AI 一次性生成的，按时间排等于随机
+- **只读**：不做点赞、不做发帖。点赞在单机场景里是编出来的数字，排序改用「回复数」这个真实存在的量
+- **默认折叠**：折叠条只占 44px。展开时播放器会让出高度，矮屏下也不会把视频或讨论区挤没
+- 生成基于字幕，所以要先在「字幕」页出字幕；锚定的是「秒」，阅读材料页不出现（材料只有页/段）
+
+> [!NOTE]
+> 与「弹幕」的分工：弹幕是**一句话的随堂提问**（飘过画面、无回复）；讨论区是**围绕某个时间点的多轮讨论**（落在视频下方、可排序、可回复）。两者输入同源，但形态与用法都不同。
 
 ### 卡片（Anki）
 
@@ -380,14 +396,15 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 | | 功能 | 一句话 |
 |---|---|---|
 | 📚 | **库与文件夹** | 文件夹分组、封面、卡片底边的播放进度条（没看过 / 不足 1% / 材料不画） |
-| 📖 | **阅读材料** | PDF 与 Word 导入后抽文本 → 分块 → 向量化，**与字幕同等参与检索**；扫描件显式告知 |
+| 📖 | **阅读材料** | PDF 与 Word 导入后抽文本 → 分块，**与字幕同等参与检索**；扫描件显式告知 |
 | ✍️ | **选区提问** | 划词 / 框选，引用条可堆叠可删除，`[第3页]` 可点击跳转 |
 | 🎬 | **B 站导入** | 链接 / BV / 短链，油猴桥本机直连，DASH 重封装为 mp4（不重编码、不丢画质） |
 | 📝 | **字幕** | VAD 分段 + ASR 并发转写，**边转边显**、断点续做，导出 VTT / SRT |
 | 📄 | **讲义** | 抽帧 → 视觉筛选 → 公文 DOCX，结构化 IR + 块级编辑 + 公文字体还原 |
 | 🧠 | **写作技能** | Agent Skills 规范，渐进式披露，内置 6 个技能，可导入 .md / zip |
-| 💬 | **问答** | 向量检索 + agent loop，Mermaid 出图、截图提问、画面引用、出题、技能范围、导出 .md |
-| 🎯 | **弹幕** | 基于字幕生成思考题弹幕，记顶弹出、开关持久化 |
+| 💬 | **问答** | 全文检索（BM25）+ agent loop，Mermaid 出图、截图提问、画面引用、出题、技能范围、导出 .md |
+| 🎯 | **弹幕** | 基于字幕生成思考题弹幕，飘过画面、开关持久化 |
+| 🗣️ | **讨论区** | 视频下方的评论区：AI 生成同学讨论串、时间戳可点跳转、热门 / 按进度两档排序 |
 | 🃏 | **卡片** | 字幕提炼 → Tinder 式滑动审核 → 导出 .apkg（Anki 全平台可导入） |
 | 🎨 | **封面与动态取色** | 导入即抽帧生成封面；Material You 动态取色随课程变化 |
 | ⏱️ | **学习时长** | 一年热力图 + 四张统计卡 + 30 天明细，只在本机 |
@@ -401,7 +418,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 **库与文件夹** —— 首页视频按文件夹分组管理（新建 / 重命名 / 删除 / 折叠持久化，视频可移动归类，删文件夹视频回到未分类）；卡片缩略图底边显示播放进度条：看到一半的按比例画、看完的显示满条。没看过、以及进度不足 1% 的**不画** —— 不用 0 宽度的条冒充「看了一点」，那种精度下跟没看过本来也分不出来。
 
-**阅读材料（PDF / Word）** —— 除视频外还能导入 PDF 与 .docx（旧版 .doc 会明确提示「另存为 .docx」）。导入后走「抽文本 → 归一化分块 → 向量化」流水线，产出一份**带页码（PDF）或段落号（Word）定位**的文本索引，与字幕**同等参与问答检索**。PDF 用 pdf.js 渲染（连续滚动 + 视口窗口化渲染，300 页不卡）、Word 用 docx-preview 渲染；两者都支持页码 / 段落导航、缩放、PDF 书签目录、断点续读。**扫描件会被显式识别并告知**（「没有文本层，无法参与检索，但仍可划词 / 框选提问」），不会让人误以为问答坏了。
+**阅读材料（PDF / Word）** —— 除视频外还能导入 PDF 与 .docx（旧版 .doc 会明确提示「另存为 .docx」）。导入后走「抽文本 → 归一化分块」流水线，产出一份**带页码（PDF）或段落号（Word）定位**的文本索引，与字幕**同等参与问答检索**。PDF 用 pdf.js 渲染（连续滚动 + 视口窗口化渲染，300 页不卡）、Word 用 docx-preview 渲染；两者都支持页码 / 段落导航、缩放、PDF 书签目录、断点续读。**扫描件会被显式识别并告知**（「没有文本层，无法参与检索，但仍可划词 / 框选提问」），不会让人误以为问答坏了。
 
 **选区提问** —— 在 PDF、Word、字幕、讲义任意一处拖选文字，浮层即给「解释这段 / 就这段提问」；PDF 页面上还能切到「框选」态圈出一块区域当图片提问（裁图规格与视频截图同构，直接复用那条三级多模态降级链）。引用以**可堆叠、可单条删除的引用条**落在输入框上方，随消息一起发给模型（先检索、再围绕引用作答），用户消息气泡里也把「引的」与「问的」分区渲染。
 
@@ -413,9 +430,11 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 **写作技能** —— Agent Skills 规范（SKILL.md + references/），渐进式披露：讲义生成前由 LLM 路由按课程内容自动选用（讲义面板可按视频手动覆盖），问答 agent 通过 `use_skill` / `read_skill_reference` 工具按需加载正文与参考文档；**问答面板可按会话限定可用技能**（默认全部启用技能，限定后提示词清单与工具白名单同步收窄，模型调不到范围外的技能）；设置页可导入 .md 单文件或 zip 包，内置 6 个技能（公文讲义写作 / 公文版式规格 / 数学 / 编程 / 公考行测 / 公考申论，含 references）。
 
-**问答** —— 字幕 embedding 索引 + agent loop（function calling 检索工具），流式回答。**Mermaid 出图**：懒加载引擎 + 串行渲染，未闭合围栏先挂起不抖，语法错回退源码 + 错误提示。**截图提问**：多图 + 时间轴上下文，三级降级，送模型时图与字幕上下文同时带且明确**以图为准**。**画面引用**：已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用。**出题**：`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化；解析按 Markdown 渲染，涉及流程 / 结构 / 对比时解析里的 ```mermaid 围栏直接出图（与问答正文同一条渲染链路），材料模式下不 linkify 时间戳以免死链。
+**问答** —— 字幕全文检索（BM25）+ agent loop（function calling 检索工具），流式回答。**Mermaid 出图**：懒加载引擎 + 串行渲染，未闭合围栏先挂起不抖，语法错回退源码 + 错误提示。**截图提问**：多图 + 时间轴上下文，三级降级，送模型时图与字幕上下文同时带且明确**以图为准**。**画面引用**：已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用。**出题**：`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化；解析按 Markdown 渲染，涉及流程 / 结构 / 对比时解析里的 ```mermaid 围栏直接出图（与问答正文同一条渲染链路），材料模式下不 linkify 时间戳以免死链。
 
-**弹幕** —— 基于字幕一键生成 AI 思考题弹幕（启发式为主、回忆式为辅，宁缺毋滥），播放时在画面顶部记顶弹出（暂停跟随暂停，seek 回退可重看）；控制栏「弹」开关持久化；「弹幕」页可重新生成、列表点击时间戳跳转。
+**弹幕** —— 基于字幕一键生成 AI 思考题弹幕（启发式为主、回忆式为辅、宁缺毋滥），播放时自画面右侧向左侧飘过，走**恒定线速度**（思考题长度差好几倍，固定时长会让最长的那条飞得最快 —— 恰好最难读的最快）；暂停跟随暂停，seek 回退可重看；控制栏「弹」开关持久化；「弹幕」页可重新生成、列表点击时间戳跳转。
+
+**讨论区（评论区）** —— 视频下方一条 44px 的折叠条，展开是 YouTube 式评论区：AI 按字幕生成若干讨论串（每串 1 主贴 + 1~3 回复），每串锚定一个字幕时间点。**与弹幕的差别是形态**：弹幕是一句话飘过、无回复；这里是围绕某个时间点的多轮对话，落在视频下方、可排序、可回复。排序只有两档 —— 热门（回复数降序）与按进度（时间轴升序）；**刻意没有 YouTube 的「最新」**（内容是 AI 一次性生成的，按生成时间排等于随机），**也没有点赞**（单机没有社交回路，编出来的数字会让人怀疑整块内容的真实性，热度改用「回复数」这个真实量）。折叠态占 44px，展开时 `.video-pane` 加 `video-pane--comments-open`，播放器按 `44vh` 的高度预算反推宽度让位（播放器高度由宽度决定，只能从宽度一侧压）—— 矮屏下视频与讨论区都不会被 `overflow:hidden` 裁掉。数据落 `comments` 表（v12），`parentId` 是非索引字段（一节课的评论本来就一次全取，内存里分组）。跨标签页迁移**不能走 `simpleTables` 快路径**：`parentId` 指向同表自增 id，剥掉 id 直接 `bulkAdd` 会让所有回复变成孤儿，导入侧按 `chatSessions→chats` 的做法重挂。模型输出解析 / 钳制 / 排序 / 两层分组全在 `harness/comments.ts`（零依赖，Node 可单测）。
 
 **卡片（Anki）** —— 一键从字幕提炼知识点生成问答候选卡（一卡一事实 / 自包含 / 答案唯一，带时间戳来源）→ Tinder 式滑动审核 → 保留卡导出 .apkg（本地生成 collection.anki2 旧版包，Anki 桌面 / AnkiMobile / AnkiDroid 均可导入；sql.js 懒加载 + PWA 预缓存，离线可导出）。
 
@@ -441,7 +460,6 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 |---|---|
 | ASR 转写 | `XingChenAGI/XingChenASR-V3.2-Ultra` |
 | 文本生成 | `deepseek-ai/DeepSeek-V4-Flash` |
-| Embedding | `Qwen/Qwen3-VL-Embedding-8B` |
 | 视觉 | `Qwen/Qwen3.6-35B-A3B` |
 
 设置页可拉取模型列表并按用途收藏（供各面板下拉选用）；上下文窗口 / 多模态 / 思考能力来自 models.dev 实时元数据（本地缓存 7 天，设置页可手动刷新），未收录模型回退名称启发式，上下文窗口也可手动修改。
@@ -478,9 +496,9 @@ src/
   materials/    pdf.ts(pdf.js 封装/文本层/书签) docx.ts(Word 抽取，Node 可测) parse.ts(流水线)
                 chunk.ts(归一化分块) units.ts(页/段引用) region.ts(框选裁图) types.ts material-reader.css
   harness/      agent.ts(循环) tools.ts context.ts prompts.ts search.ts(字幕检索)
-                searchMaterial.ts(材料检索) quiz.ts ankiCard.ts
+                searchMaterial.ts(材料检索) quiz.ts ankiCard.ts comments.ts(讨论串清洗/排序/分组)
   pipelines/    transcribe.ts transcribeQueue.ts handout.ts handoutEdit.ts embedIndex.ts
-                embedMaterial.ts materialJob.ts danmaku.ts cards.ts cover.ts coverQueue.ts
+                embedMaterial.ts materialJob.ts danmaku.ts cards.ts comments.ts cover.ts coverQueue.ts
   media/        audio.ts extractWorker.ts extractClient.ts vad.ts frames.ts(抽帧) wav.ts pcm.ts
                 tolerantDecode.ts(坏帧容忍) snapshot.ts(截图) ortConfig.ts
   handout/      ir.ts(IR 类型/解析/兜底) styles.ts(版式样式表) render.ts(IR→排版) docx.ts(组装/补丁)
@@ -490,6 +508,7 @@ src/
                 scope.ts(会话技能范围的三态判定，零依赖可单测) zip.ts
   components/   SubtitlePanel HandoutPanel HandoutDocView ChatPanel MaterialReader PdfReader DocxReader
                 SelectionAsk mermaid/ QuizCard DanmakuPanel DanmakuLayer CardsPanel SwipeDeck
+                CommentsSection(视频下方讨论区)
                 SkillsCard StorageCard StudyTimeCard MigrationCard ModelPicker SkillPicker appNav.tsx motion.tsx
   pages/        Library(课程库) Player(播放) Study(热力图) Settings(设置)
   store/        db.ts(Dexie schema) settings.ts(zustand persist) studyTime.ts fileStore.ts(OPFS)
@@ -537,8 +556,11 @@ node scripts/test-builtin-skills.mjs      # 内置 skill 资产（frontmatter / 
 node scripts/test-chat-frames.mjs         # 画面引用：linkify / 清单格式化 / qaSystem 规则注入
 node scripts/test-chat-export.mjs         # 会话导出 Markdown：结构 / 折叠块 / 题卡作答 / 文件名清洗
 node scripts/test-qa-skill-scope.mjs      # 问答技能范围：undefined / [] / [id] 三态、白名单×启用集合求交、工具放行条件
+node scripts/test-lexical.mjs             # 词法检索：分词（CJK 单字+二字组）/ BM25 打分 / 覆盖率加成 / 排序稳定
+node scripts/test-db-schema.mjs           # Dexie 建表版本：v13 删两张向量表（含 v12 带数据升级的路径）
 node scripts/test-quiz.mjs                # 答题卡：present_quiz 参数校验 / 清洗
 node scripts/test-anki-cards.mjs          # 制卡：LLM 输出清洗 / 时间戳钳制 / 去重
+node scripts/test-comments.mjs            # 讨论区：讨论串解析 / 角色与作者归一 / 钳制 / 去重 / 两档排序 / 两层分组（含孤儿回复）
 node scripts/test-apkg.mjs                # .apkg 生成：zip + SQLite 结构断言
 
 # 阅读材料
@@ -555,10 +577,11 @@ node scripts/test-rate.mjs                # 倍速：归一化 / 档位比较 / 
 node scripts/test-pcm-resample.mjs        # 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
 node scripts/test-ort-config.mjs          # ORT wasm 路径与单线程降级
 node scripts/test-migration.mjs           # 旧数据迁移判定
+node scripts/test-sync-units.mjs          # 同步单元：id 构造/解析往返 / 名字编码无歧义 / 分片边界 / 设置白名单与排除项互斥
 node scripts/test-bilingual.mjs           # 双语字幕处理
 node scripts/test-diagram-export.mjs      # 图表导出：只改根标签，不碰子元素几何
 node scripts/test-error-text.mjs          # 错误文案归一
-node scripts/test-library-job-copy.mjs    # 库页任务状态文案（转写 / 解析 / 建索引）
+node scripts/test-library-job-copy.mjs    # 库页任务状态文案（转写 / 解析）
 ```
 
 DOCX 渲染 XML 断言（需 esbuild 先打包）：
@@ -592,6 +615,7 @@ node scripts/e2e-library-copy.mjs         # 长说明收进问号
 node scripts/e2e-covers.mjs               # 封面：导入即有 / 小图档位 / PDF 首页 / 删除不残留
 node scripts/e2e-materials.mjs            # 阅读材料链路：真实导入 PDF → 解析 → 阅读器 → 划词与框选 → 跳页
 node scripts/e2e-cards.mjs                # 滑动制卡：审核 / 撤销 / 导出 .apkg
+TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-comments.mjs  # 视频下方讨论区：折叠 / 渲染 / 时间戳跳转 / 排序 / 让出高度 / 移动端
 node scripts/e2e-chat-export.mjs          # 会话复制 / 导出 Markdown
 node scripts/e2e-settings-skills.mjs      # 设置页写作技能列表 + 新建对话框
 node scripts/e2e-storage-card.mjs         # 存储占用卡片
@@ -621,6 +645,8 @@ SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-quiz.mjs         #
 ### 已知限制
 
 - 转写接口单文件 **≤ 1 小时、≤ 50MB**
+- 讨论区的「同学讨论」是 AI **生成**的，不是真人评论；质量取决于模型，与弹幕同源（都基于字幕），不适合当学习依据
+- 问答检索是**全文（BM25）匹配**，不是语义检索：提问用词与课程原文对不上时可能搜不到（模型会换关键词重试，但用原文术语提问命中率最高）
 - 视频 / 字幕 / 讲义只存在本机浏览器，清除站点数据会丢失
 - iPad / 手机 PWA 装不了油猴脚本，B 站导入请用桌面浏览器或本地文件
 - 静态托管若不支持自定义响应头（如 GitHub Pages），VAD 会退化为单线程

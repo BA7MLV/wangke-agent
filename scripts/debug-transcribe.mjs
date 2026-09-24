@@ -11,7 +11,7 @@ page.on('response', (res) => { if (res.status() >= 400) console.log('[HTTP', res
 
 await page.addInitScript((key) => {
   localStorage.setItem('wangke-settings', JSON.stringify({
-    state: { apiKey: key, baseUrl: 'https://api.siliconflow.cn/v1', asrModel: 'XingChenAGI/XingChenASR-V3.2-Ultra', llmModel: 'deepseek-ai/DeepSeek-V4-Flash', embedModel: 'Qwen/Qwen3-VL-Embedding-8B', visionModel: 'Qwen/Qwen3-VL-32B-Instruct' },
+    state: { apiKey: key, baseUrl: 'https://api.siliconflow.cn/v1', asrModel: 'XingChenAGI/XingChenASR-V3.2-Ultra', llmModel: 'deepseek-ai/DeepSeek-V4-Flash', visionModel: 'Qwen/Qwen3-VL-32B-Instruct' },
     version: 0,
   }));
 }, API_KEY);

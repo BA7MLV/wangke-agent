@@ -1,14 +1,13 @@
 import { useJobStore } from '../store/jobs';
-import { getSettings } from '../store/settings';
 import { formatCaughtError } from '../utils/errorText';
 import { parseMaterial, type MaterialFormat } from '../materials/parse';
-import { ensureMaterialIndex } from './embedMaterial';
 
 /**
- * 材料的「解析 → 建索引」任务。
+ * 材料的解析任务。
  *
- * 一趟跑完两件事，但**进度分两段**（`parse` / `index`）：解析是本地的、几十秒；
- * 建索引要打 API、按块数计费。混成一段会让「卡在 40% 很久」看起来像卡死。
+ * 2026-09-24：**原来还有第二段「建索引」**（把文本块向量化、打 embedding API、按块计费）。
+ * 稠密检索移除后这一段整体消失，任务只剩解析一件事 —— 也因此不再需要 API Key：
+ * 材料解析完就能检索（词法检索直接扫 `materialBlocks`）。
  *
  * 放在 job store 里（而不是组件 state）的理由与转写一致：用户导入一份 300 页 PDF
  * 之后通常就切走了，回来时希望看到「已经解析好了」而不是「进度没了、也不知道成没成」。
@@ -25,22 +24,13 @@ export interface MaterialJobResult {
   parsed: number;
   scanned: boolean;
   empty: boolean;
-  indexed: boolean;
 }
 
-/**
- * 跑解析 + 建索引。
- *
- * 没有 API Key 时**只解析不建索引**：材料照样能打开、能划词提问，
- * 只是语义检索不可用（问答面板会给出「索引尚未就绪」的提示）。
- * 反过来把整件事因为没 Key 就失败掉是错的设计 —— 阅读本身不需要联网。
- */
 export async function startMaterialJob(
   materialId: string,
   format: MaterialFormat,
-  opts: { index?: boolean } = {},
 ): Promise<MaterialJobResult> {
-  if (running.has(materialId)) return { parsed: 0, scanned: false, empty: false, indexed: false };
+  if (running.has(materialId)) return { parsed: 0, scanned: false, empty: false };
   running.add(materialId);
   const { upsert } = useJobStore.getState();
   try {
@@ -68,25 +58,11 @@ export async function startMaterialJob(
         done: 1,
         total: 1,
       });
-      return { parsed: res.blockCount, scanned: res.scanned, empty: res.empty, indexed: false };
-    }
-
-    let indexed = false;
-    if (opts.index !== false && getSettings().apiKey) {
-      upsert(materialId, {
-        phase: 'index',
-        message: '建立问答索引…',
-        done: 0,
-        total: res.blockCount,
-      });
-      await ensureMaterialIndex(materialId, (p) => {
-        upsert(materialId, { phase: 'index', message: p.message, done: p.done, total: p.total });
-      });
-      indexed = true;
+      return { parsed: res.blockCount, scanned: res.scanned, empty: res.empty };
     }
 
     upsert(materialId, { phase: 'done', message: '', done: 1, total: 1 });
-    return { parsed: res.blockCount, scanned: false, empty: false, indexed };
+    return { parsed: res.blockCount, scanned: false, empty: false };
   } catch (e) {
     upsert(materialId, {
       phase: 'error',

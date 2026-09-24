@@ -20,6 +20,7 @@ import HandoutPanel from '../components/HandoutPanel';
 import ChatPanel from '../components/ChatPanel';
 import DanmakuPanel from '../components/DanmakuPanel';
 import CardsPanel from '../components/CardsPanel';
+import CommentsSection from '../components/CommentsSection';
 import MaterialReader from '../components/MaterialReader';
 import SelectionAsk from '../components/SelectionAsk';
 import RateButtons from '../components/RateButtons';
@@ -27,6 +28,9 @@ import CaptionSizeButton from '../components/CaptionSizeButton';
 import DanmakuToggleButton from '../components/DanmakuToggleButton';
 import SeekFeedback from '../components/SeekFeedback';
 import DanmakuLayer from '../components/DanmakuLayer';
+import PlayerBigPlayButton from '../components/PlayerBigPlayButton';
+import TimeSliderWithPreview from '../components/TimeSliderWithPreview';
+import { createYoutubeKeyShortcuts } from '../utils/playerKeys';
 
 /** 常驻字幕轨的固定 id：vidstack 的 NativeTextRenderer 会把轨的 id 写到它创建的原生 <track> 上，
  *  而 MediaProvider 的 Tracks 观察器会把「没登记的 <track> 元素」当成新轨补进列表（id 为空时用
@@ -103,6 +107,12 @@ export default function Player() {
   const useBottomNav = isMobile && !isPhoneLandscape;
   // 窄屏底部导航 / 桌面 Tabs 当前面板
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
+  /**
+   * 评论区展开状态。**必须住在播放页**，因为展开时 `.video-pane` 要加
+   * `--comments-open` 让播放器让出高度 —— CSS 既选不到前面的兄弟节点，也读不到
+   * 评论区组件内部的状态。见 theme.css 里那两条注释。
+   */
+  const [commentsOpen, setCommentsOpen] = useState(false);
   // 阅读器命令式句柄：问答里的「[第3页]」引用点一下就靠它跳过去
   const readerRef = useRef<MaterialReaderHandle | null>(null);
   // 选区提问投递：浮层点完必须让用户看到问答面板（窄屏下面板可能是隐藏的）
@@ -342,8 +352,21 @@ export default function Player() {
   // 讲义/弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
   const hasSubtitles = segments.length > 0 && !subsRunning;
 
-  // slots 对象固定引用：每次渲染的新字面量会让 Vidstack 重建 slot 内容并重置控制栏 idle
-  // 状态（手机断点切换触发重渲染时，控制栏会意外自动隐藏）
+  // YouTube 式键盘映射（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。
+  // 单例：里面的连按累加游标要跨按键保留，所以不能每次渲染重建。见 utils/playerKeys.ts。
+  const keyShortcuts = useMemo(() => createYoutubeKeyShortcuts(), []);
+
+  /**
+   * 布局槽位。
+   *
+   * 两点讲究：
+   * 1. 对象引用要尽量稳定 —— 每次渲染都传新字面量会让 Vidstack 重建 slot 内容并重置控制栏
+   *    idle 状态（手机断点切换触发重渲染时，控制栏会意外自动隐藏）。依赖只有 `videoUrl`
+   *    （进播放器时已就位，之后不再变）。
+   * 2. `googleCastButton: null` 是**替换**默认按钮而不是禁用：vidstack 的 `slot()` 用
+   *    `isUndefined(slot) ? 默认值 : slot` 判断，传 null 正好把默认投屏按钮摘掉。
+   *    本项目没接 Google Cast 框架，那颗按钮点了没有任何反应，留着只是视觉噪音。
+   */
   const layoutSlots = useMemo(
     () => ({
       topControlsGroupStart: <RateButtons />,
@@ -353,8 +376,11 @@ export default function Player() {
           <CaptionSizeButton />
         </>
       ),
+      // 进度条换成带缩略图预览的版本（YouTube 的 hover 预览）
+      timeSlider: <TimeSliderWithPreview previewSrc={videoUrl} />,
+      googleCastButton: null,
     }),
-    [],
+    [videoUrl],
   );
 
   // 桌面端 mdui-tabs 的选中变化：mdui 的 change 是 CustomEvent<void>，值要从元素上读
@@ -400,7 +426,7 @@ export default function Player() {
             // 材料没有播放器：playerRef 留空（ChatPanel 据此隐藏截图按钮、不渲染 #seek- 链接）
             playerRef={playerRef}
             readerRef={readerRef}
-            materialKind={video.materialFormat === 'docx' ? 'para' : 'page'}
+            materialKind={video.materialFormat === 'pdf' || !video.materialFormat ? 'page' : 'para'}
           />
         ),
       }
@@ -421,6 +447,18 @@ export default function Player() {
         dm: <DanmakuPanel videoId={id} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
         cards: <CardsPanel videoId={id} videoName={video.name} playerRef={playerRef} hasSubtitles={hasSubtitles} />,
       };
+
+  /**
+   * 视频栏的类名。`video-pane--comments-open` 只给视频加（材料页没有播放器可压，
+   * 而且评论区不进材料页 —— 它锚定的是「秒」，材料只有页/段）。
+   */
+  const videoPaneClass = [
+    'video-pane',
+    isMaterial ? 'video-pane--reading' : '',
+    !isMaterial && commentsOpen ? 'video-pane--comments-open' : '',
+  ]
+    .filter(Boolean)
+    .join(' ');
 
   return (
     <PageShell
@@ -450,7 +488,7 @@ export default function Player() {
         {/* 字幕字号变量设在普通容器上（不 media-player host：它 upgrade 时会重写内联样式），
             经继承传递给内部的 .vds-captions */}
         <div
-          className={isMaterial ? 'video-pane video-pane--reading' : 'video-pane'}
+          className={videoPaneClass}
           style={{ '--media-user-font-size': captionScale } as CSSProperties}
         >
           {isMaterial ? (
@@ -477,22 +515,47 @@ export default function Player() {
               // 「未播放过」那段 vds 不注册鼠标监听，由 player-enhance.css 的 :hover 兜住。
               hideControlsOnMouseLeave
               controlsDelay={CONTROLS_IDLE_DELAY}
+              // YouTube 式快捷键（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。见 utils/playerKeys.ts
+              keyShortcuts={keyShortcuts}
               // 学习时长追踪：播放中不做「人走开了」的空闲判定（看课不用一直操作键鼠）。
               // 暂停/播完/卸载都恢复普通判定，见 store/studyTime.ts。
               onPlay={() => setStudyMediaPlaying(true)}
               onPlaying={() => setStudyMediaPlaying(true)}
               onPause={() => setStudyMediaPlaying(false)}
               onEnded={() => setStudyMediaPlaying(false)}
-              style={{ borderRadius: 12, overflow: 'hidden' }}
+              // 这里刻意**不带** style：播放器是直角，真正的实现在 player-enhance.css 的
+              // `[data-media-player] { --video-border-radius: 0 }` —— vds 默认布局会在宿主上写
+              // `border-radius: var(--video-border-radius, 6px)`，只删这里的内联圆角是盖不住它的。
+              // 此前这行是 style={{ borderRadius: 12, overflow: 'hidden' }}（2026-09-23 按用户
+              // 要求去掉直角）；overflow 当初只为让圆角能裁住视频，没有别的用途，因此一并删掉。
             >
               <MediaProvider>
                 {/* 常驻单轨、不设 src：挂载即 ready，之后由 syncTrack 增量 addCue */}
                 {trackReady && <Track id={SUBS_TRACK_ID} kind="subtitles" label="中文字幕" default />}
               </MediaProvider>
+              {/* 中央大播放按钮：必须挂在 <MediaProvider> 之外 —— 手势层是在 provider 元素上
+                  监听 pointerup 的（单击暂停 / 双击全屏），挂在里面会被它连点两下。 */}
+              <PlayerBigPlayButton />
               <SeekFeedback />
               <DanmakuLayer videoId={id} />
-              <DefaultVideoLayout icons={defaultLayoutIcons} slots={layoutSlots} />
+              {/* seekStep 只影响「时间滑块自己拿到方向键」那条路（滑块被 Tab 聚焦时，
+                  或方向键在滑块上合成的事件）：标成 5s 才能和 playerKeys 里的 ←/→ 一致。
+                  j/l 走的是 playerKeys 的回调，不受这里影响。 */}
+              <DefaultVideoLayout icons={defaultLayoutIcons} slots={layoutSlots} seekStep={5} />
             </MediaPlayer>
+          )}
+
+          {/* 评论区：贴在播放器下方，**必须在 .video-pane 内部**。
+              放成 .player-layout 的直接子节点会变成「视频栏与侧栏之间的第三栏」
+              （`display:flex` 的 row 布局），视频栏被挤窄、顺序也全乱 —— 实测踩到过。
+              材料页不渲染：它锚定的是「秒」，材料只有页/段。 */}
+          {!isMaterial && (
+            <CommentsSection
+              videoId={id}
+              playerRef={playerRef}
+              hasSubtitles={hasSubtitles}
+              onOpenChange={setCommentsOpen}
+            />
           )}
         </div>
 

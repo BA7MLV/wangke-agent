@@ -47,6 +47,9 @@ export const SYMBOL_NAMES = [
   'folder',
   'folder_open',
   'format_size',
+  // 评论区（讨论区折叠条）。不复用 comment：那个已经被「弹幕」面板占了，
+  // 两者在图例上必须能分开（弹幕是单句飘过，评论区是多轮讨论）。
+  'forum',
   'graphic_eq',
   'help',
   'home',

@@ -7,8 +7,8 @@ import { db } from './db';
  * Safari 按桶取整，仅供参考量级）；分类明细由应用自统计：
  * estimate() 的 usageDetails 在 Safari 上不可靠，且分不清应用内类别。
  *
- * 大表（embeddings / frames / segments）用 cursor 逐条累加，
- * 避免 toArray() 一次性把向量/图片全部读进内存。
+ * 大表（frames / segments）用 cursor 逐条累加，
+ * 避免 toArray() 一次性把图片/正文全部读进内存。
  */
 
 export interface StorageCategory {
@@ -31,7 +31,7 @@ export async function getStorageStats(): Promise<StorageStats> {
   let videos = 0;
   let materials = 0;
   let frames = 0;
-  let textAndVectors = 0;
+  let textBytes = 0;
   let handouts = 0;
 
   // 视频与阅读材料按 kind 分流：不分开的话材料体积会被算进「视频文件」，
@@ -48,27 +48,21 @@ export async function getStorageStats(): Promise<StorageStats> {
     frames += f.blob.size;
   });
   await db.segments.each((s) => {
-    textAndVectors += s.text.length * 2; // JS 字符串按 UTF-16 估算
+    textBytes += s.text.length * 2; // JS 字符串按 UTF-16 估算
   });
   // B 站多语言字幕轨（对照显示用，条数与主字幕同量级）
   await db.subtitleTracks.each((t) => {
-    for (const c of t.cues) textAndVectors += c.text.length * 2;
+    for (const c of t.cues) textBytes += c.text.length * 2;
   });
-  await db.embeddings.each((e) => {
-    textAndVectors += e.vector.byteLength;
-  });
-  // 材料的文本块与向量：与字幕同属「文本与向量」一类（都是为检索服务的小块数据）
+  // 材料的文本块：与字幕同属「供检索的正文」一类
   await db.materialBlocks.each((b) => {
-    textAndVectors += b.text.length * 2;
-  });
-  await db.materialEmbeddings.each((e) => {
-    textAndVectors += e.vector.byteLength;
+    textBytes += b.text.length * 2;
   });
   await db.handouts.each((h) => {
     handouts += h.blob.size;
   });
 
-  const known = videos + materials + frames + textAndVectors + handouts;
+  const known = videos + materials + frames + textBytes + handouts;
 
   let usage = 0;
   let quota = 0;
@@ -94,7 +88,7 @@ export async function getStorageStats(): Promise<StorageStats> {
       { key: 'videos', label: '视频文件', bytes: videos },
       { key: 'materials', label: '阅读材料', bytes: materials },
       { key: 'frames', label: '抽帧图片', bytes: frames },
-      { key: 'text', label: '字幕与向量', bytes: textAndVectors },
+      { key: 'text', label: '字幕与文本', bytes: textBytes },
       { key: 'handouts', label: '讲义文档', bytes: handouts },
       { key: 'overhead', label: '浏览器存储开销', bytes: overhead },
     ],

@@ -101,6 +101,33 @@ html.mdui-theme-dark {
   justify-content: stretch;
 }
 
+/* ── 评论区（视频下方）：折叠态只占一行，展开态吃固定高度 ──────────────
+   为什么默认折叠：视频的 16:9 高度由宽度反推、在 pane 里居中 —— 评论区一旦默认展开，
+   窄屏下视频会被挤到不可用，而用户 90% 的时间在看视频。折叠条只占约 40px。
+   详见 docs/plans/2026-09-22-comments-design.md §3.1。 */
+.player-layout .comments-block {
+  /* 压过 pane 的 align-items:center，仍然铺满整宽 */
+  align-self: stretch;
+  flex: 0 0 auto;
+  min-width: 0;
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* 展开时播放器让出高度。
+   **播放器的高度由宽度决定（16:9）**，所以要压它只能从宽度一侧压：
+   `calc(44vh * 16 / 9)` 就是「高度预算 44vh 对应的宽度」，与下面 ≤900px 那条
+   `45vh * 16 / 9` 是同一个手法。
+   ⚠️ 选择器刻意写成 `.video-pane.video-pane--comments-open`（同一个类组里写两遍）：
+   下面那几条媒体查询里的 `.player-layout .video-pane [data-media-player]` 特异性相同
+   却**排在后面**，按源序会赢 —— 拼一档特异性才能让「展开态让高度」在窄屏同样生效，
+   包括手机横屏。不要"顺手"化简掉它。 */
+.player-layout .video-pane.video-pane--comments-open [data-media-player] {
+  width: min(100%, calc(44vh * 16 / 9));
+  max-height: 44vh;
+}
+
 /* 阅读器外壳：提示条在上，阅读区吃掉剩余高度（否则提示条会把阅读区挤出可视区） */
 .mr-shell {
   flex: 1;

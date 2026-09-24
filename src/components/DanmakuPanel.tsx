@@ -78,7 +78,7 @@ export default function DanmakuPanel({ videoId, playerRef, hasSubtitles }: Props
         )}
         {hasSubtitles && items.length === 0 && !running && (
           <PanelPlaceholder testId="dm-empty">
-            点击「生成弹幕」，AI 将按课程内容设计思考题，播放到对应时间点时弹在画面顶部
+            点击「生成弹幕」，AI 将按课程内容设计思考题，播放到对应时间点会自画面右侧向左飘过
           </PanelPlaceholder>
         )}
         {items.map((d) => (

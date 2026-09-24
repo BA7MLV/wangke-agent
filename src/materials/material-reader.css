@@ -1,4 +1,4 @@
-/* 阅读材料（PDF / Word）阅读器样式。
+/* 阅读材料（PDF / Word / Markdown）阅读器样式。
    层级全部走 mdui 的 MD3 令牌，与播放页/讲义页保持同一套视觉语言。 */
 
 /* ── PDF 文本层（逐条摘录自 pdf.js web/pdf_viewer.css，Apache-2.0） ──────────────
@@ -226,4 +226,54 @@
   padding: 40px 0;
   color: rgb(var(--mdui-color-on-surface-variant));
   font-size: 13px;
+}
+
+.mr-md {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  color: rgb(var(--mdui-color-on-surface));
+}
+
+.mr-md__block {
+  scroll-margin-top: 12px;
+}
+
+.mr-md__block--mark {
+  background: rgb(var(--mdui-color-primary) / 0.14);
+  box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
+  border-radius: 6px;
+  padding: 2px 10px 6px;
+  margin-left: -10px;
+  margin-right: -10px;
+}
+
+.mr-md__badge {
+  display: none;
+}
+
+.mr-md__block--mark .mr-md__badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(var(--mdui-color-primary));
+  color: rgb(var(--mdui-color-on-primary));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mr-md .x-markdown {
+  --margin-block: 0 0 0.7em 0;
+  --margin-ul-ol: 0 0 0.7em 1.2em;
+  --margin-li: 0.2em 0;
+  --margin-pre: 0.7em 0;
+  --table-margin: 0.7em 0;
+  --td-th-padding: 0.35em 0.5em;
+  line-height: 1.7;
+  font-size: 15px;
+}
+
+.mr-md [data-unit] {
+  scroll-margin-top: 12px;
 }

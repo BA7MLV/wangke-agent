@@ -17,7 +17,7 @@ import type { RegionImage } from '../materials/region';
  * 走 DOM 事件则在面板被隐藏时时序很脆。
  */
 
-export type AskSource = 'pdf' | 'docx' | 'handout' | 'subtitle';
+export type AskSource = 'pdf' | 'docx' | 'md' | 'handout' | 'subtitle';
 
 export interface Citation {
   /** 选中的原文（已归一化、限长） */

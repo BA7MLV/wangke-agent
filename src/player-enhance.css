@@ -1,6 +1,24 @@
 /* 播放器增强：控制栏 hover 显隐 / 倍速快捷按钮 / 字幕字号按钮 / 双击 ±10s 涟漪反馈
    （叠加在 Vidstack 默认布局之上，:where() 零特异性，普通类选择器即可覆盖） */
 
+/* ── 播放器直角（用户要求） ──────────────────────────────────────────
+   vds 的默认视频布局会**在宿主元素上**圆角 + 描边：
+     [data-media-player][data-layout=video]:not([data-fullscreen]) {
+       border-radius: var(--video-border-radius, 6px);
+       border: var(--video-border, 1px solid rgb(255 255 255 / .1));
+     }
+   （node_modules/@vidstack/react/player/styles/default/layouts/video.css）
+
+   ⚠️ 只删掉 Player.tsx 里那个内联 `style={{ borderRadius: 12 }}` 是**不够的** ——
+   内联样式只是盖住了它，删掉之后 vds 那 6px 就顶上来，肉眼在浅色背景上仍看得出圆角。
+   正确做法是把这条规则消费的变量置 0（变量在元素自身上解析，不必跟那条选择器拼特异性；
+   它也不带 `:where()`，用 `[data-media-player]` 覆盖会被 3 个选择器单位压过去）。
+
+   只改圆角、保留那圈 1px 描边：请求只说不要圆角，描边是另一件事。 */
+[data-media-player] {
+  --video-border-radius: 0;
+}
+
 /* ── 控制栏：只在悬停播放器时出现（YouTube 行为） ────────────── */
 /* 两处配合：
    ① JS 侧 <MediaPlayer hideControlsOnMouseLeave controlsDelay=24h>（Player.tsx）——
@@ -32,6 +50,25 @@
   }
 }
 
+/* 控制层遮罩：vidstack 默认是一条约 0.6 黑的底渐变 + 顶部只剩 0.3 黑。
+   顶部那一档在本项目不够用 —— 顶栏放的是自研按钮（倍速档位 / 弹幕 / 字号），
+   压在浅色课件录制、白底 PPT 上会整片发白（2x/3x 几乎看不见）。这里把顶档提到 0.55，
+   同时把圆角对齐播放器本身的 12px（默认 6px，会和控制层底色在角上错开）。 */
+[data-media-player] {
+  --video-border-radius: 12px;
+}
+
+.vds-video-layout .vds-controls[data-visible] {
+  background-image: linear-gradient(
+    to top,
+    rgb(0 0 0 / 0.6),
+    10%,
+    transparent,
+    88%,
+    rgb(0 0 0 / 0.55)
+  );
+}
+
 /* ── 控制栏：YouTube 视觉（进度条 / 按钮） ───────────────────── */
 /* 只覆盖 vidstack 的令牌 —— 它的默认样式都包在 `:where()` 里（0 特异性），
    普通类选择器即可覆盖，不需要 `!important`。
@@ -51,11 +88,165 @@
   --media-button-size: 40px;
   --media-button-icon-size: 60%;
   --media-button-hover-bg: rgb(255 255 255 / 0.12);
+
+  /* 时间「当前 / 总长」：YouTube 是 13px、无内边距；默认 15px + 2px 内边距偏大，
+     在 40px 的按钮行里显得比图标还重 */
+  --media-time-font-size: 13px;
+  --media-time-padding: 0;
+  --media-time-letter-spacing: 0;
+  /* 章节标题（本项目没有章节轨，默认布局退化显示视频名）：YouTube 用 14px 的次要色 */
+  --media-chapter-title-font-size: 14px;
+  --media-chapter-title-color: rgb(255 255 255 / 0.7);
+}
+
+/* 时间数字等宽：不然「当前时间」每秒重排，右侧的「/ 总长」会跟着左右抖 */
+.vds-video-layout .vds-time {
+  font-variant-numeric: tabular-nums;
+}
+
+/* 分隔斜杠压暗一档（默认 #e0e0e0 和数字同亮，看起来像两个计时器） */
+.vds-video-layout .vds-time-divider {
+  color: rgb(255 255 255 / 0.55);
+}
+
+/* 压在浅色画面上时的可读性：底部的渐变遮罩到顶部只剩 0.3 的黑，
+   倍速文字、时间、图标落在白底画面（比如课件截图、浅色 PPT 录制）上会糊掉。
+   YouTube 同样给控制栏的图标与文字加了淡投影 —— 这是它「压在什么画面上都看得清」的原因。
+   text-shadow 会继承，挂在 .vds-controls 上一次就够；SVG 图标不吃 text-shadow，
+   单独补一层 drop-shadow。 */
+.vds-video-layout .vds-controls {
+  text-shadow: 0 0 2px rgb(0 0 0 / 0.45);
+}
+
+.vds-video-layout .vds-controls .vds-icon {
+  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.45));
 }
 
 /* 按钮间距：vidstack 默认 2.5px 太挤，YouTube 大约 8px */
 .vds-video-layout .vds-button {
   margin-right: 6px;
+}
+
+/* ── 进度条 hover 预览：缩略图 + 时间胶囊（YouTube 的招牌细节） ────── */
+/* 结构来自 components/TimeSliderWithPreview.tsx：
+     .vds-slider-preview            ← 跟随指针的盒子（left/bottom 由 vidstack 内联算出来）
+       .player-preview-frame > video ← 停在指针时间点的预览帧（.player-preview-frame 上写死尺寸）
+       .vds-slider-value             ← 时间胶囊，绝对定位叠在卡片底部
+   这里不用 vidstack 官方的 .vds-slider-video：它的默认样式带 1px 白描边，而且未就绪时
+   整个元素被 display: none 掉（详见组件里 PreviewFrame 的注释）。 */
+.vds-video-layout .vds-time-slider .vds-slider-preview {
+  /* 卡片外观全交给 .player-preview-frame，外层不再画背景 */
+  --media-slider-preview-bg: transparent;
+  --media-slider-preview-border-radius: 10px;
+  gap: 0;
+}
+
+.player-preview-frame {
+  position: relative;
+  overflow: hidden;
+  border-radius: 10px;
+  background: #000;
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.55);
+}
+
+.player-preview-video {
+  display: block;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  /* 第一帧解出来之前先不显示，否则会闪一下纯黑 */
+  opacity: 0;
+  transition: opacity var(--duration-quick, 150ms) ease-out;
+}
+
+.player-preview-video[data-ready] {
+  opacity: 1;
+}
+
+.vds-video-layout .vds-time-slider .vds-slider-value {
+  position: absolute;
+  left: 50%;
+  bottom: 6px;
+  transform: translateX(-50%);
+  /* 默认是「图下方另起一行」的 2px 顶距，改成叠在图上就不需要了 */
+  margin: 0;
+  padding: 3px 7px;
+  border: 0;
+  border-radius: 6px;
+  background: rgb(0 0 0 / 0.85);
+  color: #fff;
+  font-size: 12px;
+  font-weight: 500;
+  line-height: 14px;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+/* ── 中央大播放按钮（YouTube 首帧） ─────────────────────────────── */
+/* 只在「本次打开还没播过」时出现（PlayerBigPlayButton），所以不必考虑和播放中的画面争视线。
+   层级压在字幕(10)之上、弹幕(15)之下：它是静态元素，弹幕经过时应该在它上面。 */
+.player-big-play {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  z-index: 14;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 68px;
+  height: 68px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: rgb(0 0 0 / 0.55);
+  color: #fff;
+  cursor: pointer;
+  transform: translate(-50%, -50%);
+  transition:
+    background-color var(--duration-quick, 150ms) ease-out,
+    transform var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
+  animation: big-play-in var(--duration-medium, 350ms) var(--ease-smooth-out, ease-out);
+}
+
+.player-big-play:hover {
+  background: rgb(0 0 0 / 0.72);
+  transform: translate(-50%, -50%) scale(1.06);
+}
+
+.player-big-play:active {
+  transform: translate(-50%, -50%) scale(0.96);
+}
+
+.player-big-play:focus-visible {
+  outline: 2px solid #fff;
+  outline-offset: 3px;
+}
+
+.player-big-play__icon {
+  width: 30px;
+  height: 30px;
+  fill: currentColor;
+  /* 三角形的几何中心比视觉重心偏右，右移一点才是「看起来居中」 */
+  margin-left: 3px;
+}
+
+@keyframes big-play-in {
+  from {
+    opacity: 0;
+    transform: translate(-50%, -50%) scale(0.8);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, -50%) scale(1);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .player-big-play {
+    animation: none;
+  }
 }
 
 /* ── 倍速快捷按钮 ───────────────────────────────────────────── */
@@ -146,6 +337,12 @@
   pointer-events: none;
 }
 
+/* 自右向左飘过。位移量没法纯 CSS 算：百分比是相对**自身宽度**的，而「整条飘完刚好
+   出屏」要走的距离是「容器宽 + 自身宽」，容器宽 CSS 自己拿不到。所以沿用下面的居中
+   定位（left/right:0 + margin:auto，可用宽度就是整层宽），起点与终点天然关于中心
+   对称 —— 只要往右挪 (容器宽 + 自身宽) / 2，左边缘就正好落在层右边界外；往左挪同样
+   的距离，右边缘正好落在层左边界外。这个 --dm-shift 由 DanmakuLayer 量出来。
+   走 transform 而不是 left，是为了留在合成层上，别去动播放时的布局。 */
 .dm-item {
   position: absolute;
   top: 12%;
@@ -161,7 +358,15 @@
   font-size: 16px;
   line-height: 1.55;
   text-align: center;
-  animation: dm-pop 7s var(--ease-smooth-out, ease-out) forwards;
+  will-change: transform;
+  animation: dm-scroll var(--dm-dur, 10s) linear forwards;
+  /* 宽度量出来之前先别跑：animation-duration 中途被改，进度会跟着重算、画面会跳 */
+  animation-play-state: paused;
+}
+
+/* 量与时长都写好了，放行 */
+.dm-item[data-ready] {
+  animation-play-state: running;
 }
 
 .dm-tag {
@@ -176,33 +381,30 @@
   vertical-align: 2px;
 }
 
-/* 暂停时弹幕动画一并暂停（onAnimationEnd 在恢复后才触发，state 清理正常） */
-[data-media-player][data-paused] .dm-item {
+/* 暂停时弹幕动画一并暂停（onAnimationEnd 在恢复后才触发，state 清理正常）。
+   但「播完」不算：「视频结束」也是一种 paused，此刻半路那条会冻结在画面中间 ——
+   动画停在 100% 之前，animationend 永不触发，state 清不掉，画面正中就永远杵着一条
+   弹幕（10s 的 e2e 样片上必现）。视频都放完了，让它把这几十像素飘完退场更合理。
+   特异性 (0,4,0) 高于 .dm-item[data-ready] (0,2,0)，谁先谁后都赢。 */
+[data-media-player][data-paused]:not([data-ended]) .dm-item {
   animation-play-state: paused;
 }
 
-@keyframes dm-pop {
-  0% {
-    opacity: 0;
-    transform: translateY(-10px);
+@keyframes dm-scroll {
+  from {
+    transform: translateX(var(--dm-shift, 50vw));
   }
-  6% {
-    opacity: 1;
-    transform: translateY(0);
-  }
-  88% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(6px);
+  to {
+    transform: translateX(calc(var(--dm-shift, 50vw) * -1));
   }
 }
 
 @media (prefers-reduced-motion: reduce) {
-  /* 保留淡入淡出（onAnimationEnd 仍触发），去掉位移 */
+  /* 保留淡入淡出（onAnimationEnd 仍触发），去掉位移；
+     时长写死：这个分支跟飘屏距离无关，不该跟着 --dm-dur 变 */
   .dm-item {
     animation-name: dm-pop-fade;
+    animation-duration: 7s;
   }
 }
 

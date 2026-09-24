@@ -107,15 +107,6 @@ export async function transcribe(
   };
 }
 
-export async function embed(s: Settings, model: string, input: string[]): Promise<number[][]> {
-  const res = await request(s, '/embeddings', {
-    method: 'POST',
-    body: JSON.stringify({ model, input }),
-  });
-  const data = await res.json();
-  return (data.data as { embedding: number[] }[]).map((d) => d.embedding);
-}
-
 export interface ToolDef {
   type: 'function';
   function: { name: string; description: string; parameters: Record<string, unknown> };

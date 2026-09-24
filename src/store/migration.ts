@@ -35,6 +35,9 @@ const TABLES = [
   'chats',
   'danmakus',
   'cards',
+  // 评论区（v12）。**注意它不能走下面的 simpleTables 快路径** —— parentId 是同表内的
+  // 自增 id 引用，导入侧必须重挂，见 importMigrationZip 的 3b) 段。
+  'comments',
   'skills',
   'skillRefs',
   // 学习时长（v11）。它不是视频的子表（一天一行、与课程无关），导入侧单独合并，见 importMigrationZip
@@ -135,7 +138,6 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
     baseUrl: s.baseUrl,
     asrModel: s.asrModel,
     llmModel: s.llmModel,
-    embedModel: s.embedModel,
     visionModel: s.visionModel,
     favorites: s.favorites,
     contextWindow: s.contextWindow,
@@ -301,6 +303,39 @@ export async function importMigrationZip(
       await db.table(t).bulkAdd(batch);
       bump(t, batch.length);
     }
+  }
+
+  // 3b) 评论区（comments）：**刻意不走 simpleTables**。
+  //     parentId 指向的是同表内的自增 id，剥掉 id 直接 bulkAdd 会让所有回复指向不存在的
+  //     父级 —— 展示层把孤儿回复提升为主贴，用户看到的是「回复全变成主贴」。
+  //     做法与 chatSessions→chats 一致：主贴先入、记 旧id→新id，回复再按映射重挂。
+  onStep?.('正在导入评论区…');
+  const commentIdMap = new Map<number, number>();
+  const pendingReplies: { row: Record<string, unknown>; oldParent: number }[] = [];
+  for (const raw of data.comments ?? []) {
+    const row = decodeRow(raw);
+    if (!newVideoIds.has(row.videoId as string)) continue;
+    const oldId = row.id as number | undefined;
+    delete row.id;
+    if (row.parentId == null) {
+      const newId = (await db.comments.add(row as never)) as number;
+      if (oldId != null) commentIdMap.set(oldId, newId);
+      bump('comments', 1);
+    } else {
+      pendingReplies.push({ row, oldParent: row.parentId as number });
+    }
+  }
+  const replyBatch: Record<string, unknown>[] = [];
+  for (const { row, oldParent } of pendingReplies) {
+    const pid = commentIdMap.get(oldParent);
+    // 父评论没进来（不属于本次导入的新视频），或父级本身是回复（我们只做两层）→ 丢弃这条引用，
+    // 内容不丢，只是失去归属；不这么做会写出一条永远找不到父级的孤儿行。
+    if (pid == null) continue;
+    replyBatch.push({ ...row, parentId: pid });
+  }
+  if (replyBatch.length) {
+    await db.comments.bulkAdd(replyBatch as never[]);
+    bump('comments', replyBatch.length);
   }
 
   // 4) 学习时长：与课程无关的全局表，按日期合并。

@@ -32,7 +32,7 @@ const info = await page.evaluate(() => {
 console.log('2. 内容:', JSON.stringify(info, null, 2));
 
 // 六个分类行齐全（阅读材料是 v9 起新增的一类：不单独统计的话材料体积会被算进「视频文件」）
-const labels = ['视频文件', '阅读材料', '抽帧图片', '字幕与向量', '讲义文档', '浏览器存储开销'];
+const labels = ['视频文件', '阅读材料', '抽帧图片', '字幕与文本', '讲义文档', '浏览器存储开销'];
 const missing = labels.filter((l) => !info || !info.rows.some((r) => r.includes(l)));
 if (missing.length) {
   console.log(`   ✗ 缺少分类行: ${missing.join('、')}`);

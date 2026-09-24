@@ -1,9 +1,10 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
+import type { CommentRole } from '../harness/comments';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
- * `kind` 区分视频与阅读材料（PDF / Word）。改名要动 30+ 个文件，不值当，
+   * `kind` 区分视频与阅读材料（PDF / Word / Markdown）。改名要动 30+ 个文件，不值当，
  * 因此只在类型名与注释上澄清。
  */
 export interface VideoRow {
@@ -42,8 +43,8 @@ export interface VideoRow {
   /** 资源类型；不设视为 'video' */
   kind?: 'video' | 'material';
   /** 材料格式，决定用哪个阅读器 */
-  materialFormat?: 'pdf' | 'docx';
-  /** 材料定位单元总数：PDF=页数，Word=段落数 */
+  materialFormat?: 'pdf' | 'docx' | 'md';
+  /** 材料定位单元总数：PDF=页数，Word / Markdown=段落数 */
   unitCount?: number;
   /** 上次阅读到的单元（断点续读），与视频的 lastPosition 对称 */
   lastUnit?: number;
@@ -216,13 +217,6 @@ export interface ChatRow {
   quiz?: QuizState;
 }
 
-export interface EmbeddingRow {
-  id?: number;
-  videoId: string;
-  segmentId: number;
-  vector: ArrayBuffer; // Float32Array
-}
-
 /**
  * 阅读材料的可检索文本块。
  *
@@ -245,20 +239,39 @@ export interface MaterialBlockRow {
   kind: 'body' | 'title' | 'table' | 'caption';
 }
 
-/** 材料文本块的向量（与 EmbeddingRow 对称，只是外键换成 blockId） */
-export interface MaterialEmbeddingRow {
-  id?: number;
-  materialId: string;
-  blockId: number;
-  vector: ArrayBuffer; // Float32Array
-}
-
 /** 思考题弹幕：播放到 time 时在画面顶部弹出（AI 按字幕内容生成） */
 export interface DanmakuRow {
   id?: number;
   videoId: string;
   time: number; // 秒
   text: string;
+}
+
+/**
+ * 评论区的一条发言（AI 按字幕生成的「同学讨论」，只读）。
+ *
+ * 与 `DanmakuRow` 是同源不同形态：输入都是字幕，弹幕是「一句话飘过、无回复」，
+ * 这里是「锚定某一时间点的多轮讨论」。两者的职责边界见
+ * docs/plans/2026-09-22-comments-design.md §1 —— 生成提示词也按这条边界错开，
+ * 否则两边会出同一批问题。
+ */
+export interface CommentRow {
+  id?: number;
+  videoId: string;
+  /** 时间锚点（秒）：点这一行跳播放器 */
+  time: number;
+  /** 角色名，取自固定名单（PROMPTS.commentAuthorPool），保证整门课里同一个人前后一致 */
+  author: string;
+  /** 发言类型，决定标签样式（提问 / 回答 / 补充） */
+  role: CommentRole;
+  text: string;
+  /** 二级回复：指向同一视频内父评论的 id。**非索引字段**（无需升版本）。
+   *
+   * 不建索引的理由：取一节课的评论本来就是一次 `where('videoId').equals(id).toArray()`
+   * 全取，分组在内存里做。调用点也不要写 `where('parentId')` —— 会绕开这条取舍。
+   */
+  parentId?: number;
+  createdAt: number;
 }
 
 /** Anki 问答卡（AI 按字幕生成候选，用户滑动审核：右留左弃） */
@@ -321,7 +334,6 @@ class WangkeDB extends Dexie {
   handouts!: Table<HandoutRow, number>;
   chats!: Table<ChatRow, number>;
   chatSessions!: Table<ChatSessionRow, number>;
-  embeddings!: Table<EmbeddingRow, number>;
   skills!: Table<SkillRow, number>;
   skillRefs!: Table<SkillRefRow, number>;
   danmakus!: Table<DanmakuRow, number>;
@@ -329,9 +341,9 @@ class WangkeDB extends Dexie {
   cards!: Table<CardRow, number>;
   subtitleTracks!: Table<SubtitleTrackRow, number>;
   materialBlocks!: Table<MaterialBlockRow, number>;
-  materialEmbeddings!: Table<MaterialEmbeddingRow, number>;
   covers!: Table<CoverRow, string>;
   studyDays!: Table<StudyDayRow, string>;
+  comments!: Table<CommentRow, number>;
 
   constructor() {
     super('wangke');
@@ -404,6 +416,24 @@ class WangkeDB extends Dexie {
     // v11：每日学习时长（热力图）。主键即日期，见 StudyDayRow 的注释。
     this.version(11).stores({
       studyDays: 'date',
+    });
+    // v12：评论区（AI 生成的同学讨论）。parentId 是**非索引字段**，理由见 CommentRow 的注释。
+    this.version(12).stores({
+      comments: '++id, videoId, time',
+    });
+    // v13：**删除向量表**。稠密检索已整体移除（改词法，见
+    // docs/plans/2026-09-23-context-engineering-design.md §1.6），两张表没有任何读写了。
+    //
+    // 用 `null` 而不是「留着不管」：向量是这套库里最占地的派生数据
+    // （一门 2 小时课约 2MB，30 门就 60MB），留着既白占空间，又会让
+    // 存储统计与云同步设计继续把它们算进去。
+    //
+    // 删表即丢数据，但这里**丢得起**：向量是从字幕/材料块算出来的派生数据，
+    // 需要时随时可重建 —— 而我们已经决定不再需要它。这条版本号同时保证了
+    // 全新安装不会白建这两张表。
+    this.version(13).stores({
+      embeddings: null,
+      materialEmbeddings: null,
     });
   }
 }

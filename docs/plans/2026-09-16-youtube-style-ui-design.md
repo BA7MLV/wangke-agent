@@ -45,7 +45,8 @@
     （滑块、chips 列表）用 `className="field--stack"`。作用域必须限定设置页 —— `.field` 同时被
     讲义面板复用。**塌陷的项靠截图一眼看出来，比事前读 TSX 快**。
   - **播放页**：`.video-pane` 加 `justify-content: center`（16:9 在更高的视口里顶对齐会留大片空白，
-    实测居中后上下各 189px）、播放器圆角收到 12px、`.sub-item` 与 `.panel-bar` 密度各收一档。
+    实测居中后上下各 189px）、~~播放器圆角收到 12px~~（**2026-09-23 已改回直角，见变更记录**）、
+    `.sub-item` 与 `.panel-bar` 密度各收一档。
   - **库页细节**：卡片底部 `> mdui-button { margin-right: auto }` 让主操作靠左、图标靠右；
     导入区从纵向大虚线块收成横排提示条（1327×88），testid 与整页拖拽不变。
   - **未做**：导航 rail 与顶栏（`.app-bar` / `.nav-rail`）的间距与选中态微调 —— 收益偏细节，
@@ -62,3 +63,28 @@
 - **资料库从行式改网格会损失信息密度**（一行能看到的状态标签、进度条、操作按钮都要重新安排）。取舍：元信息与状态标签保留在卡片下方一行，转写进度条移到缩略图底部（更像 YouTube 的上传进度），详情仍可进播放页看。
 - **缩略图取帧有性能成本**：`db.frames` 里每帧都有 320px dataURL，一次性读全表在视频多时会有内存压力。做法：只取每个视频的**第一帧**，用 Dexie 查询按 `videoId` 分组后再取 `thumb`；渲染用懒加载（`loading="lazy"`），失败静默占位。
 - **移动端不做网格**：手机竖屏保持单列大卡片（YouTube 移动端也是单列），复用同一套卡片样式。
+
+## 6. 变更记录
+
+- 2026-09-23：**播放器改回直角**（用户要求）。
+
+  ```
+  - style={{ borderRadius: 12, overflow: 'hidden' }}
+  ```
+  这行从初版就在（`borderRadius: 8`），2026-09-16 收到 12px。用户明确提出不要圆角后一起删掉：`overflow: hidden` 当初**只是为了**让圆角能裁住视频、没有别的用途，留着会让人以为它在挡什么。
+
+  ⚠️ **删内联样式只做了一半，这是这次最值得记的一步**：vidstack 的默认视频布局**自己在宿主元素上**写了圆角 ——
+
+  ```css
+  /* node_modules/@vidstack/react/player/styles/default/layouts/video.css */
+  [data-media-player][data-layout=video]:not([data-fullscreen]) {
+    border-radius: var(--video-border-radius, 6px);
+    border: var(--video-border, 1px solid rgb(255 255 255 / .1));
+  }
+  ```
+
+  内联的 12px 只是把它**盖住**了，删掉之后那 6px 立刻顶上来（肉眼在浅色背景上仍看得出圆角，`getComputedStyle` 一量就是 6px）。而且这条规则**不在 `:where()` 里**，特异性是 3 个选择器单位，用 `[data-media-player]` 去覆盖会被压过去。所以真正的修法是把变量置 0：`[data-media-player] { --video-border-radius: 0 }`（写在 `player-enhance.css`，变量在元素自身上解析，不必拼特异性）。
+
+  实测：宿主与内部 `<video>` 的计算圆角均为 `0px`；顺带删掉 `overflow: hidden` 后（`overflow: visible`）**打开播放器设置菜单也没有任何元素溢出播放器边界**（`probe-overflow` 量过，越界元素 0 个），所以那次删除没有副作用。只改了圆角，**那圈 1px 描边保留** —— 请求只说不要圆角。
+
+  ⚠️ 一条反面提示：这份文档的主旨是「向 YouTube 的观感靠拢」，但**不是所有 YouTube 特征都该跟** —— 播放器圆角是它明确不要的一条（"借视觉语言"当初就写明了不照抄 YouTube 红，圆角同理）。将来若有人拿着这份文档来"补齐 YouTube 特征"，别顺手把它加回去。

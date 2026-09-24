@@ -113,7 +113,7 @@ await expectHidden('未播放 + 移出播放器');
 await page.screenshot({ path: 'e2e-shots/controls-hover-off.png' });
 
 console.log('B. 播放中：悬停出现 / 移出立刻收起');
-await page.locator('video').evaluate((v) => v.play());
+await page.locator('[data-media-provider] video').evaluate((v) => v.play());
 await page.waitForTimeout(600);
 await hoverAway();
 await expectHidden('播放中 + 鼠标在播放器外');
@@ -129,7 +129,7 @@ if (!idle.dataVisible) {
 } else ok('data-visible 与悬停视觉一致');
 
 console.log('D. 暂停中：悬停出现 / 移出收起（旧行为是暂停时常驻）');
-await page.locator('video').evaluate((v) => v.pause());
+await page.locator('[data-media-provider] video').evaluate((v) => v.pause());
 await page.waitForTimeout(300);
 await hoverPlayer();
 await expectVisible('暂停中 + 悬停播放器');

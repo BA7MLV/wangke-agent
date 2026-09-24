@@ -1,13 +1,14 @@
 /* eslint-disable no-console */
-// 思考题弹幕链路：生成（真实 API，可选）→ 记顶飘屏 → 开关持久化 → seek 重发
+// 思考题弹幕链路：生成（真实 API，可选）→ 自右向左飘屏 → 开关持久化 → seek 重发
 // 用法：
 //   SF_KEY=sk-... TEST_FILE=/path/to/video.mp4 node scripts/e2e-danmaku.mjs   # 全链路（含 LLM 生成）
 //   TEST_FILE=/path/to/video.mp4 node scripts/e2e-danmaku.mjs                  # 仅飘屏/开关/seek（种子数据，无 API）
-// 需先 npm run preview（4173）
+// 需先 npm run preview（默认 4173，被占用时用 BASE_URL 指到别处）
 import { chromium } from 'playwright';
 
 const API_KEY = process.env.SF_KEY;
 const TEST_FILE = process.env.TEST_FILE;
+const BASE = process.env.BASE_URL ?? 'http://localhost:4173';
 if (!TEST_FILE) { console.error('需要 TEST_FILE'); process.exit(1); }
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -27,7 +28,7 @@ if (API_KEY) {
 }
 
 console.log('1. 打开首页并导入测试视频');
-await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
+await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 
@@ -150,14 +151,14 @@ if (secondTime.length >= 2) {
   else ok(`点击跳转 ${ct.toFixed(1)}s ≈ ${secondTime[1]}s`);
 }
 
-console.log('5. 飘屏验证：seek 到第一条弹幕前 2s 播放，弹幕应记顶弹出');
+console.log('5. 飘屏验证：seek 到第一条弹幕前 2s 播放，弹幕应自右向左飘过');
 const firstTime = secondTime[0] ?? 3;
 await page.evaluate((t) => { const v = document.querySelector('video'); v.currentTime = Math.max(0, t - 2); v.play(); }, firstTime);
 const dmItem = page.locator('.dm-item');
 const shown = await dmItem.waitFor({ state: 'visible', timeout: 15000 }).then(() => true).catch(() => false);
-if (!shown) fail(`播放到 ${firstTime}s 时应弹出弹幕`);
+if (!shown) fail(`播放到 ${firstTime}s 时应飘出弹幕`);
 else {
-  ok(`弹幕已弹出：「${(await dmItem.innerText()).replace(/\n/g, ' ')}」`);
+  ok(`弹幕已飘出：「${(await dmItem.innerText()).replace(/\n/g, ' ')}」`);
   // 同屏最多 1 条
   if ((await page.locator('.dm-item').count()) !== 1) fail('同屏弹幕应只有 1 条');
   const boxOk = await dmItem.evaluate((el) => {
@@ -167,22 +168,37 @@ else {
   });
   if (!boxOk) fail('弹幕应出现在画面上部 30% 区域');
   else ok('弹幕位于画面顶部区域');
-  await page.screenshot({ path: 'e2e-shots/danmaku-pop.png' });
-  // 7s 动画播完自动消失
-  await page.waitForTimeout(8000);
-  if ((await page.locator('.dm-item').count()) !== 0) fail('弹幕应在动画结束后自动消失');
+
+  // 方向：隔一段时间采两次左边界，必须单调向左。这是这个用例唯一的「方向」断言 ——
+  // 位置与消失都测不出方向，原地弹出同样能全绿（这正是之前没能拦住回归的原因）。
+  await page.waitForTimeout(1200);
+  const x1 = await dmItem.evaluate((el) => el.getBoundingClientRect().left);
+  await page.waitForTimeout(1200);
+  const x2 = await dmItem.evaluate((el) => el.getBoundingClientRect().left);
+  if (!(x2 < x1)) fail(`弹幕应从右向左飘：测得 left ${x1.toFixed(1)} → ${x2.toFixed(1)}`);
+  else ok(`自右向左飘动（left ${x1.toFixed(1)} → ${x2.toFixed(1)}）`);
+
+  await page.screenshot({ path: 'e2e-shots/danmaku-scroll.png' });
+  // 动画播完自动消失。时长按恒定线速度算（7~16s），不写死睡眠时长
+  const gone = await dmItem.waitFor({ state: 'detached', timeout: 25000 }).then(() => true).catch(() => false);
+  if (!gone) fail('弹幕应在飘出画面后自动消失');
   else ok('弹幕已自动消失');
 }
 
 console.log('6. seek 回退重发：拖回第一条之前，弹幕应再次弹出');
-await page.evaluate((t) => { const v = document.querySelector('video'); v.currentTime = Math.max(0, t - 1.5); }, firstTime);
+// 带上 play()：上一步是等弹幕飘完才往下走的，此时视频多半已经播到结尾，只 seek 不回放
+// 就一直停在原地、永远到不了弹幕的时间点（真实用户拖回去也是接着看的）
+await page.evaluate((t) => { const v = document.querySelector('video'); v.currentTime = Math.max(0, t - 1.5); v.play(); }, firstTime);
 const reshown = await dmItem.waitFor({ state: 'visible', timeout: 8000 }).then(() => true).catch(() => false);
 if (!reshown) fail('seek 回退后弹幕应重新弹出');
 else ok('seek 回退后弹幕重发正常');
 
-// 控制栏 idle 会自动隐藏：先移入播放器唤醒（真实用户同理）
+// 控制栏 idle 会自动隐藏：先移入播放器唤醒（真实用户同理）。
+// 先挪出去再挪进来 —— reload 之后鼠标可能仍停在播放器原位上，同坐标的 mousemove
+// 不一定会重算 :hover，控制栏就一直是 visibility:hidden，点不到按钮。
 const wakeControls = async () => {
   const box = await page.locator('[data-media-player]').boundingBox();
+  await page.mouse.move(1, 1);
   await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 5 });
   await page.waitForTimeout(300);
 };
@@ -202,11 +218,20 @@ await page.waitForSelector('video', { timeout: 15000 });
 const storedAfter = await page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings') ?? '{}'));
 if (storedAfter?.state?.danmakuEnabled !== false) fail('刷新后开关应保持关闭');
 else ok('刷新后开关保持关闭');
-// 恢复开启，避免影响其他 e2e
+// 恢复开启，避免影响其他 e2e。开关本身在上面已经验过（点得到、且持久化正确），
+// 这一步只是收尾：刷新后能不能唤醒控制栏依赖 hover 时序，headless 下偶发点不到，
+// 点不到就直接把设置改回去，不让收尾把一条断言全绿的用例判红。
 await wakeControls();
-await page.locator('.dm-toggle-btn').click();
-ok('已恢复开启');
+const restored = await page.locator('.dm-toggle-btn').click({ timeout: 5000 }).then(() => true).catch(() => false);
+if (!restored) {
+  await page.evaluate(() => {
+    const raw = JSON.parse(localStorage.getItem('wangke-settings') ?? '{}');
+    raw.state = { ...raw.state, danmakuEnabled: true };
+    localStorage.setItem('wangke-settings', JSON.stringify(raw));
+  });
+}
+ok(`已恢复开启（${restored ? '点击控制栏开关' : '直接改设置 · 控制栏没唤醒'}）`);
 
 await browser.close();
 if (process.exitCode) process.exit(process.exitCode);
-console.log(`✅ 弹幕链路通过：${API_KEY ? 'LLM 生成 + ' : ''}列表跳转 / 记顶飘屏 / seek 重发 / 开关持久化 全部正常`);
+console.log(`✅ 弹幕链路通过：${API_KEY ? 'LLM 生成 + ' : ''}列表跳转 / 自右向左飘屏 / seek 重发 / 开关持久化 全部正常`);

@@ -22,11 +22,16 @@ const SEARCH_TRANSCRIPT_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'search_transcript',
-    description: '在课程字幕中语义检索与问题最相关的片段，返回带时间戳的字幕内容',
+    description:
+      '在课程字幕中按关键词检索相关片段，返回带时间戳的字幕内容。传**关键词或短语**，不要传整句问题',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '检索关键词或问题' },
+        query: {
+          type: 'string',
+          description:
+            '检索关键词，2~6 个词为佳（例如「贝叶斯定理」「第4条规则」「过拟合 惩罚项」）。不要传自然语言问句——检索是字面匹配，问句里的大量虚词只会引入噪声',
+        },
       },
       required: ['query'],
     },
@@ -56,11 +61,15 @@ const SEARCH_MATERIAL_TOOL: ToolDef = {
   function: {
     name: 'search_material',
     description:
-      '在阅读材料中语义检索与问题最相关的段落，返回带页码（PDF）或段落号（Word）的原文',
+      '在阅读材料中按关键词检索相关段落，返回带页码（PDF）或段落号（Word）的原文。传**关键词或短语**，不要传整句问题',
     parameters: {
       type: 'object',
       properties: {
-        query: { type: 'string', description: '检索关键词或问题' },
+        query: {
+          type: 'string',
+          description:
+            '检索关键词，2~6 个词为佳（例如「贝叶斯定理」「公式 3.2」「假设检验 显著性」）。不要传自然语言问句——检索是字面匹配',
+        },
       },
       required: ['query'],
     },

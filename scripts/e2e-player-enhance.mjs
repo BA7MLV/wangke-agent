@@ -108,9 +108,9 @@ else ok('刷新后字号设置保持');
 console.log('7. 窄屏折叠：倍速平铺收起为循环按钮');
 // Vidstack 规则：未播放过（无 data-started）的 small layout 会隐藏顶部控制组（rate 按钮所在）。
 // 先播放再暂停置位 data-started，再把鼠标移进播放器唤醒控制栏（idle 会自动隐藏）
-await page.locator('video').evaluate((v) => v.play());
+await page.locator('[data-media-provider] video').evaluate((v) => v.play());
 await page.waitForTimeout(400);
-await page.locator('video').evaluate((v) => v.pause());
+await page.locator('[data-media-provider] video').evaluate((v) => v.pause());
 await page.setViewportSize({ width: 500, height: 900 });
 await page.waitForTimeout(600); // 等 ResizeObserver 切换 data-sm
 // 视口变窄后鼠标原坐标已不在播放器上，控制栏会 idle 隐藏；移入播放器唤醒（真实用户同理）
