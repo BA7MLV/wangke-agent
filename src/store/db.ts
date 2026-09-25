@@ -4,7 +4,7 @@ import type { CommentRole } from '../harness/comments';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
-   * `kind` 区分视频与阅读材料（PDF / Word / Markdown）。改名要动 30+ 个文件，不值当，
+   * `kind` 区分视频与阅读材料（PDF / Word / Markdown / HTML）。改名要动 30+ 个文件，不值当，
  * 因此只在类型名与注释上澄清。
  */
 export interface VideoRow {
@@ -43,8 +43,8 @@ export interface VideoRow {
   /** 资源类型；不设视为 'video' */
   kind?: 'video' | 'material';
   /** 材料格式，决定用哪个阅读器 */
-  materialFormat?: 'pdf' | 'docx' | 'md';
-  /** 材料定位单元总数：PDF=页数，Word / Markdown=段落数 */
+  materialFormat?: 'pdf' | 'docx' | 'md' | 'html';
+  /** 材料定位单元总数：PDF=页数，Word / Markdown / HTML=段落数 */
   unitCount?: number;
   /** 上次阅读到的单元（断点续读），与视频的 lastPosition 对称 */
   lastUnit?: number;

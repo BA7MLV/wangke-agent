@@ -154,12 +154,150 @@
    宽度 0，main 的 padding-left 自动归零，所以显隐用纯 CSS 就够，不用 JS 判断视口。 */
 .nav-rail {
   display: none;
+  box-sizing: border-box;
+  width: 14rem;
+  transition: width var(--mdui-motion-duration-medium2) var(--mdui-motion-easing-emphasized-decelerate);
 }
 
 @media (min-width: 641px) and (min-height: 521px) {
   .nav-rail {
     /* 覆盖 mdui 的 :host{display:flex} 的显隐；布局助手会再给内联 position:absolute 定位 */
     display: flex;
+  }
+}
+
+.nav-rail[data-collapsed='true'] {
+  width: 5.0625rem;
+}
+
+.nav-rail__top {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  height: 3.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.nav-rail__brand {
+  min-width: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  color: rgb(var(--mdui-color-on-surface));
+  font-size: var(--mdui-typescale-title-small-size);
+  font-weight: var(--mdui-typescale-title-small-weight);
+  letter-spacing: var(--mdui-typescale-title-small-tracking);
+  opacity: 1;
+  transition:
+    opacity var(--mdui-motion-duration-short2) var(--mdui-motion-easing-standard),
+    width var(--mdui-motion-duration-short4) var(--mdui-motion-easing-standard);
+}
+
+.nav-rail__toggle {
+  flex: none;
+}
+
+.nav-rail__toggle mdui-sym-chevron-right {
+  transition: transform var(--mdui-motion-duration-short4) var(--mdui-motion-easing-emphasized-decelerate);
+  transform: rotate(180deg);
+}
+
+.nav-rail[data-collapsed='true'] .nav-rail__top {
+  justify-content: center;
+}
+
+.nav-rail[data-collapsed='true'] .nav-rail__brand {
+  width: 0;
+  opacity: 0;
+}
+
+.nav-rail[data-collapsed='true'] .nav-rail__toggle mdui-sym-chevron-right {
+  transform: rotate(0deg);
+}
+
+/* MDUI NavigationRail 固定按 80px 图标轨排版；展开态通过公开的 CSS parts
+   把导航项改成横向列表，同时保留组件自身的选中态、键盘焦点与 ripple。 */
+.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(container) {
+  box-sizing: border-box;
+  flex-direction: row;
+  justify-content: flex-start;
+  gap: 12px;
+  width: 100%;
+  padding: 0 12px;
+  border-radius: var(--mdui-shape-corner-full);
+}
+
+.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(indicator) {
+  flex: 0 0 2rem;
+}
+
+.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(label) {
+  min-width: 0;
+  height: auto;
+  margin: 0;
+  overflow: hidden;
+  white-space: nowrap;
+  font-size: var(--mdui-typescale-label-large-size);
+  font-weight: var(--mdui-typescale-label-large-weight);
+  letter-spacing: var(--mdui-typescale-label-large-tracking);
+}
+
+.nav-rail[data-collapsed='false'] mdui-navigation-rail-item[active]::part(container) {
+  background-color: rgb(var(--mdui-color-secondary-container));
+}
+
+.nav-rail[data-collapsed='false'] mdui-navigation-rail-item[active]::part(indicator) {
+  width: 2rem;
+  background-color: transparent;
+}
+
+.nav-rail[data-collapsed='true'] mdui-navigation-rail-item::part(label) {
+  display: none;
+}
+
+/* 中等宽度设备维持图标轨，避免展开栏挤压正文；回到桌面宽度后恢复用户选择。 */
+@media (min-width: 641px) and (max-width: 900px) and (min-height: 521px) {
+  .nav-rail {
+    width: 5.0625rem;
+  }
+
+  .nav-rail__top {
+    justify-content: center;
+  }
+
+  .nav-rail__brand,
+  .nav-rail__toggle {
+    display: none;
+  }
+
+  .nav-rail mdui-navigation-rail-item::part(container) {
+    flex-direction: column;
+    justify-content: center;
+    gap: 0;
+    padding: 0;
+  }
+
+  .nav-rail mdui-navigation-rail-item::part(label) {
+    display: none;
+  }
+
+  .nav-rail mdui-navigation-rail-item[active]::part(container) {
+    background-color: transparent;
+  }
+
+  .nav-rail mdui-navigation-rail-item[active]::part(indicator) {
+    width: 3.5rem;
+    background-color: rgb(var(--mdui-color-secondary-container));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .nav-rail,
+  .nav-rail__brand,
+  .nav-rail__toggle mdui-sym-chevron-right {
+    transition: none;
   }
 }
 

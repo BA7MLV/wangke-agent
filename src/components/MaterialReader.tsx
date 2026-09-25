@@ -7,10 +7,11 @@ import type { MaterialReaderHandle } from '../materials/types';
 import PdfReader from './PdfReader';
 import DocxReader from './DocxReader';
 import MdReader from './MdReader';
+import HtmlReader from './HtmlReader';
 import '../materials/material-reader.css';
 
 /**
- * 阅读材料容器：按格式分发到 PDF / Word / Markdown 阅读器，并兜住「文件读取 + 断点续读 + 扫描件提示」。
+ * 阅读材料容器：按格式分发到 PDF / Word / Markdown / HTML 阅读器，并兜住文件读取与断点续读。
  *
  * 定位是**薄壳**：具体的渲染与选区逻辑都在两个子阅读器里，
  * 这里只负责三件跨格式的事：取文件、存阅读位置、把不开检索的原因讲清楚。
@@ -131,6 +132,16 @@ export default function MaterialReader({ material, handleRef }: Props) {
       ) : format === 'md' ? (
         blob && (
           <MdReader
+            blob={blob}
+            materialId={materialId}
+            initialUnit={material.lastUnit}
+            handleRef={handleRef}
+            onUnitChange={onUnitChange}
+          />
+        )
+      ) : format === 'html' ? (
+        blob && (
+          <HtmlReader
             blob={blob}
             materialId={materialId}
             initialUnit={material.lastUnit}

@@ -9,6 +9,7 @@
  *   B. 键盘步长：←/→ = ±5s、j/l = ±10s、Home/End 跳两端；连按同侧要累加（5→10→15）。
  *   C. 进度条 hover 预览：缩略图卡片出得来且已解码，时间胶囊叠在卡片内部底端。
  *   D. 控制栏：投屏按钮已摘除、时间字号 13px 且等宽数字。
+ *   E. 影院模式：按钮在全屏按钮前，切换后隐藏侧栏、播放器铺满，切回恢复且面板不卸载。
  *
  * 用法：先起 preview（生产构建才有真实 CSS），再跑
  *   npm run build && npm run preview &
@@ -155,9 +156,52 @@ const typo = await page.evaluate(() => {
 if (typo.size === '13px' && typo.numeric.includes('tabular-nums')) ok(`时间 ${typo.size} / ${typo.numeric}`);
 else bad(`时间排版异常：${JSON.stringify(typo)}`);
 
+console.log('E. 影院模式');
+const theaterButton = page.locator('[data-testid="theater-mode-button"]');
+const fullscreenButton = page.locator('.vds-fullscreen-button');
+if (await theaterButton.isVisible()) ok('桌面控制栏显示影院模式按钮');
+else bad('桌面控制栏应显示影院模式按钮');
+
+const buttonOrder = await page.evaluate(() => {
+  const theater = document.querySelector('[data-testid="theater-mode-button"]');
+  const fullscreen = document.querySelector('.vds-fullscreen-button');
+  if (!theater || !fullscreen || theater.parentElement !== fullscreen.parentElement) return null;
+  return theater.compareDocumentPosition(fullscreen) & Node.DOCUMENT_POSITION_FOLLOWING ? 'before' : 'after';
+});
+if (buttonOrder === 'before') ok('影院按钮位于全屏按钮左侧');
+else bad(`影院按钮顺序异常：${buttonOrder}`);
+
+const panelCount = await page.locator('.side-pane').count();
+const normalWidth = (await page.locator('[data-media-player]').boundingBox())?.width ?? 0;
+await theaterButton.click();
+await page.waitForTimeout(250);
+const theaterLayout = page.locator('.player-layout--theater');
+const theaterWidth = (await page.locator('[data-media-player]').boundingBox())?.width ?? 0;
+if ((await theaterLayout.count()) === 1 && (await theaterButton.getAttribute('aria-pressed')) === 'true') {
+  ok('点击后进入影院模式并更新可访问状态');
+} else bad('点击后未进入影院模式');
+if (!(await page.locator('.side-pane').isVisible()) && theaterWidth > normalWidth * 1.25) {
+  ok(`侧栏隐藏，播放器 ${Math.round(normalWidth)}px → ${Math.round(theaterWidth)}px`);
+} else bad(`影院几何异常（sideVisible=${await page.locator('.side-pane').isVisible()}, ${normalWidth} → ${theaterWidth}）`);
+
+await theaterButton.click();
+await page.waitForTimeout(250);
+const restoredWidth = (await page.locator('[data-media-player]').boundingBox())?.width ?? 0;
+if ((await page.locator('.player-layout--theater').count()) === 0 && (await page.locator('.side-pane').isVisible())) {
+  ok('再次点击恢复视频 + 面板分栏');
+} else bad('再次点击后未恢复分栏');
+if ((await page.locator('.side-pane').count()) === panelCount && Math.abs(restoredWidth - normalWidth) < 3) {
+  ok('侧栏保持挂载，播放器宽度恢复');
+} else bad('切换影院模式不应卸载侧栏或改变恢复后的几何');
+
+await page.setViewportSize({ width: 800, height: 900 });
+await page.waitForTimeout(400);
+if (!(await theaterButton.isVisible())) ok('窄屏隐藏影院按钮');
+else bad('窄屏不应显示影院按钮');
+
 await browser.close();
 if (failed > 0) {
   console.error(`\n❌ 播放器 YouTube 化契约有 ${failed} 处回归`);
   process.exit(3);
 }
-console.log('\n✅ 播放器 YouTube 化契约符合预期：大播放按钮 / 键盘步长 / 进度条缩略图预览 / 控制栏细节');
+console.log('\n✅ 播放器 YouTube 化契约符合预期：大播放按钮 / 键盘步长 / 进度条缩略图预览 / 控制栏细节 / 影院模式');

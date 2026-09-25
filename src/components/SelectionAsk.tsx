@@ -14,7 +14,7 @@ import './selection-ask.css';
  * 要穿透 4 条组件链。
  *
  * 改成**容器自报家门**：谁想支持划词，就在自己的 DOM 上标
- * `data-askable="pdf|docx|md|handout|subtitle"`（可选 `data-ask-unit` / `data-ask-label` / `data-ask-time`），
+ * `data-askable="pdf|docx|md|html|handout|subtitle"`（可选 `data-ask-unit` / `data-ask-label` / `data-ask-time`），
  * 浮层用 `selection.getRangeAt(0)` 反查最近的 `[data-askable]` 祖先。
  * 新增来源只要加一个属性，浮层一行不用改。
  *

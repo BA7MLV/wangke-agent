@@ -162,6 +162,44 @@ html.mdui-theme-dark {
   min-height: 0;
 }
 
+/* ── 桌面影院模式 ────────────────────────────────────────────────────────
+   右侧面板只隐藏、不卸载：切回普通模式时，字幕滚动位置、问答草稿和生成任务都还在。
+   播放器盒子铺满视频栏的剩余空间，真实画面继续 object-fit: contain，不裁切课件内容。 */
+.player-layout--theater {
+  gap: 0;
+}
+
+.player-layout--theater .video-pane {
+  flex: 1 1 auto;
+  width: 100%;
+}
+
+.player-layout--theater .side-pane {
+  display: none;
+}
+
+.player-layout--theater .video-pane [data-media-player] {
+  flex: 1 1 0;
+  width: 100%;
+  min-height: 0;
+  max-height: none;
+  aspect-ratio: auto;
+}
+
+.player-layout--theater .video-pane [data-media-provider] video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+/* 评论区展开时，普通模式会按 44vh 收窄播放器；影院模式仍以整栏为画布，只在竖向让位。 */
+.player-layout.player-layout--theater
+  .video-pane.video-pane--comments-open
+  [data-media-player] {
+  width: 100%;
+  max-height: none;
+}
+
 @media (max-width: 900px) {
   /* 窄屏同样保持「视频固定 + 面板区域内滚动」，不做整页滚动 */
   .player-layout {
@@ -187,6 +225,37 @@ html.mdui-theme-dark {
   .player-layout .side-pane {
     flex: 1;
     min-height: 0;
+  }
+
+  /* 影院模式是桌面页内布局；窄屏继续使用既有的视频 + 面板堆叠结构。 */
+  .player-layout--theater {
+    gap: 12px;
+  }
+
+  .player-layout--theater .side-pane {
+    display: flex;
+  }
+
+  .player-layout--theater .video-pane [data-media-player] {
+    flex: none;
+    width: min(100%, calc(45vh * 16 / 9));
+    aspect-ratio: 16 / 9;
+  }
+}
+
+/* 手机横屏虽然可能宽于 900px，仍属于移动布局：影院状态不能吞掉右侧面板。 */
+@media (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  .player-layout--theater {
+    gap: 8px;
+  }
+
+  .player-layout--theater .side-pane {
+    display: flex;
+  }
+
+  .player-layout--theater .video-pane [data-media-player] {
+    flex: none;
+    aspect-ratio: 16 / 9;
   }
 }
 

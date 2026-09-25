@@ -127,6 +127,24 @@
   margin-right: 6px;
 }
 
+/* ── 影院模式按钮 ────────────────────────────────────────────────
+   放在全屏按钮左侧。选中态只加一层低调底色，避免与「真正全屏」争夺视觉权重。 */
+.vds-video-layout .theater-mode-btn[data-active] {
+  background: rgb(255 255 255 / 0.2);
+}
+
+.vds-video-layout .theater-mode-btn .vds-icon {
+  fill: currentColor;
+}
+
+/* 页内影院模式只对桌面有意义；平板堆叠和手机继续使用现有面板布局。 */
+@media (max-width: 900px),
+  (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  .vds-video-layout .theater-mode-btn {
+    display: none;
+  }
+}
+
 /* ── 进度条 hover 预览：缩略图 + 时间胶囊（YouTube 的招牌细节） ────── */
 /* 结构来自 components/TimeSliderWithPreview.tsx：
      .vds-slider-preview            ← 跟随指针的盒子（left/bottom 由 vidstack 内联算出来）

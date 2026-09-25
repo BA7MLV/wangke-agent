@@ -30,6 +30,7 @@ import SeekFeedback from '../components/SeekFeedback';
 import DanmakuLayer from '../components/DanmakuLayer';
 import PlayerBigPlayButton from '../components/PlayerBigPlayButton';
 import TimeSliderWithPreview from '../components/TimeSliderWithPreview';
+import TheaterModeButton from '../components/TheaterModeButton';
 import { createYoutubeKeyShortcuts } from '../utils/playerKeys';
 
 /** 常驻字幕轨的固定 id：vidstack 的 NativeTextRenderer 会把轨的 id 写到它创建的原生 <track> 上，
@@ -107,6 +108,9 @@ export default function Player() {
   const useBottomNav = isMobile && !isPhoneLandscape;
   // 窄屏底部导航 / 桌面 Tabs 当前面板
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
+  // 桌面影院模式：只改变页面布局，右侧面板继续挂载以保留草稿、滚动位置与生成状态。
+  const [theaterMode, setTheaterMode] = useState(false);
+  const toggleTheaterMode = useCallback(() => setTheaterMode((active) => !active), []);
   /**
    * 评论区展开状态。**必须住在播放页**，因为展开时 `.video-pane` 要加
    * `--comments-open` 让播放器让出高度 —— CSS 既选不到前面的兄弟节点，也读不到
@@ -378,9 +382,13 @@ export default function Player() {
       ),
       // 进度条换成带缩略图预览的版本（YouTube 的 hover 预览）
       timeSlider: <TimeSliderWithPreview previewSrc={videoUrl} />,
+      // 放在默认全屏按钮左边：影院模式是页内扩展，全屏仍保留为更强的一档。
+      beforeFullscreenButton: (
+        <TheaterModeButton active={theaterMode} onToggle={toggleTheaterMode} />
+      ),
       googleCastButton: null,
     }),
-    [videoUrl],
+    [theaterMode, toggleTheaterMode, videoUrl],
   );
 
   // 桌面端 mdui-tabs 的选中变化：mdui 的 change 是 CustomEvent<void>，值要从元素上读
@@ -484,7 +492,7 @@ export default function Player() {
           : undefined
       }
     >
-      <div className="player-layout">
+      <div className={`player-layout${theaterMode ? ' player-layout--theater' : ''}`}>
         {/* 字幕字号变量设在普通容器上（不 media-player host：它 upgrade 时会重写内联样式），
             经继承传递给内部的 .vds-captions */}
         <div

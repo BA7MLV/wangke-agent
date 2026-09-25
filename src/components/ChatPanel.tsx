@@ -205,7 +205,7 @@ export default function ChatPanel({
   readerRef,
   materialKind,
 }: Props) {
-  /** 材料课程（PDF / Word / Markdown）：没有字幕、没有播放器，检索与引用都走材料那一套 */
+  /** 材料课程（PDF / Word / Markdown / HTML）：没有字幕、没有播放器，检索与引用都走材料那一套 */
   const isMaterial = materialKind !== undefined;
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
   const [input, setInput] = useState('');

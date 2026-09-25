@@ -58,7 +58,7 @@ function isVideoFile(file: File): boolean {
 }
 
 /**
- * 可导入的文件 = 视频 或 阅读材料（PDF / Word / Markdown）。
+ * 可导入的文件 = 视频 或 阅读材料（PDF / Word / Markdown / HTML）。
  *
  * `.doc`（旧版二进制）也算「可导入」—— 但不是在导入时静默忽略，而是在
  * `importMaterial` 里**明确报错并给出「另存为 .docx」的提示**。
@@ -153,10 +153,11 @@ const TASK_STATUS_TEXT: Record<ImportTask['status'], string> = {
 };
 
 /** 材料写入的提示文案与视频不同（材料不做容器探测，直接就是写文件） */
-const MATERIAL_MIME: Record<'pdf' | 'docx' | 'md', string> = {
+const MATERIAL_MIME: Record<'pdf' | 'docx' | 'md' | 'html', string> = {
   pdf: 'application/pdf',
   docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
   md: 'text/markdown',
+  html: 'text/html',
 };
 
 /** 「未分类」虚拟组的 key（折叠状态持久化用） */
@@ -327,7 +328,7 @@ export default function Library() {
   };
 
   /**
-   * 导入阅读材料（PDF / Word / Markdown）。
+   * 导入阅读材料（PDF / Word / Markdown / HTML）。
    *
    * 与视频导入的差别：
    * - **不做容器探测**（没有时长可探，`duration` 恒为 0）；
@@ -1029,7 +1030,7 @@ export default function Library() {
         onDrop={handleDrop}
       >
         <mdui-sym-cloud-upload className="drop-zone__icon" />
-        <div className="drop-zone__title">点击或拖拽视频到此处导入</div>
+        <div className="drop-zone__title">点击或拖拽视频、PDF、Word、Markdown、HTML 到此处导入</div>
         {/* 说明文案：只留「用哪个 App 选 + 存哪儿」这两件当场要决策的事，
             相册会转码 / iCloud 要先下载 / 导入后删原片释放空间这些补充说明收进问号里。
             原因见 layout.css 里 .page-library .drop-zone 的注释：手机上两段长文会被挤成竖排。 */}

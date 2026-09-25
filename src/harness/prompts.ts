@@ -247,7 +247,7 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
   },
 
   /**
-   * 阅读材料（PDF / Word / Markdown）的问答系统提示词。与 `qaSystem` 同构，只换四件事：
+   * 阅读材料（PDF / Word / Markdown / HTML）的问答系统提示词。与 `qaSystem` 同构，只换四件事：
    *
    * 1. 检索工具换成 `search_material` / `get_material_range`；
    * 2. 引用标记从 `[mm:ss]` 换成 `[第N页]` / `[第N段]`；

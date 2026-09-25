@@ -1,4 +1,4 @@
-/* 阅读材料（PDF / Word / Markdown）阅读器样式。
+/* 阅读材料（PDF / Word / Markdown / HTML）阅读器样式。
    层级全部走 mdui 的 MD3 令牌，与播放页/讲义页保持同一套视觉语言。 */
 
 /* ── PDF 文本层（逐条摘录自 pdf.js web/pdf_viewer.css，Apache-2.0） ──────────────
@@ -276,4 +276,96 @@
 
 .mr-md [data-unit] {
   scroll-margin-top: 12px;
+}
+
+/* ── HTML 阅读器 ────────────────────────────────────────────────────────── */
+
+.mr-html {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-size: 15px;
+  line-height: 1.7;
+  overflow-wrap: anywhere;
+}
+
+.mr-html__block {
+  scroll-margin-top: 12px;
+}
+
+.mr-html__block--mark {
+  background: rgb(var(--mdui-color-primary) / 0.14);
+  box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
+  border-radius: 6px;
+  padding: 2px 10px 6px;
+  margin-left: -10px;
+  margin-right: -10px;
+}
+
+.mr-html__badge {
+  display: none;
+}
+
+.mr-html__block--mark .mr-html__badge {
+  display: inline-block;
+  margin-top: 6px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgb(var(--mdui-color-primary));
+  color: rgb(var(--mdui-color-on-primary));
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.mr-html :is(h1, h2, h3, h4, h5, h6) {
+  line-height: 1.3;
+  margin: 1em 0 0.5em;
+}
+
+.mr-html :is(p, blockquote, ul, ol, dl, pre, table, figure) {
+  margin: 0 0 0.8em;
+}
+
+.mr-html blockquote {
+  margin-left: 0;
+  padding-left: 1em;
+  border-left: 3px solid rgb(var(--mdui-color-outline-variant));
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.mr-html :is(pre, code) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.mr-html pre {
+  overflow: auto;
+  padding: 12px;
+  border-radius: 6px;
+  background: rgb(var(--mdui-color-surface-container));
+  white-space: pre-wrap;
+}
+
+.mr-html table {
+  width: 100%;
+  border-collapse: collapse;
+  overflow-x: auto;
+}
+
+.mr-html :is(th, td) {
+  padding: 6px 8px;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  text-align: start;
+  vertical-align: top;
+}
+
+.mr-html img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+  margin: 0.8em auto;
+}
+
+.mr-html a {
+  color: rgb(var(--mdui-color-primary));
 }

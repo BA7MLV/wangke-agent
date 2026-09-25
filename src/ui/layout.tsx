@@ -1,5 +1,15 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 import './layout.css';
+
+const NAV_RAIL_COLLAPSED_KEY = 'wangke-nav-rail-collapsed';
+
+function readNavRailCollapsed(): boolean {
+  try {
+    return window.localStorage.getItem(NAV_RAIL_COLLAPSED_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
 
 /**
  * MD3 页面骨架与表单布局原语。
@@ -90,6 +100,20 @@ export function PageShell({
   bottomNav,
   children,
 }: PageShellProps) {
+  const [railCollapsed, setRailCollapsed] = useState(readNavRailCollapsed);
+
+  const toggleRail = () => {
+    setRailCollapsed((collapsed) => {
+      const next = !collapsed;
+      try {
+        window.localStorage.setItem(NAV_RAIL_COLLAPSED_KEY, next ? '1' : '0');
+      } catch {
+        // 隐私模式或存储被禁用时仍允许本次会话内切换。
+      }
+      return next;
+    });
+  };
+
   const innerClass = [
     'page-inner',
     narrow ? 'page-inner--narrow' : wide ? 'page-inner--wide' : '',
@@ -109,12 +133,32 @@ export function PageShell({
           /* rail 必须是 mdui-layout 的直接子元素且排在标题栏之前：
              布局助手按 DOM 顺序累加偏移，rail 的 80px 宽度会写进标题栏 item 的 left
              与 main 的 padding-left；display:none 时量到 0，偏移自动归零（实测）。 */
-          <mdui-navigation-rail className="nav-rail" value={rail.value} divider data-testid="nav-rail">
+          <mdui-navigation-rail
+            className="nav-rail"
+            value={rail.value}
+            divider
+            data-collapsed={railCollapsed ? 'true' : 'false'}
+            data-testid="nav-rail"
+          >
+            <div slot="top" className="nav-rail__top">
+              <span className="nav-rail__brand">网课学习</span>
+              <mdui-button-icon
+                className="nav-rail__toggle"
+                data-testid="nav-rail-toggle"
+                aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                title={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                onClick={toggleRail}
+              >
+                <mdui-sym-chevron-right />
+              </mdui-button-icon>
+            </div>
             {rail.items.map((it) => (
               <mdui-navigation-rail-item
                 key={it.value}
                 value={it.value}
                 data-testid={it.testId}
+                aria-label={it.label}
+                title={railCollapsed ? it.label : undefined}
                 onClick={it.onClick}
               >
                 <span slot="icon">{it.icon}</span>
