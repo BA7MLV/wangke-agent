@@ -3,6 +3,7 @@ import { fmtUnitRef, type UnitKind } from '../materials/units';
 import { db, type VideoRow } from '../store/db';
 import { formatStudyDuration } from '../utils/studyLog';
 import { fmtTime } from '../utils/vtt';
+import { MAX_COURSE_CONTEXT, normalizeCourseContextIds, resolveCourseSearchScope } from './courseContext';
 import { lexicalSearch } from './lexical';
 
 /**
@@ -25,6 +26,18 @@ interface SearchableCourseDoc {
   kind: 'video' | 'material';
   location: string;
   text: string;
+}
+
+export interface CourseContextItem {
+  id: string;
+  name: string;
+}
+
+export interface LibraryAssistantExecutorOptions {
+  /** 会话进入本轮时已经选中的课程；空数组表示让助手从全库自动选择。 */
+  contextCourseIds?: string[];
+  /** set_course_context 成功后的持久化与 UI 回调。 */
+  onContextChange?: (courses: CourseContextItem[]) => void | Promise<void>;
 }
 
 function materialKindOf(course: VideoRow): UnitKind {
@@ -114,9 +127,29 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
+      name: 'set_course_context',
+      description:
+        '选择后续回答与检索要重点使用的课程上下文。先从 list_courses 或 search_course_library 的结果取得精确 courseId；传空数组可清除旧上下文、恢复全课程自动选择',
+      parameters: {
+        type: 'object',
+        properties: {
+          courseIds: {
+            type: 'array',
+            items: { type: 'string' },
+            maxItems: MAX_COURSE_CONTEXT,
+            description: '0~5 个精确 courseId；按相关性从高到低排列。空数组表示不固定课程',
+          },
+        },
+        required: ['courseIds'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
       name: 'search_course_library',
       description:
-        '跨课程检索字幕与阅读材料正文。传关键词或短语，不要传整句问题；可用 courseId 限定到某门课程',
+        '检索字幕与阅读材料正文。已选择课程上下文时默认只查这些课程，否则查全课程库；传 courseId 可临时限定到某一门课程',
       parameters: {
         type: 'object',
         properties: {
@@ -125,6 +158,11 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
             description: '检索关键词或短语，2~6 个词为佳；一次没命中时换同义词或更短说法重试',
           },
           courseId: { type: 'string', description: '可选；从其他工具结果中取得的精确 courseId' },
+          scope: {
+            type: 'string',
+            enum: ['context', 'all'],
+            description: '默认 context，使用当前课程上下文；话题变化、需要从全库重新找课时传 all',
+          },
           limit: { type: 'integer', description: '最多返回多少个片段，默认 8，最大 15' },
         },
         required: ['query'],
@@ -147,20 +185,35 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
   },
 ];
 
-export function libraryAssistantSystemPrompt(): string {
-  return `你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。
+export function libraryAssistantSystemPrompt(
+  skillMetaList?: string,
+  contextCourses: CourseContextItem[] = [],
+): string {
+  const skillSection = skillMetaList
+    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当用户问题与某项技能的用途匹配时，先调用 use_skill 加载完整规范，再按规范回答；技能正文列出参考文档时，可继续调用 read_skill_reference。不要凭技能名称猜测正文要求。`
+    : '\n\n本次会话没有可用技能。不要调用 use_skill 或 read_skill_reference，直接依据课程数据与通用能力回答。';
+  const contextSection = contextCourses.length > 0
+    ? `\n\n当前课程上下文：${contextCourses.map((course) => `《${course.name}》（courseId=${course.id}）`).join('、')}。除非用户明显换了话题，否则优先使用这些课程；话题变化时可以重新选择。`
+    : '\n\n当前没有固定课程上下文。根据用户问题从全课程库判断最相关的课程。';
+
+  return `你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。${skillSection}${contextSection}
 
 工作规则：
 1. 只要问题涉及“我的课程、我的进度、课程里讲了什么、推荐我接下来学什么”等用户数据，回答前必须调用相应工具，不能凭空猜测。
-2. 查具体知识点时先用 search_course_library；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时，换同义词或更短的词再试。
-3. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
-4. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
-5. 不编造课程、进度或系统记录。课程库中没有相关内容时，明确说明“课程库中没有检索到”，再把通用知识与课程数据分开回答。
-6. 当前能力是只读查询。不能声称已经替用户删除、收藏、导入、修改或完成课程；如果用户要求这类操作，说明目前只能提供步骤或建议。
-7. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
+2. 课程上下文由你主动维护：问题明确针对某门或少数几门课程时，先通过 list_courses 或全库 search_course_library 找到精确 courseId，再调用 set_course_context 选择 1~5 门最相关课程。不要把无关课程塞进上下文。
+3. 用户明显换话题时，用 search_course_library 的 scope=all 从全库重新判断，再调用 set_course_context 替换上下文；问题是全库盘点、学习统计或跨全部课程比较时，调用 set_course_context 传空数组，避免旧课程限制本轮查询。
+4. 查具体知识点时用 search_course_library；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时，换同义词或更短的词再试。一次全库检索已经给出足够证据时，可以据此选择上下文并直接回答，不必机械地重复检索。
+5. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
+6. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
+7. 不编造课程、进度或系统记录。课程库中没有相关内容时，明确说明“课程库中没有检索到”，再把通用知识与课程数据分开回答。
+8. 当前能力是只读查询。不能声称已经替用户删除、收藏、导入、修改或完成课程；如果用户要求这类操作，说明目前只能提供步骤或建议。
+9. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
+10. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
 }
 
-export function createLibraryAssistantExecutor() {
+export function createLibraryAssistantExecutor(options: LibraryAssistantExecutorOptions = {}) {
+  let contextCourseIds = [...new Set(options.contextCourseIds ?? [])].slice(0, MAX_COURSE_CONTEXT);
+
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (name === 'get_learning_overview') {
       const [courses, folders, days, cards, handouts, sessions] = await Promise.all([
@@ -202,6 +255,35 @@ export function createLibraryAssistantExecutor() {
       return lines.join('\n');
     }
 
+    if (name === 'set_course_context') {
+      const requestedIds = normalizeCourseContextIds(args.courseIds);
+      if (requestedIds == null) {
+        return 'courseIds 必须是字符串数组；如需恢复自动选择，请传空数组。';
+      }
+      if (requestedIds.length === 0) {
+        contextCourseIds = [];
+        await options.onContextChange?.([]);
+        return '已清除固定课程上下文；后续问题将从全课程库自动选择。';
+      }
+
+      const rows = await db.videos.where('id').anyOf(requestedIds).toArray();
+      const byId = new Map(rows.map((course) => [course.id, course]));
+      const selected = requestedIds.map((id) => byId.get(id)).filter((course): course is VideoRow => !!course);
+      if (selected.length === 0) {
+        return '没有找到这些 courseId 对应的课程。请先用 list_courses 或 search_course_library 获取精确 id。';
+      }
+
+      contextCourseIds = selected.map((course) => course.id);
+      const contextItems = selected.map((course) => ({ id: course.id, name: course.name }));
+      await options.onContextChange?.(contextItems);
+      const missing = requestedIds.filter((id) => !byId.has(id));
+      return [
+        `已选择课程上下文：${selected.map(courseLink).join('、')}`,
+        missing.length > 0 ? `未找到并已忽略：${missing.join('、')}` : '',
+        '后续未指定 courseId 的内容检索会优先限定在这些课程中。',
+      ].filter(Boolean).join('\n');
+    }
+
     if (name === 'search_course_library') {
       const query = String(args.query ?? '').trim();
       if (!query) return '请提供要检索的关键词。';
@@ -216,11 +298,16 @@ export function createLibraryAssistantExecutor() {
       if (requestedCourseId && !courseMap.has(requestedCourseId)) {
         return `未找到 courseId=${requestedCourseId} 的课程。请先用 list_courses 取得精确 id。`;
       }
+      const scopedCourseIds = resolveCourseSearchScope(
+        requestedCourseId,
+        String(args.scope ?? 'context') === 'all',
+        contextCourseIds,
+      );
 
       const docs: SearchableCourseDoc[] = [];
       for (const segment of segments) {
         const course = courseMap.get(segment.videoId);
-        if (!course || (requestedCourseId && course.id !== requestedCourseId)) continue;
+        if (!course || (scopedCourseIds && !scopedCourseIds.has(course.id))) continue;
         docs.push({
           courseId: course.id,
           courseName: course.name,
@@ -231,7 +318,7 @@ export function createLibraryAssistantExecutor() {
       }
       for (const block of materialBlocks) {
         const course = courseMap.get(block.materialId);
-        if (!course || (requestedCourseId && course.id !== requestedCourseId)) continue;
+        if (!course || (scopedCourseIds && !scopedCourseIds.has(course.id))) continue;
         docs.push({
           courseId: course.id,
           courseName: course.name,
@@ -242,7 +329,11 @@ export function createLibraryAssistantExecutor() {
       }
 
       const hits = lexicalSearch(docs, (doc) => `${doc.courseName}\n${doc.text}`, query, limit);
-      if (hits.length === 0) return '课程库中没有检索到相关内容。请尝试更短的关键词或同义说法。';
+      if (hits.length === 0) {
+        return scopedCourseIds
+          ? '当前课程上下文中没有检索到相关内容。可以换关键词重试，或重新选择课程上下文。'
+          : '课程库中没有检索到相关内容。请尝试更短的关键词或同义说法。';
+      }
       return hits
         .map((hit, index) => {
           const course = courseMap.get(hit.doc.courseId)!;

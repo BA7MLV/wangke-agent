@@ -9,133 +9,17 @@
   min-height: 0;
   flex: 1 1 auto;
   margin: 0 auto;
-  display: grid;
-  grid-template-columns: 272px minmax(0, 1fr);
+  display: flex;
   overflow: hidden;
   border-top: 1px solid rgb(var(--mdui-color-outline-variant));
   background: rgb(var(--mdui-color-background));
-}
-
-/* ── 数据范围栏：把“能访问什么”直接做成产品界面，而不是藏在免责声明里 ── */
-.course-chat__scope {
-  position: relative;
-  min-width: 0;
-  padding: 24px 22px;
-  overflow: auto;
-  background: rgb(var(--mdui-color-surface-container-low));
-  border-right: 1px solid rgb(var(--mdui-color-outline-variant));
-  color: rgb(var(--mdui-color-on-surface));
-}
-
-.course-chat__scope-heading {
-  position: relative;
-  z-index: 1;
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.course-chat__scope-mark {
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  width: 40px;
-  height: 40px;
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
-  font-size: 24px;
-}
-
-.course-chat__scope-mark > * {
-  font-size: inherit;
-}
-
-.course-chat__scope-title {
-  font-size: var(--mdui-typescale-title-medium-size);
-  font-weight: var(--mdui-typescale-title-medium-weight);
-}
-
-.course-chat__scope-subtitle {
-  margin-top: 2px;
-  font-size: var(--mdui-typescale-body-small-size);
-  line-height: 1.45;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  text-wrap: pretty;
-}
-
-.course-chat__scope-line {
-  position: absolute;
-  top: 76px;
-  left: 41px;
-  width: 1px;
-  height: 178px;
-  background: rgb(var(--mdui-color-outline-variant));
-}
-
-.course-chat__scope-items {
-  position: relative;
-  z-index: 1;
-  margin-top: 28px;
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.course-chat__scope-item {
-  min-height: 42px;
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 9px;
-  font-size: var(--mdui-typescale-body-medium-size);
-  color: rgb(var(--mdui-color-on-surface-variant));
-}
-
-.course-chat__scope-item strong {
-  max-width: 96px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  color: rgb(var(--mdui-color-on-surface));
-  font-weight: var(--mdui-typescale-label-large-weight);
-  font-variant-numeric: tabular-nums;
-}
-
-.course-chat__scope-dot {
-  box-sizing: border-box;
-  width: 9px;
-  height: 9px;
-  margin-left: 3px;
-  border: 2px solid rgb(var(--mdui-color-primary));
-  border-radius: 50%;
-  background: rgb(var(--mdui-color-surface-container-low));
-}
-
-.course-chat__scope-note {
-  margin-top: 30px;
-  padding-top: 18px;
-  display: flex;
-  align-items: flex-start;
-  gap: 9px;
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-small-size);
-  line-height: 1.55;
-  text-wrap: pretty;
-}
-
-.course-chat__scope-note > mdui-sym-visibility {
-  flex: 0 0 auto;
-  margin-top: 1px;
-  color: rgb(var(--mdui-color-primary));
-  font-size: 18px;
 }
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
 .course-chat__main {
   min-width: 0;
   min-height: 0;
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   background: rgb(var(--mdui-color-surface));
@@ -167,6 +51,68 @@
 
 .course-chat__effort {
   flex: 0 0 auto;
+}
+
+/* ── 课程上下文：只展示助手本轮实际选中的事实范围 ───────────────────────── */
+.course-chat__context {
+  box-sizing: border-box;
+  min-width: 0;
+  min-height: 42px;
+  padding: 5px 20px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 7px;
+  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  background: rgb(var(--mdui-color-surface-container-low));
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-label-medium-size);
+}
+
+.course-chat__context-label {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-weight: var(--mdui-typescale-label-large-weight);
+}
+
+.course-chat__context-label > mdui-sym-toc {
+  color: rgb(var(--mdui-color-primary));
+  font-size: 18px;
+}
+
+.course-chat__context-auto {
+  min-width: 0;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.course-chat__context-chips {
+  min-width: 0;
+  flex: 1 1 auto;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 5px;
+}
+
+.course-chat__context-chip {
+  box-sizing: border-box;
+  max-width: min(240px, 100%);
+  padding: 3px 9px;
+  overflow: hidden;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: var(--mdui-shape-corner-full);
+  background: rgb(var(--mdui-color-surface));
+  color: rgb(var(--mdui-color-on-surface));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.course-chat__context-reset {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 
 .course-chat__messages {
@@ -460,20 +406,6 @@
   line-height: 1.4;
 }
 
-@media (max-width: 1180px) {
-  .course-chat {
-    display: flex;
-  }
-
-  .course-chat__scope {
-    display: none;
-  }
-
-  .course-chat__main {
-    flex: 1 1 auto;
-  }
-}
-
 @media (max-width: 980px) {
   .course-chat__effort {
     display: none;
@@ -487,6 +419,10 @@
 
   .course-chat__toolbar-divider {
     margin: 0 2px;
+  }
+
+  .course-chat__context {
+    padding-inline: 12px 8px;
   }
 
   .course-chat__messages {

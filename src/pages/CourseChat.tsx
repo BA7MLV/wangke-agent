@@ -4,21 +4,24 @@ import { useNavigate } from 'react-router-dom';
 import { useAppNav } from '../components/appNav';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import ModelPicker from '../components/ModelPicker';
+import SkillPicker from '../components/SkillPicker';
 import { StreamParagraph, ThinkLine } from '../components/motion';
 import { supportsThinking } from '../api/modelCaps';
 import { getSettings, useSettings } from '../store/settings';
 import { db, type ChatSessionRow } from '../store/db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
 import { runAgentLoop } from '../harness/agent';
+import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
 import {
+  type CourseContextItem,
   createLibraryAssistantExecutor,
   LIBRARY_ASSISTANT_ID,
   LIBRARY_ASSISTANT_TOOLS,
   libraryAssistantSystemPrompt,
 } from '../harness/libraryAssistant';
+import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import type { ChatMessage, ReasoningEffort } from '../api/siliconflow';
 import { confirmDialog, PageShell, useMduiEvent } from '../ui';
-import { formatStudyDuration } from '../utils/studyLog';
 import './course-chat.css';
 
 interface AssistantMessage {
@@ -29,13 +32,6 @@ interface AssistantMessage {
   hint?: string;
   streaming?: boolean;
   error?: boolean;
-}
-
-interface ScopeStats {
-  courses: number;
-  searchableCourses: number;
-  inProgress: number;
-  studySeconds: number;
 }
 
 const STARTERS = [
@@ -61,6 +57,8 @@ const STARTERS = [
   },
 ] as const;
 
+const COURSE_ASSISTANT_TOOLS = [...LIBRARY_ASSISTANT_TOOLS, ...SKILL_TOOLS];
+
 let keySeq = 0;
 const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
 
@@ -85,31 +83,6 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
   );
 }
 
-async function loadScopeStats(): Promise<ScopeStats> {
-  const [courses, segmentRows, blockRows, days] = await Promise.all([
-    db.videos.toArray(),
-    db.segments.filter((row) => row.status === 1 && !!row.text).toArray(),
-    db.materialBlocks.toArray(),
-    db.studyDays.toArray(),
-  ]);
-
-  const searchable = new Set<string>();
-  for (const row of segmentRows) searchable.add(row.videoId);
-  for (const row of blockRows) searchable.add(row.materialId);
-
-  const inProgress = courses.filter((course) => {
-    if (course.finished === 1) return false;
-    return course.kind === 'material' ? (course.lastUnit ?? 0) > 0 : (course.lastPosition ?? 0) > 0;
-  }).length;
-
-  return {
-    courses: courses.length,
-    searchableCourses: searchable.size,
-    inProgress,
-    studySeconds: days.reduce((sum, day) => sum + day.seconds, 0),
-  };
-}
-
 export default function CourseChat() {
   const navigate = useNavigate();
   const nav = useAppNav('chat');
@@ -118,7 +91,10 @@ export default function CourseChat() {
   const [messages, setMessages] = useState<AssistantMessage[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
-  const [stats, setStats] = useState<ScopeStats | null>(null);
+  const [loadedSessionId, setLoadedSessionId] = useState<number | null>(null);
+  const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
+  const [contextCourses, setContextCourses] = useState<CourseContextItem[]>([]);
+  const [courseCount, setCourseCount] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
   const llmModel = useSettings((state) => state.llmModel);
   const thinking = useSettings((state) => state.thinkingEnabled);
@@ -151,28 +127,61 @@ export default function CourseChat() {
 
   useEffect(() => {
     void ensureSessions();
-    void loadScopeStats().then(setStats);
+    void db.videos.count().then(setCourseCount);
   }, [ensureSessions]);
 
   useEffect(() => {
+    setLoadedSessionId(null);
+    setMessages([]);
+    setSkillIds(undefined);
+    setContextCourses([]);
     if (activeId == null) {
-      setMessages([]);
       return;
     }
     let cancelled = false;
-    void db.chats.where('sessionId').equals(activeId).sortBy('createdAt').then((rows) => {
+    void (async () => {
+      const [session, rows] = await Promise.all([
+        db.chatSessions.get(activeId),
+        db.chats.where('sessionId').equals(activeId).sortBy('createdAt'),
+      ]);
       if (cancelled) return;
+      const contextIds = session?.contextCourseIds ?? [];
+      const contextRows = contextIds.length > 0
+        ? await db.videos.where('id').anyOf(contextIds).toArray()
+        : [];
+      if (cancelled) return;
+      const byId = new Map(contextRows.map((course) => [course.id, course.name]));
+      setSkillIds(session?.skillIds);
+      setContextCourses(
+        contextIds
+          .filter((id) => byId.has(id))
+          .map((id) => ({ id, name: byId.get(id)! })),
+      );
       setMessages(rows.map((row) => ({
         key: `stored-${row.id}`,
         role: row.role === 'assistant' ? 'ai' : 'user',
         content: row.content,
         reasoning: row.reasoning,
       })));
-    });
+      setLoadedSessionId(activeId);
+    })();
     return () => {
       cancelled = true;
     };
   }, [activeId]);
+
+  /** 当前会话的技能范围：undefined=不限定，[]=明确禁用全部技能。 */
+  const updateSkillIds = (next: number[] | undefined) => {
+    if (activeId == null) return;
+    setSkillIds(next);
+    void db.chatSessions
+      .where('id')
+      .equals(activeId)
+      .modify((row) => {
+        if (next === undefined) delete row.skillIds;
+        else row.skillIds = next;
+      });
+  };
 
   const createSession = async () => {
     if (loading) return;
@@ -183,7 +192,19 @@ export default function CourseChat() {
       createdAt: now,
     })) as number;
     setSessions((current) => [...current, { id, videoId: LIBRARY_ASSISTANT_ID, title: '新会话', createdAt: now }]);
+    setContextCourses([]);
     setActiveId(id);
+  };
+
+  const clearCourseContext = () => {
+    if (activeId == null || contextCourses.length === 0) return;
+    setContextCourses([]);
+    void db.chatSessions
+      .where('id')
+      .equals(activeId)
+      .modify((row) => {
+        delete row.contextCourseIds;
+      });
   };
 
   const deleteSession = async () => {
@@ -207,7 +228,7 @@ export default function CourseChat() {
 
   const send = async (rawQuestion: string) => {
     const question = rawQuestion.trim();
-    if (!question || loading || activeId == null) return;
+    if (!question || loading || activeId == null || loadedSessionId !== activeId) return;
     const sessionId = activeId;
     const firstMessage = messages.length === 0;
     const userKey = nextKey();
@@ -242,8 +263,12 @@ export default function CourseChat() {
       }
 
       const settings = getSettings();
-      const systemPrompt = libraryAssistantSystemPrompt();
-      const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const [history, skillMetas] = await Promise.all([
+        db.chats.where('sessionId').equals(sessionId).sortBy('createdAt'),
+        loadSessionSkillMeta(skillIds),
+      ]);
+      const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
+      const systemPrompt = libraryAssistantSystemPrompt(skillBlock, contextCourses);
       const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(question) - 4096;
       const recent = fitHistoryToBudget(history.slice(0, -1), Math.max(2000, budget));
       const chatMessages: ChatMessage[] = [
@@ -252,10 +277,29 @@ export default function CourseChat() {
         { role: 'user', content: question },
       ];
 
+      const libraryExecutor = createLibraryAssistantExecutor({
+        contextCourseIds: contextCourses.map((course) => course.id),
+        onContextChange: async (courses) => {
+          setContextCourses(courses);
+          await db.chatSessions
+            .where('id')
+            .equals(sessionId)
+            .modify((row) => {
+              if (courses.length === 0) delete row.contextCourseIds;
+              else row.contextCourseIds = courses.map((course) => course.id);
+            });
+        },
+      });
+      const skillExecutor = createToolExecutor(LIBRARY_ASSISTANT_ID, { allowedSkillIds: skillIds });
+      const executeTool = (name: string, args: Record<string, unknown>) =>
+        name === 'use_skill' || name === 'read_skill_reference'
+          ? skillExecutor(name, args)
+          : libraryExecutor(name, args);
+
       await runAgentLoop(
         chatMessages,
-        LIBRARY_ASSISTANT_TOOLS,
-        createLibraryAssistantExecutor(),
+        COURSE_ASSISTANT_TOOLS,
+        executeTool,
         {
           thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
           onReasoningDelta: (text) => {
@@ -276,8 +320,11 @@ export default function CourseChat() {
               const args = JSON.parse(argsJson || '{}') as { query?: string };
               if (name === 'search_course_library' && args.query) hint = `正在跨课程检索：${args.query}`;
               if (name === 'list_courses') hint = '正在整理课程清单…';
+              if (name === 'set_course_context') hint = '正在选择相关课程…';
               if (name === 'get_learning_overview') hint = '正在汇总学习记录…';
               if (name === 'get_course_details') hint = '正在读取课程详情…';
+              if (name === 'use_skill') hint = '正在加载技能规范…';
+              if (name === 'read_skill_reference') hint = '正在查阅技能参考资料…';
             } catch {
               // 工具参数不完整时仍保留通用提示，真正的错误由 executor 返回给模型。
             }
@@ -297,7 +344,6 @@ export default function CourseChat() {
         createdAt: Date.now(),
         reasoning: reasoning || undefined,
       });
-      void loadScopeStats().then(setStats);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       patchAi({
@@ -338,6 +384,7 @@ export default function CourseChat() {
   );
 
   const lastMessage = messages[messages.length - 1];
+  const sessionReady = activeId != null && loadedSessionId === activeId;
   const scrollSignal = [
     messages.length,
     lastMessage?.key ?? '',
@@ -370,47 +417,6 @@ export default function CourseChat() {
       bottomNav={nav.bottom}
     >
       <div className="course-chat" data-testid="course-chat-page">
-        <aside className="course-chat__scope" aria-label="课程助手数据范围">
-          <div className="course-chat__scope-heading">
-            <span className="course-chat__scope-mark" aria-hidden="true">
-              <mdui-sym-forum filled />
-            </span>
-            <div>
-              <div className="course-chat__scope-title">全课程上下文</div>
-              <div className="course-chat__scope-subtitle">只读取当前浏览器里的学习数据</div>
-            </div>
-          </div>
-
-          <div className="course-chat__scope-line" aria-hidden="true" />
-          <div className="course-chat__scope-items">
-            <div className="course-chat__scope-item">
-              <span className="course-chat__scope-dot" />
-              <span>课程目录</span>
-              <strong>{stats?.courses ?? '—'}</strong>
-            </div>
-            <div className="course-chat__scope-item">
-              <span className="course-chat__scope-dot" />
-              <span>可检索课程</span>
-              <strong>{stats?.searchableCourses ?? '—'}</strong>
-            </div>
-            <div className="course-chat__scope-item">
-              <span className="course-chat__scope-dot" />
-              <span>正在学习</span>
-              <strong>{stats?.inProgress ?? '—'}</strong>
-            </div>
-            <div className="course-chat__scope-item">
-              <span className="course-chat__scope-dot" />
-              <span>累计学习</span>
-              <strong>{stats ? formatStudyDuration(stats.studySeconds) : '—'}</strong>
-            </div>
-          </div>
-
-          <div className="course-chat__scope-note">
-            <mdui-sym-visibility />
-            <span>回答会附课程入口和内容位置；修改、删除等操作不会自动执行。</span>
-          </div>
-        </aside>
-
         <section className="course-chat__main" aria-label="课程助手聊天">
           <div className="course-chat__toolbar">
             <mdui-select
@@ -432,6 +438,7 @@ export default function CourseChat() {
             </span>
             <span className="course-chat__toolbar-divider" aria-hidden="true" />
             <ModelPicker slot="chat" field="llmModel" />
+            <SkillPicker value={skillIds} onChange={updateSkillIds} />
             {supportsThinking(llmModel) && (
               <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
                 <mdui-button-icon
@@ -452,6 +459,36 @@ export default function CourseChat() {
             )}
           </div>
 
+          <div className="course-chat__context" data-testid="course-chat-context">
+            <span className="course-chat__context-label">
+              <mdui-sym-toc aria-hidden="true" />
+              课程上下文
+            </span>
+            {contextCourses.length === 0 ? (
+              <span className="course-chat__context-auto">助手自动选择</span>
+            ) : (
+              <div className="course-chat__context-chips">
+                {contextCourses.map((course) => (
+                  <span className="course-chat__context-chip" key={course.id} title={course.name}>
+                    {course.name}
+                  </span>
+                ))}
+              </div>
+            )}
+            {contextCourses.length > 0 && (
+              <mdui-tooltip content="清除课程上下文，恢复自动选择">
+                <mdui-button-icon
+                  className="course-chat__context-reset"
+                  aria-label="恢复自动选择课程"
+                  onClick={clearCourseContext}
+                  disabled={loading}
+                >
+                  <mdui-sym-refresh />
+                </mdui-button-icon>
+              </mdui-tooltip>
+            )}
+          </div>
+
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
             {messages.length === 0 && (
               <div className="course-chat__empty">
@@ -460,11 +497,11 @@ export default function CourseChat() {
                 </div>
                 <h1>问你的整个课程库</h1>
                 <p>
-                  我会按需查询课程目录、字幕与材料正文、学习进度和学习统计，并把依据留在回答里。
+                  我会先判断问题对应哪些课程，再读取相关内容；需要时也会调用当前会话允许的技能。
                 </p>
-                {stats == null ? (
+                {courseCount == null ? (
                   <div className="course-chat__empty-loading">正在读取课程库…</div>
-                ) : stats.courses === 0 ? (
+                ) : courseCount === 0 ? (
                   <button type="button" className="course-chat__import" onClick={() => navigate('/')}>
                     <mdui-sym-add />
                     先去导入课程
@@ -477,7 +514,7 @@ export default function CourseChat() {
                         type="button"
                         className="course-chat__starter"
                         onClick={() => void send(starter.prompt)}
-                        disabled={loading || activeId == null}
+                        disabled={loading || !sessionReady}
                       >
                         <span aria-hidden="true">{starter.icon}</span>
                         <span>{starter.label}</span>
@@ -538,7 +575,7 @@ export default function CourseChat() {
                 variant="outlined"
                 rows={2}
                 value={input}
-                disabled={activeId == null || loading}
+                disabled={!sessionReady || loading}
                 placeholder="问课程、内容或学习进度，回车发送"
                 aria-label="给课程助手发送消息"
                 onKeyDown={(event) => {
@@ -553,14 +590,14 @@ export default function CourseChat() {
                   aria-label="发送"
                   variant="filled"
                   loading={loading}
-                disabled={activeId == null || loading || !input.trim()}
+                  disabled={!sessionReady || loading || !input.trim()}
                   onClick={() => void send(input)}
                 >
                   <mdui-sym-send />
                 </mdui-button-icon>
               </mdui-tooltip>
             </div>
-            <div className="course-chat__composer-note">AI 会按当前课程库数据回答，请核对引用来源。</div>
+            <div className="course-chat__composer-note">AI 会结合课程数据与所选技能回答，请核对引用来源。</div>
           </div>
         </section>
       </div>

@@ -168,6 +168,12 @@ export interface ChatSessionRow {
   title: string;
   createdAt: number;
   /**
+   * 课程助手当前选中的课程上下文（非索引字段，无需升级数据库版本）。
+   * 不设或空数组 = 由助手按当前问题自动选择；有值 = 后续跨课程检索默认限定在这些课程。
+   * 普通单课程问答会话不使用该字段。
+   */
+  contextCourseIds?: string[];
+  /**
    * 会话级技能白名单（非索引字段，无需升级版本）。
    *
    * ⚠️ **`undefined` 与 `[]` 语义不同，不能合并判断**：

@@ -167,7 +167,15 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
   },
 };
 
-const SHARED_TOOLS: ToolDef[] = [USE_SKILL_TOOL, READ_SKILL_REFERENCE_TOOL, PRESENT_QUIZ_TOOL];
+/**
+ * 可嵌入其他 Agent 的技能工具集。
+ *
+ * 课程助手没有单课程的字幕/材料上下文，也不展示交互题卡，但仍要复用同一套
+ * use_skill / read_skill_reference 契约与白名单执行边界，因此把这两项单独导出。
+ */
+export const SKILL_TOOLS: ToolDef[] = [USE_SKILL_TOOL, READ_SKILL_REFERENCE_TOOL];
+
+const SHARED_TOOLS: ToolDef[] = [...SKILL_TOOLS, PRESENT_QUIZ_TOOL];
 
 /** 视频课程的问答工具集 */
 export const QA_TOOLS: ToolDef[] = [
