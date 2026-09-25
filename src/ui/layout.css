@@ -144,169 +144,188 @@
   }
 }
 
-/* ── 左侧导航轨（宽屏专属，MD3 NavigationRail）────────────────────────────
-   与 .bottom-nav 互补：>640px 且不是「手机横屏」那档时显示。
-   手机横屏判据必须用高度（横屏宽度普遍 >640，见 useIsPhoneLandscape）：
-   那一档视口高度只有 300~500px，再切掉 80px 宽不合算，两者都不显示。
-   ⚠️ rail 必须直接放在 mdui-layout 下（PageShell 里已保证）——包进 mdui-layout-item
-   会走「非 layout 子元素」分支，给它爹补 padding 而不是给 main 补。实测见
-   docs/plans/2026-09-10-navigation-rail-design.md「一」：display:none 时助手量到
-   宽度 0，main 的 padding-left 自动归零，所以显隐用纯 CSS 就够，不用 JS 判断视口。 */
-.nav-rail {
+/* ── 左侧导航（宽屏专属）──────────────────────────────────────────────────
+   不再把 80px NavigationRail 强行拉宽，而是使用真正的 layout item：展开态是标准
+   导航栏，收起态是图标栏。布局助手会观察 item 宽度并自动给标题栏与正文让位。 */
+.app-sidebar-layout {
   display: none;
-  box-sizing: border-box;
-  width: 14rem;
-  transition: width var(--mdui-motion-duration-medium2) var(--mdui-motion-easing-emphasized-decelerate);
+  height: 100%;
 }
 
 @media (min-width: 641px) and (min-height: 521px) {
-  .nav-rail {
-    /* 覆盖 mdui 的 :host{display:flex} 的显隐；布局助手会再给内联 position:absolute 定位 */
+  .app-sidebar-layout {
     display: flex;
   }
 }
 
-.nav-rail[data-collapsed='true'] {
-  width: 5.0625rem;
+.app-sidebar {
+  box-sizing: border-box;
+  width: 14.5rem;
+  height: 100%;
+  padding: 12px 10px;
+  display: flex;
+  flex-direction: column;
+  background: rgb(var(--mdui-color-surface));
+  border-right: 1px solid rgb(var(--mdui-color-outline-variant));
+  color: rgb(var(--mdui-color-on-surface));
 }
 
-.nav-rail__top {
+.app-sidebar[data-collapsed='true'] {
+  width: 5rem;
+}
+
+.app-sidebar__brand {
   box-sizing: border-box;
-  width: 100%;
-  min-width: 0;
-  height: 3.5rem;
+  height: 52px;
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 8px;
+  gap: 12px;
+  padding: 0 10px;
+  margin-bottom: 14px;
 }
 
-.nav-rail__brand {
+.app-sidebar__brand-mark {
+  flex: 0 0 32px;
+  width: 32px;
+  height: 32px;
+  display: grid;
+  place-items: center;
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-primary));
+  color: rgb(var(--mdui-color-on-primary));
+  font-size: 22px;
+}
+
+.app-sidebar__brand-mark > * {
+  font-size: inherit;
+}
+
+.app-sidebar__brand-text {
   min-width: 0;
   overflow: hidden;
   white-space: nowrap;
-  color: rgb(var(--mdui-color-on-surface));
-  font-size: var(--mdui-typescale-title-small-size);
-  font-weight: var(--mdui-typescale-title-small-weight);
-  letter-spacing: var(--mdui-typescale-title-small-tracking);
-  opacity: 1;
-  transition:
-    opacity var(--mdui-motion-duration-short2) var(--mdui-motion-easing-standard),
-    width var(--mdui-motion-duration-short4) var(--mdui-motion-easing-standard);
+  font-size: var(--mdui-typescale-title-medium-size);
+  font-weight: var(--mdui-typescale-title-medium-weight);
 }
 
-.nav-rail__toggle {
-  flex: none;
+.app-sidebar__nav {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
 }
 
-.nav-rail__toggle mdui-sym-chevron-right {
-  transition: transform var(--mdui-motion-duration-short4) var(--mdui-motion-easing-emphasized-decelerate);
-  transform: rotate(180deg);
-}
-
-.nav-rail[data-collapsed='true'] .nav-rail__top {
-  justify-content: center;
-}
-
-.nav-rail[data-collapsed='true'] .nav-rail__brand {
-  width: 0;
-  opacity: 0;
-}
-
-.nav-rail[data-collapsed='true'] .nav-rail__toggle mdui-sym-chevron-right {
-  transform: rotate(0deg);
-}
-
-/* MDUI NavigationRail 固定按 80px 图标轨排版；展开态通过公开的 CSS parts
-   把导航项改成横向列表，同时保留组件自身的选中态、键盘焦点与 ripple。 */
-.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(container) {
+.app-sidebar__item,
+.app-sidebar__collapse {
   box-sizing: border-box;
-  flex-direction: row;
-  justify-content: flex-start;
-  gap: 12px;
   width: 100%;
-  padding: 0 12px;
-  border-radius: var(--mdui-shape-corner-full);
+  min-height: 48px;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-large);
+  padding: 0 14px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  background: transparent;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(indicator) {
-  flex: 0 0 2rem;
+.app-sidebar__item:hover,
+.app-sidebar__collapse:hover {
+  background: rgba(var(--mdui-color-on-surface), var(--mdui-state-layer-hover));
+  color: rgb(var(--mdui-color-on-surface));
 }
 
-.nav-rail[data-collapsed='false'] mdui-navigation-rail-item::part(label) {
+.app-sidebar__item:focus-visible,
+.app-sidebar__collapse:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
+}
+
+.app-sidebar__item[aria-current='page'] {
+  background: rgb(var(--mdui-color-secondary-container));
+  color: rgb(var(--mdui-color-on-secondary-container));
+}
+
+.app-sidebar__item-icon,
+.app-sidebar__collapse-icon {
+  flex: 0 0 24px;
+  width: 24px;
+  height: 24px;
+  display: grid;
+  place-items: center;
+  font-size: 24px;
+}
+
+.app-sidebar__item-icon > *,
+.app-sidebar__collapse-icon > * {
+  font-size: inherit;
+}
+
+.app-sidebar__item-label,
+.app-sidebar__collapse-label {
   min-width: 0;
-  height: auto;
-  margin: 0;
   overflow: hidden;
   white-space: nowrap;
   font-size: var(--mdui-typescale-label-large-size);
   font-weight: var(--mdui-typescale-label-large-weight);
-  letter-spacing: var(--mdui-typescale-label-large-tracking);
 }
 
-.nav-rail[data-collapsed='false'] mdui-navigation-rail-item[active]::part(container) {
-  background-color: rgb(var(--mdui-color-secondary-container));
+.app-sidebar__footer {
+  margin-top: auto;
+  padding-top: 10px;
+  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
 }
 
-.nav-rail[data-collapsed='false'] mdui-navigation-rail-item[active]::part(indicator) {
-  width: 2rem;
-  background-color: transparent;
+.app-sidebar__collapse-icon {
+  transform: rotate(180deg);
 }
 
-.nav-rail[data-collapsed='true'] mdui-navigation-rail-item::part(label) {
+.app-sidebar[data-collapsed='true'] .app-sidebar__brand {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-sidebar[data-collapsed='true'] .app-sidebar__brand-text,
+.app-sidebar[data-collapsed='true'] .app-sidebar__item-label,
+.app-sidebar[data-collapsed='true'] .app-sidebar__collapse-label {
   display: none;
 }
 
-/* 中等宽度设备维持图标轨，避免展开栏挤压正文；回到桌面宽度后恢复用户选择。 */
+.app-sidebar[data-collapsed='true'] .app-sidebar__item,
+.app-sidebar[data-collapsed='true'] .app-sidebar__collapse {
+  justify-content: center;
+  padding: 0;
+}
+
+.app-sidebar[data-collapsed='true'] .app-sidebar__collapse-icon {
+  transform: rotate(0deg);
+}
+
+/* 中等宽度设备固定使用图标栏，避免导航挤压学习内容。 */
 @media (min-width: 641px) and (max-width: 900px) and (min-height: 521px) {
-  .nav-rail {
-    width: 5.0625rem;
+  .app-sidebar {
+    width: 5rem;
   }
 
-  .nav-rail__top {
+  .app-sidebar__brand {
     justify-content: center;
-  }
-
-  .nav-rail__brand,
-  .nav-rail__toggle {
-    display: none;
-  }
-
-  .nav-rail mdui-navigation-rail-item::part(container) {
-    flex-direction: column;
-    justify-content: center;
-    gap: 0;
     padding: 0;
   }
 
-  .nav-rail mdui-navigation-rail-item::part(label) {
+  .app-sidebar__brand-text,
+  .app-sidebar__item-label,
+  .app-sidebar__footer {
     display: none;
   }
 
-  .nav-rail mdui-navigation-rail-item[active]::part(container) {
-    background-color: transparent;
+  .app-sidebar__item {
+    justify-content: center;
+    padding: 0;
   }
-
-  .nav-rail mdui-navigation-rail-item[active]::part(indicator) {
-    width: 3.5rem;
-    background-color: rgb(var(--mdui-color-secondary-container));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .nav-rail,
-  .nav-rail__brand,
-  .nav-rail__toggle mdui-sym-chevron-right {
-    transition: none;
-  }
-}
-
-/* 与底部导航同一个坑：shadow 里 `::slotted([slot=icon])` 是 font-size: inherit，
-   图标会被外部基准字号（16px）压小，补回 MD3 的 24px。 */
-.nav-rail [slot='icon'],
-.nav-rail [slot='active-icon'] {
-  display: flex;
-  font-size: 1.5rem;
 }
 
 /* ── 内容分区（替 antd Card） ───────────────────────────────────────────── */

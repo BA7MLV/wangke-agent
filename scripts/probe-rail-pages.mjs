@@ -1,8 +1,8 @@
 /**
- * NavigationRail + 标题栏对齐的页面级验证（生产构建，默认打 4173）。
+ * 可收起侧边栏 + 标题栏对齐的页面级验证（生产构建，默认打 4173）。
  *
  * 断言（对应 docs/plans/2026-09-10-navigation-rail-design.md「六」）：
- *  1. 1280×800 首页：rail 可见、main padding-left=81、标题文字 x 与内容列左边界同线；
+ *  1. 1280×800 首页：侧边栏可见、展开/收起宽度正确、标题与内容列左边界同线；
  *  2. 390×844 首页：rail 隐藏、底部导航可见、标题回落到 16px；
  *  3. 1280×800 播放页：rail 常驻且「课程库」高亮，视频区从 rail 右侧开始；
  *  4. 844×390（手机横屏）：rail 与底部导航都不显示。
@@ -42,7 +42,7 @@ console.log('1. 宽屏首页（1280×800）');
   if (await rail.isVisible()) ok('rail 可见');
   else fail('rail 不可见');
   const mainPad = await page.evaluate(() => getComputedStyle(document.querySelector('mdui-layout-main')).paddingLeft);
-  (mainPad === '81px' ? ok : fail)(`main padding-left=${mainPad}（期望 81px，divider 版 rail 宽 5.0625rem）`);
+  (mainPad === '232px' ? ok : fail)(`main padding-left=${mainPad}（展开态期望 232px）`);
   const xs = await page.evaluate(() => {
     const title = document.querySelector('mdui-top-app-bar-title');
     const inner = document.querySelector('.page-inner');
@@ -58,6 +58,10 @@ console.log('1. 宽屏首页（1280×800）');
     };
   });
   (Math.abs(xs.title - xs.content) <= 2 ? ok : fail)(`标题 x=${xs.title} vs 内容列左边界 x=${xs.content}（bar ${xs.barLeft}+${xs.barWidth}, main ${xs.mainWidth}, inner.left=${xs.innerLeft}）`);
+  await page.locator('[data-testid="nav-rail-toggle"]').click();
+  await page.waitForTimeout(250);
+  const collapsedPad = await page.evaluate(() => getComputedStyle(document.querySelector('mdui-layout-main')).paddingLeft);
+  (collapsedPad === '80px' ? ok : fail)(`收起后 main padding-left=${collapsedPad}（期望 80px）`);
   if ((await page.locator('[data-testid="nav-settings"]').count()) === 0) ok('宽屏不再有标题栏设置齿轮（rail 承担）');
   else fail('标题栏设置齿轮还在');
   await page.screenshot({ path: 'e2e-shots/rail-home-desktop.png' });
@@ -93,9 +97,9 @@ await page.waitForTimeout(1200);
   (railVisible ? ok : fail)('播放页 rail 可见');
   const homeActive = await page.evaluate(() => {
     const item = document.querySelector('[data-testid="nav-rail-home"]');
-    return item?.hasAttribute('active');
+    return item?.getAttribute('aria-current') === 'page';
   });
-  (homeActive ? ok : fail)(`播放页 rail「课程库」高亮（active=${homeActive}）`);
+  (homeActive ? ok : fail)(`播放页侧边栏「课程库」高亮（aria-current=${homeActive}）`);
   const videoX = await page.evaluate(() => Math.round(document.querySelector('.video-pane').getBoundingClientRect().left));
   (videoX >= 81 ? ok : fail)(`视频区左缘 x=${videoX}（应从 rail 右侧 81 起）`);
   await page.screenshot({ path: 'e2e-shots/rail-player-desktop.png' });

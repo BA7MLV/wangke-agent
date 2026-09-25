@@ -1,9 +1,8 @@
 /**
  * 评论区（视频下方）。
  *
- * 与播放器的**高度博弈**写在 `theme.css` 里（`.video-pane--comments-open` 让出高度那两条）——
- * 本文件只管区块内部的排版。理由：那两条要跟 `.video-pane` / `[data-media-player]` 的现有规则
- * 放在一起才看得出「谁在压谁」，散到两个文件里下次改必然漏一处。
+ * 桌面普通模式由整个左栏滚动，评论内容自然接在视频下方；窄屏和影院模式空间有限，
+ * 仍由本区块内部滚动。播放器/左栏的高度关系写在 `theme.css`，这里仅管内部排版。
  */
 
 .comments-block {
@@ -82,6 +81,21 @@
   min-height: 0;
   overflow-y: auto;
   padding: 2px 10px 10px;
+}
+
+/* 宽屏双栏布局：取消评论框自己的高度上限与滚动条，让视频 + 工具栏 + 全部评论成为
+   左栏里一条连续内容流。滚轮落在评论正文上时也会滚动 `.video-pane`。 */
+@media (min-width: 901px) {
+  .player-layout:not(.player-layout--theater) .comments-panel {
+    max-height: none;
+    overflow: visible;
+  }
+
+  .player-layout:not(.player-layout--theater) .comments-body {
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
 }
 
 .comments-placeholder {

@@ -93,6 +93,20 @@ html.mdui-theme-dark {
   justify-content: center;
 }
 
+/* 桌面普通模式：左栏像 YouTube 的主内容列一样整体滚动。
+   滚动容器必须是 video-pane 本身，这样鼠标位于播放器、折叠条或任意评论上方时，
+   都是在推进同一条内容流；评论列表不再形成第二个嵌套滚动区。
+   阅读材料有自己的阅读滚动，影院模式也有独立的满屏高度逻辑，因此都不套用。 */
+@media (min-width: 901px) {
+  .player-layout:not(.player-layout--theater) .video-pane:not(.video-pane--reading) {
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    justify-content: flex-start;
+  }
+}
+
 /* 阅读材料：阅读器要**填满**整块区域，而不是像视频那样按比例居中留白。
    视频的高度由 16:9 宽度反推，在更高的视口里居中才不显空；阅读器则是「越满越好」，
    而且它自己内部滚动，不参与居中。 */
@@ -126,6 +140,16 @@ html.mdui-theme-dark {
 .player-layout .video-pane.video-pane--comments-open [data-media-player] {
   width: min(100%, calc(44vh * 16 / 9));
   max-height: 44vh;
+}
+
+/* 桌面普通模式由整条左栏承接新增高度，不需要为了把评论塞进视口而缩小视频。 */
+@media (min-width: 901px) {
+  .player-layout:not(.player-layout--theater)
+    .video-pane.video-pane--comments-open
+    [data-media-player] {
+    width: 100%;
+    max-height: none;
+  }
 }
 
 /* 阅读器外壳：提示条在上，阅读区吃掉剩余高度（否则提示条会把阅读区挤出可视区） */

@@ -38,7 +38,7 @@ const id = await page.evaluate(async () => {
   return all[all.length - 1].id;
 });
 
-// 播种 9 条发言（两串嵌套）：讨论区必须比 `--comments-max-h` 长，才验得到「内部滚动」而不是「内容刚好装下」
+// 播种 9 条发言（两串嵌套）：讨论区必须足够长，才能验到「左栏整体滚动」而不是内容刚好装下。
 await page.evaluate(async (vid) => {
   const db = await new Promise((res, rej) => {
     const q = indexedDB.open('wangke');
@@ -85,27 +85,32 @@ const measure = async (label) => {
       return { top: Math.round(b.top), bottom: Math.round(b.bottom), h: Math.round(b.height) };
     };
     const pane = document.querySelector('.video-pane');
+    const body = document.querySelector('[data-testid="comments-list"]');
     return {
       vh: window.innerHeight,
       pane: r('.video-pane'),
       paneOverflow: pane ? pane.scrollHeight > pane.clientHeight + 1 : false,
+      paneOverflowY: pane ? getComputedStyle(pane).overflowY : null,
       player: r('[data-media-player]'),
       block: r('[data-testid="comments"]'),
       body: r('[data-testid="comments-list"]'),
+      bodyOverflowY: body ? getComputedStyle(body).overflowY : null,
       pageScroll: document.scrollingElement.scrollHeight > window.innerHeight + 2,
     };
   });
   console.log(`\n[${label}] ${JSON.stringify(m)}`);
-  if (m.paneOverflow) {
-    console.error(`  ❌ ${label}：视频栏内容溢出（会被 overflow:hidden 裁掉）`);
-    bad++;
+  if (label.includes('展开')) {
+    if (!m.paneOverflow || m.paneOverflowY !== 'auto') {
+      console.error(`  ❌ ${label}：左栏没有形成整体滚动容器`);
+      bad++;
+    }
+    if (m.bodyOverflowY !== 'visible') {
+      console.error(`  ❌ ${label}：评论列表仍是独立滚动区`);
+      bad++;
+    }
   }
   if (m.pageScroll) {
     console.error(`  ❌ ${label}：整页被撑出了滚动条`);
-    bad++;
-  }
-  if (m.block && m.pane && m.block.bottom > m.pane.bottom + 1) {
-    console.error(`  ❌ ${label}：讨论区底边 ${m.block.bottom} 超出视频栏底边 ${m.pane.bottom}`);
     bad++;
   }
 };

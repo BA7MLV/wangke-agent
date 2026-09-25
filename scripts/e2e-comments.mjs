@@ -1,6 +1,6 @@
 /* eslint-disable no-console */
 // 评论区链路（视频下方的讨论区）：折叠条 → 展开 → 渲染讨论串 → 点时间戳跳播放器 → 排序切换 →
-// 收起；再单独验「矮视口下展开不吃掉视频」（高度预算真的生效）与移动端可达性。
+// 收起；再单独验「桌面左栏整体滚动」与移动端可达性。
 //
 // 用法：
 //   TEST_FILE=/path/to/video.mp4 node scripts/e2e-comments.mjs
@@ -201,9 +201,7 @@ async function seedComments(page, videoId) {
   if (count2 === '2 条讨论 · 5 条发言') ok('收起后计数保持');
   else fail(`收起后计数不符：${count2}`);
 
-  console.log('8. 矮视口（1280×560）：展开时播放器让出高度、讨论区完整可见、页面不滚动');
-  // 这个高度是刻意挑的：视频栏不再有富余高度，`44vh` 的上限必须真的生效 ——
-  // 否则固定 16:9 的视频会把讨论区顶出可视区，被 .player-layout 的 overflow:hidden 裁掉。
+  console.log('8. 矮视口（1280×560）：播放器不缩小，评论接在下方，整条左栏滚动');
   await page.setViewportSize({ width: 1280, height: 560 });
   await page.waitForTimeout(300);
   const playerH = async () => (await page.locator(PLAYER).boundingBox())?.height ?? 0;
@@ -214,12 +212,34 @@ async function seedComments(page, videoId) {
   if (openCls?.includes('video-pane--comments-open')) ok('展开态给视频栏加上了 video-pane--comments-open');
   else fail(`视频栏类名没带上展开态：${openCls}`);
   const hOpen = await playerH();
-  if (hOpen > 0 && hOpen < hClosed) ok(`播放器高度 ${Math.round(hClosed)} → ${Math.round(hOpen)}（让出了高度）`);
-  else fail(`矮视口下播放器没有让出高度：闭合 ${hClosed} / 展开 ${hOpen}`);
-  const blockBox = await page.locator('[data-testid="comments"]').boundingBox();
-  if (blockBox && blockBox.y + blockBox.height <= 561) {
-    ok(`讨论区完整落在可视区内（底边 ${Math.round(blockBox.y + blockBox.height)} ≤ 560）`);
-  } else fail(`讨论区被裁掉了：${JSON.stringify(blockBox)}`);
+  if (hOpen > 0 && Math.abs(hOpen - hClosed) <= 2) {
+    ok(`播放器高度保持 ${Math.round(hClosed)}px（展开评论不再压小）`);
+  } else fail(`展开评论改变了播放器高度：闭合 ${hClosed} / 展开 ${hOpen}`);
+
+  const scrollState = await page.evaluate(() => {
+    const pane = document.querySelector('.video-pane');
+    const body = document.querySelector('[data-testid="comments-list"]');
+    return {
+      paneOverflowY: pane ? getComputedStyle(pane).overflowY : null,
+      paneScrollable: !!pane && pane.scrollHeight > pane.clientHeight + 1,
+      commentsOverflowY: body ? getComputedStyle(body).overflowY : null,
+    };
+  });
+  if (scrollState.paneOverflowY === 'auto' && scrollState.paneScrollable) {
+    ok('左栏自身可滚动，视频与评论位于同一内容流');
+  } else fail(`左栏没有形成滚动容器：${JSON.stringify(scrollState)}`);
+  if (scrollState.commentsOverflowY === 'visible') ok('评论列表没有独立滚动条');
+  else fail(`评论列表仍在独立滚动：${scrollState.commentsOverflowY}`);
+
+  const paneBox = await page.locator('.video-pane').boundingBox();
+  if (paneBox) {
+    await page.mouse.move(paneBox.x + paneBox.width / 2, paneBox.y + Math.min(80, paneBox.height / 2));
+    await page.mouse.wheel(0, 480);
+    await page.waitForTimeout(150);
+  }
+  const paneScrollTop = await page.locator('.video-pane').evaluate((el) => el.scrollTop);
+  if (paneScrollTop > 0) ok(`在左栏上滚轮可推进整栏（scrollTop=${Math.round(paneScrollTop)}）`);
+  else fail('滚轮没有推动左栏');
   await page.screenshot({ path: `${SHOTS}/desktop-short-expanded.png` });
   const noPageScroll = await page.evaluate(
     () => document.scrollingElement.scrollHeight <= window.innerHeight + 2,

@@ -1,6 +1,7 @@
 import { useEffect } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
 import Library from './pages/Library';
+import CourseChat from './pages/CourseChat';
 import Player from './pages/Player';
 import Settings from './pages/Settings';
 import Study from './pages/Study';
@@ -32,6 +33,7 @@ export default function App() {
     <HashRouter>
       <Routes>
         <Route path="/" element={<Library />} />
+        <Route path="/chat" element={<CourseChat />} />
         <Route path="/player/:id" element={<Player />} />
         <Route path="/study" element={<Study />} />
         <Route path="/settings" element={<Settings />} />

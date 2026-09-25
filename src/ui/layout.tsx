@@ -21,7 +21,7 @@ function readNavRailCollapsed(): boolean {
  * 结构（与设计文档 §3.1 的 MD3 骨架一致；宽屏侧边导航见 2026-09-10-navigation-rail-design.md）：
  *   .page（沿用既有 CSS，负责 --vvh 高度链）
  *     └ mdui-layout（mdui 官方布局：自己测量 mdui-layout-item 并给 mdui-layout-main 补间距）
- *         ├ mdui-navigation-rail（宽屏左侧，CSS 控制显隐；必须排在标题栏之前）
+ *         ├ mdui-layout-item[placement=left] → .app-sidebar（宽屏左侧）
  *         ├ mdui-layout-item[placement=top] → mdui-top-app-bar
  *         ├ mdui-layout-item[placement=bottom] → mdui-navigation-bar（窄屏）
  *         └ mdui-layout-main → .page-inner → 各 SectionCard
@@ -76,11 +76,7 @@ export interface PageShellProps {
   rootRef?: (el: HTMLDivElement | null) => void;
   /** 追加到根 `.page` 上的类名（页面级的样式挂载点） */
   rootClassName?: string;
-  /**
-   * 宽屏左侧导航轨（MD3 NavigationRail）。窄屏由 CSS 隐藏，此时导航走 `bottomNav`。
-   * ⚠️ 必须直接放在 mdui-layout 下、且排在标题栏之前 —— 实测见
-   * docs/plans/2026-09-10-navigation-rail-design.md「一」。
-   */
+  /** 宽屏左侧导航。窄屏由 CSS 隐藏，此时导航走 `bottomNav`。 */
   rail?: NavConfig;
   /** 窄屏底部导航（MD3 应用外壳）。宽屏由 CSS 隐藏，mdui 的布局助手会随之把内容区的 padding 归零。 */
   bottomNav?: NavConfig;
@@ -130,43 +126,57 @@ export function PageShell({
     >
       <mdui-layout>
         {rail && (
-          /* rail 必须是 mdui-layout 的直接子元素且排在标题栏之前：
-             布局助手按 DOM 顺序累加偏移，rail 的 80px 宽度会写进标题栏 item 的 left
-             与 main 的 padding-left；display:none 时量到 0，偏移自动归零（实测）。 */
-          <mdui-navigation-rail
-            className="nav-rail"
-            value={rail.value}
-            divider
-            data-collapsed={railCollapsed ? 'true' : 'false'}
-            data-testid="nav-rail"
-          >
-            <div slot="top" className="nav-rail__top">
-              <span className="nav-rail__brand">网课学习</span>
-              <mdui-button-icon
-                className="nav-rail__toggle"
-                data-testid="nav-rail-toggle"
-                aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
-                title={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
-                onClick={toggleRail}
-              >
-                <mdui-sym-chevron-right />
-              </mdui-button-icon>
-            </div>
-            {rail.items.map((it) => (
-              <mdui-navigation-rail-item
-                key={it.value}
-                value={it.value}
-                data-testid={it.testId}
-                aria-label={it.label}
-                title={railCollapsed ? it.label : undefined}
-                onClick={it.onClick}
-              >
-                <span slot="icon">{it.icon}</span>
-                {it.activeIcon && <span slot="active-icon">{it.activeIcon}</span>}
-                {it.label}
-              </mdui-navigation-rail-item>
-            ))}
-          </mdui-navigation-rail>
+          /* 左侧 item 必须排在标题栏之前：布局助手会把它的实时宽度同时计入
+             标题栏 left 与 main padding-left，收起后内容区会自动让回空间。 */
+          <mdui-layout-item placement="left" className="app-sidebar-layout" data-testid="nav-rail">
+            <aside className="app-sidebar" data-collapsed={railCollapsed ? 'true' : 'false'}>
+              <div className="app-sidebar__brand" aria-label="网课学习">
+                <span className="app-sidebar__brand-mark" aria-hidden="true">
+                  <mdui-sym-play-circle filled />
+                </span>
+                <span className="app-sidebar__brand-text">网课学习</span>
+              </div>
+
+              <nav className="app-sidebar__nav" aria-label="主导航">
+                {rail.items.map((it) => {
+                  const active = it.value === rail.value;
+                  return (
+                    <button
+                      key={it.value}
+                      type="button"
+                      className="app-sidebar__item"
+                      data-testid={it.testId}
+                      aria-current={active ? 'page' : undefined}
+                      aria-label={it.label}
+                      title={railCollapsed ? it.label : undefined}
+                      onClick={it.onClick}
+                    >
+                      <span className="app-sidebar__item-icon" aria-hidden="true">
+                        {active && it.activeIcon ? it.activeIcon : it.icon}
+                      </span>
+                      <span className="app-sidebar__item-label">{it.label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <div className="app-sidebar__footer">
+                <button
+                  type="button"
+                  className="app-sidebar__collapse"
+                  data-testid="nav-rail-toggle"
+                  aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                  title={railCollapsed ? '展开侧边栏' : undefined}
+                  onClick={toggleRail}
+                >
+                  <span className="app-sidebar__collapse-icon" aria-hidden="true">
+                    <mdui-sym-chevron-right />
+                  </span>
+                  <span className="app-sidebar__collapse-label">收起侧边栏</span>
+                </button>
+              </div>
+            </aside>
+          </mdui-layout-item>
         )}
         <mdui-layout-item placement="top">
           <mdui-top-app-bar className="app-bar" data-testid="top-app-bar">
