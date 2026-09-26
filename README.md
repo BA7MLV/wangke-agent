@@ -29,7 +29,7 @@
 
 1. **遵守平台协议** —— 视频导入（含 B 站通道）与字幕获取依赖第三方平台的公开接口。使用者须自行确保其使用方式符合该平台的用户协议与所在地法律法规。作者不支持、也不鼓励任何形式的批量抓取、绕过权限或内容再分发。
 2. **尊重版权** —— 本项目不提供、不分发任何课程内容。请勿使用它下载或传播付费课程、会员专享及其他受版权保护的内容，由此产生的一切后果由使用者自行承担。
-3. **数据不出本机** —— 视频、字幕、讲义与设置（含 API Key 与平台 Cookie）全部保存在浏览器本地存储中，作者不收集、不上传任何用户数据。分享导出文件前请先确认其中不含自己的凭据。
+3. **数据不出本机** —— 视频、字幕、讲义与设置（含 API Key 与平台 Cookie）全部保存在浏览器本地存储中，作者不收集、不上传任何用户数据。分享导出文件前请先确认其中不含自己的凭据。**唯一例外是 HTML 材料**：按原文档渲染时会去取它自己引用的远程图片 / 样式 / 字体（见下方「HTML 材料」），设置页可一键关掉。
 4. **API 费用自担** —— 转写、讲义与问答均调用第三方模型 API（默认硅基流动），产生的费用与账号风险由使用者承担。
 5. **按原样提供** —— 本软件按「原样」提供，不附带任何明示或默示担保；因使用本软件造成的直接或间接损失，作者不承担责任。
 
@@ -185,12 +185,28 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 **支持格式**
 
 - 视频：`mp4` `mov` `m4v` `webm` `mkv` `flv` `ts` `m2ts` `wmv` `avi` `mpg` `mpeg` `3gp` `rmvb` `rm`
-- 阅读材料：**PDF** 与 **.docx**（旧版 `.doc` 会明确提示「另存为 .docx」，不是静默忽略）
+- 阅读材料：**PDF**、**.docx**、**Markdown**（`.md` / `.markdown`）与 **HTML**（`.html` / `.htm`）。旧版 `.doc` 会明确提示「另存为 .docx」，不是静默忽略
 
 导入之后：
 
 - 视频卡片自动生成封面（抽帧里的幻灯片帧），底边按播放进度画进度条 —— **没看过、进度不足 1%、阅读材料都不画**；
 - 阅读材料**写盘成功即算导入完成**，解析在后台跑，列表行上能看到 job 进度，不阻塞你继续导入下一个。
+
+**HTML 材料**（[设计文档](docs/plans/2026-09-26-html-faithful-import-design.md)）
+
+HTML 有两种读法，阅读器右上角可切，选择会记住：
+
+| 视图 | 长什么样 | 适合 |
+|---|---|---|
+| **原样**（默认） | 整份文档塞进沙箱 iframe，**文档自己的 CSS 与版式照常生效** | 网页存档、带表格与配图的导出文档 |
+| **分段** | 按语义块抽成「第 N 段」逐段排版，样式统一走应用的设计令牌 | 导航条噪音大、窄栏小字读不动的网页 |
+
+两种视图共用同一套段号与同一个阅读位置，所以 `[第3段]` 引用、断点续读、划词提问在两边都成立。
+
+> [!WARNING]
+> **原样视图会联网。** 按原文档渲染意味着它引用的远程图片 / 样式表 / 字体会被加载 —— 这会向第三方暴露你的 IP，断网后同一份材料也长得不一样。默认开启，但**不静默**：阅读器顶部会常驻一条「正在联网加载 N 项资源」的提示并给一个「本次离线」按钮，设置页也有全局开关（关掉后完全离线，只放行文档内嵌的资源）。
+>
+> 两种情况下**脚本都不会执行**（沙箱不给 `allow-scripts`，CSP 里 `default-src 'none'` 兜底），相对路径的资源一律不解析（单文件导入下它们本来也没有对应文件），缺失数量会在提示条里说明。
 
 ### 生成字幕
 
@@ -397,7 +413,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 | | 功能 | 一句话 |
 |---|---|---|
 | 📚 | **库与文件夹** | 文件夹分组、封面、卡片底边的播放进度条（没看过 / 不足 1% / 材料不画） |
-| 📖 | **阅读材料** | PDF 与 Word 导入后抽文本 → 分块，**与字幕同等参与检索**；扫描件显式告知 |
+| 📖 | **阅读材料** | PDF / Word / Markdown / HTML 导入后抽文本 → 分块，**与字幕同等参与检索**；HTML 可选「原样」或「分段」视图；扫描件显式告知 |
 | ✍️ | **选区提问** | 划词 / 框选，引用条可堆叠可删除，`[第3页]` 可点击跳转 |
 | 🎬 | **B 站导入** | 链接 / BV / 短链，油猴桥本机直连，DASH 重封装为 mp4（不重编码、不丢画质） |
 | 📝 | **字幕** | VAD 分段 + ASR 并发转写，**边转边显**、断点续做，导出 VTT / SRT |
@@ -419,7 +435,9 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 **库与文件夹** —— 首页视频按文件夹分组管理（新建 / 重命名 / 删除 / 折叠持久化，视频可移动归类，删文件夹视频回到未分类）；卡片缩略图底边显示播放进度条：看到一半的按比例画、看完的显示满条。没看过、以及进度不足 1% 的**不画** —— 不用 0 宽度的条冒充「看了一点」，那种精度下跟没看过本来也分不出来。
 
-**阅读材料（PDF / Word）** —— 除视频外还能导入 PDF 与 .docx（旧版 .doc 会明确提示「另存为 .docx」）。导入后走「抽文本 → 归一化分块」流水线，产出一份**带页码（PDF）或段落号（Word）定位**的文本索引，与字幕**同等参与问答检索**。PDF 用 pdf.js 渲染（连续滚动 + 视口窗口化渲染，300 页不卡）、Word 用 docx-preview 渲染；两者都支持页码 / 段落导航、缩放、PDF 书签目录、断点续读。**扫描件会被显式识别并告知**（「没有文本层，无法参与检索，但仍可划词 / 框选提问」），不会让人误以为问答坏了。
+**阅读材料（PDF / Word / Markdown / HTML）** —— 除视频外还能导入 PDF、`.docx`、`.md` 与 `.html`（旧版 `.doc` 会明确提示「另存为 .docx」）。导入后走「抽文本 → 归一化分块」流水线，产出一份**带页码（PDF）或段落号（其余）定位**的文本索引，与字幕**同等参与问答检索**。PDF 用 pdf.js 渲染（连续滚动 + 视口窗口化渲染，300 页不卡）、Word 用 docx-preview 渲染、Markdown 走问答正文同一套渲染器；都支持位置导航、缩放、PDF 书签目录、断点续读。**扫描件会被显式识别并告知**（「没有文本层，无法参与检索，但仍可划词 / 框选提问」），不会让人误以为问答坏了。
+
+**HTML 材料的两种读法** —— 「原样」把整份文档（含它自己的 `<style>`）净化后塞进**沙箱 iframe**，长得像原文档；「分段」按语义块抽成「第 N 段」逐段渲染。之所以不能直接插进主文档：导入文档的 CSS 里一条 `body{position:fixed}` 就能锁死整个界面，而 CSS 选择器无法安全地「作用域化」；Shadow DOM 挡得住样式泄漏，但 `position:fixed`、`html/body`、`@media`、独立滚动这些**视口相关**的规则仍按主文档算，一份为整页设计的文档塞进去必然错位。沙箱只给 `allow-same-origin`（**绝不给 `allow-scripts`**）—— 保留它的唯一目的是让父窗口读得到 `contentDocument`，划词、`[第N段]` 跳转、滚动定位全靠它；不给它则父窗口读不到 iframe 内部，这几件事全废。段号定位的做法是**不包装、只标注**：抽单元的同一个遍历顺手把 `data-mr-unit` 打回原 DOM，于是同一份文档既原样又可定位，段号与入库块同源同序（各写一份必然漂移，表现是 `[第3段]` 跳到第 5 段）。净化是三层：结构性黑名单（删脚本 / 表单 / `base` / `meta refresh` / 非 `stylesheet` 的 `link`）→ CSP（注入 head 首位，`default-src 'none'` 兜住漏网的加载）→ 沙箱。**相对路径资源一律拦住**：`srcdoc` 文档的 base URL 是宿主页面的 URL，`./bg.png` 会解析到应用自己的域名上，导入一份网页就等于给应用服务器发一堆 404。
 
 **选区提问** —— 在 PDF、Word、字幕、讲义任意一处拖选文字，浮层即给「解释这段 / 就这段提问」；PDF 页面上还能切到「框选」态圈出一块区域当图片提问（裁图规格与视频截图同构，直接复用那条三级多模态降级链）。引用以**可堆叠、可单条删除的引用条**落在输入框上方，随消息一起发给模型（先检索、再围绕引用作答），用户消息气泡里也把「引的」与「问的」分区渲染。
 
@@ -494,7 +512,8 @@ src/
                 modelCaps.ts(能力查询)
   bilibili/     parse.ts api.ts pages.ts(分P) remux.ts(DASH→mp4) transport.ts(油猴桥优先/代理回退)
                 subtitle.ts(自带字幕) dmview.ts(弹幕) wire.ts index.ts
-  materials/    pdf.ts(pdf.js 封装/文本层/书签) docx.ts(Word 抽取，Node 可测) parse.ts(流水线)
+  materials/    pdf.ts(pdf.js 封装/文本层/书签) docx.ts(Word 抽取，Node 可测) md.ts(Markdown 抽取)
+                html.ts(HTML 整文档净化/段号锚点/字符集嗅探，与渲染分离) parse.ts(流水线)
                 chunk.ts(归一化分块) units.ts(页/段引用) region.ts(框选裁图) types.ts material-reader.css
   harness/      agent.ts(循环) tools.ts context.ts prompts.ts search.ts(字幕检索)
                 searchMaterial.ts(材料检索) quiz.ts ankiCard.ts comments.ts(讨论串清洗/排序/分组)
@@ -508,6 +527,7 @@ src/
   skills/       types.ts builtin/(6 个内置技能) builtin.ts store.ts(升级/导入) router.ts(讲义路由)
                 scope.ts(会话技能范围的三态判定，零依赖可单测) zip.ts
   components/   SubtitlePanel HandoutPanel HandoutDocView ChatPanel MaterialReader PdfReader DocxReader
+                MdReader HtmlReader(沙箱 iframe 原样视图 + 分段视图)
                 SelectionAsk mermaid/ QuizCard DanmakuPanel DanmakuLayer CardsPanel SwipeDeck
                 CommentsSection(视频下方讨论区)
                 SkillsCard StorageCard StudyTimeCard MigrationCard ModelPicker SkillPicker appNav.tsx motion.tsx
@@ -568,6 +588,9 @@ node scripts/test-apkg.mjs                # .apkg 生成：zip + SQLite 结构�
 node scripts/test-material-units.mjs      # 页 / 段引用标记：格式化 / 反解 / linkify 往返 / 代码块不动
 node scripts/test-material-chunk.mjs      # 归一化与分块：中文空格修正 / 软换行拼接 / 扫描件判定 / 长页再切
 node scripts/test-material-docx.mjs       # Word 抽取：段落 / 表格 / 三种标题写法 / section 归属 / 真 zip 解包
+node scripts/test-material-md.mjs         # Markdown 抽取：围栏整段保留 / 三种标题 / 段号与 section
+node scripts/test-material-html.mjs       # HTML：整文档净化 / CSP 逐字 / 段号锚点同源同序 / 沙箱同源假设 /
+                                          #       字符集（GB2312 不乱码）；自己起 headless Chromium，不起服务
 node scripts/test-material-region.mjs     # 框选区域：矩形规范化 / 误触判定 / 选区清洗与截断
 
 # 其它纯逻辑
@@ -652,6 +675,8 @@ SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-quiz.mjs         #
 - iPad / 手机 PWA 装不了油猴脚本，B 站导入请用桌面浏览器或本地文件
 - 静态托管若不支持自定义响应头（如 GitHub Pages），VAD 会退化为单线程
 - 旧版本存 IndexedDB 的视频会在首次打开时自动迁移到 OPFS
+- HTML 材料的**原样视图会联网**：按原文档渲染意味着加载它引用的远程图片 / 样式 / 字体，这会向第三方暴露你的 IP，断网后同一份材料也会长得不一样。设置页可全局关掉，阅读器里也能对当前这份点「本次离线」（详见上方「HTML 材料」）
+- HTML 原样视图里**相对路径的图片只显示 alt 文字**（单文件导入没有同目录资源可解析），有几项缺失会在阅读器顶部提示条里说明
 
 <div align="center">
 <sub>数据只在本机 · 不上传任何服务器</sub>

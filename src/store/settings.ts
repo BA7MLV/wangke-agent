@@ -46,6 +46,19 @@ export interface Settings {
   studyTrackingEnabled: boolean;
   /** 多久没操作就算「人不在」（分钟）。播放视频时不计入空闲判定 */
   studyIdleMinutes: number;
+  // ── 阅读材料（docs/plans/2026-09-26-html-faithful-import-design.md）──
+  /**
+   * HTML 材料是否允许联网加载外部资源（图片 / 样式表 / 字体）。**默认开**。
+   *
+   * 为什么这里默认开、而 `syncEnabled` 默认关：两者都让数据离开本机，但性质不同 ——
+   * 云同步会把**你的**字幕、讲义、问答送上服务器；这里只是阅读一份导入文档时，
+   * 按原文档的引用去取它本来就指向的公开资源，不发送任何本机数据。
+   *
+   * 但「默认开」不等于「静默开」：阅读器顶部会常驻一条「正在联网加载 N 项资源」的提示，
+   * 并给一个「本次离线」按钮；README 的免责声明与已知限制里也各有一条。
+   * 想完全不出网，把这里关掉即可（关闭后 CSP 会一并收紧，不是只做个样子）。
+   */
+  htmlRemoteAssets: boolean;
   // ── 云端同步（docs/plans/2026-09-23-cloud-sync-design.md）──
   /**
    * 是否启用云端同步。**默认关闭**。
@@ -96,6 +109,7 @@ export const useSettings = create<SettingsStore>()(
       dynamicColor: true,
       studyTrackingEnabled: true,
       studyIdleMinutes: 5,
+      htmlRemoteAssets: true,
       syncEnabled: false,
       syncEndpoint: '',
       syncToken: '',
@@ -139,6 +153,7 @@ export function getSettings(): Settings {
     dynamicColor: s.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes,
+    htmlRemoteAssets: s.htmlRemoteAssets,
     syncEnabled: s.syncEnabled,
     syncEndpoint: s.syncEndpoint,
     syncToken: s.syncToken,

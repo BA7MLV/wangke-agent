@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
 import type { CommentRole } from '../harness/comments';
+import type { HtmlView } from '../materials/types';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
@@ -52,6 +53,8 @@ export interface VideoRow {
   scanned?: 1;
   /** 解析后没有任何正文单元（空文档 / 只有图片的 Word）：同样不建索引，但与扫描件是两回事 */
   empty?: 1;
+  /** HTML 材料上次用的阅读视图（原样 / 分段），不设视为 `raw`。非索引字段，无需升版本 */
+  htmlView?: HtmlView;
   // ── 封面（派生资源），全部为非索引字段
   /**
    * 封面主色 `#RRGGBB`，由生成封面时顺带提取，用作读取侧的 LQIP 占位底。

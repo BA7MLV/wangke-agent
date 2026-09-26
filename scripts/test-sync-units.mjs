@@ -164,6 +164,7 @@ test('设置白名单与排除项逐项吻合', () => {
     'danmakuEnabled',
     'dynamicColor',
     'favorites',
+    'htmlRemoteAssets',
     'llmModel',
     'studyIdleMinutes',
     'studyTrackingEnabled',

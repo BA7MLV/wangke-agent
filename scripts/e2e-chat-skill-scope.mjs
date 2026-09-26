@@ -96,8 +96,10 @@ const readVideoId = () =>
  * 为什么必须播种：**没有字幕时问答面板只渲染占位符**（「请先在字幕页生成字幕」），
  * 工具条整个不出现，技能按钮自然也不在。走真实转写要 ASR key，本脚本刻意不依赖它。
  *
- * 顺带把向量也播上（`embCount >= segCount`），让 ChatPanel 跳过自动建索引 ——
- * 否则它会去打真实的 embedding 接口，既慢又会往页面里抛 toast 噪音。
+ * 为什么**不再播向量**：2026-09-24 检索改为词法（BM25）后，「建索引」那一步已经不存在了，
+ * `indexReady` 只看「有没有 status=1 且带 text 的字幕段」（见 ChatPanel 的初始化 effect）；
+ * v13 也已把 `embeddings` 表删掉，原来那段播种现在会直接抛
+ * `NotFoundError: One of the specified object stores was not found`。
  */
 const seedSubtitle = (videoId) =>
   page.evaluate(async (vid) => {
@@ -106,9 +108,10 @@ const seedSubtitle = (videoId) =>
       req.onsuccess = () => res(req.result);
       req.onerror = rej;
     });
-    const segId = await new Promise((res, rej) => {
+    // 等事务 complete 再 close：在事务还挂着时 close 会把它 abort 掉
+    await new Promise((res, rej) => {
       const tx = db.transaction('segments', 'readwrite');
-      const q = tx.objectStore('segments').add({
+      tx.objectStore('segments').add({
         videoId: vid,
         idx: 0,
         start: 0,
@@ -116,21 +119,10 @@ const seedSubtitle = (videoId) =>
         text: '这是一段用于端到端测试的字幕内容，主题是问答技能范围限定。',
         status: 1,
       });
-      q.onsuccess = () => res(q.result);
-      q.onerror = () => rej(q.error);
-    });
-    await new Promise((res, rej) => {
-      const tx = db.transaction('embeddings', 'readwrite');
-      const q = tx.objectStore('embeddings').add({
-        videoId: vid,
-        segmentId: segId,
-        vector: new Float32Array(8).buffer,
-      });
-      q.onsuccess = () => res();
-      q.onerror = () => rej(q.error);
+      tx.oncomplete = () => res();
+      tx.onerror = () => rej(tx.error);
     });
     db.close();
-    return segId;
   }, videoId);
 
 console.log('1. 导入测试视频并播种字幕');

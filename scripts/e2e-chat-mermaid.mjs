@@ -78,10 +78,9 @@ await page.evaluate(async ({ videoId, FLOW, BAD, JSBLOCK, OPEN }) => {
     q.onerror = () => rej(q.error);
   });
   const now = Date.now();
-  // 1 段字幕即可让「问答」面板解锁
-  const segId = await put('segments', { videoId, idx: 0, start: 0, end: 20, text: '这是一段用来解锁问答面板的测试字幕。', status: 1 });
-  // embeddings 数量 >= 已完成的段数时直接判定索引就绪，不会去调真实 API
-  await put('embeddings', { videoId, segmentId: segId, vector: new Float32Array(8).buffer });
+  // 1 段字幕即可让「问答」面板解锁 —— 检索改词法后没有建索引这一步，
+  // 所以不再需要播一条向量（v13 也已删掉 embeddings 表）
+  await put('segments', { videoId, idx: 0, start: 0, end: 20, text: '这是一段用来解锁问答面板的测试字幕。', status: 1 });
   const sid = await put('chatSessions', { videoId, title: 'Mermaid 渲染验收', createdAt: now });
   const rows = [
     { role: 'user', content: '讲一下这个课程的流程' },

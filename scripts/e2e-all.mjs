@@ -86,6 +86,12 @@ const META = {
   // 都不依赖 DOM，所以能进这一档（materials/docx.ts、md.ts 刻意与渲染分离，就是为了这个）
   'test-material-chunk': { service: 'none', antd: false, timeout: 120 },
   'test-material-docx': { service: 'none', antd: false, timeout: 120 },
+  // 整文档净化 / CSP / 段号锚点 / 沙箱同源假设 / 字符集解码。DOMParser 与沙箱 iframe
+  // 都是浏览器能力，所以它自己起一个 headless Chromium（页面停在 https://mr.test/，
+  // 由 route 就地应答，不出网），仍不需要应用服务。
+  // ⚠️ 这一条曾经漏登记：脚本在仓库里躺了一轮，一键跑分从没执行过它，
+  //    报告里也看不出少了什么 —— 与 README「开发流程 §3」里那条警告是同一个坑。
+  'test-material-html': { service: 'none', antd: false, timeout: 180 },
   'test-material-md': { service: 'none', antd: false, timeout: 120 },
   'test-material-region': { service: 'none', antd: false, timeout: 120 },
   'test-material-units': { service: 'none', antd: false, timeout: 120 },

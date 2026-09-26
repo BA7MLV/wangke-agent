@@ -280,6 +280,28 @@
 
 /* ── HTML 阅读器 ────────────────────────────────────────────────────────── */
 
+/* 原样视图：整份文档塞在沙箱 iframe 里，**滚动由 iframe 自己负责** ——
+   外层再套一个滚动容器会出现双滚动条，且 iframe 高度算不对（它会退化成 150px 默认高）。
+   底色给白：导入文档大多假定自己画在白纸上，透出应用深色底会让只设了 color 的文档读不了。
+   （文档自己声明了 body 背景时，那份声明照常生效 —— 它盖在白底之上。） */
+.mr-frame-wrap {
+  flex: 1;
+  min-height: 0;
+  background: #fff;
+}
+
+.mr-frame {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+/* 提示条里的说明文字占满剩余宽度，动作按钮才不会被挤到换行 */
+.mr-hint > span {
+  flex: 1;
+}
+
 .mr-html {
   max-width: 760px;
   margin: 0 auto;

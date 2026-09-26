@@ -25,7 +25,7 @@ async function seed(page) {
       req.onsuccess = () => res(req.result);
       req.onerror = () => rej(req.error);
     });
-    const tx = db.transaction(['videos', 'segments', 'embeddings', 'chatSessions', 'chats'], 'readwrite');
+    const tx = db.transaction(['videos', 'segments', 'chatSessions', 'chats'], 'readwrite');
     tx.objectStore('videos').put({
       id: videoId,
       name: '测试课程.mp4',
@@ -75,18 +75,9 @@ async function seed(page) {
       tx.oncomplete = res;
       tx.onerror = () => rej(tx.error);
     });
-    // embedding 计数 >= 字幕数 → 索引视为就绪，不触发真实 API 建索引
-    const seg = await new Promise((res, rej) => {
-      const req = db.transaction('segments', 'readonly').objectStore('segments').getAll();
-      req.onsuccess = () => res(req.result[0]);
-      req.onerror = () => rej(req.error);
-    });
-    const tx2 = db.transaction('embeddings', 'readwrite');
-    tx2.objectStore('embeddings').add({ videoId, segmentId: seg.id, vector: new ArrayBuffer(4) });
-    await new Promise((res, rej) => {
-      tx2.oncomplete = res;
-      tx2.onerror = () => rej(tx2.error);
-    });
+    // 这里原来还会播一条 embedding 让「索引视为就绪」—— 现在不需要了：
+    // 2026-09-24 检索改词法后没有建索引这一步，indexReady 只看上面那条字幕；
+    // 且 v13 已删掉 embeddings 表，再播会抛 NotFoundError。
     db.close();
   }, VIDEO_ID);
 }

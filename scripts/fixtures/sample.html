@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>HTML 原样渲染样本</title>
+<style>
+  /* 这一份样式表就是「原样视图」的判别依据：分段视图走白名单净化，
+     class 与 style 元素都会被剥掉，这些声明一条都不会生效。 */
+  body { margin: 0; padding: 20px; background: rgb(250, 250, 252); font-family: system-ui, sans-serif; }
+  h1 { font-size: 22px; }
+  .mr-probe { color: rgb(1, 2, 3); }
+  .mr-probe-block { background: rgb(4, 5, 6); color: rgb(255, 255, 255); }
+</style>
+</head>
+<body>
+  <!-- 沙箱不给 allow-scripts，这一行必须永远不执行 -->
+  <script>window.__mrPwned = 1;</script>
+
+  <h1>HTML 原样渲染样本</h1>
+  <p class="mr-probe">第一段：这段文字的颜色来自文档自己的样式表。</p>
+  <p class="mr-probe-block">第二段：这一段的背景色同样来自文档自己的样式表。</p>
+  <p>第三段：用来验证 [第3段] 引用跳转能落到这一段上。</p>
+  <p>第四段：相对路径图片不该向应用自身的域名发任何请求。<img src="./local.png" alt="相对路径图片" width="16" height="16"></p>
+  <p>第五段：内嵌图片与远程图片都应该能显示出来。<img src="data:image/gif;base64,R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7" alt="内嵌图片" width="16" height="16"><img src="https://cdn.mr.test/remote.png" alt="远程图片" width="16" height="16"></p>
+</body>
+</html>

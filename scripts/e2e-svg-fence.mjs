@@ -140,8 +140,7 @@ await page.evaluate(async ({ videoId, questions }) => {
     q.onerror = () => rej(q.error);
   });
   const now = Date.now();
-  const segId = await put('segments', { videoId, idx: 0, start: 0, end: 20, text: '这是一段用来解锁问答面板的测试字幕。', status: 1 });
-  await put('embeddings', { videoId, segmentId: segId, vector: new Float32Array(8).buffer });
+  await put('segments', { videoId, idx: 0, start: 0, end: 20, text: '这是一段用来解锁问答面板的测试字幕。', status: 1 });
   const sid = await put('chatSessions', { videoId, title: 'svg 围栏验收', createdAt: now });
   await put('chats', { role: 'user', videoId, sessionId: sid, content: '考考我', createdAt: now });
   await put('chats', {

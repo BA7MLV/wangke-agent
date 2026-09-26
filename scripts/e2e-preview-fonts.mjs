@@ -60,6 +60,20 @@ await page.click('[data-testid="panel-tab-handout"]');
 await page.waitForSelector('.docx-preview-container section.docx', { timeout: 20000 });
 console.log('2. 讲义预览渲染 OK');
 
+/**
+ * 等应用的 @font-face 注册完再断言。
+ *
+ * 不等的后果是「通常红、偶尔赶上」：实测查的这一刻 `document.fonts` 里**一个仿宋 face 都没有**，
+ * 而 `document.fonts.check()` 在没有任何 face 匹配时会回落到系统字体并返回 `true` ——
+ * 所以那半条断言没有判别力，真正决定成败的是 `load()` 返回的 `faces.length`。
+ * 等 `fonts.ready` + 约 1.5s 后 face 数变成 187（全部 `loaded`），同一个查询就通过了。
+ *
+ * 超时**不在这里判红**：让下面那条断言报出真实状态，而不是在这里变成一个含糊的 timeout。
+ */
+await page
+  .waitForFunction(() => [...document.fonts].some((f) => f.family.includes('仿宋')), { timeout: 10000 })
+  .catch(() => null);
+
 // 5. 字体断言
 const fonts = await page.evaluate(async () => {
   const load = async (family, text) => {

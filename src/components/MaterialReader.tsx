@@ -3,7 +3,7 @@ import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
 import { toast } from '../ui';
-import type { MaterialReaderHandle } from '../materials/types';
+import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import PdfReader from './PdfReader';
 import DocxReader from './DocxReader';
 import MdReader from './MdReader';
@@ -66,6 +66,14 @@ export default function MaterialReader({ material, handleRef }: Props) {
   const onUnitChange = useCallback(
     (unit: number) => {
       void db.videos.update(materialId, { lastUnit: unit });
+    },
+    [materialId],
+  );
+
+  /** HTML 的阅读视图（原样 / 分段）写回 videos.htmlView —— 非索引字段，与 lastUnit 同一惯例 */
+  const onHtmlViewChange = useCallback(
+    (htmlView: HtmlView) => {
+      void db.videos.update(materialId, { htmlView });
     },
     [materialId],
   );
@@ -145,6 +153,8 @@ export default function MaterialReader({ material, handleRef }: Props) {
             blob={blob}
             materialId={materialId}
             initialUnit={material.lastUnit}
+            initialView={material.htmlView ?? 'raw'}
+            onViewChange={onHtmlViewChange}
             handleRef={handleRef}
             onUnitChange={onUnitChange}
           />

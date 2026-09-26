@@ -192,8 +192,12 @@ export const VIDEO_META_FIELDS = [
  *   封面但 `coverState` 为空时，列表会不会显示成「待生成」。若会，就需要让
  *   coverState 参与同步，或让封面单元带一个显式的「已就绪」标记。
  *   见设计文档 §3.2 封面单元与 §3.11。
+ * - `htmlView`：HTML 材料的阅读视图（原样 / 分段）。**同一份材料在不同设备上的最佳视图不同** ——
+ *   手机窄屏上「原样」经常是导航条加窄栏小字，得切「分段」；桌面则相反。跟着走等于把
+ *   一台设备的选择强加给另一台，用户会看到「我在 iPad 上明明切过分段了」。
+ *   与 `lastUnit` 不同：那个是**读到哪了**（位置，跨设备有意义），这个是**用什么姿势读**（偏好）。
  */
-export const VIDEO_LOCAL_FIELDS = ['fileDeleted', 'coverState'] as const;
+export const VIDEO_LOCAL_FIELDS = ['fileDeleted', 'coverState', 'htmlView'] as const;
 
 /**
  * `videos` 行中**属于身份标识**的字段，即主键 `id`。
@@ -252,6 +256,10 @@ export const SYNC_SETTINGS_KEYS = [
   'dynamicColor',
   'studyTrackingEnabled',
   'studyIdleMinutes',
+  // HTML 材料的联网开关：与 danmakuEnabled / dynamicColor 同类的渲染偏好，不携带凭据，
+  // 也不描述「这台设备怎么出网」（那是 bilibiliProxy 被排除的理由）。同步本身只在用户
+  // 显式打开云同步后才发生。
+  'htmlRemoteAssets',
 ] as const satisfies readonly (keyof Settings)[];
 
 /**

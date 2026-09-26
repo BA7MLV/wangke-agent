@@ -431,6 +431,9 @@ export default function Settings() {
   const dynamicColorRef = useMduiEvent('mdui-switch', 'change', (_e, el) =>
     settings.update({ dynamicColor: el.checked }),
   );
+  const htmlRemoteRef = useMduiEvent('mdui-switch', 'change', (_e, el) =>
+    settings.update({ htmlRemoteAssets: el.checked }),
+  );
   const rateDraftRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => {
     const n = Number(el.value);
     setRateDraft(el.value.trim() === '' || !Number.isFinite(n) ? null : n);
@@ -649,6 +652,24 @@ export default function Settings() {
             ref={dynamicColorRef}
             data-testid="dynamic-color"
             checked={settings.dynamicColor}
+          />
+        </Field>
+      </SectionCard>
+
+      <SectionCard
+        title="阅读材料"
+        subtitle="只影响 HTML 材料；PDF / Word / Markdown 的材料都在文件里，不涉及联网"
+        testId="card-material"
+      >
+        <Field
+          label="HTML 联网加载外部资源"
+          hint="按原文档的样子渲染 HTML 时，它引用的远程图片 / 样式表 / 字体会被加载。关掉后完全离线：只放行文档内嵌的资源，外部引用一律跳过并在阅读器顶部说明。两种情况下脚本都不会执行"
+          testId="field-html-remote"
+        >
+          <mdui-switch
+            ref={htmlRemoteRef}
+            data-testid="html-remote-assets"
+            checked={settings.htmlRemoteAssets}
           />
         </Field>
       </SectionCard>
