@@ -39,12 +39,31 @@
 }
 
 @media (hover: hover) and (pointer: fine) {
-  [data-media-player]:hover .vds-controls {
+  [data-media-player]:hover .vds-controls,
+  [data-media-player]:focus-visible .vds-controls,
+  [data-media-player]:has(:focus-visible) .vds-controls {
     opacity: 1;
     visibility: visible;
+    /* Vidstack keeps the overlay's inline pointer-events:none while its
+       mouse state is hidden. Keyboard focus must be able to tab into the
+       real controls as soon as the overlay is made visible. */
+    pointer-events: auto !important;
   }
 
-  [data-media-player]:not(:hover) .vds-controls {
+  /* Vidstack can keep individual control groups in their transient hidden
+     state while focus moves from the player surface to the first button.
+     Reveal the groups for the duration of keyboard focus so Tab reaches the
+     actual play, volume, captions, and seek controls. */
+  [data-media-player]:focus-visible .vds-controls .vds-controls-group,
+  [data-media-player]:has(:focus-visible) .vds-controls .vds-controls-group {
+    opacity: 1 !important;
+    visibility: visible !important;
+    pointer-events: auto !important;
+  }
+
+  /* 键盘用户先聚焦播放器，再 Tab 到控制键；不能在鼠标离开时把焦点目标隐藏。
+     用 focus-visible 而不是任意 focus-within，鼠标点过播放后仍可正常移出收起。 */
+  [data-media-player]:not(:hover):not(:focus-visible):not(:has(:focus-visible)) .vds-controls {
     opacity: 0;
     visibility: hidden;
   }
@@ -53,12 +72,10 @@
 /* 控制层遮罩：vidstack 默认是一条约 0.6 黑的底渐变 + 顶部只剩 0.3 黑。
    顶部那一档在本项目不够用 —— 顶栏放的是自研按钮（倍速档位 / 弹幕 / 字号），
    压在浅色课件录制、白底 PPT 上会整片发白（2x/3x 几乎看不见）。这里把顶档提到 0.55，
-   同时把圆角对齐播放器本身的 12px（默认 6px，会和控制层底色在角上错开）。 */
-[data-media-player] {
-  --video-border-radius: 12px;
-}
-
-.vds-video-layout .vds-controls[data-visible] {
+   遮罩沿用播放器的直角令牌，避免再次覆盖上方用户指定的 --video-border-radius: 0。 */
+.vds-video-layout .vds-controls[data-visible],
+[data-media-player]:focus-visible .vds-controls,
+[data-media-player]:has(:focus-visible) .vds-controls {
   background-image: linear-gradient(
     to top,
     rgb(0 0 0 / 0.6),

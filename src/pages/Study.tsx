@@ -213,6 +213,7 @@ export default function Study() {
           <mdui-segmented-button-group
             ref={rangeRef}
             data-testid="study-range"
+            aria-label="学习记录时间范围"
             selects="single"
             value={range}
           >
@@ -228,6 +229,9 @@ export default function Study() {
           className="heat-scroll"
           ref={scrollRef}
           data-testid="heat-scroll"
+          role="region"
+          aria-label="学习热力图，可横向滚动查看较早的记录"
+          tabIndex={0}
           onMouseOver={(e) => showTip(e.target)}
           onMouseLeave={() => setTip(null)}
           onClick={(e) => showTip(e.target)}
@@ -268,7 +272,8 @@ export default function Study() {
                         data-seconds={cell.seconds}
                         data-future={cell.future ? '1' : '0'}
                         data-testid="heat-cell"
-                        role="img"
+                        role={cell.future ? undefined : 'img'}
+                        aria-hidden={cell.future ? true : undefined}
                         aria-label={`${cell.date} ${cell.seconds > 0 ? formatStudyDuration(cell.seconds) : '无记录'}`}
                       />
                     ))}

@@ -225,7 +225,17 @@ export default function CardsPanel({ videoId, videoName, playerRef, hasSubtitles
             <div className="text-secondary cards-list__caption">已保留（点时间戳回看视频）</div>
             {kept.map((c) => (
               <div key={c.id} className="sub-item cards-row" data-testid="cards-row" onClick={() => seekTo(c.time)}>
-                <span className="sub-item__time">{fmtTime(c.time)}</span>
+                <button
+                  type="button"
+                  className="sub-item__time cards-row__seek"
+                  aria-label={`跳到视频 ${fmtTime(c.time)}`}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    seekTo(c.time);
+                  }}
+                >
+                  {fmtTime(c.time)}
+                </button>
                 <span className="sub-item__text" style={{ flex: '1 1 auto' }}>
                   {c.q}
                 </span>

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
@@ -151,16 +151,23 @@ function FrameThumb({
  */
 function ReasoningBlock({ reasoning, active }: { reasoning: string; active: boolean }) {
   const [open, setOpen] = useState(active);
+  const bodyId = useId();
   useEffect(() => {
     if (!active) setOpen(false);
   }, [active]);
   return (
     <div className="chat-reason">
-      <div className="chat-reason__toggle" onClick={() => setOpen((v) => !v)}>
+      <button
+        type="button"
+        className="chat-reason__toggle"
+        aria-expanded={open}
+        aria-controls={bodyId}
+        onClick={() => setOpen((v) => !v)}
+      >
         <mdui-sym-chevron-right className={open ? 'chat-reason__chevron chat-reason__chevron--open' : 'chat-reason__chevron'} />
         {active ? '思考中…' : '思考过程'}
-      </div>
-      {open && <div className="chat-reason__body">{reasoning}</div>}
+      </button>
+      {open && <div className="chat-reason__body" id={bodyId}>{reasoning}</div>}
     </div>
   );
 }

@@ -131,7 +131,7 @@ const navPairs = await navPage.evaluate(() =>
     return { label: item.innerText.trim(), active: item.hasAttribute('active'), icon: pick('icon'), activeIcon: pick('active-icon') };
   }),
 );
-check(navPairs.length === 2, '底部导航有 2 项');
+check(navPairs.length === 4, '底部导航包含课程库、课程助手、学习、设置 4 项');
 check(
   navPairs.every((i) => i.icon && i.activeIcon),
   '每项都同时挂了描边与实心两套图标',

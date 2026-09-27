@@ -13,7 +13,7 @@
   outline: none;
 }
 .deck:focus-visible {
-  outline: 2px solid rgb(var(--mdui-color-primary) / 0.35);
+  outline: 2px solid rgba(var(--mdui-color-primary), 0.35);
   outline-offset: 2px;
   border-radius: 12px;
 }
@@ -70,7 +70,7 @@
   opacity: 0;
   transition: opacity var(--duration-quick) var(--ease-out);
   pointer-events: none;
-  background: rgb(var(--mdui-color-surface-container-highest) / 0.9);
+  background: rgba(var(--mdui-color-surface-container-highest), 0.9);
 }
 .deck-hint.keep {
   right: 14px;
@@ -187,6 +187,37 @@
 .cards-list__caption {
   padding: 4px 8px 2px;
   font-size: 12px;
+}
+
+.cards-row {
+  align-items: center;
+}
+
+.cards-row__seek {
+  min-width: 48px;
+  min-height: 40px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-small);
+  background: transparent;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+
+.cards-row__seek:hover {
+  background: rgba(var(--mdui-color-primary), 0.08);
+}
+
+.cards-row__seek:focus-visible {
+  outline: 3px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
+}
+
+@media (pointer: coarse) {
+  .cards-row__seek {
+    min-height: 48px;
+  }
 }
 
 .cards-row .sub-item__text {

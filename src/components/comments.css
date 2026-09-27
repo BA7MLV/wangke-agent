@@ -15,7 +15,8 @@
   align-items: center;
   gap: 8px;
   width: 100%;
-  /* 40px 高（触控目标下限）：20px 行高 + 上下各 10px */
+  box-sizing: border-box;
+  min-height: 48px;
   padding: 10px 12px;
   border: 0;
   border-radius: var(--mdui-shape-corner-medium);
@@ -28,6 +29,12 @@
 
 .comments-toggle:hover {
   background: rgb(var(--mdui-color-surface-container));
+}
+
+.comments-toggle:focus-visible,
+.cmt-time:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
 }
 
 .comments-toggle__label {
@@ -74,6 +81,41 @@
 
 .comments-bar__spacer {
   flex: 1 1 auto;
+}
+
+.comments-sort__button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-full);
+  background: transparent;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.comments-sort__button[aria-pressed='true'] {
+  background: rgb(var(--mdui-color-secondary-container));
+  color: rgb(var(--mdui-color-on-secondary-container));
+}
+
+.comments-sort__button:hover {
+  background-image: linear-gradient(rgba(var(--mdui-color-on-surface), 0.08), rgba(var(--mdui-color-on-surface), 0.08));
+}
+
+.comments-sort__button:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
+}
+
+.comments-source {
+  margin: 8px 0 0;
+  padding-inline: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: 12px;
+  line-height: 1.5;
 }
 
 .comments-body {
@@ -171,6 +213,8 @@
 .cmt-time {
   margin-left: auto;
   flex: 0 0 auto;
+  min-width: 48px;
+  min-height: 40px;
   padding: 2px 6px;
   border: 0;
   border-radius: var(--mdui-shape-corner-extra-small, 4px);
@@ -183,7 +227,7 @@
 }
 
 .cmt-time:hover {
-  background: rgb(var(--mdui-color-primary) / 0.1);
+  background: rgba(var(--mdui-color-primary), 0.08);
 }
 
 .cmt-text {
@@ -222,5 +266,18 @@
   .cmt-replies {
     margin-left: 10px;
     padding-left: 8px;
+  }
+}
+
+@media (pointer: coarse) {
+  .cmt-time,
+  .comments-sort__button {
+    min-height: 48px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comments-toggle__chev {
+    transition: none;
   }
 }

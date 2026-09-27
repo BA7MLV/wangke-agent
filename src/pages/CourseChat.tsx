@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import { useNavigate } from 'react-router-dom';
 import { useAppNav } from '../components/appNav';
@@ -64,6 +64,7 @@ const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
 
 function ReasoningBlock({ reasoning, active }: { reasoning: string; active: boolean }) {
   const [open, setOpen] = useState(active);
+  const bodyId = useId();
   useEffect(() => {
     if (!active) setOpen(false);
   }, [active]);
@@ -73,12 +74,13 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
         type="button"
         className="course-chat__reason-toggle"
         aria-expanded={open}
+        aria-controls={bodyId}
         onClick={() => setOpen((value) => !value)}
       >
         <mdui-sym-chevron-right className={open ? 'course-chat__reason-icon course-chat__reason-icon--open' : 'course-chat__reason-icon'} />
         {active ? '思考中…' : '思考过程'}
       </button>
-      {open && <div className="course-chat__reason-body">{reasoning}</div>}
+      {open && <div className="course-chat__reason-body" id={bodyId}>{reasoning}</div>}
     </div>
   );
 }
@@ -418,7 +420,7 @@ export default function CourseChat() {
     >
       <div className="course-chat" data-testid="course-chat-page">
         <section className="course-chat__main" aria-label="课程助手聊天">
-          <div className="course-chat__toolbar">
+          <div className="course-chat__toolbar" role="group" aria-label="会话与回答设置">
             <mdui-select
               ref={sessionRef}
               className="course-chat__session-select"
@@ -443,7 +445,8 @@ export default function CourseChat() {
               <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
                 <mdui-button-icon
                   aria-label={thinking ? '关闭思考' : '开启思考'}
-                  variant={thinking ? 'filled' : 'standard'}
+                  aria-pressed={thinking}
+                  variant={thinking ? 'tonal' : 'standard'}
                   onClick={() => updateSettings({ thinkingEnabled: !thinking })}
                 >
                   <mdui-sym-lightbulb />
@@ -451,7 +454,7 @@ export default function CourseChat() {
               </mdui-tooltip>
             )}
             {supportsThinking(llmModel) && thinking && (
-              <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort">
+              <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort" aria-label="思考强度">
                 <mdui-segmented-button value="low">低</mdui-segmented-button>
                 <mdui-segmented-button value="high">高</mdui-segmented-button>
                 <mdui-segmented-button value="max">最大</mdui-segmented-button>
@@ -495,7 +498,7 @@ export default function CourseChat() {
                 <div className="course-chat__empty-mark" aria-hidden="true">
                   <mdui-sym-forum />
                 </div>
-                <h1>问你的整个课程库</h1>
+                <h2>问你的整个课程库</h2>
                 <p>
                   我会先判断问题对应哪些课程，再读取相关内容；需要时也会调用当前会话允许的技能。
                 </p>

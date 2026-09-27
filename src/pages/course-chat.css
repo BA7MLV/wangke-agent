@@ -30,6 +30,7 @@
   min-height: 58px;
   padding: 8px 20px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 4px;
   border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
@@ -37,7 +38,7 @@
 }
 
 .course-chat__session-select {
-  flex: 1 1 auto;
+  flex: 1 1 200px;
   min-width: 0;
   max-width: 320px;
 }
@@ -152,7 +153,7 @@
   font-size: inherit;
 }
 
-.course-chat__empty h1 {
+.course-chat__empty h2 {
   margin: 22px 0 8px;
   font-size: clamp(26px, 3vw, 36px);
   line-height: 1.18;
@@ -226,7 +227,7 @@
 }
 
 .course-chat__import {
-  min-height: 44px;
+  min-height: 48px;
   margin-top: 28px;
   padding: 0 18px;
   display: inline-flex;
@@ -290,8 +291,8 @@
   padding: 10px 14px;
   border-radius: var(--mdui-shape-corner-large);
   border-bottom-right-radius: var(--mdui-shape-corner-extra-small);
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
+  background: rgb(var(--mdui-color-secondary-container));
+  color: rgb(var(--mdui-color-on-secondary-container));
   white-space: pre-wrap;
 }
 
@@ -343,15 +344,22 @@
 }
 
 .course-chat__reason-toggle {
-  padding: 0;
+  min-height: 40px;
+  padding: 0 8px;
+  margin-left: -8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
   border: 0;
+  border-radius: var(--mdui-shape-corner-small);
   background: transparent;
   color: rgb(var(--mdui-color-on-surface-variant));
   font: inherit;
   cursor: pointer;
+}
+
+.course-chat__reason-toggle:hover {
+  background: rgba(var(--mdui-color-on-surface), 0.08);
 }
 
 .course-chat__reason-icon {
@@ -406,19 +414,30 @@
   line-height: 1.4;
 }
 
-@media (max-width: 980px) {
-  .course-chat__effort {
-    display: none;
-  }
-}
-
 @media (max-width: 760px) {
   .course-chat__toolbar {
     padding: 7px 10px;
   }
 
+  /* 第一行管理会话，第二行设置回答；窄屏仍保留删除与思考强度。 */
+  .course-chat__session-select {
+    flex-basis: calc(100% - 104px);
+    max-width: none;
+  }
+
   .course-chat__toolbar-divider {
-    margin: 0 2px;
+    display: none;
+  }
+
+  .course-chat__effort {
+    flex: 1 1 auto;
+    max-width: 232px;
+    margin-left: auto;
+  }
+
+  .course-chat__effort > mdui-segmented-button {
+    min-width: 0;
+    flex: 1 1 0;
   }
 
   .course-chat__context {
@@ -434,7 +453,7 @@
     padding: 28px 2px 54px;
   }
 
-  .course-chat__empty h1 {
+  .course-chat__empty h2 {
     font-size: 28px;
   }
 
@@ -456,15 +475,6 @@
 }
 
 @media (max-width: 430px) {
-  .course-chat__session-select {
-    max-width: none;
-  }
-
-  .course-chat__toolbar-divider,
-  .course-chat__delete-action {
-    display: none;
-  }
-
   .course-chat__avatar {
     width: 28px;
     height: 28px;
@@ -473,5 +483,11 @@
 
   .course-chat__message {
     gap: 8px;
+  }
+}
+
+@media (pointer: coarse) {
+  .course-chat__reason-toggle {
+    min-height: 48px;
   }
 }

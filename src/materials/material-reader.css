@@ -37,7 +37,7 @@
   height: 0;
 }
 .mr-page .textLayer ::selection {
-  background: rgb(var(--mdui-color-primary) / 0.28);
+  background: rgba(var(--mdui-color-primary), 0.28);
 }
 .mr-page .textLayer br::selection {
   background: transparent;
@@ -76,7 +76,7 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant) / 0.5);
+  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
   flex-wrap: wrap;
 }
 
@@ -112,7 +112,7 @@
   line-height: 1.5;
   color: rgb(var(--mdui-color-on-surface-variant));
   background: rgb(var(--mdui-color-surface-container));
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant) / 0.5);
+  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
 }
 
 .mr-scroll {
@@ -143,7 +143,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgb(var(--mdui-color-on-surface-variant) / 0.5);
+  color: rgba(var(--mdui-color-on-surface-variant), 0.5);
   font-size: 12px;
 }
 
@@ -168,24 +168,24 @@
 .mr-area__rect {
   position: absolute;
   border: 1.5px solid rgb(var(--mdui-color-primary));
-  background: rgb(var(--mdui-color-primary) / 0.14);
+  background: rgba(var(--mdui-color-primary), 0.14);
   border-radius: 2px;
   pointer-events: none;
 }
 
 /* 框选态下整页描边提示，避免用户忘了自己在框选态、以为「选不了字了」 */
 .mr-page--area {
-  outline: 2px dashed rgb(var(--mdui-color-primary) / 0.7);
+  outline: 2px dashed rgba(var(--mdui-color-primary), 0.7);
   outline-offset: 2px;
 }
 
 /* 引用跳转来的落点高亮（800ms 后由 JS 移除） */
 @keyframes mr-flash {
   from {
-    box-shadow: 0 0 0 3px rgb(var(--mdui-color-primary) / 0.85);
+    box-shadow: 0 0 0 3px rgba(var(--mdui-color-primary), 0.85);
   }
   to {
-    box-shadow: 0 0 0 3px rgb(var(--mdui-color-primary) / 0);
+    box-shadow: 0 0 0 3px rgba(var(--mdui-color-primary), 0);
   }
 }
 .mr-flash {
@@ -240,7 +240,7 @@
 }
 
 .mr-md__block--mark {
-  background: rgb(var(--mdui-color-primary) / 0.14);
+  background: rgba(var(--mdui-color-primary), 0.14);
   box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
   border-radius: 6px;
   padding: 2px 10px 6px;
@@ -317,7 +317,7 @@
 }
 
 .mr-html__block--mark {
-  background: rgb(var(--mdui-color-primary) / 0.14);
+  background: rgba(var(--mdui-color-primary), 0.14);
   box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
   border-radius: 6px;
   padding: 2px 10px 6px;

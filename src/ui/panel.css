@@ -92,6 +92,11 @@
   background: rgb(var(--mdui-color-surface-container-high));
 }
 
+.sub-item[role='button']:focus-visible {
+  outline: 3px solid rgb(var(--mdui-color-primary));
+  outline-offset: -3px;
+}
+
 .sub-item--active,
 .sub-item--active:hover {
   background: rgb(var(--mdui-color-primary-container));

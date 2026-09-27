@@ -249,7 +249,7 @@
 /* ── AI 改写 / 编辑器 ───────────────────────────── */
 
 .hd-ai-panel {
-  border: 1px solid rgb(var(--mdui-color-primary) / 0.25);
+  border: 1px solid rgba(var(--mdui-color-primary), 0.25);
   background: rgb(var(--mdui-color-primary-container));
   border-radius: 6px;
   padding: 8px;

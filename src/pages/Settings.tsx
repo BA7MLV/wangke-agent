@@ -91,47 +91,53 @@ function ModelField({
       }
       testId={`${testId}-field`}
     >
-      <div className="row row--nowrap">
-        <mdui-text-field
-          ref={fieldRef}
-          data-testid={testId}
-          value={value}
-          clearable
-          style={{ flex: '1 1 auto', minWidth: 0 }}
-        />
-        {options.length > 0 && (
-          <mdui-button
-            variant="text"
-            data-testid={`${testId}-pick`}
-            onClick={() => setOpen((o) => !o)}
-          >
-            选择
-          </mdui-button>
+      <div>
+        <div className="row row--nowrap">
+          <mdui-text-field
+            ref={fieldRef}
+            data-testid={testId}
+            aria-label={label}
+            value={value}
+            clearable
+            style={{ flex: '1 1 auto', minWidth: 0 }}
+          />
+          {options.length > 0 && (
+            <mdui-button
+              variant="text"
+              data-testid={`${testId}-pick`}
+              aria-expanded={open}
+              aria-controls={`${testId}-options`}
+              onClick={() => setOpen((o) => !o)}
+            >
+              选择
+            </mdui-button>
+          )}
+        </div>
+        {open && options.length > 0 && (
+          <div className="model-picker" id={`${testId}-options`}>
+            <mdui-text-field
+              ref={filterRef}
+              data-testid={`${testId}-filter`}
+              aria-label={`筛选${label}模型`}
+              placeholder="筛选模型"
+              clearable
+            />
+            <mdui-list>
+              {list.map((id) => (
+                <mdui-list-item
+                  key={id}
+                  headline={id}
+                  data-testid={`${testId}-option`}
+                  onClick={() => {
+                    onPick(id);
+                    setOpen(false);
+                  }}
+                />
+              ))}
+            </mdui-list>
+          </div>
         )}
       </div>
-      {open && options.length > 0 && (
-        <div className="model-picker">
-          <mdui-text-field
-            ref={filterRef}
-            data-testid={`${testId}-filter`}
-            placeholder="筛选模型"
-            clearable
-          />
-          <mdui-list>
-            {list.map((id) => (
-              <mdui-list-item
-                key={id}
-                headline={id}
-                data-testid={`${testId}-option`}
-                onClick={() => {
-                  onPick(id);
-                  setOpen(false);
-                }}
-              />
-            ))}
-          </mdui-list>
-        </div>
-      )}
     </Field>
   );
 }
@@ -452,6 +458,7 @@ export default function Settings() {
         <mdui-text-field
           ref={favKeywordRef}
           data-testid="fav-filter"
+          aria-label="筛选收藏模型"
           placeholder="筛选模型"
           clearable
           value={favSearch[slot]}
@@ -512,27 +519,32 @@ export default function Settings() {
           className={keyError ? 't-input-wrap is-error' : 't-input-wrap'}
           testId="field-api-key"
         >
-          <div ref={keyInputRef} className={keyError ? 't-input is-error' : 't-input'}>
-            <mdui-text-field
-              data-testid="api-key"
-              type="password"
-              toggle-password
-              clearable
-              placeholder="sk-..."
-              value={settings.apiKey}
-              onInput={(e) => {
-                clearKeyError();
-                settings.update({ apiKey: (e.target as HTMLElement & { value: string }).value.trim() });
-              }}
-            />
+          <div>
+            <div ref={keyInputRef} className={keyError ? 't-input is-error' : 't-input'}>
+              <mdui-text-field
+                data-testid="api-key"
+                aria-label="API Key"
+                aria-invalid={keyError}
+                type="password"
+                toggle-password
+                clearable
+                placeholder="sk-..."
+                value={settings.apiKey}
+                onInput={(e) => {
+                  clearKeyError();
+                  settings.update({ apiKey: (e.target as HTMLElement & { value: string }).value.trim() });
+                }}
+              />
+            </div>
+            <p className="t-error-msg" data-testid="key-error">
+              请先填写 API Key
+            </p>
           </div>
-          <p className="t-error-msg" data-testid="key-error">
-            请先填写 API Key
-          </p>
         </Field>
         <Field label="API 地址" testId="field-base-url">
           <mdui-text-field
             data-testid="base-url"
+            aria-label="API 地址"
             value={settings.baseUrl}
             clearable
             onInput={(e) =>
@@ -549,6 +561,7 @@ export default function Settings() {
           <mdui-slider
             ref={concurrencyRef}
             data-testid="asr-concurrency"
+            aria-label="字幕转写并发数"
             min={1}
             max={12}
             step={1}
@@ -577,6 +590,7 @@ export default function Settings() {
         <Field label="上下文窗口（tokens）" hint={metaHint} testId="field-context-window">
           <mdui-text-field
             data-testid="context-window"
+            aria-label="上下文窗口，单位 tokens"
             type="number"
             min={8192}
             step={1024}
@@ -595,6 +609,7 @@ export default function Settings() {
           <mdui-segmented-button-group
             ref={roundsRef}
             data-testid="agent-rounds"
+            aria-label="问答检索轮次上限"
             selects="single"
             value={String(settings.agentRounds)}
           >
@@ -635,6 +650,7 @@ export default function Settings() {
           <mdui-segmented-button-group
             ref={themeRef}
             data-testid="theme-select"
+            aria-label="主题"
             selects="single"
             value={settings.theme}
           >
@@ -651,6 +667,7 @@ export default function Settings() {
           <mdui-switch
             ref={dynamicColorRef}
             data-testid="dynamic-color"
+            aria-label="动态取色"
             checked={settings.dynamicColor}
           />
         </Field>
@@ -669,6 +686,7 @@ export default function Settings() {
           <mdui-switch
             ref={htmlRemoteRef}
             data-testid="html-remote-assets"
+            aria-label="HTML 联网加载外部资源"
             checked={settings.htmlRemoteAssets}
           />
         </Field>
@@ -715,13 +733,15 @@ export default function Settings() {
           type="button"
           data-testid="bili-adv-toggle"
           aria-expanded={advOpen}
+          aria-controls="bili-advanced-settings"
           onClick={() => setAdvOverride(!advOpen)}
           style={{
             display: 'flex',
             alignItems: 'center',
             gap: 6,
             width: '100%',
-            padding: '12px 0 0',
+            minHeight: 48,
+            padding: '8px 0',
             background: 'none',
             border: 'none',
             color: 'inherit',
@@ -736,7 +756,7 @@ export default function Settings() {
           {advOpen ? <mdui-sym-keyboard-arrow-down /> : <mdui-sym-chevron-right />}
         </button>
         {advOpen && (
-          <div data-testid="bili-adv">
+          <div data-testid="bili-adv" id="bili-advanced-settings">
             <div className="text-secondary" style={{ fontSize: 12, margin: '10px 0 12px' }}>
               只有油猴桥不可用、或要改用代理时才需要填。装了桥时请求会自动带上浏览器自己的 Cookie，
               「B 站 Cookie」可以留空。
@@ -748,6 +768,7 @@ export default function Settings() {
             >
               <mdui-text-field
                 data-testid="bili-proxy"
+                aria-label="代理地址"
                 value={settings.bilibiliProxy}
                 clearable
                 placeholder="https://bili-proxy.yourname.workers.dev"
@@ -758,44 +779,47 @@ export default function Settings() {
                 }
               />
             </Field>
-            <Field label="B 站 Cookie" hint="仅存本机 localStorage，用于代理回退路径" testId="field-bili-cookie">
-              <div className="row row--nowrap">
-                <mdui-text-field
-                  data-testid="bili-cookie"
-                  type="password"
-                  toggle-password
-                  clearable
-                  placeholder="SESSDATA=...; bili_jct=..."
-                  value={settings.bilibiliCookie}
-                  style={{ flex: 1, minWidth: 0 }}
-                  onInput={(e) =>
-                    settings.update({
-                      bilibiliCookie: (e.target as HTMLElement & { value: string }).value.trim(),
-                    })
-                  }
-                />
-                <mdui-button
-                  variant="tonal"
-                  data-testid="bili-cookie-read"
-                  loading={cookieReading}
-                  onClick={() => void readCookieFromBrowser()}
-                >
-                  读取本机 Cookie
-                </mdui-button>
-              </div>
-              {cookieNote && (
-                <div
-                  className="text-secondary"
-                  style={{
-                    fontSize: 12,
-                    marginTop: 6,
-                    color: cookieNoteLevel === 'warn' ? 'rgb(var(--mdui-color-error))' : undefined,
-                  }}
-                  data-testid="bili-cookie-note"
-                >
-                  {cookieNote}
+            <Field label="B 站 Cookie" hint="仅存本机 localStorage，用于代理回退路径" className="field--stack" testId="field-bili-cookie">
+              <div>
+                <div className="row row--nowrap">
+                  <mdui-text-field
+                    data-testid="bili-cookie"
+                    aria-label="B 站 Cookie"
+                    type="password"
+                    toggle-password
+                    clearable
+                    placeholder="SESSDATA=...; bili_jct=..."
+                    value={settings.bilibiliCookie}
+                    style={{ flex: 1, minWidth: 0 }}
+                    onInput={(e) =>
+                      settings.update({
+                        bilibiliCookie: (e.target as HTMLElement & { value: string }).value.trim(),
+                      })
+                    }
+                  />
+                  <mdui-button
+                    variant="tonal"
+                    data-testid="bili-cookie-read"
+                    loading={cookieReading}
+                    onClick={() => void readCookieFromBrowser()}
+                  >
+                    读取本机 Cookie
+                  </mdui-button>
                 </div>
-              )}
+                {cookieNote && (
+                  <div
+                    className="text-secondary"
+                    style={{
+                      fontSize: 12,
+                      marginTop: 6,
+                      color: cookieNoteLevel === 'warn' ? 'rgb(var(--mdui-color-error))' : undefined,
+                    }}
+                    data-testid="bili-cookie-note"
+                  >
+                    {cookieNote}
+                  </div>
+                )}
+              </div>
             </Field>
           </div>
         )}
@@ -821,6 +845,7 @@ export default function Settings() {
               <mdui-text-field
                 ref={rateDraftRef}
                 data-testid="rate-input"
+                aria-label="添加自定义播放倍速"
                 type="number"
                 min={MIN_RATE}
                 max={MAX_RATE}

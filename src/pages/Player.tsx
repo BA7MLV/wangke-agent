@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MediaPlayer, MediaProvider, Track, type MediaPlayerInstance, type MediaStorage } from '@vidstack/react';
 import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default';
@@ -108,6 +108,8 @@ export default function Player() {
   const useBottomNav = isMobile && !isPhoneLandscape;
   // 窄屏底部导航 / 桌面 Tabs 当前面板
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
+  const [keyboardControls, setKeyboardControls] = useState(false);
+  const panelId = useId();
   // 桌面影院模式：只改变页面布局，右侧面板继续挂载以保留草稿、滚动位置与生成状态。
   const [theaterMode, setTheaterMode] = useState(false);
   const toggleTheaterMode = useCallback(() => setTheaterMode((active) => !active), []);
@@ -422,6 +424,27 @@ export default function Player() {
    */
   const effTab: PanelKey = panelKeys.includes(activeTab) ? activeTab : panelKeys[0];
 
+  // mdui 2 的 Tab 只提供鼠标选中与焦点样式，不实现 ARIA tab 的方向键 / roving tab stop。
+  // 只监听 tab 宿主，面板内的输入、阅读和播放器快捷键不经过这条路径。
+  const handlePanelTabKeyDown = (event: KeyboardEvent<HTMLElement>, key: PanelKey) => {
+    if (event.altKey || event.ctrlKey || event.metaKey) return;
+    const index = panelKeys.indexOf(key);
+    let nextIndex: number;
+    switch (event.key) {
+      case 'ArrowRight': nextIndex = (index + 1) % panelKeys.length; break;
+      case 'ArrowLeft': nextIndex = (index - 1 + panelKeys.length) % panelKeys.length; break;
+      case 'Home': nextIndex = 0; break;
+      case 'End': nextIndex = panelKeys.length - 1; break;
+      case 'Enter':
+      case ' ': nextIndex = index; break;
+      default: return;
+    }
+    event.preventDefault();
+    const nextKey = panelKeys[nextIndex];
+    setActiveTab(nextKey);
+    tabsRef.current?.querySelector<HTMLElement>(`mdui-tab[value="${nextKey}"]`)?.focus();
+  };
+
   // 五个面板只实例化一份：桌面挂进 mdui-tabs 的 tab-panel，窄屏挂进 panel-host（hidden 保活切换）。
   // 材料只实例化问答：其余面板都以字幕为输入，挂上去只会给出「先生成字幕」的错误入口。
   const panels: Partial<Record<PanelKey, ReactNode>> = isMaterial
@@ -479,6 +502,8 @@ export default function Player() {
         useBottomNav
           ? {
               value: effTab,
+              mode: 'panels',
+              label: '学习面板',
               items: panelTabs.map((t) => ({
                 value: t.key,
                 label: t.label,
@@ -520,7 +545,16 @@ export default function Player() {
               // 控制栏只在鼠标悬停播放器时出现（YouTube 行为）：mouseenter → show(0)、
               // mouseleave → hide(0) 立即收起；静态隐藏关掉（见 CONTROLS_IDLE_DELAY）。
               // 「未播放过」那段 vds 不注册鼠标监听，由 player-enhance.css 的 :hover 兜住。
-              hideControlsOnMouseLeave
+              // 键盘焦点在播放器内部时暂时保持控制栏，确保 Tab 不会把控制键从焦点顺序中
+              // 隐藏；焦点离开整个播放器后再恢复 YouTube 式的移出即隐藏。
+              hideControlsOnMouseLeave={!keyboardControls}
+              onFocus={() => setKeyboardControls(true)}
+              onBlur={(event) => {
+                const next = event.relatedTarget;
+                if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
+                  setKeyboardControls(false);
+                }
+              }}
               controlsDelay={CONTROLS_IDLE_DELAY}
               // YouTube 式快捷键（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。见 utils/playerKeys.ts
               keyShortcuts={keyShortcuts}
@@ -576,6 +610,8 @@ export default function Player() {
                 // 都用 `[role="tabpanel"]:visible .sub-item` 定位「当前面板里的条目行」，
                 // 这样同一个选择器在桌面 mdui-tab-panel 与窄屏 .panel-slot 下都成立。
                 role="tabpanel"
+                id={`${panelId}-panel-${key}`}
+                aria-label={panelTabs.find((tab) => tab.key === key)?.label}
                 data-testid={`panel-slot-${key}`}
                 hidden={effTab !== key}
               >
@@ -595,12 +631,25 @@ export default function Player() {
               variant="secondary"
               value={effTab}
               role="tablist"
+              aria-label="学习面板"
               data-testid="panel-tabs"
             >
               {/* mdui 的 tabs 组件不带任何 ARIA 角色（实测 manifest 与实现里都没有），
                   这里手动补齐 tablist / tab —— e2e 的 getByRole('tab') 也依赖它。 */}
               {panelTabs.map((t) => (
-                <mdui-tab key={t.key} value={t.key} role="tab" data-testid={`panel-tab-${t.key}`}>
+                <mdui-tab
+                  key={t.key}
+                  id={`${panelId}-tab-${t.key}`}
+                  value={t.key}
+                  role="tab"
+                  // mdui-tab reflects boolean JSX values as an empty presence
+                  // attribute. ARIA requires the literal true/false tokens.
+                  aria-selected={effTab === t.key ? 'true' : 'false'}
+                  aria-controls={`${panelId}-panel-${t.key}`}
+                  tabIndex={effTab === t.key ? 0 : -1}
+                  onKeyDown={(event) => handlePanelTabKeyDown(event, t.key)}
+                  data-testid={`panel-tab-${t.key}`}
+                >
                   {t.label}
                 </mdui-tab>
               ))}
@@ -610,6 +659,8 @@ export default function Player() {
                   slot="panel"
                   value={key}
                   role="tabpanel"
+                  id={`${panelId}-panel-${key}`}
+                  aria-labelledby={`${panelId}-tab-${key}`}
                   data-testid={`panel-slot-${key}`}
                 >
                   {panels[key]}

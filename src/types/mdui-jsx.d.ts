@@ -3416,6 +3416,7 @@ declare module 'react' {
       'mdui-sym-play-circle': MduiSymbolProps;
       'mdui-sym-quiz': MduiSymbolProps;
       'mdui-sym-refresh': MduiSymbolProps;
+      'mdui-sym-search': MduiSymbolProps;
       'mdui-sym-send': MduiSymbolProps;
       'mdui-sym-settings': MduiSymbolProps;
       'mdui-sym-style': MduiSymbolProps;

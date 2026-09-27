@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useId, useState, type ReactNode } from 'react';
 import './layout.css';
 
 const NAV_RAIL_COLLAPSED_KEY = 'wangke-nav-rail-collapsed';
@@ -49,6 +49,9 @@ export type BottomNavItem = NavItem;
 export interface NavConfig {
   items: NavItem[];
   value: string;
+  /** 页面目的地与页内面板切换采用不同的选中语义。 */
+  mode?: 'navigation' | 'panels';
+  label?: string;
 }
 
 export interface PageShellProps {
@@ -97,6 +100,10 @@ export function PageShell({
   children,
 }: PageShellProps) {
   const [railCollapsed, setRailCollapsed] = useState(readNavRailCollapsed);
+  const shellId = useId();
+  const titleId = `${shellId}-title`;
+  const mainId = `${shellId}-main`;
+  const navigationId = `${shellId}-navigation`;
 
   const toggleRail = () => {
     setRailCollapsed((collapsed) => {
@@ -124,6 +131,17 @@ export function PageShell({
       className={rootClassName ? `page page-mdui ${shellClass} ${rootClassName}` : `page page-mdui ${shellClass}`}
       ref={rootRef}
     >
+      <a
+        className="skip-link"
+        href={`#${mainId}`}
+        onClick={(event) => {
+          // HashRouter 拥有 URL 的 hash；跳过导航只移动焦点，不触发路由。
+          event.preventDefault();
+          document.getElementById(mainId)?.focus();
+        }}
+      >
+        跳到主要内容
+      </a>
       <mdui-layout>
         {rail && (
           /* 左侧 item 必须排在标题栏之前：布局助手会把它的实时宽度同时计入
@@ -137,7 +155,7 @@ export function PageShell({
                 <span className="app-sidebar__brand-text">网课学习</span>
               </div>
 
-              <nav className="app-sidebar__nav" aria-label="主导航">
+              <nav id={navigationId} className="app-sidebar__nav" aria-label="主导航">
                 {rail.items.map((it) => {
                   const active = it.value === rail.value;
                   return (
@@ -166,6 +184,8 @@ export function PageShell({
                   className="app-sidebar__collapse"
                   data-testid="nav-rail-toggle"
                   aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                  aria-expanded={!railCollapsed}
+                  aria-controls={navigationId}
                   title={railCollapsed ? '展开侧边栏' : undefined}
                   onClick={toggleRail}
                 >
@@ -185,20 +205,40 @@ export function PageShell({
                 <mdui-sym-arrow-back />
               </mdui-button-icon>
             )}
-            <mdui-top-app-bar-title>{title}</mdui-top-app-bar-title>
+            <mdui-top-app-bar-title>
+              <h1 id={titleId} className="app-bar__title">{title}</h1>
+            </mdui-top-app-bar-title>
             <div className="app-bar__spacer" />
             {actions}
           </mdui-top-app-bar>
         </mdui-layout-item>
         {bottomNav && (
           <mdui-layout-item placement="bottom" className="bottom-nav">
-            <mdui-navigation-bar value={bottomNav.value} data-testid="bottom-nav">
+            <mdui-navigation-bar
+              value={bottomNav.value}
+              label-visibility="labeled"
+              data-testid="bottom-nav"
+              role={bottomNav.mode === 'panels' ? 'group' : 'navigation'}
+              aria-label={bottomNav.label ?? '主导航'}
+            >
               {bottomNav.items.map((it) => (
                 <mdui-navigation-bar-item
                   key={it.value}
                   value={it.value}
                   data-testid={it.testId}
+                  role="button"
+                  aria-label={it.label}
+                  aria-current={bottomNav.mode !== 'panels' && it.value === bottomNav.value ? 'page' : undefined}
+                  aria-pressed={bottomNav.mode === 'panels' ? it.value === bottomNav.value : undefined}
                   onClick={it.onClick}
+                  onKeyDown={(event) => {
+                    // mdui 导航项聚焦在宿主上，不是原生 button，需补齐键盘激活。
+                    if (event.altKey || event.ctrlKey || event.metaKey) return;
+                    if (event.key === 'Enter' || event.key === ' ') {
+                      event.preventDefault();
+                      if (!event.repeat) it.onClick();
+                    }
+                  }}
                 >
                   {/* 图标走 icon / active-icon **插槽**而不是 `icon` 属性：
                       属性值是 Material Icons 字体里的字形名，本项目没装那个字体。
@@ -212,7 +252,13 @@ export function PageShell({
             </mdui-navigation-bar>
           </mdui-layout-item>
         )}
-        <mdui-layout-main className={fill ? 'page-main page-main--fill' : 'page-main'}>
+        <mdui-layout-main
+          id={mainId}
+          role="main"
+          tabIndex={-1}
+          aria-labelledby={titleId}
+          className={fill ? 'page-main page-main--fill' : 'page-main'}
+        >
           <div className={innerClass}>{children}</div>
         </mdui-layout-main>
       </mdui-layout>
@@ -240,7 +286,7 @@ export function SectionCard({ title, actions, subtitle, testId, children }: Sect
   return (
     <mdui-card variant="elevated" className="section-card" data-testid={testId}>
       <div className="section-card__head">
-        <div className="section-card__title">{title}</div>
+        <h2 className="section-card__title">{title}</h2>
         {actions && <div className="section-card__actions">{actions}</div>}
       </div>
       {subtitle && <div className="section-card__subtitle">{subtitle}</div>}

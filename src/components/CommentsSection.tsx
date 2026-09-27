@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type CommentRow } from '../store/db';
 import { runComments, type CommentsProgress } from '../pipelines/comments';
@@ -49,6 +49,7 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
   const [sort, setSort] = useState<CommentSort>('hot');
   const [progress, setProgress] = useState<CommentsProgress | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);
+  const commentsId = useId();
 
   const reload = useCallback(async () => {
     const rs = await db.comments.where('videoId').equals(videoId).sortBy('time');
@@ -112,7 +113,9 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
         type="button"
         className="comments-toggle"
         data-testid="comments-toggle"
+        id={`${commentsId}-toggle`}
         aria-expanded={open}
+        aria-controls={`${commentsId}-panel`}
         onClick={toggle}
       >
         <mdui-sym-forum />
@@ -128,7 +131,12 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
       </button>
 
       {open && (
-        <div className="comments-panel">
+        <div
+          className="comments-panel"
+          id={`${commentsId}-panel`}
+          role="region"
+          aria-labelledby={`${commentsId}-toggle`}
+        >
           <div className="comments-bar">
             <mdui-button
               variant="filled"
@@ -143,16 +151,18 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
             </mdui-button>
 
             {stats.threads > 0 && (
-              <div className="comments-sort">
+              <div className="comments-sort" role="group" aria-label="讨论排序">
                 {(Object.keys(COMMENT_SORT_LABEL) as CommentSort[]).map((k) => (
-                  <mdui-button
+                  <button
                     key={k}
-                    variant={sort === k ? 'tonal' : 'text'}
+                    type="button"
+                    className="comments-sort__button"
+                    aria-pressed={sort === k}
                     onClick={() => setSort(k)}
                     data-testid={`comments-sort-${k}`}
                   >
                     {COMMENT_SORT_LABEL[k]}
-                  </mdui-button>
+                  </button>
                 ))}
               </div>
             )}
@@ -160,6 +170,8 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
             <div className="comments-bar__spacer" />
             <ModelPicker slot="chat" field="llmModel" />
           </div>
+
+          <p className="comments-source">AI 生成的学习讨论，供复习参考。</p>
 
           {running && progress && (
             <PanelProgress testId="comments-progress" percent={pct} text={<TextSwap text={progress.message} />} />
@@ -210,6 +222,7 @@ function CommentItem({ row, onSeek }: { row: CommentRowLike; onSeek: (t: number)
             className="cmt-time"
             data-testid="cmt-time"
             title="跳到视频对应位置"
+            aria-label={`跳到视频 ${fmtTime(row.time)}`}
             onClick={() => onSeek(row.time)}
           >
             {fmtTime(row.time)}

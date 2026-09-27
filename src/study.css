@@ -144,6 +144,12 @@ html.mdui-theme-dark .page-study {
   -webkit-overflow-scrolling: touch;
 }
 
+.heat-scroll:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
+  border-radius: var(--mdui-shape-corner-small);
+}
+
 .heat-inner {
   width: max-content;
 }

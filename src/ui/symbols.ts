@@ -67,6 +67,7 @@ export const SYMBOL_NAMES = [
   'play_circle',
   'quiz',
   'refresh',
+  'search',
   'send',
   'settings',
   'style',

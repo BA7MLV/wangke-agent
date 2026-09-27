@@ -32,6 +32,7 @@ import { enqueueCover } from '../pipelines/coverQueue';
 import { useCoverRevision } from '../store/covers';
 import { detectMaterialFormat, isLegacyDocFile, isMaterialFile } from '../materials/parse';
 import { formatCaughtError } from '../utils/errorText';
+import './library.css';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -163,6 +164,13 @@ const MATERIAL_MIME: Record<'pdf' | 'docx' | 'md' | 'html', string> = {
 /** 「未分类」虚拟组的 key（折叠状态持久化用） */
 const UNCAT_KEY = '__uncat__';
 const COLLAPSE_STORE_KEY = 'library.collapsedGroups';
+const LIBRARY_FILTERS = [
+  { value: 'all', label: '全部' },
+  { value: 'video', label: '视频' },
+  { value: 'material', label: '阅读材料' },
+  { value: 'started', label: '继续学习' },
+] as const;
+type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['value'];
 
 function loadCollapsed(): Set<string> {
   try {
@@ -179,6 +187,9 @@ export default function Library() {
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
+  const [searchText, setSearchText] = useState('');
+  const [filter, setFilter] = useState<LibraryFilter>('all');
+  const searchInputRef = useRef<HTMLInputElement>(null);
   const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
   const [tasks, setTasks] = useState<ImportTask[]>([]);
   // 重命名视频弹窗状态：renaming 为 null 时弹窗关闭
@@ -307,6 +318,33 @@ export default function Library() {
       { key: UNCAT_KEY, name: '未分类', videos: uncat, folder: null },
     ];
   }, [videos, folders]);
+
+  const searchQuery = searchText.trim().toLocaleLowerCase();
+  const hasFilters = searchQuery.length > 0 || filter !== 'all';
+  // 搜索时展开命中的组；清除筛选后恢复用户原本的折叠状态，不写入新的折叠偏好。
+  const visibleGroups = useMemo(
+    () => groups.map((group) => ({
+      ...group,
+      videos: group.videos.filter((video) => {
+        if (searchQuery && !video.name.toLocaleLowerCase().includes(searchQuery)) return false;
+        if (filter === 'video') return video.kind !== 'material';
+        if (filter === 'material') return video.kind === 'material';
+        if (filter === 'started') {
+          return video.kind !== 'material' && (video.lastPosition ?? 0) > 0 && video.finished !== 1;
+        }
+        return true;
+      }),
+    })).filter((group) => group.videos.length > 0 || (!hasFilters && group.folder != null)),
+    [groups, searchQuery, filter, hasFilters],
+  );
+  const visibleCount = visibleGroups.reduce((count, group) => count + group.videos.length, 0);
+  const materialCount = videos.filter((video) => video.kind === 'material').length;
+
+  const clearFilters = () => {
+    setSearchText('');
+    setFilter('all');
+    searchInputRef.current?.focus();
+  };
 
   const toggleCollapse = (key: string) => {
     setCollapsed((prev) => {
@@ -906,7 +944,7 @@ export default function Library() {
   // ---------- 渲染 ----------
 
   const renderGroupHeader = (g: (typeof groups)[number]) => {
-    const isCollapsed = collapsed.has(g.key);
+    const isCollapsed = collapsed.has(g.key) && !hasFilters;
     const isDropTarget = drag?.overKey === g.key;
     const headerClass = [
       'group-header',
@@ -925,23 +963,35 @@ export default function Library() {
         className={headerClass}
         data-testid="group-header"
         data-group-key={g.key}
-        onClick={() => toggleCollapse(g.key)}
+        onClick={(e) => {
+          if (!hasFilters && !(e.target as HTMLElement).closest('mdui-dropdown')) toggleCollapse(g.key);
+        }}
       >
-        <span className="group-header__icon">
-          {isCollapsed ? <mdui-sym-chevron-right /> : <mdui-sym-keyboard-arrow-down />}
-        </span>
-        <span className="group-header__icon">
-          <mdui-sym-folder />
-        </span>
-        <span className="group-header__name">{g.name}</span>
-        <span className="group-header__count">{g.videos.length}</span>
-        <span className="library-toolbar__spacer" />
+        <button
+          type="button"
+          className="group-header__toggle"
+          aria-expanded={!isCollapsed}
+          aria-controls={`library-group-${g.key}`}
+          aria-label={`${g.name}，${g.videos.length} 项`}
+          onClick={(e) => {
+            e.stopPropagation();
+            toggleCollapse(g.key);
+          }}
+          disabled={hasFilters}
+        >
+          <span className="group-header__icon" aria-hidden="true">
+            {isCollapsed ? <mdui-sym-chevron-right /> : <mdui-sym-keyboard-arrow-down />}
+          </span>
+          <span className="group-header__icon" aria-hidden="true"><mdui-sym-folder /></span>
+          <span className="group-header__name">{g.name}</span>
+          <span className="group-header__count">{g.videos.length}</span>
+        </button>
         {g.folder && (
           <mdui-dropdown>
             <mdui-button-icon
               slot="trigger"
               data-testid="btn-folder-more"
-              aria-label="文件夹操作"
+              aria-label={`${g.name}的文件夹操作`}
               onClick={(e) => e.stopPropagation()}
             >
               <mdui-sym-more-vert />
@@ -956,7 +1006,7 @@ export default function Library() {
               </mdui-menu-item>
               <mdui-menu-item
                 data-testid="menu-folder-delete"
-                onClick={() => confirmDeleteFolder(g.folder!, g.videos.length)}
+                onClick={() => confirmDeleteFolder(g.folder!, groups.find((group) => group.key === g.key)?.videos.length ?? 0)}
               >
                 <mdui-sym-delete slot="icon" />
                 删除文件夹
@@ -1029,27 +1079,38 @@ export default function Library() {
         }}
         onDrop={handleDrop}
       >
-        <mdui-sym-cloud-upload className="drop-zone__icon" />
-        <div className="drop-zone__title">点击或拖拽视频、PDF、Word、Markdown、HTML 到此处导入</div>
-        {/* 说明文案：只留「用哪个 App 选 + 存哪儿」这两件当场要决策的事，
-            相册会转码 / iCloud 要先下载 / 导入后删原片释放空间这些补充说明收进问号里。
-            原因见 layout.css 里 .page-library .drop-zone 的注释：手机上两段长文会被挤成竖排。 */}
-        <div className="drop-zone__hint">
-          <span>用「文件」App 选视频，只存本机、不上传</span>
-          {/* HelpTip 内部已经 stopPropagation —— 这里整块是可点击的投放区，
-              不拦住会顺手弹出文件选择器。 */}
-          <HelpTip headline="导入说明" label="导入说明" testId="import-help">
-            <p>
-              请从「文件」App 中选择视频。从「相册」选择时系统会先转码，大视频可能长时间没有进度；
-              存在 iCloud 里的文件，请先在「文件」App 中下载到本机。
-            </p>
-            <p>
-              视频只保存在本机浏览器存储中，不会上传到任何服务器。导入完成后，可以在「文件」App
-              中删除原视频来释放空间。
-            </p>
-          </HelpTip>
+        <mdui-sym-cloud-upload className="drop-zone__icon" aria-hidden="true" />
+        <div className="drop-zone__copy">
+          <div className="drop-zone__title">导入课程与资料</div>
+          {/* 格式与存储位置留在正文；系统选择器和空间管理细节收进说明。 */}
+          <div className="drop-zone__hint">
+            <span>拖入视频、PDF、Word、Markdown、HTML，只存本机</span>
+            {/* HelpTip 内部已经 stopPropagation —— 这里整块是可点击的投放区，
+                不拦住会顺手弹出文件选择器。 */}
+            <HelpTip headline="导入说明" label="导入说明" testId="import-help">
+              <p>
+                请从「文件」App 中选择视频。从「相册」选择时系统会先转码，大视频可能长时间没有进度；
+                存在 iCloud 里的文件，请先在「文件」App 中下载到本机。
+              </p>
+              <p>
+                视频只保存在本机浏览器存储中，不会上传到任何服务器。导入完成后，可以在「文件」App
+                中删除原视频来释放空间。
+              </p>
+            </HelpTip>
+          </div>
         </div>
         <div className="drop-zone__actions">
+          <mdui-button
+            data-testid="btn-native-pick"
+            variant="filled"
+            onClick={(e) => {
+              e.stopPropagation();
+              nativeInputRef.current?.click();
+            }}
+          >
+            <mdui-sym-upload slot="icon" />
+            导入文件
+          </mdui-button>
           <mdui-button
             data-testid="btn-bili-import"
             variant="tonal"
@@ -1062,17 +1123,6 @@ export default function Library() {
             <mdui-sym-link slot="icon" />
             从 B 站导入
           </mdui-button>
-          <mdui-button
-            data-testid="btn-native-pick"
-            variant="text"
-            onClick={(e) => {
-              e.stopPropagation();
-              nativeInputRef.current?.click();
-            }}
-          >
-            <mdui-sym-upload slot="icon" />
-            上方没反应？用系统选择器导入
-          </mdui-button>
         </div>
         {/* iOS 上隐藏 input 需可聚焦，不能用 display:none */}
         <input
@@ -1080,6 +1130,8 @@ export default function Library() {
           data-testid="import-input"
           type="file"
           multiple
+          tabIndex={-1}
+          aria-label="选择要导入的视频或阅读材料"
           onChange={handleNativePick}
           style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}
         />
@@ -1131,31 +1183,95 @@ export default function Library() {
       )}
 
       {(videos.length > 0 || folders.length > 0) && (
-        <div className="library-toolbar">
-          <span className="library-toolbar__spacer" />
-          <mdui-button data-testid="btn-new-folder" variant="text" onClick={() => openFolderModal('create')}>
-            <mdui-sym-create-new-folder slot="icon" />
-            新建文件夹
-          </mdui-button>
-        </div>
+        <section className="library-browse" aria-label="浏览课程库">
+          <div className="library-toolbar">
+            <div className="library-toolbar__summary">
+              <h2>你的课程与资料</h2>
+              <p>{videos.length - materialCount} 个视频 · {materialCount} 份阅读材料</p>
+            </div>
+            <div className="library-search" role="search">
+              <mdui-sym-search aria-hidden="true" />
+              <input
+                ref={searchInputRef}
+                type="search"
+                data-testid="library-search"
+                aria-label="搜索课程或资料名称"
+                placeholder="搜索课程或资料"
+                value={searchText}
+                onChange={(e) => setSearchText(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === 'Escape' && searchText) {
+                    e.preventDefault();
+                    setSearchText('');
+                  }
+                }}
+              />
+              {searchText && (
+                <mdui-button-icon
+                  className="library-search__clear"
+                  data-testid="library-search-clear"
+                  aria-label="清除搜索"
+                  onClick={() => {
+                    setSearchText('');
+                    searchInputRef.current?.focus();
+                  }}
+                >
+                  <mdui-sym-close />
+                </mdui-button-icon>
+              )}
+            </div>
+            <mdui-button data-testid="btn-new-folder" variant="text" onClick={() => openFolderModal('create')}>
+              <mdui-sym-create-new-folder slot="icon" />
+              新建文件夹
+            </mdui-button>
+          </div>
+          <div className="library-filter-row">
+            <div className="library-filters" role="group" aria-label="按内容筛选">
+              {LIBRARY_FILTERS.map((item) => (
+                <button
+                  key={item.value}
+                  type="button"
+                  className="library-filter"
+                  data-testid={`library-filter-${item.value}`}
+                  aria-pressed={filter === item.value}
+                  onClick={() => setFilter(item.value)}
+                >
+                  {filter === item.value && <mdui-sym-check aria-hidden="true" />}
+                  {item.label}
+                </button>
+              ))}
+            </div>
+            <span className="library-results" role="status" aria-live="polite">
+              {hasFilters ? `${visibleCount} 项结果` : '最近导入优先'}
+            </span>
+          </div>
+        </section>
       )}
 
       <div data-testid="video-list">
         {videos.length === 0 && folders.length === 0 ? (
           // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
           // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
-          <EmptyState testId="empty-state" title="还没有视频" />
+          <EmptyState testId="empty-state" icon={<mdui-sym-video-library />} title="还没有课程或资料" />
+        ) : hasFilters && visibleCount === 0 ? (
+          <EmptyState
+            testId="library-no-results"
+            icon={<mdui-sym-search />}
+            title="没有找到匹配的内容"
+            description={searchQuery ? '试试其他名称，或清除筛选查看全部内容。' : '当前筛选下没有内容，可以切换到全部查看。'}
+            action={<mdui-button variant="tonal" onClick={clearFilters}>清除搜索和筛选</mdui-button>}
+          />
         ) : (
-          groups
-            .filter((g) => g.videos.length > 0 || g.folder != null)
-            .map((g) => (
-              <div key={g.key}>
-                {renderGroupHeader(g)}
-                {!collapsed.has(g.key) && (
+          visibleGroups.map((g) => (
+            <div key={g.key}>
+              {renderGroupHeader(g)}
+              <div id={`library-group-${g.key}`} hidden={collapsed.has(g.key) && !hasFilters}>
+                {(!collapsed.has(g.key) || hasFilters) && (
                   <div className="video-grid">{g.videos.map(renderVideoItem)}</div>
                 )}
               </div>
-            ))
+            </div>
+          ))
         )}
       </div>
 
@@ -1559,17 +1675,25 @@ function VideoRow({
   const activeJob = isJobActive(job) ? job : undefined;
   const jobCopy = activeJob ? libraryJobCopy(activeJob) : undefined;
   return (
-    <div
+    <article
       className={dragging ? 'video-row video-row--dragging' : 'video-row'}
       data-testid="video-item"
       data-video-id={v.id}
+      aria-labelledby={`library-title-${v.id}`}
     >
       <div
         className="video-row__handle"
         role="button"
         tabIndex={0}
-        aria-label="拖拽移动到文件夹"
+        aria-label={`移动 ${v.name} 到文件夹`}
+        title="拖拽移动，或按 Enter 选择文件夹"
         data-testid="drag-handle"
+        onKeyDown={(e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            onMove();
+          }
+        }}
         onPointerDown={onDragStart}
         onPointerMove={onDragMove}
         onPointerUp={onDragEnd}
@@ -1579,12 +1703,11 @@ function VideoRow({
       </div>
       {/* 缩略图：16:9 通栏，右下角压时长徽标（YouTube 卡片的两件套）。
           点缩略图直接进播放页，与卡片式的「整张可点」一致 */}
-      <div
+      <button
+        type="button"
         className="video-row__thumb"
         data-testid="video-thumb"
-        role="button"
-        tabIndex={-1}
-        aria-label={`学习 ${v.name}`}
+        aria-label={`${isMaterial ? '阅读' : '学习'} ${v.name}${ratio == null ? '' : v.finished === 1 ? '，已看完' : `，已观看 ${Math.round(ratio * 100)}%`}`}
         onClick={onPlay}
       >
         {cover ? (
@@ -1592,7 +1715,7 @@ function VideoRow({
           <img src={cover} alt="" loading="lazy" decoding="async" />
         ) : (
           // 没有画面时：先用主色铺底（LQIP），连主色都没有才落到主题色底
-          <div
+          <span
             className="video-row__thumb-empty"
             style={v.dominantColor ? { background: v.dominantColor } : undefined}
           >
@@ -1601,7 +1724,7 @@ function VideoRow({
             ) : (
               <mdui-sym-play-circle />
             )}
-          </div>
+          </span>
         )}
         <span className="video-row__duration">
           {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
@@ -1611,24 +1734,25 @@ function VideoRow({
             与主区的 .video-row__job 也不冲突 —— 那是转写/建索引的**后台任务**进度，
             位置和颜色都不同，别混。 */}
         {ratio != null && (
-          <div
+          <span
             className="video-row__progress"
             data-testid="video-progress"
             data-ratio={ratio.toFixed(3)}
             data-finished={v.finished === 1 ? '1' : undefined}
+            aria-hidden="true"
           >
-            <div
+            <span
               className="video-row__progress-fill"
               data-testid="video-progress-fill"
               style={{ width: `${ratio * 100}%` }}
             />
-          </div>
+          </span>
         )}
-      </div>
+      </button>
       <div className="video-row__main">
-        <div className="video-row__name" title={v.name}>
+        <h3 className="video-row__name" id={`library-title-${v.id}`} title={v.name}>
           {v.name}
-        </div>
+        </h3>
         <div className="video-row__meta" title={meta}>
           {meta}
         </div>
@@ -1707,6 +1831,6 @@ function VideoRow({
           </>
         )}
       </div>
-    </div>
+    </article>
   );
 }

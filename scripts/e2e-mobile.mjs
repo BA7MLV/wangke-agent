@@ -8,6 +8,7 @@ import { chromium } from 'playwright';
 
 const TEST_FILE = process.env.TEST_FILE;
 if (!TEST_FILE) { console.error('需要 TEST_FILE'); process.exit(1); }
+const BASE = process.env.BASE_URL || 'http://localhost:4173';
 
 // iPhone 14 竖屏视口
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -23,7 +24,7 @@ const fail = (msg) => { console.error(`❌ ${msg}`); process.exitCode = 1; };
 const ok = (msg) => console.log(`   ✓ ${msg}`);
 
 console.log('1. 手机视口打开首页并导入测试视频');
-await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
+await page.goto(BASE, { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 await page.screenshot({ path: 'e2e-shots/mobile-library.png' });
@@ -196,7 +197,10 @@ else ok('保留当前面板（讲义）');
 
 console.log('15. 直接在横屏刷新：默认落在字幕（不走「旋转」这条路）');
 await page.setViewportSize({ width: 852, height: 393 });
-await page.reload({ waitUntil: 'networkidle' });
+// A loaded blob-backed video can keep a media request active, so waiting for
+// network-idle here makes the layout check flaky. The selector below is the
+// meaningful readiness gate for this refresh case.
+await page.reload({ waitUntil: 'domcontentloaded' });
 await page.waitForSelector('[data-media-player]', { timeout: 15000 });
 await page.waitForTimeout(400);
 const fresh = await measure();

@@ -53,8 +53,8 @@
 .chat-bubble--user {
   border-radius: var(--mdui-shape-corner-large);
   border-bottom-right-radius: var(--mdui-shape-corner-extra-small);
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
+  background: rgb(var(--mdui-color-secondary-container));
+  color: rgb(var(--mdui-color-on-secondary-container));
 }
 
 /* 回答中断的消息：整体降为错误容器色，让「失败」一眼可见 */
@@ -70,13 +70,29 @@
 }
 
 .chat-reason__toggle {
+  min-height: 40px;
+  padding: 0 8px;
+  margin-left: -8px;
   display: flex;
   align-items: center;
   gap: 4px;
   cursor: pointer;
-  opacity: 0.65;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-small);
+  background: transparent;
+  font: inherit;
+  text-align: left;
   user-select: none;
   color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.chat-reason__toggle:hover {
+  background: rgba(var(--mdui-color-on-surface), 0.08);
+}
+
+.chat-reason__toggle:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
 }
 
 .chat-reason__chevron {
@@ -95,7 +111,6 @@
   max-height: 240px;
   overflow: auto;
   white-space: pre-wrap;
-  opacity: 0.8;
   color: rgb(var(--mdui-color-on-surface-variant));
 }
 
@@ -279,7 +294,19 @@
 
 .chat-ref__remove {
   flex: none;
-  --mdui-icon-button-size: 28px;
+  width: 40px;
+  height: 40px;
+}
+
+@media (pointer: coarse) {
+  .chat-reason__toggle {
+    min-height: 48px;
+  }
+
+  .chat-ref__remove {
+    width: 48px;
+    height: 48px;
+  }
 }
 
 /* 用户气泡里的引用块：与正文区分开，让「引的」和「问的」一眼分得清 */
@@ -289,7 +316,7 @@
   padding: 6px 8px;
   border-left: 3px solid rgb(var(--mdui-color-primary));
   border-radius: 0 var(--mdui-shape-corner-extra-small) var(--mdui-shape-corner-extra-small) 0;
-  background: rgb(var(--mdui-color-surface-container-highest) / 0.7);
+  background: rgba(var(--mdui-color-surface-container-highest), 0.7);
   font-size: 12px;
   line-height: 1.5;
 }
