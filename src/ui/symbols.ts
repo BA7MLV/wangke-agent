@@ -71,6 +71,7 @@ export const SYMBOL_NAMES = [
   'send',
   'settings',
   'style',
+  'stop',
   'subtitles',
   'swap_horiz',
   'toc',

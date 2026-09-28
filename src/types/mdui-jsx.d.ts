@@ -3420,6 +3420,7 @@ declare module 'react' {
       'mdui-sym-send': MduiSymbolProps;
       'mdui-sym-settings': MduiSymbolProps;
       'mdui-sym-style': MduiSymbolProps;
+      'mdui-sym-stop': MduiSymbolProps;
       'mdui-sym-subtitles': MduiSymbolProps;
       'mdui-sym-swap-horiz': MduiSymbolProps;
       'mdui-sym-toc': MduiSymbolProps;

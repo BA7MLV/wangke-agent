@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { useSettings, type AppTheme, type ModelSlot } from '../store/settings';
 import { listModels } from '../api/siliconflow';
 import { guessContextWindow, isVisionModel, supportsThinking } from '../api/modelCaps';
+import { UNLIMITED_ROUNDS } from '../harness/loopGuard';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
 import { buildInfoLabel } from '../utils/buildInfo';
@@ -428,9 +429,12 @@ export default function Settings() {
   const concurrencyRef = useMduiEvent('mdui-slider', 'change', (_e, el) =>
     settings.update({ asrConcurrency: el.value || 4 }),
   );
-  const roundsRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
-    settings.update({ agentRounds: Number(el.value) || 12 }),
-  );
+  const roundsRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) => {
+    // ⚠️ 不能写 `Number(el.value) || 12`：「不限」这一档的值是 0（UNLIMITED_ROUNDS 哨兵），
+    // `0 || 12` 会把它悄悄改回 12 —— 那个选项就永远存不下来
+    const n = Number(el.value);
+    settings.update({ agentRounds: Number.isFinite(n) ? n : 12 });
+  });
   const themeRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
     settings.update({ theme: el.value as AppTheme }),
   );
@@ -603,7 +607,7 @@ export default function Settings() {
         </Field>
         <Field
           label="问答检索轮次上限"
-          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token；大窗口模型下 12~20 轮安全。达到上限后会强制收尾作答，不会没有回答"
+          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token。选「不限」也有三道护栏兜着 —— 同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、界面上随时可以按停止生成"
           testId="field-agent-rounds"
         >
           <mdui-segmented-button-group
@@ -618,6 +622,9 @@ export default function Settings() {
                 {n}
               </mdui-segmented-button>
             ))}
+            {/* 0 = 不限（agent.ts 的 UNLIMITED_ROUNDS 哨兵）。用哨兵而不是再加一个布尔字段：
+                两个字段迟早会漂移，「轮数」和「有没有上限」必须是同一个量的两种取值 */}
+            <mdui-segmented-button value={String(UNLIMITED_ROUNDS)}>不限</mdui-segmented-button>
           </mdui-segmented-button-group>
         </Field>
       </SectionCard>

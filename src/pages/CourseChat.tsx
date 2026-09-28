@@ -95,6 +95,7 @@ export default function CourseChat() {
   const setSkillIds = useCourseChat((s) => s.setSkillIds);
   const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
   const answerAsk = useCourseChat((s) => s.answerAsk);
+  const stop = useCourseChat((s) => s.stop);
   const confirmPlan = useCourseChat((s) => s.confirmPlan);
   const cancelPlan = useCourseChat((s) => s.cancelPlan);
 
@@ -408,18 +409,35 @@ export default function CourseChat() {
                   void send(draft);
                 }}
               />
-              <mdui-tooltip content={pendingAsk ? '确认这个回答' : '发送'}>
-                <mdui-button-icon
-                  className="course-chat__send"
-                  aria-label={pendingAsk ? '确认这个回答' : '发送'}
-                  variant="filled"
-                  loading={loading}
-                  disabled={!sessionReady || !draft.trim() || (loading && pendingAsk == null)}
-                  onClick={() => void send(draft)}
-                >
-                  <mdui-sym-send />
-                </mdui-button-icon>
-              </mdui-tooltip>
+              {/* 生成中：发送按钮**变成**停止键，而不是并排加一个 ——
+                  输入框此时是禁用的，并排两个按钮会让人以为发送还能用。
+                  有提问卡悬着时例外：那时循环在等用户答，输入框必须留着。 */}
+              {loading && !pendingAsk ? (
+                <mdui-tooltip content="停止生成">
+                  <mdui-button-icon
+                    className="course-chat__send"
+                    aria-label="停止生成"
+                    variant="tonal"
+                    data-testid="chat-stop"
+                    onClick={stop}
+                  >
+                    <mdui-sym-stop />
+                  </mdui-button-icon>
+                </mdui-tooltip>
+              ) : (
+                <mdui-tooltip content={pendingAsk ? '确认这个回答' : '发送'}>
+                  <mdui-button-icon
+                    className="course-chat__send"
+                    aria-label={pendingAsk ? '确认这个回答' : '发送'}
+                    variant="filled"
+                    loading={loading}
+                    disabled={!sessionReady || !draft.trim() || (loading && pendingAsk == null)}
+                    onClick={() => void send(draft)}
+                  >
+                    <mdui-sym-send />
+                  </mdui-button-icon>
+                </mdui-tooltip>
+              )}
             </div>
             <div className="course-chat__composer-note">AI 会结合课程数据与所选技能回答，请核对引用来源。</div>
           </div>

@@ -242,6 +242,8 @@ HTML 有两种读法，阅读器右上角可切，选择会记住：
 | **Mermaid 出图** | 回答里的 ```mermaid 围栏自动渲染成图，可看源码 / 复制 / 下载 SVG / 全屏 |
 | **技能范围** | 工具条上的拼图按钮可**按会话限定**可用技能（默认全部）；限定后模型只能从勾选的技能里挑，工具层同步拦截 |
 | **思考深度** | 低 / 高 / 最大可调，可控制思考过程是否显示 |
+| **停止生成** | 生成中发送键变成停止键，随时打断；已流出的部分**保留并落库**（不落库就等于白生成一轮） |
+| **轮次上限** | 可选 3 / 6 / 12 / 20 / **不限**。不限也稳：同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、随时能按停止 |
 
 输入框下方有实时上下文用量；整会话可一键复制 Markdown / 导出 `.md`（含思考过程、题卡答案折叠与作答对错标记）。
 
@@ -600,6 +602,7 @@ node scripts/test-anki-cards.mjs          # 制卡：LLM 输出清洗 / 时间�
 node scripts/test-comments.mjs            # 讨论区：讨论串解析 / 角色与作者归一 / 钳制 / 去重 / 两档排序 / 两层分组（含孤儿回复）
 node scripts/test-apkg.mjs                # .apkg 生成：zip + SQLite 结构断言
 node scripts/test-course-chat-tools.mjs   # 课程助手两张卡：ask_user 选项边界 / 整理方案分类合并与清洗
+node scripts/test-agent-guard.mjs          # agent 循环护栏：调用指纹（键序无关）/ 轮次档位（0 → 不限）
 
 # 阅读材料
 node scripts/test-material-units.mjs      # 页 / 段引用标记：格式化 / 反解 / linkify 往返 / 代码块不动
@@ -657,6 +660,7 @@ node scripts/e2e-covers.mjs               # 封面：导入即有 / 小图档位
 node scripts/e2e-materials.mjs            # 阅读材料链路：真实导入 PDF → 解析 → 阅读器 → 划词与框选 → 跳页
 node scripts/e2e-course-chat-cards.mjs    # 课程助手：提问卡 / 方案卡确认与取消 / 切页继续（页内假模型，不花 API）
 node scripts/e2e-handout-position.mjs      # 讲义阅读位置：写回 → 刷新落回同一锚点 → 锚点失效回顶部（自播种讲义）
+node scripts/e2e-agent-guard.mjs           # agent 护栏：循环检测 / 不误伤换关键词检索 / 不限档跑 12 轮 / 停止生成
 node scripts/e2e-cards.mjs                # 滑动制卡：审核 / 撤销 / 导出 .apkg
 TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-comments.mjs  # 视频下方讨论区：折叠 / 渲染 / 时间戳跳转 / 排序 / 让出高度 / 移动端
 node scripts/e2e-chat-export.mjs          # 会话复制 / 导出 Markdown

@@ -2,7 +2,8 @@ import { create } from 'zustand';
 import { getSettings } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type FolderPlanState } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
-import { runAgentLoop, noAnswerNotice } from '../harness/agent';
+import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
+import { resolveMaxRounds } from '../harness/loopGuard';
 import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
 import {
   type CourseContextItem,
@@ -99,8 +100,10 @@ export interface CourseChatStore {
   send: (text: string) => Promise<void>;
   setSkillIds: (ids: number[] | undefined) => void;
   clearCourseContext: () => void;
-  /** 点选项（或在输入框里打字）回答提问；随后本轮 agent 循环继续 */
+  /** 提问卡作答（同时把选择落成一条 user 消息） */
   answerAsk: (option: string) => Promise<void>;
+  /** 停止生成：中断当前的 LLM 请求与 agent 循环（已流出的内容保留） */
+  stop: () => void;
   /** 确认执行目录整理方案 */
   confirmPlan: () => Promise<{ ok: boolean; error?: string }>;
   /** 放弃目录整理方案（不落库） */
@@ -111,6 +114,14 @@ const COURSE_ASSISTANT_TOOLS = [...LIBRARY_ASSISTANT_TOOLS, ...SKILL_TOOLS];
 
 let keySeq = 0;
 const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
+
+/**
+ * 正在跑的那一轮的 abort 句柄。
+ *
+ * 放**模块级**而不是 store state：它要在 React 渲染之外被 stop() 读到，
+ * 塞进 state 只会平白多几次渲染（有没有在跑看 `loading` 就够）。
+ */
+let inflightAbort: AbortController | null = null;
 
 export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   ready: false,
@@ -244,13 +255,15 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     let lastNarration = '';
     let lastHint = '';
     /**
-     * 轮次用尽的收尾情况（见 agent.ts 的 onBudgetExhausted）。
+     * 护栏停下的情况（见 agent.ts 的 onStop）。
      *
      * 用数组而不是 `let x: T | null`：赋值发生在回调里，TS 的控制流分析在读它的地方
      * 仍然认为它是 `null`（于是 `x?.granted` 报「property does not exist on never」）。
      * 数组取下标不做这种收窄，是这里最省事又不会骗过编译器的写法。
      */
-    const exhausted: { requestedTools: string[]; granted: boolean }[] = [];
+    const stopped: AgentStopInfo[] = [];
+    const abort = new AbortController();
+    inflightAbort = abort;
     const patchAi = (patch: Partial<CourseChatMessage>) => {
       set((s) => ({ messages: s.messages.map((m) => (m.key === currentKey ? { ...m, ...patch } : m)) }));
     };
@@ -400,16 +413,18 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             lastHint = toolHint(name, argsJson);
             patchAi({ hint: lastHint });
           },
-          onBudgetExhausted: (info) => {
-            exhausted.push(info);
+          onStop: (info) => {
+            stopped.push(info);
           },
+          signal: abort.signal,
         },
-        settings.agentRounds,
+        resolveMaxRounds(settings.agentRounds),
       );
-
-      const closeOut = exhausted[exhausted.length - 1];
+      const closeOut = stopped[stopped.length - 1];
       const finalAnswer = answer.trim() || noAnswerNotice({
-        rounds: settings.agentRounds,
+        reason: closeOut?.reason ?? 'rounds',
+        rounds: closeOut?.rounds ?? settings.agentRounds,
+        ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
         requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
         narration: lastNarration,
         hint: lastHint,
@@ -431,19 +446,46 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       })) as number;
       patchAi({ rowId });
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      patchAi({
-        streaming: false,
-        hint: undefined,
-        error: true,
-        content: answer.trim() ? `${answer}\n\n> 回答中断：${message}` : `回答失败：${message}`,
-      });
+      // 用户按了停止：这不是错误。保留已经流出的内容，只补一句「已停止」——
+      // 报成「回答失败：The user aborted a request」只会让人以为出问题了。
+      // **必须落库**：停止之后这段内容要留住，否则刷新就没了，等于「停止」= 白生成一轮
+      if (abort.signal.aborted) {
+        const partial = answer.trim() || lastNarration.trim();
+        const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
+        patchAi({ streaming: false, hint: undefined, content });
+        // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
+        set({ loading: false });
+        const rowId = (await db.chats.add({
+          videoId: LIBRARY_ASSISTANT_ID,
+          sessionId,
+          role: 'assistant',
+          content,
+          createdAt: Date.now(),
+          reasoning: reasoning || undefined,
+        })) as number;
+        patchAi({ rowId });
+      } else {
+        const message = error instanceof Error ? error.message : String(error);
+        patchAi({
+          streaming: false,
+          hint: undefined,
+          error: true,
+          content: answer.trim() ? `${answer}\n\n> 回答中断：${message}` : `回答失败：${message}`,
+        });
+      }
     } finally {
       // 悬着的提问/确认在这里一定已经有人 resolve 过（正常路径），但异常路径下可能还挂着 ——
       // releasePending 会把没 resolve 的收掉，绝不让某个 promise 永远等下去。
       releasePending(get());
+      if (inflightAbort === abort) inflightAbort = null;
       set({ loading: false });
     }
+  },
+
+  // ── 停止生成 ──────────────────────────────────────────────────────────────
+  stop: () => {
+    // 只断 LLM 请求与循环。悬着的提问/方案由 releasePending 收掉（`finally` 里统一做）
+    inflightAbort?.abort();
   },
 
   // ── 提问卡作答 ────────────────────────────────────────────────────────────

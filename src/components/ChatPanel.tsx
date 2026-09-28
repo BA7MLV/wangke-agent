@@ -3,7 +3,8 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
 import { getSettings, useSettings } from '../store/settings';
-import { runAgentLoop, noAnswerNotice } from '../harness/agent';
+import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
+import { resolveMaxRounds } from '../harness/loopGuard';
 import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
@@ -204,6 +205,15 @@ function UserContent({ content }: { content: string }) {
     </>
   );
 }
+
+/**
+ * 正在跑的那一轮的 abort 句柄。
+ *
+ * 模块级而不是组件 state：停止按钮要在 React 渲染之外读到它（放进 state 只会平白多几次
+ * 渲染；「有没有在跑」看 `loading` 就够）。**只能有一个**：问答面板与课程助手同屏时
+ * 各自的 send 都会写它，但生成中用户看不到另一个面板的停止键。
+ */
+let inflightAbort: AbortController | null = null;
 
 export default function ChatPanel({
   videoId,
@@ -646,10 +656,12 @@ export default function ChatPanel({
     let lastNarration = '';
     let lastHint = '';
     /**
-     * 轮次用尽的收尾情况。用数组而不是 `let`：赋值在回调里，TS 在读它的地方仍会当成
+     * 护栏停下的情况。用数组而不是 `let`：赋值在回调里，TS 在读它的地方仍会当成
      * `null`（`x?.granted` 会报「property does not exist on never」），数组下标不做这种收窄。
      */
-    const exhausted: { requestedTools: string[]; granted: boolean }[] = [];
+    const stopped: AgentStopInfo[] = [];
+    const abort = new AbortController();
+    inflightAbort = abort;
     const patchAi = (patch: Partial<ChatMsg>) =>
       setMsgs((prev) => prev.map((m) => (m.key === aiKey ? { ...m, ...patch } : m)));
 
@@ -884,12 +896,13 @@ export default function ChatPanel({
             lastHint = hint;
             patchAi({ hint });
           },
-          onBudgetExhausted: (info) => {
-            exhausted.push(info);
+          onStop: (info) => {
+            stopped.push(info);
           },
+          signal: abort.signal,
         },
-        // 检索轮次上限来自设置（默认 6）；达到上限 agent 内部会强制无工具收尾作答
-        settings.agentRounds,
+        // 检索轮次上限来自设置（默认 6，选「不限」则为 Infinity；另有循环检测与 token 预算兜着）
+        resolveMaxRounds(settings.agentRounds),
       );
 
       const finalAnswer = answer.trim();
@@ -906,14 +919,16 @@ export default function ChatPanel({
         })) as number;
         patchAi({ rowId });
       } else {
-        // 空回答兜底，避免留下永久空气泡。**要说清发生了什么**：只写「（未获得回答）」的话，
-        // 用户看到的就是「点了没反应」，既不知道它查了六轮，也不知道自己该做什么。
-        const closeOut = exhausted[exhausted.length - 1];
+        // 空回答兜底，避免留下永久空气泡。**要说清是哪道闸停下的**：只写「（未获得回答）」的话，
+        // 用户看到的就是「点了没反应」，既不知道它查了多少轮，也不知道自己该做什么。
+        const closeOut = stopped[stopped.length - 1];
         patchAi({
           streaming: false,
           hint: undefined,
           content: noAnswerNotice({
-            rounds: settings.agentRounds,
+            reason: closeOut?.reason ?? 'rounds',
+            rounds: closeOut?.rounds ?? settings.agentRounds,
+            ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
             requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
             narration: lastNarration,
             hint: lastHint,
@@ -925,17 +940,42 @@ export default function ChatPanel({
         toast.warning('部分截图描述失败，回答仅参考了时间戳与字幕');
       }
     } catch (e) {
-      const errMsg = e instanceof Error ? e.message : String(e);
-      patchAi({
-        streaming: false,
-        hint: undefined,
-        error: true,
-        // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
-        content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
-      });
+      // 用户按了停止：不是错误。保留已流出的内容，只补一句「已停止」，并且**落库**
+      // （否则刷新就没了，「停止」等于白生成一轮）
+      if (abort.signal.aborted) {
+        const partial = answer.trim() || lastNarration.trim();
+        const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
+        patchAi({ streaming: false, hint: undefined, content });
+        // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
+        setLoading(false);
+        const rowId = (await db.chats.add({
+          videoId,
+          sessionId,
+          role: 'assistant',
+          content,
+          createdAt: Date.now(),
+          reasoning: reasoning || undefined,
+        })) as number;
+        patchAi({ rowId });
+      } else {
+        const errMsg = e instanceof Error ? e.message : String(e);
+        patchAi({
+          streaming: false,
+          hint: undefined,
+          error: true,
+          // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
+          content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
+        });
+      }
     } finally {
+      if (inflightAbort === abort) inflightAbort = null;
       setLoading(false);
     }
+  };
+
+  /** 停止生成：断掉当前的 LLM 请求与 agent 循环（已流出的内容保留） */
+  const stopGenerating = () => {
+    inflightAbort?.abort();
   };
 
   // 会话下拉：mdui-select 的值是字符串，会话 id 是数字 —— 两端都要转换
@@ -1268,19 +1308,34 @@ export default function ChatPanel({
               void send(input);
             }}
           />
-          <mdui-tooltip content="发送">
-            <mdui-button-icon
-              className="chat-send"
-              data-testid="chat-send"
-              aria-label="发送"
-              variant="filled"
-              loading={loading}
-              disabled={!indexReady}
-              onClick={() => send(input)}
-            >
-              <mdui-sym-send />
-            </mdui-button-icon>
-          </mdui-tooltip>
+          {/* 生成中：发送键**变成**停止键。单课程问答没有课程上下文要等用户，
+              所以不用给「提问卡悬着」开口子（那边是例外）。 */}
+          {loading ? (
+            <mdui-tooltip content="停止生成">
+              <mdui-button-icon
+                className="chat-send"
+                data-testid="chat-stop"
+                aria-label="停止生成"
+                variant="tonal"
+                onClick={stopGenerating}
+              >
+                <mdui-sym-stop />
+              </mdui-button-icon>
+            </mdui-tooltip>
+          ) : (
+            <mdui-tooltip content="发送">
+              <mdui-button-icon
+                className="chat-send"
+                data-testid="chat-send"
+                aria-label="发送"
+                variant="filled"
+                disabled={!indexReady}
+                onClick={() => send(input)}
+              >
+                <mdui-sym-send />
+              </mdui-button-icon>
+            </mdui-tooltip>
+          )}
         </div>
         <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
           ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k

@@ -60,6 +60,8 @@ const META = {
   // 课程助手两张卡片的参数校验（ask_user / propose_folder_plan）：条数上下限、去重、
   // 同名分类合并、错误文案是否点名到第几个。纯逻辑，不碰 DOM 与 IndexedDB。
   'test-course-chat-tools': { service: 'none', antd: false, timeout: 120 },
+  // agent 循环护栏纯逻辑：调用指纹（键序无关、非法 JSON 也有指纹）/ 轮次档位（0 → Infinity）
+  'test-agent-guard': { service: 'none', antd: false, timeout: 120 },
   // 评论区（AI 生成的同学讨论）纯逻辑：模型输出解析 / 时间戳钳制 / 角色与作者归一 /
   // 跨块去重 / 两档排序 / 两层分组（含孤儿回复）。提示词契约（角色名单同一份来源）也在里面。
   // 「数据 → 渲染 → 时间戳跳转」由 e2e-comments 覆盖，两者不重叠。
@@ -143,6 +145,9 @@ const META = {
   // 课程助手的两张生成式卡片（提问选方案 / 目录整理方案）+ 跨页继续。
   // 模型流是页内假的（addInitScript 换掉 window.fetch），所以既不依赖 SF_KEY 也不花时间。
   'e2e-course-chat-cards': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // agent 循环护栏：循环检测（重复调用就停，且不误伤换关键词的检索）/「不限」档真能跑 12 轮 /
+  // 停止生成（点一下就停、已流出内容保留并落库）。模型流是页内假的，不花 API。
+  'e2e-agent-guard': { service: 'preview', antd: false, base: true, timeout: 300 },
   // 评论区（视频下方的讨论区）：折叠条 → 展开 → 渲染 → 点时间戳跳播放器 → 排序切换 →
   // 展开时播放器让出高度 → 收起，外加移动端可达性。
   // 自播种评论（不调真实 API）；需要真实视频是因为「点时间戳」那条断言要读 media-player.currentTime。
