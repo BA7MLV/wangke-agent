@@ -57,6 +57,9 @@ const META = {
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
+  // 课程助手两张卡片的参数校验（ask_user / propose_folder_plan）：条数上下限、去重、
+  // 同名分类合并、错误文案是否点名到第几个。纯逻辑，不碰 DOM 与 IndexedDB。
+  'test-course-chat-tools': { service: 'none', antd: false, timeout: 120 },
   // 评论区（AI 生成的同学讨论）纯逻辑：模型输出解析 / 时间戳钳制 / 角色与作者归一 /
   // 跨块去重 / 两档排序 / 两层分组（含孤儿回复）。提示词契约（角色名单同一份来源）也在里面。
   // 「数据 → 渲染 → 时间戳跳转」由 e2e-comments 覆盖，两者不重叠。
@@ -137,6 +140,9 @@ const META = {
   'e2e-chat-image': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat-mermaid': { service: 'preview', antd: true, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-mermaid-test.mp4' },
+  // 课程助手的两张生成式卡片（提问选方案 / 目录整理方案）+ 跨页继续。
+  // 模型流是页内假的（addInitScript 换掉 window.fetch），所以既不依赖 SF_KEY 也不花时间。
+  'e2e-course-chat-cards': { service: 'preview', antd: false, base: true, timeout: 300 },
   // 评论区（视频下方的讨论区）：折叠条 → 展开 → 渲染 → 点时间戳跳播放器 → 排序切换 →
   // 展开时播放器让出高度 → 收起，外加移动端可达性。
   // 自播种评论（不调真实 API）；需要真实视频是因为「点时间戳」那条断言要读 media-player.currentTime。
@@ -166,6 +172,9 @@ const META = {
   'e2e-danmaku': { service: 'preview', antd: true, key: 'optional', testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-handout-edit': { service: 'preview', antd: true, base: true, timeout: 300 },
   'e2e-handout': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
+  // 讲义阅读位置（锚点 + 偏移）：滚动写回 → 刷新落回同一处 → 锚点失效回顶部。
+  // 自播种讲义行，不调模型，所以不需要 key。
+  'e2e-handout-position': { service: 'preview', antd: false, base: true, timeout: 300 },
   'e2e-import-insecure': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-import': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   // 首页自身交互（分组 / 移动 / 折叠 / 两步删除 / 拖拽）—— 既有脚本只把首页当跳板，没覆盖这些

@@ -1,5 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
+import type { AskUserData } from '../harness/askUser';
+import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
 import type { HtmlView } from '../materials/types';
 
@@ -163,6 +165,16 @@ export interface HandoutRow {
   sectionsJson?: string;
   /** 本次生成选用的写作技能名（路由结果 + 手动覆盖） */
   usedSkills?: string[];
+  /**
+   * 上次阅读位置（**非索引字段**，无需升版本）：锚点 + 该锚点相对滚动容器顶部的额外偏移（px）。
+   *
+   * 为什么存锚点而不是 `scrollTop`：讲义高度随视口宽度、图片解码、字体加载而变，
+   * 同一份讲义在手机与桌面上的绝对滚动量能差几百像素，纯像素落位会「回到附近的某处」。
+   * 锚点复用 `HandoutDocView` 里 `keyOf(target)` 的形状（`sum` / `h{sec}` / `s{sec}b{idx}`），
+   * 位置变了宁可落空回顶部，也不要落错地方。详见
+   * docs/plans/2026-09-28-course-chat-generative-ui-design.md §3。
+   */
+  readPos?: { anchor: string; offset: number };
 }
 
 export interface ChatSessionRow {
@@ -224,6 +236,25 @@ export interface ChatRow {
   reasoning?: string;
   /** 答题卡（非索引字段，无需升级版本） */
   quiz?: QuizState;
+  /**
+   * 助手向用户提问的选项卡（非索引字段，无需升级版本）。
+   * `picked` 为空 = 用户还没答；**刷新页面会杀掉正在等待的 agent 循环**，
+   * 此时这张卡会退化成只读（`picked` 永远空），文案显式说明而不是给一个点了没反应的按钮。
+   */
+  ask?: AskUserState;
+  /** 目录整理方案卡（非索引字段，无需升级版本）。`applied`：0=待确认 1=已落库 2=用户取消 */
+  folderPlan?: FolderPlanState;
+}
+
+/** 提问卡状态（`ChatRow.ask`）：题面与选项 + 用户的选择 */
+export interface AskUserState extends AskUserData {
+  /** 被选中的选项原文；不设 = 尚未作答。存原文而不是下标，改选项顺序也不会错位 */
+  picked?: string;
+}
+
+/** 目录整理方案卡状态（`ChatRow.folderPlan`） */
+export interface FolderPlanState extends FolderPlan {
+  applied: 0 | 1 | 2;
 }
 
 /**

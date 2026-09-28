@@ -12,6 +12,7 @@ import type { Block } from '../handout/ir';
 import type { HandoutSection } from '../handout/docx';
 import { h1Num, h2Num } from '../handout/styles';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
+import { useHandoutReadingPos } from '../handout/useReadingPos';
 import { blockToText, persistHandoutEdit, rewriteBlockWithLLM } from '../pipelines/handoutEdit';
 import { toast, useMduiEvent } from '../ui';
 
@@ -35,6 +36,9 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
   const [aiDraft, setAiDraft] = useState<{ key: string; block: Block } | null>(null);
   const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
   const savingRef = useRef(0);
+  /** 滚动容器（位置记忆的坐标系）与文档内容（观察高度变化用） */
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const docRef = useRef<HTMLDivElement>(null);
 
   // 编辑对话框：Esc / 点遮罩关闭时同步回 React state，避免「关掉又自己弹回」
   const editDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setEditTarget(null));
@@ -91,6 +95,15 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
     const t = setTimeout(() => setSaveState('idle'), 2500);
     return () => clearTimeout(t);
   }, [saveState]);
+
+  // ── 阅读位置：打开落回上次 + 滚动写回（实现与理由见 handout/useReadingPos.ts）────
+  useHandoutReadingPos({
+    enabled: doc != null,
+    handoutId: handout.id,
+    readPos: handout.readPos,
+    scrollRef,
+    docRef,
+  });
 
   const getBlock = (t: Target): Block | null => {
     if (!doc) return null;
@@ -186,6 +199,8 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
     return (
       <EditableBlock
         key={k}
+        // 阅读位置的锚点：与 keyOf 同形，写进 data-hd-anchor 供 readingPos 找回
+        anchor={k}
         hasAi={block.type !== 'figure'}
         locked={editTarget !== null || aiBusy}
         swipeOpen={openKey === k}
@@ -255,8 +270,13 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
   };
 
   return (
-    <div className="hd-scroll" data-testid="handout-doc" onScroll={() => openKey && setOpenKey(null)}>
-      <div className="hd-doc">
+    <div
+      className="hd-scroll"
+      data-testid="handout-doc"
+      ref={scrollRef}
+      onScroll={() => openKey && setOpenKey(null)}
+    >
+      <div className="hd-doc" ref={docRef}>
         <div className="hd-save-state">
           {saveState === 'saving' ? '正在保存修改…' : saveState === 'saved' ? '修改已保存' : ' '}
         </div>
@@ -330,6 +350,7 @@ function editHeadline(t: Target, block: Block | null): string {
 /** 单块容器：触摸左滑露操作按钮（pan-y 保证垂直滚动优先），桌面 hover 浮按钮 */
 function EditableBlock({
   children,
+  anchor,
   hasAi,
   locked,
   swipeOpen,
@@ -340,6 +361,8 @@ function EditableBlock({
   ask,
 }: {
   children: ReactNode;
+  /** 块锚点（`sum` / `h{sec}` / `s{sec}b{idx}`）：阅读位置靠它找回，见 handout/readingPos.ts */
+  anchor: string;
   hasAi: boolean;
   /** 编辑进行中 / AI 生成中：禁用手势与操作入口 */
   locked: boolean;
@@ -365,7 +388,7 @@ function EditableBlock({
   }, [swipeOpen, actionsW]);
 
   return (
-    <div className={`hd-swipe${swipeOpen ? ' is-open' : ''}`}>
+    <div className={`hd-swipe${swipeOpen ? ' is-open' : ''}`} data-hd-anchor={anchor}>
       {!locked && (
         <div className="hd-swipe-actions" style={{ width: actionsW }}>
           {hasAi && (

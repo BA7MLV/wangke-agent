@@ -1,0 +1,299 @@
+/*
+ * 课程助手的两张「生成式」卡片：提问卡（ask-card）与目录整理方案卡（plan-card）。
+ *
+ * 两者都遵守同一条布局原则：**卡与正文左边缘对齐**（不缩进到正文里）—— 它们是「助手做的一个
+ * 动作 / 问的一句话」，不是正文的一段；缩进进去会让人误以为那是回答内容，而不是一次要你点头的操作。
+ * 顺序上卡片在正文**之前**：卡片来自第 1 轮（提问 / 提方案），正文是用户回应之后才流出来的。
+ */
+
+.ask-card,
+.plan-card {
+  margin-top: 12px;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: var(--mdui-shape-corner-large);
+  background: rgb(var(--mdui-color-surface-container-low));
+}
+
+.ask-card {
+  padding: 12px 14px 10px;
+}
+
+/* ── 提问卡 ──────────────────────────────────────────────────────────────── */
+
+.ask-card__head,
+.plan-card__head {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--mdui-color-primary));
+  font-size: var(--mdui-typescale-label-medium-size);
+  font-weight: var(--mdui-typescale-label-large-weight);
+}
+
+.ask-card__head > mdui-sym-help,
+.plan-card__head > mdui-sym-create-new-folder {
+  font-size: 17px;
+}
+
+.ask-card__question {
+  margin: 8px 0 10px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-size: var(--mdui-typescale-body-medium-size);
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.ask-card__options {
+  display: grid;
+  gap: 6px;
+}
+
+/* 单选方案：原生 <button> + MD3 令牌上色（与 cards.css 的 .quiz-option 同一套理由：
+   MD3 里「一行一个可选项」在语义上更接近列表项，mdui-button 的胶囊形状会让它们像一排按钮） */
+.ask-option {
+  box-sizing: border-box;
+  min-height: 44px;
+  padding: 8px 12px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface));
+  color: rgb(var(--mdui-color-on-surface));
+  font: inherit;
+  font-size: var(--mdui-typescale-body-medium-size);
+  text-align: left;
+  cursor: pointer;
+}
+
+.ask-option:hover:not(:disabled) {
+  background: rgb(var(--mdui-color-surface-container-high));
+  border-color: rgb(var(--mdui-color-outline));
+}
+
+.ask-option:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ask-option[data-picked='true'] {
+  border-color: rgb(var(--mdui-color-primary));
+  background: rgb(var(--mdui-color-primary-container));
+  color: rgb(var(--mdui-color-on-primary-container));
+  opacity: 1;
+}
+
+/* 判定位常驻（未选中时留空）：与 .quiz-option__mark 同一个理由 —— 选中的那一刻
+   行内宽度/高度不能变，否则整组选项会跟着跳一下 */
+.ask-option__mark {
+  margin-left: auto;
+  min-width: 18px;
+  display: grid;
+  place-items: center;
+  color: inherit;
+  font-size: 17px;
+}
+
+.ask-card__custom {
+  min-height: 40px;
+  margin-top: 6px;
+  padding: 0 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-small);
+  background: transparent;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font: inherit;
+  font-size: var(--mdui-typescale-label-large-size);
+  cursor: pointer;
+}
+
+.ask-card__custom:hover:not(:disabled) {
+  background: rgba(var(--mdui-color-on-surface), 0.08);
+}
+
+.ask-card__custom:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.ask-card__dead,
+.plan-card__dead {
+  margin: 6px 0 0;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-body-small-size);
+  line-height: 1.5;
+}
+
+.ask-option:focus-visible,
+.ask-card__custom:focus-visible,
+.plan-folder__course:focus-visible,
+.plan-card__link:focus-visible {
+  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline-offset: 2px;
+}
+
+/* ── 方案卡 ──────────────────────────────────────────────────────────────── */
+
+.plan-card {
+  padding: 12px 14px 12px;
+}
+
+.plan-card__count {
+  margin-left: auto;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-label-small-size);
+  font-weight: 400;
+}
+
+.plan-card__summary {
+  margin: 8px 0 12px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-size: var(--mdui-typescale-body-medium-size);
+  line-height: 1.65;
+  text-wrap: pretty;
+}
+
+.plan-card__folders {
+  display: grid;
+  gap: 10px;
+}
+
+.plan-folder {
+  padding: 8px 10px;
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface));
+}
+
+.plan-folder__name {
+  margin: 0 0 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--mdui-color-on-surface));
+  font-size: var(--mdui-typescale-title-small-size);
+  font-weight: 500;
+}
+
+.plan-folder__name > mdui-sym-folder {
+  color: rgb(var(--mdui-color-primary));
+  font-size: 16px;
+}
+
+.plan-folder__n {
+  margin-left: auto;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-label-small-size);
+  font-weight: 400;
+}
+
+.plan-folder__courses {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.plan-folder__course {
+  max-width: 100%;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--mdui-shape-corner-small);
+  background: transparent;
+  color: rgb(var(--mdui-color-on-surface));
+  font: inherit;
+  font-size: var(--mdui-typescale-body-small-size);
+  text-align: left;
+  cursor: pointer;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  display: block;
+}
+
+.plan-folder__course:hover {
+  background: rgb(var(--mdui-color-surface-container-high));
+  color: rgb(var(--mdui-color-primary));
+}
+
+.plan-folder__more,
+.plan-folder__unknown,
+.plan-folder__empty,
+.plan-folder__loading {
+  padding: 3px 6px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-body-small-size);
+}
+
+.plan-folder__unknown {
+  color: rgb(var(--mdui-color-error));
+}
+
+.plan-card__gate,
+.plan-card__done,
+.plan-card__cancel {
+  margin: 12px 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-body-small-size);
+  line-height: 1.5;
+}
+
+.plan-card__gate > mdui-sym-warning {
+  color: rgb(var(--mdui-color-tertiary));
+  font-size: 16px;
+}
+
+.plan-card__done > mdui-sym-check {
+  color: rgb(var(--mdui-color-primary));
+  font-size: 16px;
+}
+
+.plan-card__cancel > mdui-sym-undo {
+  font-size: 16px;
+}
+
+.plan-card__link {
+  padding: 0 2px;
+  border: 0;
+  background: transparent;
+  color: rgb(var(--mdui-color-primary));
+  font: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.plan-card__actions {
+  margin-top: 10px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+@media (max-width: 760px) {
+  .ask-card,
+  .plan-card {
+    padding: 10px 11px;
+  }
+
+  .ask-option {
+    min-height: 48px;
+  }
+
+  .ask-card__custom {
+    min-height: 48px;
+  }
+
+  .plan-card__actions {
+    /* 窄屏手指目标：两个按钮撑满一行，比并排挤在右侧好按 */
+    justify-content: stretch;
+  }
+
+  .plan-card__actions > mdui-button {
+    flex: 1 1 0;
+  }
+}

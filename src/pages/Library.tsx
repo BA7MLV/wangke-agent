@@ -13,6 +13,7 @@ import {
 } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { db, type FolderRow, type VideoRow } from '../store/db';
+import { useLibraryRevision } from '../pipelines/folderPlan';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
 import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
@@ -264,6 +265,18 @@ export default function Library() {
   useEffect(() => {
     reload();
   }, []);
+
+  /**
+   * 助手在**别的页面**整理了目录（课程助手页的方案卡确认后会建文件夹、改 folderId），
+   * 这里要立刻看到归位结果。
+   *
+   * 靠重新挂载是不行的：用户在库页时助手可能在聊天页确认了方案，回来时组件已经挂着了，
+   * 什么都不会变。信号只带一个计数器（`useLibraryRevision`），本组件只管「变了就重读」。
+   */
+  const libraryRevision = useLibraryRevision((s) => s.revision);
+  useEffect(() => {
+    if (libraryRevision > 0) void reload();
+  }, [libraryRevision]);
 
   /**
    * 任务跑到终态时刷新列表。

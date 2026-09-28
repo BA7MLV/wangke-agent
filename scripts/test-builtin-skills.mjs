@@ -36,8 +36,8 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 7 个内置 skill', () => {
-  assert.equal(skills.length, 7);
+test('恰好 8 个内置 skill', () => {
+  assert.equal(skills.length, 8);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -47,7 +47,7 @@ test('每个 skill 有 name + description（路由依赖 description）', () => 
   }
 });
 
-test('包含必备的六个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论 / 讲解配图', () => {
+test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论 / 讲解配图 / 课程库整理', () => {
   const names = skills.map((s) => s.name);
   assert.ok(names.includes('公文讲义写作'));
   assert.ok(names.includes('公文版式规格'));
@@ -55,6 +55,7 @@ test('包含必备的六个：公文讲义写作 / 公文版式规格 / 学科�
   assert.ok(names.includes('公考行测讲义'));
   assert.ok(names.includes('公考申论讲义'));
   assert.ok(names.includes('讲解配图'));
+  assert.ok(names.includes('课程库整理'));
 });
 
 test('「讲解配图」写死两种围栏名、五类图种、节点上限，并划清不用于讲义', () => {
@@ -121,6 +122,19 @@ test('注入预算：写作+版式 ≤4000 字，单个 skill ≤3000 字（总�
   const core = skills.filter((x) => ['公文讲义写作', '公文版式规格'].includes(x.name));
   const total = core.reduce((n, x) => n + x.body.length, 0);
   assert.ok(total <= 4000, `核心两个 skill 共 ${total} 字超 4000`);
+});
+
+test('「课程库整理」写明主轴互斥、数量区间、id 来源与确认闸门', () => {
+  const s = skills.find((x) => x.name === '课程库整理');
+  assert.ok(s, '缺课程库整理');
+  // 这几条是提示词 ↔ 工具的硬契约：模型不认「只能有一套主轴」就会混着分，
+  // 不认「必须等确认」就会声称整理完成
+  assert.match(s.body, /主轴/);
+  assert.match(s.body, /3~8 个/);
+  assert.match(s.body, /list_courses/);
+  assert.match(s.body, /propose_folder_plan/);
+  assert.match(s.body, /用户没有执行/);
+  assert.match(s.description, /整理/);
 });
 
 test('references 非空且路径规范（references/ 前缀）', () => {

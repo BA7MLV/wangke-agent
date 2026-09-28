@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useEffect, useId, useRef, useState, useCallback } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import { useNavigate } from 'react-router-dom';
 import { useAppNav } from '../components/appNav';
@@ -6,33 +6,14 @@ import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
 import { StreamParagraph, ThinkLine } from '../components/motion';
+import AskCard from '../components/AskCard';
+import FolderPlanCard from '../components/FolderPlanCard';
 import { supportsThinking } from '../api/modelCaps';
-import { getSettings, useSettings } from '../store/settings';
-import { db, type ChatSessionRow } from '../store/db';
-import { estimateTokens, fitHistoryToBudget } from '../harness/context';
-import { runAgentLoop } from '../harness/agent';
-import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
-import {
-  type CourseContextItem,
-  createLibraryAssistantExecutor,
-  LIBRARY_ASSISTANT_ID,
-  LIBRARY_ASSISTANT_TOOLS,
-  libraryAssistantSystemPrompt,
-} from '../harness/libraryAssistant';
-import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
-import type { ChatMessage, ReasoningEffort } from '../api/siliconflow';
-import { confirmDialog, PageShell, useMduiEvent } from '../ui';
+import { useSettings } from '../store/settings';
+import { useCourseChat, type CourseChatMessage } from '../store/courseChat';
+import type { ReasoningEffort } from '../api/siliconflow';
+import { confirmDialog, PageShell, toast, useMduiEvent } from '../ui';
 import './course-chat.css';
-
-interface AssistantMessage {
-  key: string;
-  role: 'user' | 'ai';
-  content: string;
-  reasoning?: string;
-  hint?: string;
-  streaming?: boolean;
-  error?: boolean;
-}
 
 const STARTERS = [
   {
@@ -51,16 +32,11 @@ const STARTERS = [
     prompt: '根据课程名称和已有内容，帮我梳理整个课程库覆盖了哪些主要主题。',
   },
   {
-    icon: <mdui-sym-calendar-month />,
-    label: '查看学习情况',
-    prompt: '概括我的学习情况，包括课程进度和累计学习时间，并给一个接下来的学习建议。',
+    icon: <mdui-sym-folder />,
+    label: '整理课程库目录',
+    prompt: '帮我把课程库目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
   },
 ] as const;
-
-const COURSE_ASSISTANT_TOOLS = [...LIBRARY_ASSISTANT_TOOLS, ...SKILL_TOOLS];
-
-let keySeq = 0;
-const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
 
 function ReasoningBlock({ reasoning, active }: { reasoning: string; active: boolean }) {
   const [open, setOpen] = useState(active);
@@ -85,132 +61,75 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
   );
 }
 
+/**
+ * 课程助手页。
+ *
+ * 这个组件**刻意只剩视图职责**：会话、消息、流式中间态、悬着的提问/确认全在
+ * `store/courseChat.ts`。原因是「切到别的页面再回来也要接着跑」——状态跟着路由走的话，
+ * 离开页面就等于把正在生成的对话扔了（详见该 store 顶部的说明）。
+ */
 export default function CourseChat() {
   const navigate = useNavigate();
   const nav = useAppNav('chat');
-  const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
-  const [activeId, setActiveId] = useState<number | null>(null);
-  const [messages, setMessages] = useState<AssistantMessage[]>([]);
-  const [input, setInput] = useState('');
-  const [loading, setLoading] = useState(false);
-  const [loadedSessionId, setLoadedSessionId] = useState<number | null>(null);
-  const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
-  const [contextCourses, setContextCourses] = useState<CourseContextItem[]>([]);
-  const [courseCount, setCourseCount] = useState<number | null>(null);
   const listRef = useRef<HTMLDivElement | null>(null);
+
+  const ready = useCourseChat((s) => s.ready);
+  const sessions = useCourseChat((s) => s.sessions);
+  const activeId = useCourseChat((s) => s.activeId);
+  const loaded = useCourseChat((s) => s.loaded);
+  const messages = useCourseChat((s) => s.messages);
+  const loading = useCourseChat((s) => s.loading);
+  const draft = useCourseChat((s) => s.draft);
+  const courseCount = useCourseChat((s) => s.courseCount);
+  const skillIds = useCourseChat((s) => s.skillIds);
+  const contextCourses = useCourseChat((s) => s.contextCourses);
+  const pendingAsk = useCourseChat((s) => s.pendingAsk);
+  const pendingPlan = useCourseChat((s) => s.pendingPlan);
+  const planApplying = useCourseChat((s) => s.planApplying);
+  const bootstrap = useCourseChat((s) => s.bootstrap);
+  const loadSession = useCourseChat((s) => s.loadSession);
+  const createSession = useCourseChat((s) => s.createSession);
+  const deleteSession = useCourseChat((s) => s.deleteSession);
+  const setDraft = useCourseChat((s) => s.setDraft);
+  const send = useCourseChat((s) => s.send);
+  const setSkillIds = useCourseChat((s) => s.setSkillIds);
+  const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
+  const answerAsk = useCourseChat((s) => s.answerAsk);
+  const confirmPlan = useCourseChat((s) => s.confirmPlan);
+  const cancelPlan = useCourseChat((s) => s.cancelPlan);
+
   const llmModel = useSettings((state) => state.llmModel);
   const thinking = useSettings((state) => state.thinkingEnabled);
   const effort = useSettings((state) => state.thinkingEffort);
   const updateSettings = useSettings((state) => state.update);
 
-  const composerRef = useMduiEvent('mdui-text-field', 'input', (_event, element) => setInput(element.value));
+  useEffect(() => {
+    void bootstrap();
+  }, [bootstrap]);
+
+  useEffect(() => {
+    if (ready && activeId != null && !loaded) void loadSession(activeId);
+  }, [ready, activeId, loaded, loadSession]);
+
   const sessionRef = useMduiEvent('mdui-select', 'change', (_event, element) => {
     const id = Number(element.value);
-    if (Number.isFinite(id)) setActiveId(id);
+    if (Number.isFinite(id)) void loadSession(id);
   });
   const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_event, element) =>
     updateSettings({ thinkingEffort: element.value as ReasoningEffort }),
   );
+  // 输入框的取值走 mdui 自己的 input 事件（而不是 React 的 onInput）：mdui-text-field 是
+  // 自定义元素，value 挂在组件实例上，从原生事件的 target 里读会读到内部的 textarea。
+  const composerRef = useMduiEvent('mdui-text-field', 'input', (_event, element) =>
+    setDraft(element.value),
+  );
 
-  const ensureSessions = useCallback(async () => {
-    let rows = await db.chatSessions.where('videoId').equals(LIBRARY_ASSISTANT_ID).sortBy('createdAt');
-    if (rows.length === 0) {
-      const now = Date.now();
-      const id = (await db.chatSessions.add({
-        videoId: LIBRARY_ASSISTANT_ID,
-        title: '新会话',
-        createdAt: now,
-      })) as number;
-      rows = [{ id, videoId: LIBRARY_ASSISTANT_ID, title: '新会话', createdAt: now }];
-    }
-    setSessions(rows);
-    setActiveId((current) => (current != null && rows.some((row) => row.id === current) ? current : rows[rows.length - 1].id!));
-  }, []);
-
-  useEffect(() => {
-    void ensureSessions();
-    void db.videos.count().then(setCourseCount);
-  }, [ensureSessions]);
-
-  useEffect(() => {
-    setLoadedSessionId(null);
-    setMessages([]);
-    setSkillIds(undefined);
-    setContextCourses([]);
-    if (activeId == null) {
-      return;
-    }
-    let cancelled = false;
-    void (async () => {
-      const [session, rows] = await Promise.all([
-        db.chatSessions.get(activeId),
-        db.chats.where('sessionId').equals(activeId).sortBy('createdAt'),
-      ]);
-      if (cancelled) return;
-      const contextIds = session?.contextCourseIds ?? [];
-      const contextRows = contextIds.length > 0
-        ? await db.videos.where('id').anyOf(contextIds).toArray()
-        : [];
-      if (cancelled) return;
-      const byId = new Map(contextRows.map((course) => [course.id, course.name]));
-      setSkillIds(session?.skillIds);
-      setContextCourses(
-        contextIds
-          .filter((id) => byId.has(id))
-          .map((id) => ({ id, name: byId.get(id)! })),
-      );
-      setMessages(rows.map((row) => ({
-        key: `stored-${row.id}`,
-        role: row.role === 'assistant' ? 'ai' : 'user',
-        content: row.content,
-        reasoning: row.reasoning,
-      })));
-      setLoadedSessionId(activeId);
-    })();
-    return () => {
-      cancelled = true;
-    };
-  }, [activeId]);
-
-  /** 当前会话的技能范围：undefined=不限定，[]=明确禁用全部技能。 */
-  const updateSkillIds = (next: number[] | undefined) => {
-    if (activeId == null) return;
-    setSkillIds(next);
-    void db.chatSessions
-      .where('id')
-      .equals(activeId)
-      .modify((row) => {
-        if (next === undefined) delete row.skillIds;
-        else row.skillIds = next;
-      });
+  const onPlanConfirm = async () => {
+    const result = await confirmPlan();
+    if (result.error) toast.error(`整理方案执行失败：${result.error}`);
   };
 
-  const createSession = async () => {
-    if (loading) return;
-    const now = Date.now();
-    const id = (await db.chatSessions.add({
-      videoId: LIBRARY_ASSISTANT_ID,
-      title: '新会话',
-      createdAt: now,
-    })) as number;
-    setSessions((current) => [...current, { id, videoId: LIBRARY_ASSISTANT_ID, title: '新会话', createdAt: now }]);
-    setContextCourses([]);
-    setActiveId(id);
-  };
-
-  const clearCourseContext = () => {
-    if (activeId == null || contextCourses.length === 0) return;
-    setContextCourses([]);
-    void db.chatSessions
-      .where('id')
-      .equals(activeId)
-      .modify((row) => {
-        delete row.contextCourseIds;
-      });
-  };
-
-  const deleteSession = async () => {
-    if (activeId == null || loading) return;
+  const onDeleteSession = async () => {
     const ok = await confirmDialog({
       headline: '删除当前会话？',
       description: '这段课程助手对话会被永久删除，课程和学习数据不会受影响。',
@@ -218,145 +137,7 @@ export default function CourseChat() {
       cancelText: '取消',
       danger: true,
     });
-    if (!ok) return;
-    const id = activeId;
-    await db.transaction('rw', db.chats, db.chatSessions, async () => {
-      await db.chats.where('sessionId').equals(id).delete();
-      await db.chatSessions.delete(id);
-    });
-    setActiveId(null);
-    await ensureSessions();
-  };
-
-  const send = async (rawQuestion: string) => {
-    const question = rawQuestion.trim();
-    if (!question || loading || activeId == null || loadedSessionId !== activeId) return;
-    const sessionId = activeId;
-    const firstMessage = messages.length === 0;
-    const userKey = nextKey();
-    const aiKey = nextKey();
-    let answer = '';
-    let reasoning = '';
-    const patchAi = (patch: Partial<AssistantMessage>) => {
-      setMessages((current) => current.map((message) => (message.key === aiKey ? { ...message, ...patch } : message)));
-    };
-
-    setInput('');
-    setLoading(true);
-    setMessages((current) => [
-      ...current,
-      { key: userKey, role: 'user', content: question },
-      { key: aiKey, role: 'ai', content: '', streaming: true },
-    ]);
-
-    try {
-      await db.chats.add({
-        videoId: LIBRARY_ASSISTANT_ID,
-        sessionId,
-        role: 'user',
-        content: question,
-        createdAt: Date.now(),
-      });
-
-      if (firstMessage) {
-        const title = question.length > 18 ? `${question.slice(0, 18)}…` : question;
-        await db.chatSessions.update(sessionId, { title });
-        setSessions((current) => current.map((session) => (session.id === sessionId ? { ...session, title } : session)));
-      }
-
-      const settings = getSettings();
-      const [history, skillMetas] = await Promise.all([
-        db.chats.where('sessionId').equals(sessionId).sortBy('createdAt'),
-        loadSessionSkillMeta(skillIds),
-      ]);
-      const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
-      const systemPrompt = libraryAssistantSystemPrompt(skillBlock, contextCourses);
-      const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(question) - 4096;
-      const recent = fitHistoryToBudget(history.slice(0, -1), Math.max(2000, budget));
-      const chatMessages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        ...recent.map((row) => ({ role: row.role, content: row.content }) as ChatMessage),
-        { role: 'user', content: question },
-      ];
-
-      const libraryExecutor = createLibraryAssistantExecutor({
-        contextCourseIds: contextCourses.map((course) => course.id),
-        onContextChange: async (courses) => {
-          setContextCourses(courses);
-          await db.chatSessions
-            .where('id')
-            .equals(sessionId)
-            .modify((row) => {
-              if (courses.length === 0) delete row.contextCourseIds;
-              else row.contextCourseIds = courses.map((course) => course.id);
-            });
-        },
-      });
-      const skillExecutor = createToolExecutor(LIBRARY_ASSISTANT_ID, { allowedSkillIds: skillIds });
-      const executeTool = (name: string, args: Record<string, unknown>) =>
-        name === 'use_skill' || name === 'read_skill_reference'
-          ? skillExecutor(name, args)
-          : libraryExecutor(name, args);
-
-      await runAgentLoop(
-        chatMessages,
-        COURSE_ASSISTANT_TOOLS,
-        executeTool,
-        {
-          thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
-          onReasoningDelta: (text) => {
-            reasoning += text;
-            patchAi({ reasoning });
-          },
-          onDelta: (text) => {
-            answer += text;
-            patchAi({ content: answer, hint: undefined });
-          },
-          onRoundStart: () => {
-            answer = '';
-            patchAi({ content: '', hint: undefined });
-          },
-          onToolStart: (name, argsJson) => {
-            let hint = '正在读取课程库…';
-            try {
-              const args = JSON.parse(argsJson || '{}') as { query?: string };
-              if (name === 'search_course_library' && args.query) hint = `正在跨课程检索：${args.query}`;
-              if (name === 'list_courses') hint = '正在整理课程清单…';
-              if (name === 'set_course_context') hint = '正在选择相关课程…';
-              if (name === 'get_learning_overview') hint = '正在汇总学习记录…';
-              if (name === 'get_course_details') hint = '正在读取课程详情…';
-              if (name === 'use_skill') hint = '正在加载技能规范…';
-              if (name === 'read_skill_reference') hint = '正在查阅技能参考资料…';
-            } catch {
-              // 工具参数不完整时仍保留通用提示，真正的错误由 executor 返回给模型。
-            }
-            patchAi({ hint });
-          },
-        },
-        settings.agentRounds,
-      );
-
-      const finalAnswer = answer.trim() || '（未获得回答）';
-      patchAi({ content: finalAnswer, streaming: false, hint: undefined });
-      await db.chats.add({
-        videoId: LIBRARY_ASSISTANT_ID,
-        sessionId,
-        role: 'assistant',
-        content: finalAnswer,
-        createdAt: Date.now(),
-        reasoning: reasoning || undefined,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      patchAi({
-        streaming: false,
-        hint: undefined,
-        error: true,
-        content: answer.trim() ? `${answer}\n\n> 回答中断：${message}` : `回答失败：${message}`,
-      });
-    } finally {
-      setLoading(false);
-    }
+    if (ok) await deleteSession();
   };
 
   const CourseLink = useCallback(
@@ -386,13 +167,14 @@ export default function CourseChat() {
   );
 
   const lastMessage = messages[messages.length - 1];
-  const sessionReady = activeId != null && loadedSessionId === activeId;
   const scrollSignal = [
     messages.length,
     lastMessage?.key ?? '',
     lastMessage?.content.length ?? 0,
     lastMessage?.reasoning?.length ?? 0,
     lastMessage?.hint ?? '',
+    lastMessage?.ask ? `${lastMessage.ask.question}${lastMessage.ask.picked ?? ''}` : '',
+    lastMessage?.folderPlan?.applied ?? '',
   ].join('|');
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -410,6 +192,34 @@ export default function CourseChat() {
     </mdui-tooltip>
   );
 
+  const sessionReady = activeId != null && loaded;
+  /** 本轮循环是否还活着：决定两张卡能不能交互（刷新后从库里读回的卡是「死的」） */
+  const loopAlive = pendingAsk != null || pendingPlan != null;
+
+  const renderCards = (message: CourseChatMessage) => (
+    <>
+      {message.ask && (
+        <AskCard
+          ask={message.ask}
+          active={pendingAsk?.messageKey === message.key}
+          onPick={(option) => void answerAsk(option)}
+          // 「我自己说」只做一件事：把输入框交给用户。打字回车时 `send` 会把它
+          // 当作这次提问的回答（见 store 里的 pendingAsk 分支），不会新起一轮。
+          onCustom={() => composerRef.current?.focus()}
+        />
+      )}
+      {message.folderPlan && (
+        <FolderPlanCard
+          plan={message.folderPlan}
+          active={pendingPlan?.messageKey === message.key}
+          busy={planApplying && pendingPlan?.messageKey === message.key}
+          onConfirm={() => void onPlanConfirm()}
+          onCancel={() => void cancelPlan()}
+        />
+      )}
+    </>
+  );
+
   return (
     <PageShell
       title="课程助手"
@@ -425,6 +235,7 @@ export default function CourseChat() {
               ref={sessionRef}
               className="course-chat__session-select"
               value={activeId != null ? String(activeId) : undefined}
+              // 生成中禁用：切会话会把正在流的那条消息换成库里读回来的版本（库里还没有它）
               disabled={loading}
               aria-label="切换会话"
             >
@@ -436,11 +247,11 @@ export default function CourseChat() {
             </mdui-select>
             {iconButton('新开会话', <mdui-sym-add />, () => void createSession(), loading)}
             <span className="course-chat__delete-action">
-              {iconButton('删除当前会话', <mdui-sym-delete />, () => void deleteSession(), loading)}
+              {iconButton('删除当前会话', <mdui-sym-delete />, () => void onDeleteSession(), loading)}
             </span>
             <span className="course-chat__toolbar-divider" aria-hidden="true" />
             <ModelPicker slot="chat" field="llmModel" />
-            <SkillPicker value={skillIds} onChange={updateSkillIds} />
+            <SkillPicker value={skillIds} onChange={setSkillIds} />
             {supportsThinking(llmModel) && (
               <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
                 <mdui-button-icon
@@ -545,23 +356,29 @@ export default function CourseChat() {
                   <div className={user ? 'course-chat__bubble course-chat__bubble--user' : 'course-chat__bubble course-chat__bubble--ai'}>
                     {user ? (
                       message.content
-                    ) : message.hint && !message.content ? (
+                    ) : message.hint && !message.content && !message.ask && !message.folderPlan ? (
                       <ThinkLine text={message.hint} />
                     ) : (
                       <>
                         {message.reasoning && (
                           <ReasoningBlock reasoning={message.reasoning} active={!!message.streaming && !message.content} />
                         )}
-                        <XMarkdown
-                          content={message.content}
-                          components={{
-                            a: CourseLink,
-                            p: StreamParagraph,
-                            code: MarkdownCode,
-                            pre: MarkdownPre,
-                          }}
-                          streaming={{ hasNextChunk: !!message.streaming, tail: !!message.streaming }}
-                        />
+                        {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
+                            正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
+                            「先给结论、下面才是问题」。 */}
+                        {renderCards(message)}
+                        {message.content && (
+                          <XMarkdown
+                            content={message.content}
+                            components={{
+                              a: CourseLink,
+                              p: StreamParagraph,
+                              code: MarkdownCode,
+                              pre: MarkdownPre,
+                            }}
+                            streaming={{ hasNextChunk: !!message.streaming, tail: !!message.streaming }}
+                          />
+                        )}
                       </>
                     )}
                   </div>
@@ -577,24 +394,28 @@ export default function CourseChat() {
                 className="course-chat__input"
                 variant="outlined"
                 rows={2}
-                value={input}
-                disabled={!sessionReady || loading}
-                placeholder="问课程、内容或学习进度，回车发送"
+                value={draft}
+                disabled={!sessionReady || (loading && pendingAsk == null)}
+                placeholder={
+                  pendingAsk
+                    ? '直接输入就是你的回答，回车确认'
+                    : '问课程、内容或学习进度，回车发送'
+                }
                 aria-label="给课程助手发送消息"
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
                   event.preventDefault();
-                  void send(input);
+                  void send(draft);
                 }}
               />
-              <mdui-tooltip content="发送">
+              <mdui-tooltip content={pendingAsk ? '确认这个回答' : '发送'}>
                 <mdui-button-icon
                   className="course-chat__send"
-                  aria-label="发送"
+                  aria-label={pendingAsk ? '确认这个回答' : '发送'}
                   variant="filled"
                   loading={loading}
-                  disabled={!sessionReady || loading || !input.trim()}
-                  onClick={() => void send(input)}
+                  disabled={!sessionReady || !draft.trim() || (loading && pendingAsk == null)}
+                  onClick={() => void send(draft)}
                 >
                   <mdui-sym-send />
                 </mdui-button-icon>

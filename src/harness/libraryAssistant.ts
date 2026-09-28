@@ -4,6 +4,9 @@ import { db, type VideoRow } from '../store/db';
 import { formatStudyDuration } from '../utils/studyLog';
 import { fmtTime } from '../utils/vtt';
 import { MAX_COURSE_CONTEXT, normalizeCourseContextIds, resolveCourseSearchScope } from './courseContext';
+import { validateAskUser, type AskUserData } from './askUser';
+import { validateFolderPlan, type FolderPlan } from './folderPlan';
+import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { lexicalSearch } from './lexical';
 
 /**
@@ -38,6 +41,16 @@ export interface LibraryAssistantExecutorOptions {
   contextCourseIds?: string[];
   /** set_course_context 成功后的持久化与 UI 回调。 */
   onContextChange?: (courses: CourseContextItem[]) => void | Promise<void>;
+  /**
+   * 提问卡：把题面交给 UI，**等用户点选**后 resolve 成用户选中的那句话。
+   * 不实现 = 用户永远收不到这张卡（工具会退化成「没问成」的解释，见下方同名分支）。
+   */
+  onAskUser?: (ask: AskUserData) => Promise<string>;
+  /**
+   * 目录整理方案：把方案交给 UI，**等用户确认**后 resolve。
+   * resolve 值是 `{ ok, result }`：确认则 `result` 是落库结果；取消则 `ok=false`。
+   */
+  onPlanFolders?: (plan: FolderPlan) => Promise<{ ok: boolean; result: AppliedPlanResult | null }>;
 }
 
 function materialKindOf(course: VideoRow): UnitKind {
@@ -183,6 +196,76 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
       },
     },
   },
+  {
+    type: 'function',
+    function: {
+      name: 'ask_user',
+      description:
+        '当缺少关键信息、而几个答案会导向明显不同的做法时，向用户提问并给 2~5 个候选方案让用户点选。' +
+        '用户点完（或自己打字回答）你才会继续。不要用它来确认你已经能从课程数据判断出的事，也不要在没有分叉时凑选项',
+      parameters: {
+        type: 'object',
+        properties: {
+          question: { type: 'string', description: '一句话说清需要用户决定什么，不超过 200 字' },
+          options: {
+            type: 'array',
+            items: { type: 'string' },
+            minItems: 2,
+            maxItems: 5,
+            description: '2~5 个候选方案，每条不超过 60 字，写成用户能一眼分辨的短方案名而不是完整句子',
+          },
+          allowCustom: {
+            type: 'boolean',
+            description: '是否提供「我自己说」入口，默认 true；候选方案很可能都不贴切时传 false',
+          },
+        },
+        required: ['question', 'options'],
+      },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'list_folders',
+      description: '查看课程库现有的分类文件夹、各自有多少门课程，以及多少门还没归类。整理目录前必须先看现状，避免造出重复分类',
+      parameters: { type: 'object', properties: {} },
+    },
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'propose_folder_plan',
+      description:
+        '提出一份课程库目录整理方案，展示给用户预览并等待确认。**这个工具不会直接改动任何数据**；' +
+        '只有用户在方案卡上点「确认执行」之后才会真正建立文件夹并移动课程。' +
+        '先 list_courses 了解全库、list_folders 看现状，再调用它；courseIds 必须来自工具结果的真实 id',
+      parameters: {
+        type: 'object',
+        properties: {
+          summary: { type: 'string', description: '一句话说明这次的整理思路（分类主轴是什么、为什么这样分）' },
+          folders: {
+            type: 'array',
+            minItems: 1,
+            maxItems: 12,
+            description: '分类清单，一门课程只应出现在一个分类里',
+            items: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: '分类名，不超过 24 字；与现有文件夹同名则并入现有文件夹' },
+                courseIds: {
+                  type: 'array',
+                  items: { type: 'string' },
+                  description: '归入该分类的课程 id，取自 list_courses / list_folders 的结果；没有课程的分类不要列',
+                },
+              },
+              required: ['name', 'courseIds'],
+            },
+          },
+        },
+        required: ['summary', 'folders'],
+      },
+    },
+  },
 ];
 
 export function libraryAssistantSystemPrompt(
@@ -206,9 +289,11 @@ export function libraryAssistantSystemPrompt(
 5. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
 6. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
 7. 不编造课程、进度或系统记录。课程库中没有相关内容时，明确说明“课程库中没有检索到”，再把通用知识与课程数据分开回答。
-8. 当前能力是只读查询。不能声称已经替用户删除、收藏、导入、修改或完成课程；如果用户要求这类操作，说明目前只能提供步骤或建议。
-9. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
-10. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
+8. 读操作之外只有两类写操作：ask_user（向用户提问）与 propose_folder_plan（提出目录整理方案）。除此之外不能声称已经替用户删除、收藏、导入、修改或完成课程；用户要求这类操作时，说明目前只能提供步骤或建议。
+9. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给 2~5 个候选方案让用户点选，不要替用户猜。选项要写成能一眼分辨的短方案名。凡是课程库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
+10. 整理课程库目录时：先 list_courses 了解全库、list_folders 看现有分类，再调用 propose_folder_plan 提交方案等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。
+11. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
+12. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
 }
 
 export function createLibraryAssistantExecutor(options: LibraryAssistantExecutorOptions = {}) {
@@ -367,6 +452,63 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         `衍生内容：讲义 ${handouts} 份，记忆卡片 ${cards} 张，问答会话 ${sessions} 个`,
         `原文件：${course.fileDeleted ? '已删除，衍生内容仍保留' : '可用'}`,
       ].join('\n');
+    }
+
+    if (name === 'ask_user') {
+      const v = validateAskUser(args);
+      if (!v.ok) return `提问卡结构校验失败：${v.error}。请修正后重新调用 ask_user。`;
+      if (!options.onAskUser) {
+        return '当前入口不支持向用户提问（提问卡未接入）。请依据已有信息回答，并在回答中说明你的假设。';
+      }
+      try {
+        const picked = (await options.onAskUser(v.ask)).trim();
+        if (!picked) return '用户没有回答这个问题。请依据已有信息回答，并说明你做的假设。';
+        return `用户选择了：「${picked}」。`;
+      } catch (e) {
+        return `提问未完成：${e instanceof Error ? e.message : String(e)}`;
+      }
+    }
+
+    if (name === 'list_folders') {
+      const [folders, courses] = await Promise.all([db.folders.toArray(), db.videos.toArray()]);
+      const folderIds = new Set(folders.map((f) => f.id));
+      const counts = new Map<number, number>();
+      let unclassified = 0;
+      for (const course of courses) {
+        if (course.folderId != null && folderIds.has(course.folderId)) {
+          counts.set(course.folderId, (counts.get(course.folderId) ?? 0) + 1);
+        } else {
+          unclassified++;
+        }
+      }
+      if (folders.length === 0) {
+        return [
+          `当前没有任何分类文件夹，${courses.length} 门课程全部处于「未分类」。`,
+          '可以调用 propose_folder_plan 提出第一份整理方案。',
+        ].join('\n');
+      }
+      return [
+        ...folders.map((f) => `- ${f.name}（folderId=${f.id}）：${counts.get(f.id!) ?? 0} 门`),
+        `- 未分类：${unclassified} 门`,
+        `合计 ${folders.length} 个分类 / ${courses.length} 门课程。`,
+      ].join('\n');
+    }
+
+    if (name === 'propose_folder_plan') {
+      const v = validateFolderPlan(args);
+      if (!v.ok) return `整理方案结构校验失败：${v.error}。请修正后重新调用 propose_folder_plan。`;
+      if (!options.onPlanFolders) {
+        return '当前入口不支持修改课程库目录。你可以把方案写成分类清单交给用户，由用户在课程库中自行移动。';
+      }
+      try {
+        const { ok, result } = await options.onPlanFolders(v.plan);
+        if (!ok) {
+          return '用户没有执行这份整理方案，课程库目录保持原样。请问用户接下来想怎么做，不要声称已经整理好了。';
+        }
+        return `用户已确认并执行整理方案：\n${formatPlanForModel(v.plan, result)}`;
+      } catch (e) {
+        return `整理方案执行失败：${e instanceof Error ? e.message : String(e)}`;
+      }
     }
 
     return `未知工具：${name}`;

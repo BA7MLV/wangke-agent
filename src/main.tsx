@@ -22,6 +22,18 @@ navigator.storage?.persist?.().catch(() => {});
 // zustand 的 persist 是同步读 localStorage 的，所以这里能直接拿到用户设置。
 applyTheme(useSettings.getState().theme);
 
+/**
+ * 关闭浏览器自己的滚动恢复。
+ *
+ * 讲义/材料是自己管阅读位置的（`handout/readingPos.ts`、`videos.lastUnit`），而浏览器的
+ * 恢复是**在内容渲染完之后才生效**的，且不由我们控制时机：两者会打架，实测表现为
+ * 「明明读到第五节，打开却停在第四节中段」（实测偏差一个段落：期望 s1b3@40、实际 s1b2@74）。
+ *
+ * 关掉是安全的：本应用里没有一处依赖原生恢复 —— 库页、播放器、聊天都不做滚动恢复，
+ * 各视图要么自己落位（讲义/材料），要么每次都从顶部开始。
+ */
+if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
+
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 
 /** 主题切换时同步 <html> 上的主题类（深浅的实际配色全在 CSS 令牌里，这里只负责挂类名） */
