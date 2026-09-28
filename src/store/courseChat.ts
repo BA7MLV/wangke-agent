@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { getSettings } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type FolderPlanState } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
-import { runAgentLoop } from '../harness/agent';
+import { runAgentLoop, noAnswerNotice } from '../harness/agent';
 import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
 import {
   type CourseContextItem,
@@ -234,6 +234,23 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     let currentKey = aiKey;
     let answer = '';
     let reasoning = '';
+    /**
+     * 最后一轮流出的旁白 + 最后一次工具提示。
+     *
+     * 留着它们是因为 `onRoundStart` 会把当轮正文清空（旁白不是答案），而**轮次用尽时
+     * 模型可能一个字都不说** —— 那时若只有 `answer`，用户看到的就是一片空白，
+     * 六轮工具调用等于白跑（实测：只剩一句「（未获得回答）」）。
+     */
+    let lastNarration = '';
+    let lastHint = '';
+    /**
+     * 轮次用尽的收尾情况（见 agent.ts 的 onBudgetExhausted）。
+     *
+     * 用数组而不是 `let x: T | null`：赋值发生在回调里，TS 的控制流分析在读它的地方
+     * 仍然认为它是 `null`（于是 `x?.granted` 报「property does not exist on never」）。
+     * 数组取下标不做这种收窄，是这里最省事又不会骗过编译器的写法。
+     */
+    const exhausted: { requestedTools: string[]; granted: boolean }[] = [];
     const patchAi = (patch: Partial<CourseChatMessage>) => {
       set((s) => ({ messages: s.messages.map((m) => (m.key === currentKey ? { ...m, ...patch } : m)) }));
     };
@@ -373,15 +390,30 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             patchAi({ content: answer, hint: undefined });
           },
           onRoundStart: () => {
+            // 上一轮流出的只是检索旁白，答案要等后面的轮次 —— 但**存一份**：
+            // 轮次用尽而模型不吭声时，它是用户唯一能看到「它干了什么」的线索
+            if (answer.trim()) lastNarration = answer.trim();
             answer = '';
             patchAi({ content: '', hint: undefined });
           },
-          onToolStart: (name, argsJson) => patchAi({ hint: toolHint(name, argsJson) }),
+          onToolStart: (name, argsJson) => {
+            lastHint = toolHint(name, argsJson);
+            patchAi({ hint: lastHint });
+          },
+          onBudgetExhausted: (info) => {
+            exhausted.push(info);
+          },
         },
         settings.agentRounds,
       );
 
-      const finalAnswer = answer.trim() || '（未获得回答）';
+      const closeOut = exhausted[exhausted.length - 1];
+      const finalAnswer = answer.trim() || noAnswerNotice({
+        rounds: settings.agentRounds,
+        requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
+        narration: lastNarration,
+        hint: lastHint,
+      });
       patchAi({ content: finalAnswer, streaming: false, hint: undefined });
       // 落的是**当前这条**（`currentKey` 可能已经因提问/方案而轮换过一次），
       // 卡片状态也从 store 里这条消息读，而不是读闭包里的副本：用户可能在这期间点了选项

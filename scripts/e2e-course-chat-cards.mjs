@@ -93,6 +93,12 @@ await page.addInitScript((baseUrl) => {
 const push = (chunks, delayMs = 0) =>
   page.evaluate(([c, d]) => window.__LLM__.queue.push({ chunks: c, delayMs: d }), [chunks, delayMs]);
 
+/** 一次推多轮（每轮一个队列元素）—— 测「轮次用尽」这类要连着跑好几轮的场景时用 */
+const pushSteps = (steps) =>
+  page.evaluate((list) => {
+    for (const step of list) window.__LLM__.queue.push(step);
+  }, steps);
+
 const textChunks = (...parts) => parts.map((content) => ({ content }));
 const toolChunks = (name, args) => [
   {
@@ -340,6 +346,77 @@ await check('模型收到的是「用户没执行」，不是「已整理」', a
     texts.some((t) => t.includes('没有执行') || t.includes('保持原样')),
     `下一轮的历史里应带「用户没有执行方案」，实际最后一条：${texts[texts.length - 1]?.slice(0, 120)}`,
   );
+});
+
+console.log('—— 5. 轮次用尽：不能只丢一句「（未获得回答）」 ——');
+
+/** 清空会话并刷新（这两条要跑在「空会话」里，才看得清第一屏到底显示了什么） */
+const resetChats = async () => {
+  await dbHelper(async (idb) => {
+    await new Promise((res, rej) => {
+      const tx = idb.transaction(['chats', 'chatSessions'], 'readwrite');
+      tx.objectStore('chats').clear();
+      tx.objectStore('chatSessions').clear();
+      tx.oncomplete = res;
+      tx.onerror = () => rej(tx.error);
+    });
+    return true;
+  });
+  await page.goto(`${BASE}/#/chat`, { waitUntil: 'networkidle' });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
+};
+
+/** 6 轮「旁白 + 工具调用」把轮次用光；最后一条是「只想要工具、不吭声」的收尾轮 */
+const burnRounds = (lastTool) => [
+  { chunks: [{ content: '先看课程库。' }, toolChunks('list_courses', { limit: 50 })[0]] },
+  { chunks: [{ content: '逐门确认一下。' }, toolChunks('get_course_details', { courseId: 'c-math' })[0]] },
+  { chunks: [{ content: '继续确认。' }, toolChunks('get_course_details', { courseId: 'c-xingce' })[0]] },
+  { chunks: [{ content: '继续。' }, toolChunks('get_course_details', { courseId: 'c-shenlun' })[0]] },
+  { chunks: [{ content: '继续。' }, toolChunks('get_course_details', { courseId: 'c-1' })[0]] },
+  { chunks: [{ content: '整理方案。' }, toolChunks('get_course_details', { courseId: 'c-2' })[0]] },
+  { chunks: toolChunks(lastTool, { name: '南方日报', courseIds: ['c-1'] }) },
+];
+
+await check('收尾轮只想要工具、不吭声 → 宽限一次，模型说人话就照常显示', async () => {
+  await resetChats();
+  await pushSteps([
+    ...burnRounds('propose_folder_plan'),
+    { chunks: textChunks('南方日报的课程都已经归到「南方日报」分类了。') },
+  ]);
+  await typeAndSend('把南方日报的文件都移到南方日报文件夹');
+  const answer = await waitFor(async () => {
+    const t = await page.locator('.course-chat__bubble--ai').last().innerText();
+    return t.includes('南方日报的课程') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(answer, '宽限一次后应给出真实回答');
+
+  // 宽限那一轮的请求里必须有「不许调工具」的指令，且历史里不能残留没人应答的 tool_calls
+  const bodies = await page.evaluate(() => window.__LLM__.requests);
+  const last = bodies[bodies.length - 1];
+  const tail = last.messages[last.messages.length - 1];
+  assert.match(String(tail.content), /不能再调用任何工具/, '宽限轮要明确禁止再调工具');
+  const prev = last.messages[last.messages.length - 2];
+  assert.ok(!prev.tool_calls, '不吭声的那条不能带着 tool_calls 进历史（下一轮请求会 400）');
+});
+
+await check('收尾轮与宽限轮都不吭声 → 说清「用完几轮 / 还想调什么 / 接下来怎么办」', async () => {
+  await resetChats();
+  await pushSteps([
+    ...burnRounds('propose_folder_plan'),
+    { chunks: toolChunks('propose_folder_plan', { name: '南方日报', courseIds: [] }) },
+  ]);
+  await typeAndSend('把南方日报的文件都移到南方日报文件夹');
+  const notice = await waitFor(async () => {
+    const t = await page.locator('.course-chat__bubble--ai').last().innerText();
+    return t.includes('轮次上限') ? t : null;
+  }, { timeout: 20000 });
+  assert.ok(notice, '兜底文案必须出现（不能是空气泡或一句「未获得回答」）');
+  assert.match(notice, /6 次工具调用/, '要说清用完了几轮');
+  assert.match(notice, /propose_folder_plan/, '要点名它最后还想调什么');
+  assert.match(notice, /继续/, '要给出下一步动作');
+  assert.match(notice, /整理方案。/, '要把它最后说过的话留下来当进度');
+  assert.doesNotMatch(notice, /未获得回答/, '不该再出现「（未获得回答）」');
 });
 
 await browser.close();

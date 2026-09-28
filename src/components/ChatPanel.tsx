@@ -3,7 +3,7 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
 import { getSettings, useSettings } from '../store/settings';
-import { runAgentLoop } from '../harness/agent';
+import { runAgentLoop, noAnswerNotice } from '../harness/agent';
 import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
@@ -636,6 +636,20 @@ export default function ChatPanel({
     const isFirstMsg = msgs.length === 0;
     let answer = '';
     let reasoning = '';
+    /**
+     * 最后一轮旁白 + 最后一次工具提示。
+     *
+     * `onRoundStart` 会把当轮正文清空（旁白不是答案），而轮次用尽时模型可能一个字都不说
+     * （不给 tools 时它仍会返回「空正文 + tool_calls」）。存一份是为了让兜底文案能说清
+     * 「它干了什么、你想做什么」，而不是只留一句「（未获得回答）」。见 harness/agent.ts。
+     */
+    let lastNarration = '';
+    let lastHint = '';
+    /**
+     * 轮次用尽的收尾情况。用数组而不是 `let`：赋值在回调里，TS 在读它的地方仍会当成
+     * `null`（`x?.granted` 会报「property does not exist on never」），数组下标不做这种收窄。
+     */
+    const exhausted: { requestedTools: string[]; granted: boolean }[] = [];
     const patchAi = (patch: Partial<ChatMsg>) =>
       setMsgs((prev) => prev.map((m) => (m.key === aiKey ? { ...m, ...patch } : m)));
 
@@ -847,7 +861,8 @@ export default function ChatPanel({
             patchAi({ content: answer, hint: undefined });
           },
           onRoundStart: () => {
-            // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答
+            // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
+            if (answer.trim()) lastNarration = answer.trim();
             answer = '';
             patchAi({ content: '', hint: undefined });
           },
@@ -866,7 +881,11 @@ export default function ChatPanel({
             } catch {
               /* ignore */
             }
+            lastHint = hint;
             patchAi({ hint });
+          },
+          onBudgetExhausted: (info) => {
+            exhausted.push(info);
           },
         },
         // 检索轮次上限来自设置（默认 6）；达到上限 agent 内部会强制无工具收尾作答
@@ -887,8 +906,19 @@ export default function ChatPanel({
         })) as number;
         patchAi({ rowId });
       } else {
-        // 空回答兜底，避免留下永久空气泡
-        patchAi({ streaming: false, hint: undefined, content: '（未获得回答）' });
+        // 空回答兜底，避免留下永久空气泡。**要说清发生了什么**：只写「（未获得回答）」的话，
+        // 用户看到的就是「点了没反应」，既不知道它查了六轮，也不知道自己该做什么。
+        const closeOut = exhausted[exhausted.length - 1];
+        patchAi({
+          streaming: false,
+          hint: undefined,
+          content: noAnswerNotice({
+            rounds: settings.agentRounds,
+            requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
+            narration: lastNarration,
+            hint: lastHint,
+          }),
+        });
       }
       // tier 2 有截图描述失败时，回答完成后一次性提示
       if (descFailed) {

@@ -1,4 +1,4 @@
-import { chatStream, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
+import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
 import { thinkingParams } from '../api/modelCaps';
 import { getSettings } from '../store/settings';
 
@@ -21,6 +21,18 @@ export interface AgentCallbacks {
   /** 工具调用开始/结束（用于 UI 状态提示） */
   onToolStart?: (name: string, argsJson: string) => void;
   onToolEnd?: (name: string, result: string) => void;
+  /**
+   * 轮次用尽后的收尾结果。
+   *
+   * **为什么必须通报**：不给 `tools` 时模型**仍然可能**返回「空正文 + tool_calls」
+   * （它想调工具，但结构上已经没有工具可调了）。那种情况下正文是 `null`，
+   * 调用方若只看 `onDelta` 就会得到「什么都没说」——实测表现是界面上只留下一句
+   * 「（未获得回答）」，用户既不知道它干了什么、也不知道该做什么。
+   *
+   * - `requestedTools`：收尾那一轮里模型还想调的���具名（没执行）
+   * - `granted`：最后一次收尾是否真的说到了话
+   */
+  onBudgetExhausted?: (info: { requestedTools: string[]; granted: boolean }) => void;
   signal?: AbortSignal;
 }
 
@@ -36,6 +48,8 @@ export async function runAgentLoop(
   const settings = getSettings();
   const out = [...messages];
   const thinking = cb.thinkingEffort ? thinkingParams(settings.llmModel, cb.thinkingEffort) : {};
+  /** 最后一个「还在要工具」的消息：轮次用尽时用它来解释模型想干什么 */
+  let msg0: ChatMessage | null = null;
 
   for (let round = 0; round < maxRounds; round++) {
     cb.onRoundStart?.(round);
@@ -58,6 +72,8 @@ export async function runAgentLoop(
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) return out;
 
+    // 记下「最后一轮仍要调什么」，收尾时用来给用户解释（见 onBudgetExhausted）
+    msg0 = msg;
     for (const call of msg.tool_calls) {
       cb.onToolStart?.(call.function.name, call.function.arguments);
       let result: string;
@@ -77,22 +93,76 @@ export async function runAgentLoop(
     }
   }
 
-  // 轮次耗尽但模型仍要调工具（工具结果已在 out 末尾）：追加一轮无 tools 的强制收尾，确保给出最终回答
-  // 注：未提供 tools 时模型结构上无法再产出 tool_calls；若异常返回，残留 tool_calls 也不会被执行（无调用方读取 out 的尾部工具调用）
+  // ── 轮次耗尽后的收尾 ──────────────────────────────────────────────────────
+  //
+  // 「一次无 tools 的调用就能收工」这个假设是错的：不给 tools 时模型仍可能返回
+  // 「空正文 + tool_calls」（实测：整理课程库目录这种要连查多门的任务，最后一轮
+  // 只想调 propose_folder_plan，于是正文一个字都没有 → 界面上只剩「（未获得回答）」）。
+  //
+  // 所以给一次**有界宽限**：收尾轮不吭声就明确要求它「不许调工具，用中文总结」再试一次。
+  // 只宽限一次（成本可控），仍不吭声才由调用层出兜底文案。
+  let pending = msg0?.tool_calls?.map((c) => c.function.name) ?? [];
   cb.onRoundStart?.(maxRounds);
-  const finalMsg = await chatStream(
-    settings,
-    {
-      model: settings.llmModel,
-      messages: out,
-      temperature: 0.3,
-      max_tokens: 2048,
-      signal: cb.signal,
-      ...thinking,
-    },
-    cb.onDelta,
-    cb.onReasoningDelta,
-  );
-  out.push(finalMsg);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const finalMsg = await chatStream(
+      settings,
+      {
+        model: settings.llmModel,
+        messages: out,
+        temperature: 0.3,
+        max_tokens: 2048,
+        signal: cb.signal,
+        ...thinking,
+      },
+      cb.onDelta,
+      cb.onReasoningDelta,
+    );
+    if (textOf(finalMsg).trim()) {
+      out.push(finalMsg);
+      cb.onBudgetExhausted?.({ requestedTools: pending, granted: true });
+      return out;
+    }
+    pending = finalMsg.tool_calls?.map((c) => c.function.name) ?? pending;
+    if (attempt === 0) {
+      // 不把这条不吭声的消息塞回历史：它带着**没人应答**的 tool_calls，
+      // 下一轮请求里 assistant(tool_calls) 没有配对的 tool 消息，严格实现会直接 400。
+      out.push({ role: 'user', content: WRAP_UP_NUDGE });
+    }
+  }
+  cb.onBudgetExhausted?.({ requestedTools: pending, granted: false });
   return out;
+}
+
+/** 宽限那一轮的指令：把「不许调工具、必须说人话」讲死，否则模型会再要一次工具 */
+const WRAP_UP_NUDGE =
+  '（系统提示：这一轮的工具调用次数已经用完，不能再调用任何工具。请**只用中文文字**回答：' +
+  '你已经查到了什么、结论是什么、用户接下来该做什么。不要再请求工具。';
+
+export interface NoAnswerContext {
+  /** 轮次上限（设置里的「问答 agent 检索轮次上限」） */
+  rounds: number;
+  /** 收尾时模型还想调、但没执行成的工具名 */
+  requestedTools: string[];
+  /** 最后一轮流过的旁白（会随新一轮清空，这里留着做兜底） */
+  narration?: string;
+  /** 最后一次工具提示，兜底时告诉用户「它最后在干什么」 */
+  hint?: string;
+}
+
+/**
+ * 「模型一个字都没说」的兜底文案。
+ *
+ * 三条要求：**说清发生了什么**（轮次用尽、它还想调什么）、**说清已经做了什么**
+ * （旁白 / 最后在查什么）、**给出下一步**（发一句「继续」，或去设置调大轮次）。
+ * 只丢一句「（未获得回答）」等于把一次跑了六轮的工具调用变成用户眼里的「没反应」。
+ */
+export function noAnswerNotice(ctx: NoAnswerContext): string {
+  const wanted = ctx.requestedTools.length > 0 ? `、${ctx.requestedTools.join('、')}` : '';
+  const lines = [
+    `这一轮用完了 ${ctx.rounds} 次工具调用${wanted ? `，助手最后还想调用「${ctx.requestedTools.join('」「')}」` : ''}，但已经到轮次上限，所以没能给出回答。`,
+  ];
+  const progress = ctx.narration?.trim() || ctx.hint?.trim();
+  if (progress) lines.push('', `它最后说到：${progress}`);
+  lines.push('', '再说一句「继续」，我会接着上次的进度往下做；也可以到设置里把「问答 agent 检索轮次上限」调大。');
+  return lines.join('\n');
 }
