@@ -114,6 +114,9 @@ const META = {
   'test-quiz': { service: 'none', antd: false, timeout: 120 },
   'test-rate': { service: 'none', antd: false, timeout: 120 },
   // 学习时长纯逻辑：本地日期键（UTC 陷阱）/ 跨零点切分 / 热力图网格几何 / 统计与连续天数
+  // skill frontmatter 的 YAML 块标量：外部 skill 用 `description: >-` 写多行描述是常规写法，
+  // 解析器不认就会把值读成字面量 `>-`、静默丢掉真正的描述 —— 导入成功、能选中、永远不生效。
+  'test-skill-parse': { service: 'none', antd: false, timeout: 120 },
   'test-study-log': { service: 'none', antd: false, timeout: 120 },
   // 主页进度条纯逻辑：材料的 null / 非法时长的 null / finished 优先于比例 / 1% 阈值两侧
   'test-video-progress': { service: 'none', antd: false, timeout: 120 },
