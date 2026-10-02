@@ -12,6 +12,11 @@ import {
 } from './searchMaterial';
 import { fmtUnitRef, unitNoun, type UnitKind } from '../materials/units.ts';
 import { isSkillAllowed } from '../skills/scope';
+// 校验必须**走渲染层同一个函数**，否则「预检通过」没有意义 ——
+// 两处净化逻辑一旦分叉，工具就成了摆设。
+import { sanitizeSvg } from '../components/mermaid/svgRender';
+import { renderMermaid } from '../components/mermaid/mermaidRender';
+import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } from './widget';
 
 /** 一次范围取数的单元数上限：防止模型一次要 200 页把上下文吃光 */
 const MAX_RANGE_UNITS = 20;
@@ -168,6 +173,44 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
 };
 
 /**
+ * 图形预检：把写好的 SVG / mermaid 先过一遍**真正的渲染管线**，通过才回一段围栏文本。
+ *
+ * ⚠️ 它不渲染。图真正上屏靠回执里那段围栏 —— 模型把它放进回答正文，
+ * 由 components/mermaid/ 在渲染 Markdown 时接管。所以这个工具的价值是
+ * **把「净化失败静默降级成显示源码」提前成一次可重试的工具报错**。
+ *
+ * 详见 ./widget.ts 顶部的说明（含「为什么不做成卡片」）。
+ */
+const SHOW_WIDGET_TOOL: ToolDef = {
+  type: 'function',
+  function: {
+    name: 'show_widget',
+    description:
+      '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 SVG 或 mermaid 源码，' +
+      '通过后会把一段可直接放进回答正文的 ```svg / ```mermaid 围栏原样返回给你；不通过会告诉你具体哪里不合规，' +
+      '改完再试。**它不直接出图**：必须把返回的围栏放进正文，图才会显示，且要放在它解释的那句话旁边、前后各配一句说明。',
+    parameters: {
+      type: 'object',
+      properties: {
+        format: {
+          type: 'string',
+          enum: ['mermaid', 'svg'],
+          description:
+            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形、坐标轴这类 mermaid 表达不了的用 svg',
+        },
+        code: {
+          type: 'string',
+          description:
+            '完整源码，不要包围栏、不要加解释文字。svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
+            '只画静态图形，不要 script / 事件属性 / foreignObject / 外部图片或外链',
+        },
+      },
+      required: ['format', 'code'],
+    },
+  },
+};
+
+/**
  * 可嵌入其他 Agent 的技能工具集。
  *
  * 课程助手没有单课程的字幕/材料上下文，也不展示交互题卡，但仍要复用同一套
@@ -175,7 +218,7 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
  */
 export const SKILL_TOOLS: ToolDef[] = [USE_SKILL_TOOL, READ_SKILL_REFERENCE_TOOL];
 
-const SHARED_TOOLS: ToolDef[] = [...SKILL_TOOLS, PRESENT_QUIZ_TOOL];
+const SHARED_TOOLS: ToolDef[] = [...SKILL_TOOLS, PRESENT_QUIZ_TOOL, SHOW_WIDGET_TOOL];
 
 /** 视频课程的问答工具集 */
 export const QA_TOOLS: ToolDef[] = [
@@ -333,6 +376,29 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       if (!v.ok) return `题卡结构校验失败：${v.error}。请修正后重新调用 present_quiz。`;
       onQuiz?.(v.quiz);
       return '题卡已展示给学生。请用一句话说明这些题考查的知识点，不要重复题目内容。';
+    }
+    if (name === 'show_widget') {
+      const v = validateWidgetArgs(args);
+      if (!v.ok) return `预检参数不合法：${v.error}。请修正后重新调用 show_widget。`;
+      try {
+        // 两条分支都调**渲染层自己的函数**：svg 走净化，mermaid 走 parse。
+        // mermaid 那次 render 的结果有缓存（renderMermaid 内），正文里真正渲染时不会再跑一遍。
+        if (v.args.format === 'svg') {
+          // 回**净化后的**源码，不是原样回传。净化器是「剔除」而不是「全否」：
+          // 一段带 <script> 的 SVG 会被剥掉脚本后照常通过。所以原样回传等于让模型
+          // 拿到一段「预检说没问题、渲染时却会被悄悄改掉」的代码。给净化后的结果，
+          // 回执里的围栏就是**最终会渲染出来的那一份**，模型与用户看到的完全一致。
+          return widgetAcceptedText({ format: 'svg', code: sanitizeSvg(v.args.code) });
+        }
+        // mermaid 只能回源码：renderMermaid 的产物是 SVG 字符串，不是可回填的 mermaid 文本。
+        // parse 失败会抛，成功即语法有效，所以这里「回原样」是安全的。
+        await renderMermaid(v.args.code);
+      } catch (e) {
+        // 净化 / 解析失败**不回退源码**：这里是工具调用，返回的是给模型看的诊断信息，
+        // 模型据此改完重试。真到渲染那步失败才是「静默降级成显示源码」，也正是这里要挡掉的。
+        return widgetRejectedText(e);
+      }
+      return widgetAcceptedText(v.args);
     }
     return `未知工具：${name}`;
   };

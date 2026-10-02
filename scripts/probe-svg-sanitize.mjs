@@ -103,6 +103,94 @@ check(rendered.hasSvg, '插入 DOM 后确实是一个 <svg> 元素');
 check(rendered.w > 0 && rendered.h > 0, `有非零尺寸（${rendered.w}×${rendered.h}）`);
 check(rendered.textLen > 0, `文字有实际宽度（${rendered.textLen.toFixed(1)}px，说明 font-size / text-anchor 生效）`);
 
+// ── 6. show_widget 走的是同一个净化函数 ──────────────────────────────────────
+// 这才是 show_widget 的全部价值所在：它必须复用渲染层的 sanitizeSvg，
+// 否则「预检通过」与「渲染成功」两件事会分叉，工具就成了只会说「没问题」的摆设。
+// 这里直接打工具执行器，验证通过回执里那段围栏**再过一次净化仍然干净**。
+console.log('\n=== 6. show_widget 的预检与渲染层同源 ===');
+const widget = await page.evaluate(async () => {
+  const { sanitizeSvg } = await import('/src/components/mermaid/svgRender.ts');
+  const { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } = await import(
+    '/src/harness/widget.ts'
+  );
+  const good = '<svg viewBox="0 0 240 120"><rect x="1" y="1" width="10" height="10" fill="#e6f4ff"/></svg>';
+  // 净化器是「剔除」不是「全否」：带 script 的 SVG 会被剥掉脚本后照常通过
+  const strippy = '<svg viewBox="0 0 10 10"><script>alert(1)</script><rect width="5" height="5"/></svg>';
+  // 剥完只剩空壳：根 <svg> 还在，图元没了
+  const emptyish = '<svg viewBox="0 0 10 10"><foreignObject><div>x</div></foreignObject></svg>';
+  // 缺外壳：真的会被拒
+  const noshell = '<rect width="5" height="5"/>';
+  // 外链资源直接被拒
+  const external = '<svg viewBox="0 0 10 10"><rect width="5" height="5" fill="url(https://evil.example/x)"/></svg>';
+
+  const runOne = (raw) => {
+    const v = validateWidgetArgs(raw);
+    if (!v.ok) return { stage: 'args', text: v.error };
+    try {
+      // 与 tools.ts 的 show_widget 分支保持一致：svg 回净化后的源码
+      return { stage: 'ok', text: widgetAcceptedText({ format: 'svg', code: sanitizeSvg(v.args.code) }) };
+    } catch (e) {
+      return { stage: 'reject', text: widgetRejectedText(e) };
+    }
+  };
+
+  const grab = (res) => {
+    const m = res.text.match(/```svg\n([\s\S]*?)\n```/);
+    return m?.[1] ?? '';
+  };
+
+  const okRes = runOne({ format: 'svg', code: good });
+  const stripRes = runOne({ format: 'svg', code: strippy });
+  let refenceClean = false;
+  if (okRes.stage === 'ok') {
+    try {
+      refenceClean = sanitizeSvg(grab(okRes)).startsWith('<svg');
+    } catch {
+      refenceClean = false;
+    }
+  }
+
+  return {
+    okRes,
+    stripRes,
+    stripCode: grab(stripRes),
+    refenceClean,
+    emptyRes: runOne({ format: 'svg', code: emptyish }),
+    emptyCode: grab(runOne({ format: 'svg', code: emptyish })),
+    rejectRes: runOne({ format: 'svg', code: noshell }),
+    extRes: runOne({ format: 'svg', code: external }),
+  };
+});
+
+check(widget.okRes.stage === 'ok', `合规 SVG 通过预检（${widget.okRes.text.slice(0, 24)}…）`);
+check(widget.okRes.text.includes('还没有上屏'), '通过回执提醒「还没上屏、需放进正文」');
+check(widget.refenceClean, '回执里那段围栏再过一次净化仍然干净（同源验证）');
+
+// 净化器是「剔除」不是「全否」，所以带 script 的**会通过** ——
+// 关键不是拒它，而是回执里给的必须是**净化后**那份，不能是原样带毒的源码。
+check(
+  widget.stripRes.stage === 'ok',
+  '带 <script> 的 SVG 被剔除后通过（净化器语义，不是校验器）',
+);
+check(!widget.stripCode.includes('<script'), '⚠️ 回执里的围栏已不含 script —— 回的是净化后的源码');
+check(widget.stripCode.includes('rect'), '剔除 script 后图元仍在');
+
+// 只剩外壳、没有可绘制内容时**会通过**：sanitizeSvg 的「还剩东西吗」只验根 <svg> 标签在不在，
+// 标签在就算过，于是空图会被放行、渲染成一个空白框。这是净化器既有的宽松处，
+// 不是 show_widget 引入的。工具刻意不复刻这条判断 —— 它的价值恰恰来自「与渲染层同一个函数」，
+// 这里额外收紧就会与渲染结果分叉。记在这里是为了别把它当成新引入的回归。
+check(
+  widget.emptyRes.stage === 'ok' && /<svg/.test(widget.emptyCode) && !/rect|circle|path/.test(widget.emptyCode),
+  '⚠️ 只剩空壳时也会通过（净化器只看根标签）—— 已知宽松处，工具不额外收紧',
+);
+
+// 真正会被拒的两类
+check(widget.rejectRes.stage === 'reject', `缺 <svg> 外壳被拒（${widget.rejectRes.text.slice(0, 30)}…）`);
+check(/以 <svg 开头/.test(widget.rejectRes.text), '缺外壳的归因可执行');
+check(widget.extRes.stage === 'reject', '外链资源被拒');
+check(/外部资源/.test(widget.extRes.text), '外链的归因不是「脚本」而是「外部资源」');
+check(!widget.extRes.text.includes('evil.example'), '拒绝回执不回显源码（避免污染上下文）');
+
 await browser.close();
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}`);
 process.exit(failed === 0 ? 0 : 1);

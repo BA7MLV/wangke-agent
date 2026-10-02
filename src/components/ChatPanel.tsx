@@ -888,6 +888,7 @@ export default function ChatPanel({
               if (name === 'get_material_range') hint = '正在查看材料原文…';
               if (name === 'list_frames') hint = '正在查看课程画面…';
               if (name === 'present_quiz') hint = '正在出题…';
+              if (name === 'show_widget') hint = '正在预检图形…';
               if (name === 'use_skill') hint = `正在加载技能：${args.name ?? ''}`;
               if (name === 'read_skill_reference') hint = '正在查阅参考文档…';
             } catch {

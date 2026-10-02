@@ -120,6 +120,10 @@ const META = {
   'test-study-log': { service: 'none', antd: false, timeout: 120 },
   // 主页进度条纯逻辑：材料的 null / 非法时长的 null / finished 优先于比例 / 1% 阈值两侧
   'test-video-progress': { service: 'none', antd: false, timeout: 120 },
+  // show_widget 的纯逻辑：入参校验 + 两条回执文案。守住「拒绝时必须给出可执行的改法」——
+  // 净化层的报错原文（已阻止渲染）对模型没有可操作性，那这工具就只是一块会说「不行」的牌子。
+  // 「它是否真的走了渲染层同一个净化函数」由 probe-svg-sanitize 守（要真浏览器）。
+  'test-widget': { service: 'none', antd: false, timeout: 120 },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
