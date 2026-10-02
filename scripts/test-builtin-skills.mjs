@@ -117,8 +117,11 @@ test('「公考申论讲义」覆盖五类题型与广东考情、含大作文�
   }
 });
 
-test('注入预算：写作+版式 ≤4000 字，单个 skill ≤3000 字（总预算 6000 内留给学科）', () => {
-  for (const s of skills) assert.ok(s.body.length <= 3000, `${s.name} 正文 ${s.body.length} 字超 3000`);
+test('注入预算：写作+版式 ≤4000 字，单个 skill ≤10000 字', () => {
+  // 单个 10000 是**资产层**的上限：正文允许写长（分章节、带完整配方与示例）。
+  // 注意它与 store.ts 的 SKILL_BLOCK_BUDGET（6000）是两回事 ——
+  // 那个是讲义路由注入时的运行时 slice，只有走讲义路由的技能会被它截断。
+  for (const s of skills) assert.ok(s.body.length <= 10000, `${s.name} 正文 ${s.body.length} 字超 10000`);
   const core = skills.filter((x) => ['公文讲义写作', '公文版式规格'].includes(x.name));
   const total = core.reduce((n, x) => n + x.body.length, 0);
   assert.ok(total <= 4000, `核心两个 skill 共 ${total} 字超 4000`);
