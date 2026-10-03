@@ -15,6 +15,7 @@
     "@material-symbols/svg-400": "^0.47.2",
     "@ricky0123/vad-web": "^0.0.30",
     "@vidstack/react": "^1.15.6",
+    "chart.js": "^4.5.1",
     "dayjs": "^1.11.23",
     "dexie": "^4.4.5",
     "docx": "^8.5.0",

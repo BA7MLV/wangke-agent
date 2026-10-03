@@ -37,6 +37,62 @@ test('接受 svg 与 mermaid 两种 format', () => {
   }
 });
 
+// ── html 形态：mockup / interactive / chart 都走它 ────────────────────────────
+test('html 形态：接受片段，libs 白名单外的被拒', () => {
+  const ok = validateWidgetArgs({ format: 'html', code: '<div id="c">hi</div>' });
+  assert.ok(ok.ok);
+  assert.equal(ok.args.libs, undefined, '没传 libs 就不该有该字段');
+
+  const withLib = validateWidgetArgs({ format: 'html', code: '<canvas></canvas>', libs: ['chart.js'] });
+  assert.ok(withLib.ok);
+  assert.deepEqual(withLib.args.libs, ['chart.js']);
+
+  // 重复声明去重，避免把 200KB 的库内联两遍
+  const dup = validateWidgetArgs({ format: 'html', code: '<b/>', libs: ['chart.js', 'chart.js'] });
+  assert.deepEqual(dup.args.libs, ['chart.js']);
+
+  const bad = validateWidgetArgs({ format: 'html', code: '<b/>', libs: ['https://evil.example/x.js'] });
+  assert.ok(!bad.ok && /libs/.test(bad.error), '任意外链不得被当作库内联');
+});
+
+test('html 形态：拒绝文档外壳（外壳由宿主提供）', () => {
+  for (const code of [
+    '<html><body>x</body></html>',
+    '<!DOCTYPE html><p>x</p>',
+    '<head><style>a{}</style></head>',
+    '<body>x</body>',
+  ]) {
+    const v = validateWidgetArgs({ format: 'html', code });
+    assert.ok(!v.ok, `应拒绝：${code}`);
+    assert.match(v.error, /片段/);
+  }
+});
+
+test('html 形态：拒绝外链脚本与外链资源（网络已禁用，要给可执行的解释）', () => {
+  const s = validateWidgetArgs({ format: 'html', code: '<script src="https://cdn.example/x.js"></script>' });
+  assert.ok(!s.ok && /libs/.test(s.error), '要提示改用 libs，而不是只说「不行」');
+
+  const h = validateWidgetArgs({ format: 'html', code: '<img src="https://evil.example/x.png">' });
+  assert.ok(!h.ok && /外部/.test(h.error));
+
+  const l = validateWidgetArgs({ format: 'html', code: '<link href="https://evil.example/x.css" rel="stylesheet">' });
+  assert.ok(!l.ok && /外部/.test(l.error));
+});
+
+test('html 形态：超长被拒；内联 script 不误伤', () => {
+  const v = validateWidgetArgs({ format: 'html', code: 'x'.repeat(60_001) });
+  assert.ok(!v.ok && /60000/.test(v.error));
+  const ok = validateWidgetArgs({ format: 'html', code: "<div></div><script>var a=1</scr" + 'ipt>' });
+  assert.ok(ok.ok, '内联 script 应放行');
+});
+
+test('html 回执：说明「已渲染、在下方」，并劝阻把 HTML 贴进正文', () => {
+  const t = widgetAcceptedText({ format: 'html', code: '<div/>' });
+  assert.match(t, /已渲染/);
+  assert.match(t, /不要再把 HTML 贴进正文/);
+  assert.ok(!t.includes('```'), 'html 回执不该含围栏（那会被当源码显示）');
+});
+
 test('拒绝非法 format / 空 code / 超长 code', () => {
   const bad1 = validateWidgetArgs({ format: 'dot', code: SVG });
   assert.ok(!bad1.ok && /format/.test(bad1.error));

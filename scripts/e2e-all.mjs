@@ -258,6 +258,10 @@ const META = {
   'probe-mermaid': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '缺失 public/probe-mermaid.html，页面 404，无法加载' },
   // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
   'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
+  // 沙箱 widget 的隔离边界：Node 里没有同源策略 / sandbox / CSP，
+  // 「widget 里的脚本到底能碰到什么」这个问题只有真浏览器能作证。
+  // 证明的是**碰不到什么**：不透明源读不到父页面、CSP 断掉一切外发、桥接只有两个能力。
+  'probe-widget-sandbox': { service: 'dev', antd: false, diagnostic: true, timeout: 180 },
 };
 
 /**

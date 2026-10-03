@@ -16,7 +16,8 @@ import { isSkillAllowed } from '../skills/scope';
 // 两处净化逻辑一旦分叉，工具就成了摆设。
 import { sanitizeSvg } from '../components/mermaid/svgRender';
 import { renderMermaid } from '../components/mermaid/mermaidRender';
-import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } from './widget';
+import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText, MAX_WIDGET_DOC } from './widget';
+import { buildWidgetDocument, type WidgetPayload } from './widgetRuntime';
 
 /** 一次范围取数的单元数上限：防止模型一次要 200 页把上下文吃光 */
 const MAX_RANGE_UNITS = 20;
@@ -194,15 +195,24 @@ const SHOW_WIDGET_TOOL: ToolDef = {
       properties: {
         format: {
           type: 'string',
-          enum: ['mermaid', 'svg'],
+          enum: ['mermaid', 'svg', 'html'],
           description:
-            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形、坐标轴这类 mermaid 表达不了的用 svg',
+            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形这类 mermaid 表达不了的用 svg；' +
+            '界面原型（mockup）、带控件的交互图（滑块、筛选、stepper）、以及数据图表（柱/折/饼）用 html',
         },
         code: {
           type: 'string',
           description:
             '完整源码，不要包围栏、不要加解释文字。svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
-            '只画静态图形，不要 script / 事件属性 / foreignObject / 外部图片或外链',
+            'html 只给**片段**（不要 <html>/<head>/<body>），可以带内联 <script>，' +
+            '但不能引外部脚本或外链资源（网络已禁用）',
+        },
+        libs: {
+          type: 'array',
+          items: { type: 'string', enum: ['chart.js'] },
+          description:
+            '仅 html：需要宿主内联的库。画图表时填 ["chart.js"]，之后直接用全局 Chart，不要自己引 CDN。' +
+            'svg / mermaid 不需要这个参数',
         },
       },
       required: ['format', 'code'],
@@ -266,6 +276,13 @@ export interface ToolExecutorOptions {
   /** present_quiz 校验通过后的题卡透传回调 */
   onQuiz?: (quiz: QuizData) => void;
   /**
+   * show_widget 的 html 形态校验通过后的图形透传回调。
+   *
+   * 只有 html 走这里：svg / mermaid 仍然由模型自己把围栏放进正文，
+   * 在正文里按讲解顺序定位。html 是独立卡片，放在正文末尾（与 quiz / ask / folderPlan 同位）。
+   */
+  onWidget?: (w: WidgetPayload) => void;
+  /**
    * 会话级技能白名单（问答面板的「技能范围」限定）。
    *
    * ⚠️ **`undefined` 与 `[]` 不同**：`undefined` = 不限制；`[]` = 全部拒绝。
@@ -277,7 +294,7 @@ export interface ToolExecutorOptions {
 
 /** 构造绑定到某个课程的工具执行器；`kind` 决定走字幕检索还是材料检索 */
 export function createToolExecutor(courseId: string, opts: ToolExecutorOptions = {}) {
-  const { kind, onQuiz, allowedSkillIds } = opts;
+  const { kind, onQuiz, onWidget, allowedSkillIds } = opts;
 
   /**
    * 技能是否在本次会话的可选范围内。
@@ -390,15 +407,24 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
           // 回执里的围栏就是**最终会渲染出来的那一份**，模型与用户看到的完全一致。
           return widgetAcceptedText({ format: 'svg', code: sanitizeSvg(v.args.code) });
         }
-        // mermaid 只能回源码：renderMermaid 的产物是 SVG 字符串，不是可回填的 mermaid 文本。
-        // parse 失败会抛，成功即语法有效，所以这里「回原样」是安全的。
-        await renderMermaid(v.args.code);
+        if (v.args.format === 'mermaid') {
+          // mermaid 只能回源码：renderMermaid 的产物是 SVG 字符串，不是可回填的 mermaid 文本。
+          // parse 失败会抛，成功即语法有效，所以这里「回原样」是安全的。
+          await renderMermaid(v.args.code);
+          return widgetAcceptedText(v.args);
+        }
+        // html：**先确认文档能拼出来**（内联库缺失、源码过大等在这里就暴露），
+        // 成功后再交给渲染层上屏。渲染层是唯一能执行它的地方。
+        const doc = await buildWidgetDocument({ html: v.args.code, libs: v.args.libs });
+        if (doc.length > MAX_WIDGET_DOC)
+          throw new Error(`拼好的文档过大（${doc.length} 字，上限 ${MAX_WIDGET_DOC}）。拆成几张图，或去掉不需要的内联库`);
+        onWidget?.({ html: v.args.code, libs: v.args.libs });
+        return widgetAcceptedText(v.args);
       } catch (e) {
         // 净化 / 解析失败**不回退源码**：这里是工具调用，返回的是给模型看的诊断信息，
         // 模型据此改完重试。真到渲染那步失败才是「静默降级成显示源码」，也正是这里要挡掉的。
         return widgetRejectedText(e);
       }
-      return widgetAcceptedText(v.args);
     }
     return `未知工具：${name}`;
   };

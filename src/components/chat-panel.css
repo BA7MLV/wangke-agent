@@ -363,3 +363,33 @@
   flex: none;
   color: rgb(var(--mdui-color-tertiary));
 }
+
+/* ── 沙箱 widget（show_widget 的 html 形态）────────────────────────────────
+   外壳刻意保持极简：图形自己的配色与排版都在 iframe 里，外层只负责定位与错误态。
+   不设背景色 —— 与 SVG 那条一致，底色交给页面，widget 自身透明。 */
+.widget-block {
+  margin: 8px 0;
+  border-radius: var(--mdui-shape-corner-medium);
+  overflow: hidden;
+}
+
+.widget-block__frame {
+  display: block;
+  width: 100%;
+  border: 0;
+  transition: height 160ms ease;
+}
+
+.widget-block--loading,
+.widget-block--error {
+  padding: 12px;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  background: rgb(var(--mdui-color-surface-container-high));
+  border-radius: var(--mdui-shape-corner-small);
+}
+
+.widget-block--error {
+  color: rgb(var(--mdui-color-error));
+  background: rgb(var(--mdui-color-error-container));
+}

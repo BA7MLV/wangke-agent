@@ -23,32 +23,85 @@
  * 唯一的载体就是围栏。所以这个工具刻意不建第二条渲染通道。
  */
 
-export type WidgetFormat = 'svg' | 'mermaid';
+import type { WidgetLib } from './widgetRuntime';
+
+export type WidgetFormat = 'svg' | 'mermaid' | 'html';
 
 export interface WidgetArgs {
   format: WidgetFormat;
   code: string;
+  /** html 形态才用：声明要宿主内联的库 */
+  libs?: WidgetLib[];
 }
 
 export type WidgetArgsValidation = { ok: true; args: WidgetArgs } | { ok: false; error: string };
 
 /** 源码长度上限：超了多半是模型把整篇正文塞进来了，渲染出来也没有意义 */
 const MAX_CODE = 20_000;
+/**
+ * 拼好文档后的体积上限。
+ * 唯一的大头是内联的 Chart.js（UMD 约 200KB）—— 所以卡在「文档总长」而不是分别卡每个库：
+ * 声明了不需要的库就该被这个上限挡住，而不是白扛 200KB 再渲染。
+ */
+export const MAX_WIDGET_DOC = 320_000;
+/** html 形态的独立上限：它要连 DOM 带脚本，比 SVG 大得多，但仍要卡住 */
+const MAX_HTML = 60_000;
 
 /** 校验 show_widget 的入参。任何字段非法都返回**可直接照着改**的错误描述 */
 export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
-  const a = (raw as { format?: unknown; code?: unknown } | null) ?? {};
+  const a = (raw as { format?: unknown; code?: unknown; libs?: unknown } | null) ?? {};
 
   const format = a.format;
-  if (format !== 'svg' && format !== 'mermaid')
-    return { ok: false, error: 'format 必须是 "svg" 或 "mermaid"' };
+  if (format !== 'svg' && format !== 'mermaid' && format !== 'html')
+    return { ok: false, error: 'format 必须是 "svg"、"mermaid" 或 "html"' };
 
   const code = typeof a.code === 'string' ? a.code.trim() : '';
   if (!code) return { ok: false, error: 'code 不能为空' };
+
+  if (format === 'html') {
+    if (code.length > MAX_HTML)
+      return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_HTML}）。只画图，不要把正文塞进来` };
+    // 文档外壳由宿主的 runtime 统一提供。模型自己套一层会让 CSP 与桥接脚本的注入位置失控，
+    // 所以这里直接拒掉并说清正确写法，而不是默默剥掉。
+    if (/<\s*(?:!doctype|html|head|body)\b/i.test(code))
+      return {
+        ok: false,
+        error: 'html 形态只给**片段**：不要写 <html>/<head>/<body>/DOCTYPE，外壳由宿主提供',
+      };
+    // 外链一律不行：CSP 已经断了网络，这里再挡一层是为了给出可执行的解释，
+    // 而不是让模型对着一个「空白图 + connect-src 报错」瞎猜。
+    if (/<\s*script[^>]+src\s*=/i.test(code))
+      return { ok: false, error: '不要用 <script src> 引外部脚本：外部网络已被禁用。需要库时改用 libs 参数（如 libs: ["chart.js"]）' };
+    if (/(?:src|href)\s*=\s*["']\s*(?:https?:)?\/\//i.test(code))
+      return { ok: false, error: '不要引用外部资源（http(s) 开头的 src/href）：外部网络已被禁用' };
+
+    const libs = normalizeLibs(a.libs);
+    if (!libs.ok) return libs;
+    return { ok: true, args: { format, code, libs: libs.libs } };
+  }
+
   if (code.length > MAX_CODE)
     return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_CODE}）。只画图，不要把正文塞进来` };
 
   return { ok: true, args: { format, code } };
+}
+
+const KNOWN_LIBS: readonly WidgetLib[] = ['chart.js'];
+
+/** libs 只认白名单里的名字：它决定宿主往沙箱里内联哪份源码，不是模型能自选的路径 */
+function normalizeLibs(raw: unknown): { ok: true; libs?: WidgetLib[] } | { ok: false; error: string } {
+  if (raw == null) return { ok: true };
+  if (!Array.isArray(raw)) return { ok: false, error: 'libs 必须是数组，可选值：["chart.js"]' };
+  const out: WidgetLib[] = [];
+  for (const n of raw) {
+    if (typeof n !== 'string' || !KNOWN_LIBS.includes(n as WidgetLib))
+      return {
+        ok: false,
+        error: `libs 只能取 ${KNOWN_LIBS.map((k) => `"${k}"`).join(' / ')}（或省略），收到：${JSON.stringify(n)}`,
+      };
+    if (!out.includes(n as WidgetLib)) out.push(n as WidgetLib);
+  }
+  return { ok: true, libs: out.length ? out : undefined };
 }
 
 /**
@@ -62,6 +115,14 @@ export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
  * 它只是预检，**图还没上屏**；以及围栏要**放在讲解中间**、前后各配一句说明。
  */
 export function widgetAcceptedText(args: WidgetArgs): string {
+  // html 形态**不走围栏**：它渲染成独立的图形卡片，围栏会被当成源码显示。
+  if (args.format === 'html') {
+    return [
+      '图形已渲染。**它已经在回答下方显示了**，不要再把 HTML 贴进正文 —— 那样只会显示成一坨源码。',
+      '请只用一两句话说明这张图在讲什么（结论、关键取值、以及用户该看哪里）；',
+      '交互控件的说明也写在正文里，不要塞进图里。',
+    ].join('\n');
+  }
   return [
     `预检通过（${args.format}）。**图还没有上屏** —— 请把下面这段围栏原样放进你的回答正文，`,
     '放在它要解释的那句话旁边，前后各用一句话说明，不要只丢一张图，也不要在正文外重复解释一遍。',

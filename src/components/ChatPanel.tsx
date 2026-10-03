@@ -26,6 +26,9 @@ import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
+import WidgetBlock from './WidgetBlock';
+import { useResolvedDark } from '../ui/theme';
+import type { WidgetPayload } from '../harness/widgetRuntime';
 import './chat-panel.css';
 
 interface Props {
@@ -57,6 +60,8 @@ interface ChatMsg {
   hint?: string;
   /** 答题卡（present_quiz 工具产出） */
   quiz?: QuizState;
+  /** 沙箱图形卡（show_widget 的 html 形态产出） */
+  widget?: WidgetPayload;
   /** 落库后的 chats 行 id（作答状态回写用） */
   rowId?: number;
   streaming?: boolean;
@@ -269,6 +274,9 @@ export default function ChatPanel({
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
   const updateSettings = useSettings((s) => s.update);
+  // 沙箱 widget 是独立文档，拿不到 mdui 的 CSS 令牌，所以明暗得由宿主算完显式传进去。
+  // （`useResolvedDark` 原先只服务 antd，这里是第二个消费者 —— 理由同为「明暗是 JS 算的」。）
+  const widgetDark = useResolvedDark(useSettings((s) => s.theme));
   // 消息流滚动容器（原 Bubble.List 的 ref 只暴露 scrollTo，现在自己持有真实元素）
   const listRef = useRef<HTMLDivElement | null>(null);
   // 手机端：思考开关上移到会话行，第二行只留 ModelPicker（+思考深度），省一行高度
@@ -506,6 +514,7 @@ export default function ChatPanel({
           images: r.images,
           reasoning: r.reasoning,
           quiz: r.quiz,
+          widget: r.widget,
           rowId: r.id,
         })));
       }
@@ -849,12 +858,19 @@ export default function ChatPanel({
 
       // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
       let quizState: QuizState | undefined;
+      // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
+      // 与「一段回答最多一张图」的出图规范一致。
+      let widgetState: WidgetPayload | undefined;
       const executeTool = createToolExecutor(videoId, {
         // 材料：kind 决定走 search_material；视频：undefined 走 search_transcript
         kind: materialKind,
         onQuiz: (data) => {
           quizState = { data, picks: data.questions.map(() => -1) };
           patchAi({ quiz: quizState });
+        },
+        onWidget: (w) => {
+          widgetState = w;
+          patchAi({ widget: w });
         },
       });
       await runAgentLoop(
@@ -907,7 +923,7 @@ export default function ChatPanel({
       );
 
       const finalAnswer = answer.trim();
-      if (finalAnswer || quizState) {
+      if (finalAnswer || quizState || widgetState) {
         patchAi({ streaming: false, hint: undefined });
         const rowId = (await db.chats.add({
           videoId,
@@ -917,6 +933,7 @@ export default function ChatPanel({
           createdAt: Date.now(),
           reasoning: reasoning || undefined,
           ...(quizState ? { quiz: quizState } : {}),
+          ...(widgetState ? { widget: widgetState } : {}),
         })) as number;
         patchAi({ rowId });
       } else {
@@ -1010,6 +1027,7 @@ export default function ChatPanel({
     lastMsg?.reasoning?.length ?? 0,
     lastMsg?.hint ?? '',
     lastMsg?.quiz ? 1 : 0,
+    lastMsg?.widget ? 1 : 0,
   ].join('|');
   useEffect(() => {
     const id = requestAnimationFrame(() => {
@@ -1192,6 +1210,13 @@ export default function ChatPanel({
                           onSeek={seekTo}
                           // 材料没有播放器：解析里的时间戳不 linkify，免得出现点了没反应的死链
                           seekable={!isMaterial}
+                        />
+                      )}
+                      {m.widget && (
+                        <WidgetBlock
+                          payload={m.widget}
+                          dark={widgetDark}
+                          onPrompt={(t) => void send(t)}
                         />
                       )}
                     </>

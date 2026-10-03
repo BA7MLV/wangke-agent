@@ -1,5 +1,6 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
+import type { WidgetPayload } from '../harness/widgetRuntime';
 import type { AskUserData } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
@@ -244,6 +245,13 @@ export interface ChatRow {
   ask?: AskUserState;
   /** 目录整理方案卡（非索引字段，无需升级版本）。`applied`：0=待确认 1=已落库 2=用户取消 */
   folderPlan?: FolderPlanState;
+  /**
+   * 沙箱图形卡（非索引字段，无需升级版本）：show_widget 的 `html` 形态产出。
+   *
+   * 只存**载荷**不存拼好的文档：内联的库（Chart.js 有 200KB）与 CSP 外壳每次重建即可，
+   * 存进库里会让每条历史消息凭空多出几百 KB。
+   */
+  widget?: WidgetPayload;
 }
 
 /** 提问卡状态（`ChatRow.ask`）：题面与选项 + 用户的选择 */
