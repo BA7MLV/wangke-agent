@@ -664,6 +664,8 @@ export default function ChatPanel({
      */
     let lastNarration = '';
     let lastHint = '';
+    /** 实际跑过的轮数（`onRoundStart` 记的）：兜底文案只能印真实值，不能拿设置里的上限顶 */
+    let roundsRan = 0;
     /**
      * 护栏停下的情况。用数组而不是 `let`：赋值在回调里，TS 在读它的地方仍会当成
      * `null`（`x?.granted` 会报「property does not exist on never」），数组下标不做这种收窄。
@@ -892,6 +894,7 @@ export default function ChatPanel({
             // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
             if (answer.trim()) lastNarration = answer.trim();
             answer = '';
+            roundsRan++;
             patchAi({ content: '', hint: undefined });
           },
           onToolStart: (name, argsJson) => {
@@ -944,10 +947,12 @@ export default function ChatPanel({
           streaming: false,
           hint: undefined,
           content: noAnswerNotice({
-            reason: closeOut?.reason ?? 'rounds',
-            rounds: closeOut?.rounds ?? settings.agentRounds,
+            // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
+            // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
+            reason: closeOut?.reason ?? 'empty',
+            rounds: closeOut?.rounds ?? roundsRan,
             ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
-            requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
+            requestedTools: closeOut?.requestedTools ?? [],
             narration: lastNarration,
             hint: lastHint,
           }),

@@ -591,7 +591,11 @@ export default function Settings() {
         {modelField('asrModel', '语音识别（ASR）')}
         {modelField('llmModel', '文本生成（讲义 / 问答）')}
         {modelField('visionModel', '视觉（截图理解）')}
-        <Field label="上下文窗口（tokens）" hint={metaHint} testId="field-context-window">
+        <Field
+          label="上下文窗口（tokens）"
+          hint={`${metaHint}。这个值用来裁历史；每轮回答的输出上限另按模型真实能力给（取本值与模型实际窗口里更大的那个），所以这里填得偏小不会浪费模型的输出额度`}
+          testId="field-context-window"
+        >
           <mdui-text-field
             data-testid="context-window"
             aria-label="上下文窗口，单位 tokens"
@@ -607,7 +611,7 @@ export default function Settings() {
         </Field>
         <Field
           label="问答检索轮次上限"
-          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token。选「不限」也有三道护栏兜着 —— 同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、界面上随时可以按停止生成"
+          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token。选「不限」也有几道护栏兜着 —— 同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、模型空回复会被拉回来重说一遍、界面上随时可以按停止生成"
           testId="field-agent-rounds"
         >
           <mdui-segmented-button-group

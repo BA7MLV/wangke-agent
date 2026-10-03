@@ -27,6 +27,37 @@ export function thinkingParams(model: string, effort: ReasoningEffort) {
     : { enable_thinking: true, thinking_budget: BUDGET_BY_EFFORT[effort] };
 }
 
+/**
+ * 模型单次输出的上限（tokens），即 `max_tokens` 的天花板；元数据缺失时回退到 8192。
+ *
+ * 与 `contextWindow` 不是一回事：这个只管**输出**那一半，窗口是输入+输出的总容量。
+ * 超了它网关直接拒，所以每轮算输出预算时拿它当上限。
+ *
+ * 实测在架模型（models.dev）：DeepSeek-V4-Pro 384k、Kimi-K3 / GLM-5.2 262k、
+ * Qwen3.5-122B 64k，但也有 Qwen2.5-72B 只有 4k —— **所以必须逐模型取，不能取全局最大**。
+ */
+export function outputLimitOf(id: string): number {
+  return getModelMeta(id)?.output ?? 8192;
+}
+
+/**
+ * 算输出预算时该用的窗口：**取设置值与模型真实窗口里更大的那个**。
+ *
+ * 为什么不用设置值：`contextWindow` 是给历史裁剪用的**保守估值**（默认 131072），
+ * 用户不一定改过，而模型真实窗口可能是 1M（DeepSeek-V4-Pro / Kimi-K3 / GLM-5.2）。
+ * 拿估值当上限会让 `max_tokens` 被压到几万，白白浪费模型能力 ——
+ * 而 `max_tokens` 是天花板不是预留，给足不花钱。
+ *
+ * 取 max 而不是无条件信元数据：设置值可能被用户**调大**过（换过窗口更大的服务），
+ * 那是显式意图，不能被元数据拉回去。两者都缺时返回 null，交给调用方按未知处理。
+ */
+export function effectiveContextWindow(id: string, configured?: number | null): number | null {
+  const meta = getModelMeta(id)?.context ?? null;
+  const conf = configured != null && configured > 0 ? configured : null;
+  if (meta == null && conf == null) return null;
+  return Math.max(meta ?? 0, conf ?? 0);
+}
+
 /** 启发式上下文窗口对照表（tokens），仅作元数据缺失时的兜底，未知 131072 */
 const WINDOW_TABLE: [RegExp, number][] = [
   [/deepseek-v4/i, 1000000],

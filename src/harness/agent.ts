@@ -1,7 +1,7 @@
 import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
-import { thinkingParams } from '../api/modelCaps';
+import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
 import { getSettings } from '../store/settings';
-import { CallLedger, resolveMaxRounds } from './loopGuard';
+import { CallLedger, answerReserve, resolveMaxRounds, roundMaxTokens } from './loopGuard';
 import { estimateTokens } from './context';
 
 /**
@@ -11,20 +11,21 @@ import { estimateTokens } from './context';
  *
  * ## 循环什么时候停
  *
- * **不是「数够 N 轮就停」**。轮数只是成本闸，真正会出事的是另外两件事，各有各的护栏：
+ * **不是「数够 N 轮就停」**。轮数只是成本闸，真正会出事的是另外几件事，各有各的护栏：
  *
  * | 停因 | 触发条件 | 为什么必须有 |
  * |---|---|---|
  * | `rounds` | 轮数到上限（`maxRounds` 可传 `Infinity` = 设置里选「不限」） | 成本与延迟；用户显式要的那道闸 |
  * | `loop` | 同一工具 + **同一参数**在本轮里第二次出现 | 模型没有内在的「够了」判断，检索不满意会换说法再查；而完全相同的一遍拿到的结果必然一模一样，循环不会自己结束 |
  * | `tokens` | 工具结果累积 token 超预算 | `out` 只增不减（历史裁剪只在**每轮对话开始时**做一次），不设闸就会撞上下文窗口报 400 |
+ * | `empty` | 这一轮**既没有正文也没有工具调用** | 它长得像「正常收工」，实际什么都没说；当成正常结束 = 界面只剩一句兜底文案，且那文案只能靠猜（实测印出「0 次工具调用，已到轮次上限」，而轮次闸根本没触发） |
  * | `aborted` | 调用方 abort（停止生成按钮） | 用户必须有刹车；不经这里，调用方的 `signal` 直接抛 AbortError |
  *
- * 三种非人为停止都会先走**强制收尾**（无 tools 的一轮 + 一次有界宽限），保证不留空气泡。
+ * 四种非人为停止都会先走**强制收尾**（无 tools 的一轮 + 一次有界宽限），保证不留空气泡。
  */
 
 /** 循环为什么停（`aborted` 由调用方的 signal 自行处理，不走这里） */
-export type StopReason = 'rounds' | 'loop' | 'tokens';
+export type StopReason = 'rounds' | 'loop' | 'tokens' | 'empty';
 
 export interface AgentStopInfo {
   reason: StopReason;
@@ -64,9 +65,6 @@ export interface AgentCallbacks {
 
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>;
 
-/** 输出预留（tokens）：与提问/出题两条链路沿用同一个值 */
-const OUTPUT_RESERVE = 4096;
-
 export async function runAgentLoop(
   messages: ChatMessage[],
   tools: ToolDef[],
@@ -82,18 +80,36 @@ export async function runAgentLoop(
   /**
    * 护栏 2：工具结果的 token 预算。`out` 只增不减，所以**真正防 400 的是这道闸**，
    * 轮数不是 ——「不限轮次」时它依然是硬闸（没有它，无限轮次迟早撞上下文窗口）。
+   *
+   * 预留走 `answerReserve()`（窗口的 1/4）而不是写死 4096：`max_tokens` 已经开到很大，
+   * 留 4096 等于闸放行时回答只剩几百 token —— 那是我们自己把答案挤没了。
    */
   const tokenBudget = Math.max(
     2000,
     settings.contextWindow -
       messages.reduce((n, m) => n + estimateTokens(textOf(m)), 0) -
-      OUTPUT_RESERVE,
+      answerReserve(settings.contextWindow),
   );
   let toolTokens = 0;
   /** 停止原因（不含「用户按停」：那由 signal 抛 AbortError，调用方自己处理） */
   let stopped: { reason: StopReason; rounds: number; detail?: string } | null = null;
   /** 最后一个「还在要工具」的消息：收尾时用它来解释模型想干什么 */
   let msg0: ChatMessage | null = null;
+
+  /**
+   * 本轮的 `max_tokens`：**给到模型的输出上限，但每轮重算**。
+   *
+   * 窗口用 `effectiveContextWindow()` 而不是设置值 —— 设置里的 `contextWindow` 是
+   * 给历史裁剪用的保守估值（默认 131072），而模型真实窗口可能 1M。拿估值当上限，
+   * DeepSeek-V4-Pro 的 384k 输出会被压到十几万，白扔能力（而 `max_tokens` 是天花板，
+   * 给足不花钱）。每轮重算是因为 `out` 只增不减，输入变大则余量变小。
+   */
+  const budgetFor = () =>
+    roundMaxTokens(
+      outputLimitOf(settings.llmModel),
+      effectiveContextWindow(settings.llmModel, settings.contextWindow),
+      out.reduce((n, m) => n + estimateTokens(textOf(m)), 0),
+    );
 
   for (let round = 0; round < maxRounds; round++) {
     cb.onRoundStart?.(round);
@@ -104,7 +120,7 @@ export async function runAgentLoop(
         messages: out,
         tools,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: budgetFor(),
         signal: cb.signal,
         ...thinking,
       },
@@ -114,7 +130,15 @@ export async function runAgentLoop(
     );
     out.push(msg);
 
-    if (!msg.tool_calls || msg.tool_calls.length === 0) return out;
+    if (!msg.tool_calls || msg.tool_calls.length === 0) {
+      // 有正文 = 模型真的答完了，正常收工
+      if (textOf(msg).trim()) return out;
+      // 空正文 + 无工具调用：它**什么都没说**。不能当成正常结束 —— 那会让调用层只看到
+      // 一条空回答，兜底文案还只能靠猜（实测文案写成「用完了 0 次工具调用，已到轮次上限」，
+      // 而那一刻轮次闸根本没触发过）。走强制收尾：宽限轮会明确要求它用中文说人话。
+      stopped = { reason: 'empty', rounds: round + 1 };
+      break;
+    }
 
     // 记下「最后一轮仍要调什么」，收尾时用来给用户解释（见 onStop）
     msg0 = msg;
@@ -171,7 +195,7 @@ export async function runAgentLoop(
         model: settings.llmModel,
         messages: out,
         temperature: 0.3,
-        max_tokens: 2048,
+        max_tokens: budgetFor(),
         signal: cb.signal,
         ...thinking,
       },
@@ -213,7 +237,9 @@ function wrapUpNudge(reason: StopReason): string {
       ? '你刚才在重复同一个调用（同样的工具、一样的参数），再调也不会有新结果。'
       : reason === 'tokens'
         ? '你这一轮已经读到的材料接近模型能接受的上下文长度了。'
-        : '这一轮的工具调用次数已经用完。';
+        : reason === 'empty'
+          ? '你上一条回复既没有正文也没有调用任何工具，等于什么都没说。'
+          : '这一轮的检索轮次已经用完。';
   return `（系统提示：${why}现在不能再调用任何工具。请**只用中文文字**回答：你已经查到了什么、结论是什么、` +
     '用户接下来该做什么。不要再请求工具。';
 }
@@ -236,26 +262,37 @@ export interface NoAnswerContext {
 /**
  * 「模型一个字都没说」的兜底文案。
  *
- * 三条要求：**说清是哪道闸停下��**（轮次用完 / 在重复调用 / 材料读太多）、**说清已经做了什么**
- * （旁白 / 最后在查什么）、**给出下一步**（换个问法、说「继续」，或去设置调那道闸）。
- * 只丢一句「（未获得回答）」等于把跑了十几轮的工具调用变成用户眼里的「没反应」。
+ * 三条要求：**说清是哪道闸停下**（轮次用完 / 在重复调用 / 材料读太多 / 这一轮啥也没回）、
+ * **说清已经做了什么**（旁白 / 最后在查什么）、**给出下一步**（换个问法、说「继续」，或去设置调那道闸）。
+ * 只丢一句「（未获得回答）」等于把跑了几轮的工具调用变成用户眼里的「没反应」。
+ *
+ * **`rounds` 必须是真实跑过的轮数**，不能拿设置值顶 —— 「不限」档的设置值是哨兵 0，
+ * 印出来就成了「用完了 0 次工具调用，已到轮次上限」，而轮次闸那一刻根本没触发过。
  */
 export function noAnswerNotice(ctx: NoAnswerContext): string {
-  const wanted = ctx.requestedTools.length > 0 ? `，助手最后还想调用「${ctx.requestedTools.join('」「')}」` : '';
+  const ran = Math.max(1, Math.round(ctx.rounds));
+  const wanted = ctx.requestedTools.length > 0 ? `，它最后一步想调用「${ctx.requestedTools.join('」「')}」` : '';
   const head =
     ctx.reason === 'loop'
       ? `助手在第 ${ctx.rounds} 轮开始重复调用「${ctx.detail ?? '同一个工具'}」（同样的参数），再查一遍结果也不会变，所以我先把它停下来${wanted}，但它没能说出一句总结。`
       : ctx.reason === 'tokens'
-        ? `这一轮已经读了约 ${ctx.detail ?? '很多'} tokens 的材料，接近模型能接受的上下文长度，我先让它收尾${wanted}，但它没能说出一句总结。`
-        : `这一轮用完了 ${ctx.rounds} 次工具调用${wanted}，已经到轮次上限，所以没能给出回答。`;
+        ? `助手已经读了约 ${ctx.detail ?? '很多'} tokens 的材料，接近模型能接受的上下文长度，我先让它收尾${wanted}，但它没能说出一句总结。`
+        : ctx.reason === 'empty'
+          ? `助手跑完 ${ran} 轮后返回了一条**空回复**（既没有正文，也没有再调工具）${wanted}。` +
+            '这种回复不是它没话说，而是这一轮没能吐出任何内容，所以我停下来让它重新组织语言，但没能拿到一句总结。'
+          : `助手检索了 ${ran} 轮${wanted}，已经到设置里的轮次上限，所以我让它收尾，但没能拿到一句总结。`;
   const lines = [head];
-  const progress = ctx.narration?.trim() || ctx.hint?.trim();
-  if (progress) lines.push('', `它最后说到：${progress}`);
+  // 旁白与工具提示分开说：把它们揉成一句「它最后说到：正在加载技能规范…」会误导 ——
+  // 后者是界面状态提示，不是模型说的话。
+  if (ctx.narration?.trim()) lines.push('', `它最后说到：${ctx.narration.trim()}`);
+  if (ctx.hint?.trim()) lines.push('', `它停在这里：${ctx.hint.trim()}`);
   lines.push(
     '',
     ctx.reason === 'loop'
       ? '换个说法或把问题说具体一点，通常就能让它继续查下去；也可以到设置里调大「问答 agent 检索轮次上限」。'
-      : '再说一句「继续」，我会接着上次的进度往下做；也可以到设置里调大「问答 agent 检索轮次上限」。',
+      : ctx.reason === 'empty'
+        ? '直接再问一次通常就能拿到回答（这类空回复是偶发的）；如果反复出现，把问题拆短一点再问，或换一个模型试试。'
+        : '再说一句「继续」，我会接着上次的进度往下做；也可以到设置里调大「问答 agent 检索轮次上限」。',
   );
   return lines.join('\n');
 }

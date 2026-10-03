@@ -254,6 +254,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      */
     let lastNarration = '';
     let lastHint = '';
+    /** 实际跑过的轮数（`onRoundStart` 记的）。兜底文案只能印真实值，不能拿设置里的上限顶 */
+    let roundsRan = 0;
     /**
      * 护栏停下的情况（见 agent.ts 的 onStop）。
      *
@@ -407,6 +409,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             // 轮次用尽而模型不吭声时，它是用户唯一能看到「它干了什么」的线索
             if (answer.trim()) lastNarration = answer.trim();
             answer = '';
+            roundsRan++;
             patchAi({ content: '', hint: undefined });
           },
           onToolStart: (name, argsJson) => {
@@ -422,10 +425,12 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       );
       const closeOut = stopped[stopped.length - 1];
       const finalAnswer = answer.trim() || noAnswerNotice({
-        reason: closeOut?.reason ?? 'rounds',
-        rounds: closeOut?.rounds ?? settings.agentRounds,
+        // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
+        // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
+        reason: closeOut?.reason ?? 'empty',
+        rounds: closeOut?.rounds ?? roundsRan,
         ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
-        requestedTools: closeOut?.granted ? [] : (closeOut?.requestedTools ?? []),
+        requestedTools: closeOut?.requestedTools ?? [],
         narration: lastNarration,
         hint: lastHint,
       });

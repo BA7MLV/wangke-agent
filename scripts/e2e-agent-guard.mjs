@@ -9,7 +9,9 @@
 //   1. 同一工具 + 同一参数重复调用 → 停，并说清「在重复调用 X」
 //   2. 换关键词的多轮检索 → 不该被当成打转（护栏不能误伤）
 //   3. 「不限」档（agentRounds = 0）→ 真的跑到第 9 轮以上，不被轮次闸拦住
-//   4. 停止生成按钮 → 点一下就停，已流出的内容保留 + 标「已停止生成」
+//   4. 空回复（既无正文也无 tool_calls）→ 不当成正常结束，走强制收尾；收尾也不吭声时
+//      兜底文案要说「空回复」，而不是编一个「已到轮次上限 / 0 次工具调用」
+//   5. 停止生成按钮 → 点一下就停，已流出的内容保留 + 标「已停止生成」
 //
 // 用法：npm run preview &  然后 node scripts/e2e-agent-guard.mjs
 import assert from 'node:assert/strict';
@@ -111,6 +113,8 @@ const pushSteps = (steps) =>
     for (const step of list) window.__LLM__.queue.push(step);
   }, steps);
 const text = (t, delayMs = 0) => ({ chunks: [{ content: t }], delayMs });
+/** 空回复：这一轮既没有正文也没有 tool_calls（思考链吃光 max_tokens 时的真实形态） */
+const empty = () => ({ chunks: [] });
 const tool = (name, args) => ({
   chunks: [{ tool_calls: [{ index: 0, id: `c${Math.random().toString(36).slice(2)}`, type: 'function', function: { name, arguments: JSON.stringify(args) } }] }],
 });
@@ -269,7 +273,121 @@ await check('agentRounds = 0 时跑到 12 轮以上也不停', async () => {
   assert.ok(calls >= 13, `应至少发 13 次请求（12 轮 + 收尾），实际 ${calls}`);
 });
 
-console.log('—— 4. 停止生成 ——');
+console.log('—— 4. 空回复：不能当成正常结束 ——');
+await check('模型返回空回复 → 强制收尾（收尾请求里 tools 消失）并给出总结', async () => {
+  await reset();
+  await pushSteps([
+    toolWithText('list_courses', { limit: 20 }, '先列一下课程。'),
+    // 这一轮啥也没回：既不调工具也不说话。以前这里被当成「正常收工」直接 return，
+    // 界面上只剩一句凭空的「用完了 0 次工具调用，已到轮次上限」
+    empty(),
+    text('刚才那条回复是空的。我已经列完课程，可以继续。'),
+  ]);
+  await typeAndSend('课程库里有哪些课');
+  const out = await waitFor(async () => {
+    const t = await lastAssistantText();
+    return t.includes('列完课程') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(out, '空回复之后应该还能拿到一句总结（强制收尾）');
+  const reqs = await page.evaluate(() => window.__LLM__.requests);
+  const closeOut = reqs[reqs.length - 1];
+  assert.equal(closeOut.tools, undefined, '收尾那一轮必须不带 tools（否则模型还能继续调工具）');
+});
+
+await check('收尾也不吭声 → 兜底文案说「空回复」，不编「轮次上限 / 0 次工具调用」', async () => {
+  await reset();
+  await pushSteps([
+    toolWithText('list_courses', { limit: 20 }, '先列课程。'),
+    empty(),
+    // 收尾轮与宽限轮都空 → 走兜底文案
+    empty(),
+    empty(),
+  ]);
+  await typeAndSend('课程库里有哪些课');
+  const out = await waitFor(async () => {
+    const t = await lastAssistantText();
+    return t.includes('空回复') ? t : null;
+  }, { timeout: 20000 });
+  assert.ok(out, '兜底文案应出现，并说清是空回复');
+  assert.match(out, /空回复/, '要说清模型这一轮啥也没回');
+  assert.doesNotMatch(out, /轮次上限/, '轮次闸那一刻根本没触发，不该提它');
+  assert.doesNotMatch(out, /0 次/, '不该把设置里的哨兵值（0 = 不限）当轮次印出来');
+  assert.doesNotMatch(out, /未获得回答/, '不该再出现「（未获得回答）」');
+});
+
+await check('每轮 max_tokens 给到模型输出上限（不再写死 2048）', async () => {
+  await reset();
+  await pushSteps([text('一句话回答。')]);
+  await typeAndSend('你好');
+  // 先等回答真的上屏（请求是异步发的，断言得太早会读到空数组 —— 假失败）
+  const out = await waitFor(async () => {
+    const t = await lastAssistantText();
+    return t.includes('一句话回答') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(out, '应拿到回答');
+  const reqs = await page.evaluate(() => window.__LLM__.requests);
+  assert.ok(reqs.length > 0, '应发出过请求');
+  // test-model 元数据缺失 → 上限假定 8192；窗口 32768 比它大，所以上限生效
+  assert.equal(reqs[0].max_tokens, 8192, '应给到模型输出上限');
+});
+
+await check('模型窗口远大于设置值时，按真实窗口给（不被保守估值压住）', async () => {
+  await reset();
+  // 播种一份模型元数据：该模型输出上限 384k、上下文 1049k，而设置里的窗口只有 32768。
+  // 若拿设置值当上限，max_tokens 会被压到 ~2 万，白扔模型能力。
+  await page.evaluate(() => {
+    const meta = { updatedAt: Date.now(), models: { 'test-model': { context: 1049000, output: 384000, vision: false, reasoning: false, toolCall: true } } };
+    localStorage.setItem('wangke-model-meta', JSON.stringify(meta));
+  });
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
+  await page.evaluate(() => {
+    window.__LLM__.calls = 0;
+    window.__LLM__.requests = [];
+  });
+  await pushSteps([text('一句话回答。')]);
+  await typeAndSend('你好');
+  const out = await waitFor(async () => {
+    const t = await lastAssistantText();
+    return t.includes('一句话回答') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(out, '应拿到回答');
+  const reqs = await page.evaluate(() => window.__LLM__.requests);
+  // 384k 上限、1049k 窗口、输入很小 → 给满 384k
+  assert.equal(reqs[0].max_tokens, 384000, '应给到该模型的输出上限，而不是被设置里的 32768 压住');
+});
+
+await check('输入变大时 max_tokens 跟着降（每轮重算，不写死）', async () => {
+  await reset();
+  // ⚠️ 必须清掉上一条播种的元数据：localStorage 跨 reset 保留，而 `reset()` 只清 IndexedDB。
+  // 留着它的话上限是 384k，窗口 1049k，要塞满 140 万字才触发收紧 —— 那不叫测试。
+  await page.evaluate(() => localStorage.removeItem('wangke-model-meta'));
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
+  await page.evaluate(() => {
+    window.__LLM__.calls = 0;
+    window.__LLM__.requests = [];
+  });
+  // 无元数据时上限假定 8192、窗口 32768 → 输入要超过 14576 token（估算 0.7/字，约 2 万字）
+  // 余量才会低于 8192 而收紧
+  await pushSteps([
+    toolWithText('list_courses', { limit: 20 }, '查'.repeat(22000)),
+    text('查完了。'),
+  ]);
+  await typeAndSend('课程库里有哪些课');
+  const out = await waitFor(async () => {
+    const t = await lastAssistantText();
+    return t.includes('查完了') ? t : null;
+  }, { timeout: 20000 });
+  assert.ok(out, '应拿到回答');
+  const reqs = await page.evaluate(() => window.__LLM__.requests);
+  assert.ok(reqs.length >= 2, `应至少两轮请求，实际 ${reqs.length}`);
+  const first = reqs[0].max_tokens;
+  const last = reqs[reqs.length - 1].max_tokens;
+  assert.ok(last < first, `输入变大后额度应收紧：第一轮 ${first} → 末轮 ${last}`);
+});
+
+console.log('—— 5. 停止生成 ——');
 await check('点停止 → 立刻停，已流出的内容保留并标注', async () => {
   await reset();
   // 一个慢的流：3 块 × 600ms，点停要发生在它还没说完的时候
