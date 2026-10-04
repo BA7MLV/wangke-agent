@@ -114,16 +114,25 @@ function subtract(line: DocRange, holes: readonly DocRange[]): DocRange[] {
 export function planDecorations(tree: Tree, doc: string, active: readonly DocRange[]): DecorSpec[] {
   /** 藏 / 折叠的区间。它们之间天然不重叠（叶子标记互不相交，围栏子树已跳过） */
   const holes: { kind: 'hide' | 'collapse'; from: number; to: number }[] = [];
-  /** 整行样式区间，内部可能套着 holes，最终要挖掉 */
-  const styles: { range: DocRange; cls: string }[] = [];
+  /**
+   * 整行样式（容器）：标题 / 代码块，套在行里。
+   * 既要挖掉 holes，也要挖掉 inlineStyles 的区间。
+   */
+  const lineStyles: { range: DocRange; cls: string }[] = [];
+  /**
+   * 行内样式（叶子）：行内代码。
+   * 只挖 holes —— 它自己已经是最里层了。行内代码不会嵌套行内代码
+   * （lezer 解析成 InlineCode > CodeMark + CodeText，两者是平级的），所以叶子之间天然不重叠。
+   */
+  const inlineStyles: { range: DocRange; cls: string }[] = [];
   const listStack: ('bullet' | 'ordered')[] = [];
   const inlineScopes: DocRange[] = [];
 
-  const addStyle = (lines: DocRange[], cls: string) => {
+  const addLineStyle = (lines: DocRange[], cls: string) => {
     for (const l of lines) {
       // 空行（from === to）不给样式：零宽的 mark 在编辑器里既看不出效果、
       // 又会让「有序无重叠」这条契约多出一条噪声
-      if (l.to > l.from) styles.push({ range: l, cls });
+      if (l.to > l.from) lineStyles.push({ range: l, cls });
     }
   };
 
@@ -139,7 +148,7 @@ export function planDecorations(tree: Tree, doc: string, active: readonly DocRan
 
       if (INLINE_OWNERS.has(name)) {
         inlineScopes.push(range);
-        if (name === 'InlineCode') styles.push({ range, cls: 'cm-md-inlinecode' });
+        if (name === 'InlineCode') inlineStyles.push({ range, cls: 'cm-md-inlinecode' });
         // 不能 return false：行内代码里的反引号要单独判露出，
         // 无条件藏掉的话用户在行内代码里就再也看不到、也删不掉那对反引号了
         return;
@@ -163,7 +172,7 @@ export function planDecorations(tree: Tree, doc: string, active: readonly DocRan
 
       const level = headingLevel(name);
       if (level !== null) {
-        addStyle(linesOf(doc, range.from, range.to), `cm-md-h${level}`);
+        addLineStyle(linesOf(doc, range.from, range.to), `cm-md-h${level}`);
         // 标题里的行内标记要继续处理，所以不 return false
         return;
       }
@@ -178,14 +187,14 @@ export function planDecorations(tree: Tree, doc: string, active: readonly DocRan
             holes.push({ kind: 'collapse', from: close.from, to: close.to });
           }
         }
-        addStyle(linesOf(doc, open.to + 1, close.from), 'cm-md-codeblock');
+        addLineStyle(linesOf(doc, open.to + 1, close.from), 'cm-md-codeblock');
         // 必须 return false：围栏的 CodeMark 就是首尾那两行 ``` 本身，
         // 再当成普通行内标记藏一遍会与上面的折叠区间重叠，RangeSetBuilder 会抛
         return false;
       }
 
       if (name === 'CodeBlock' || name === 'HTMLBlock') {
-        addStyle(linesOf(doc, range.from, range.to), 'cm-md-codeblock');
+        addLineStyle(linesOf(doc, range.from, range.to), 'cm-md-codeblock');
         return false;
       }
     },
@@ -196,19 +205,34 @@ export function planDecorations(tree: Tree, doc: string, active: readonly DocRan
     },
   });
 
-  holes.sort((a, b) => a.from - b.from || a.to - b.to);
-  const specs: DecorSpec[] = [...holes];
-  for (const s of styles) {
-    // 整行样式要挖掉藏在它内部的语法符号（标题的 `#`、行内代码的反引号）：
-    // RangeSetBuilder 一个区间都不许重叠，样式只能退让
+  // subtract 要求 holes 按 from 升序，所以下面几处共用一个排序函数，别各自写一遍
+  const byPos = (a: DocRange, b: DocRange) => a.from - b.from || a.to - b.to;
+  holes.sort(byPos);
+
+  // 先定叶子：行内样式只让开语法符号
+  const inlineSpecs: DecorSpec[] = [];
+  for (const s of inlineStyles) {
     for (const seg of subtract(s.range, holes)) {
+      inlineSpecs.push({ kind: 'mark', from: seg.from, to: seg.to, cls: s.cls });
+    }
+  }
+  // 再定容器：整行样式要让开语法符号**和**所有行内样式。
+  // 漏掉后者的话，标题里的行内代码会被整行样式整个吞掉（两者区间重叠，
+  // 末尾那层兜底按「from 小的胜」丢掉的一定是行内样式），渲染出来就是没有底色的普通标题文字。
+  const lineHoles = [...holes, ...inlineSpecs.map((s) => ({ from: s.from, to: s.to }))].sort(byPos);
+
+  const specs: DecorSpec[] = [...holes, ...inlineSpecs];
+  for (const s of lineStyles) {
+    for (const seg of subtract(s.range, lineHoles)) {
       specs.push({ kind: 'mark', from: seg.from, to: seg.to, cls: s.cls });
     }
   }
 
   specs.sort((a, b) => a.from - b.from || a.to - b.to);
-  // 兜底：真出现重叠（同起点时短的排前面，hide/collapse 赢过整行样式）就丢掉后来的那条。
-  // 上面的构造已经保证不重叠，这层只是不让「以后加规则」时的疏忽变成 RangeSetBuilder 的运行时异常
+  // 兜底：真出现重叠（同起点时短的排前面，hide/collapse 赢过样式）就丢掉后来的那条。
+  // 上面「叶子先定、容器让开」的构造已经保证不重叠，这层只是不让「以后加规则」时的疏忽
+  // 变成 RangeSetBuilder 的运行时异常 —— 注意它是**减法**，一旦触发就是丢样式而不是崩，
+  // 所以别指望它兜住正确性。
   const out: DecorSpec[] = [];
   for (const s of specs) {
     const prev = out[out.length - 1];
