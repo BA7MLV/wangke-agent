@@ -76,6 +76,29 @@ function lineAt(doc: string, pos: number): DocRange {
 }
 
 /**
+ * 把块级标记的隐藏区间往后扩，吞掉紧随其后的连续水平空白。
+ *
+ * 为什么必须吃：只藏符号本身的话，`# 标题` 剩下「 标题」、`- 甲` 剩下「 甲」，
+ * 而这些空白仍在文档里照常占位 —— 编辑态下每个标题、每个列表项都向右偏一格，
+ * 看着像整体没对齐。空白是分隔符的一部分，不是内容。
+ *
+ * **只往后扩，绝不往前**：`- 乙` 缩进两格时，`-` 在第 2 列，它**前面**的缩进是列表层级，
+ * 是信息不是语法；往前扩到行首就会把层级也吃掉，嵌套列表整个塌成一级。
+ * 宁可留一格看不见的缩进，也不能让层级消失。
+ *
+ * **只吃 [ \\t]**：跨行的空白不是「标记后的分隔符」（那是下一段的开头），
+ * 吃过去等于把下一行也拖进隐藏区间；制表符则和空格一样纯属对齐，要一起吃。
+ *
+ * **行内标记不能走这条**：`**粗体** 文字` 里收尾的 `**` 后面紧跟正文，
+ * 扩一格就是删掉用户的一个字。
+ */
+function withTrailingBlank(doc: string, mark: DocRange): DocRange {
+  let to = mark.to;
+  while (to < doc.length && (doc[to] === ' ' || doc[to] === '\t')) to++;
+  return { from: mark.from, to };
+}
+
+/**
  * 把 [from, to) 盖到的行整行取出（自动补上缩进与行首）。
  *
  * 判定用「行的起点是否越过区间终点」，而不是「行与区间相交」：围栏正文的区间
@@ -156,17 +179,20 @@ export function planDecorations(tree: Tree, doc: string, active: readonly DocRan
 
       if (name === 'ListMark') {
         if (listStack[listStack.length - 1] === 'bullet' && !revealed(lineAt(doc, range.from), active)) {
-          holes.push({ kind: 'hide', from: range.from, to: range.to });
+          holes.push({ kind: 'hide', ...withTrailingBlank(doc, range) });
         }
         return false;
       }
 
       if (MARK_NODES.has(name)) {
-        const scope = LINE_OWNERS.has(name)
+        const isBlockMark = LINE_OWNERS.has(name);
+        const scope = isBlockMark
           ? lineAt(doc, range.from)
           // 找不到行内容器就退回标记自身：宁可不露，也不凭空把一大段判成「在编辑」
           : inlineScopes[inlineScopes.length - 1] ?? range;
-        if (!revealed(scope, active)) holes.push({ kind: 'hide', from: range.from, to: range.to });
+        if (!revealed(scope, active)) {
+          holes.push({ kind: 'hide', ...(isBlockMark ? withTrailingBlank(doc, range) : range) });
+        }
         return false;
       }
 
