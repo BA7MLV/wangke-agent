@@ -1,4 +1,5 @@
 import type { Settings } from '../store/settings';
+import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
 
 /** 硅基流动 API 客户端（浏览器直调，OpenAI 兼容协议） */
 
@@ -22,7 +23,47 @@ function parseRetryAfter(value: string | null): number | undefined {
   return Number.isNaN(at) ? undefined : Math.max(0, at - Date.now());
 }
 
-async function request(s: Pick<Settings, 'apiKey' | 'baseUrl'>, path: string, init: RequestInit = {}): Promise<Response> {
+/**
+ * 网关的消息校验类报错。
+ *
+ * 这些 400 有一个共同点：**它们说的东西和用户看到的现象毫无关系**。
+ * 界面上是「点了没反应 / 回答失败」，报出来却是 `Invalid assistant message:
+ * content or tool_calls must be set` 加一个 request_id —— 不看请求体根本无从下手。
+ * 所以命中这些模式时要把**我们送出去的历史形状**一并附上（见 `diagnose400`）。
+ */
+const MESSAGE_REJECTION_RE =
+  /content or tool_calls must be set|must be followed by tool messages|invalid\s+\w*\s*message|must be one of/i;
+
+/**
+ * 把「消息不合法」这类 400 翻成人能直接定位的话：把请求里每条消息的形状列出来。
+ *
+ * 只在网关明确抱怨消息结构时才说话（`MESSAGE_REJECTION_RE` 命中才返回非 null）——
+ * 否则返回一个与真实原因无关的猜测，只会把人带偏。
+ */
+export function diagnose400(serverMessage: string, messages: readonly ChatMessage[]): string | null {
+  if (!MESSAGE_REJECTION_RE.test(serverMessage)) return null;
+  const lines = [
+    `网关拒绝了这次请求，说的是消息结构不合法：${serverMessage}`,
+    `本次共送出 ${messages.length} 条消息，形状如下：`,
+    ...messages.map((m, i) => `  ${describeMessage(m, i)}`),
+  ];
+  const defects = messageDefects(messages);
+  if (defects.length > 0) {
+    // 走到这里说明收口点漏了：把漏在哪写明，比让用户去猜强得多
+    lines.push(`本地复查也发现 ${defects.length} 处可疑：`, ...defects.map((d) => `  ! ${d}`));
+  } else {
+    lines.push('本地复查没有发现不合法的消息 —— 那多半是网关对某种形态比我们更严格（例如空正文、纯图片段、或超长上下文）。');
+  }
+  return lines.join('\n');
+}
+
+async function request(
+  s: Pick<Settings, 'apiKey' | 'baseUrl'>,
+  path: string,
+  init: RequestInit = {},
+  /** 出错时用来定位的消息历史（只有对话请求才有） */
+  sent?: readonly ChatMessage[],
+): Promise<Response> {
   const res = await fetch(`${s.baseUrl}${path}`, {
     ...init,
     headers: {
@@ -39,7 +80,12 @@ async function request(s: Pick<Settings, 'apiKey' | 'baseUrl'>, path: string, in
     } catch {
       msg = await res.text().catch(() => msg);
     }
-    throw new ApiError(res.status, msg, res.status === 429 ? parseRetryAfter(res.headers.get('retry-after')) : undefined);
+    const explained = sent ? diagnose400(msg, sent) : null;
+    throw new ApiError(
+      res.status,
+      explained ?? msg,
+      res.status === 429 ? parseRetryAfter(res.headers.get('retry-after')) : undefined,
+    );
   }
   return res;
 }
@@ -124,7 +170,15 @@ export interface ChatMessage {
   name?: string;
   /** 思考过程（推理模型返回的非标准字段） */
   reasoning_content?: string;
+  /**
+   * 网关回的 `finish_reason`（= pi 内部的 `stopReason`）。判断这一轮是否完整只看它：
+   * `length` = 输出撞了 `max_tokens` 上限（tool 参数可能已被截断），`error`/`aborted` = 残缺轮次。
+   * **不回传**：它是这一轮的元数据，不是对话内容（与 `reasoning_content` 同理）。
+   */
+  finish_reason?: FinishReason;
 }
+
+export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'aborted' | 'error';
 
 export interface ToolCall {
   id: string;
@@ -140,6 +194,24 @@ export function textOf(msg: ChatMessage | null | undefined): string {
 }
 
 export type ReasoningEffort = 'low' | 'high' | 'max';
+
+/**
+ * 剥掉只属于「这一轮」的两个字段，得到**能发出去**的消息：
+ *
+ * - `reasoning_content`：回传会重复计费，官方亦不建议
+ * - `finish_reason`：这一轮的元数据，不是对话内容
+ *
+ * 顺带在这里过 `sanitizeMessages` —— 它是发请求前的唯一收口点，所有调用方
+ * （agent 循环 / 讲义 / 卡片 / 弹幕 / 评论…）都走这两个函数，所以脏历史只有一处能被修。
+ */
+function wire(messages: readonly ChatMessage[]): ChatMessage[] {
+  const clean = sanitizeMessages(messages);
+  // 发送前的最后一道闸。收口点已经让这条断言恒真（`test-message-hygiene.mjs` 守着），
+  // 所以它触发只可能是「收口点有漏」—— 那时**宁可自己抛一条说清哪条消息不对的错**，
+  // 也不要让网关回一句和界面现象毫无关系的 400，让用户只能对着 request_id 发呆。
+  assertRequestSafe(clean);
+  return clean.map(({ reasoning_content: _r, finish_reason: _f, ...m }) => m);
+}
 
 export interface ChatOptions {
   model: string;
@@ -158,13 +230,13 @@ export interface ChatOptions {
 
 /** 非流式对话（用于工具调用循环中的决策） */
 export async function chatOnce(s: Settings, opts: ChatOptions): Promise<ChatMessage> {
+  const messages = wire(opts.messages);
   const res = await request(s, '/chat/completions', {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify({
       model: opts.model,
-      // reasoning_content 不回传（避免重复计费，官方亦不建议）
-      messages: opts.messages.map(({ reasoning_content: _drop, ...m }) => m),
+      messages,
       tools: opts.tools,
       temperature: opts.temperature,
       max_tokens: opts.max_tokens,
@@ -173,7 +245,7 @@ export async function chatOnce(s: Settings, opts: ChatOptions): Promise<ChatMess
       thinking_budget: opts.thinking_budget,
       stream: false,
     }),
-  });
+  }, messages);
   const data = await res.json();
   return data.choices[0].message as ChatMessage;
 }
@@ -185,13 +257,13 @@ export async function chatStream(
   onDelta?: (content: string) => void,
   onReasoning?: (text: string) => void,
 ): Promise<ChatMessage> {
+  const messages = wire(opts.messages);
   const res = await request(s, '/chat/completions', {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify({
       model: opts.model,
-      // reasoning_content 不回传（避免重复计费，官方亦不建议）
-      messages: opts.messages.map(({ reasoning_content: _drop, ...m }) => m),
+      messages,
       tools: opts.tools,
       temperature: opts.temperature,
       max_tokens: opts.max_tokens,
@@ -200,13 +272,14 @@ export async function chatStream(
       thinking_budget: opts.thinking_budget,
       stream: true,
     }),
-  });
+  }, messages);
 
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
   let reasoning = '';
+  let finish: FinishReason | undefined;
   const toolCalls: Record<number, ToolCall> = {};
 
   for (;;) {
@@ -222,7 +295,10 @@ export async function chatStream(
         if (payload === '[DONE]') continue;
         try {
           const chunk = JSON.parse(payload);
-          const delta = chunk.choices?.[0]?.delta;
+          const choice = chunk.choices?.[0];
+          // finish_reason 只在最后一个 chunk 上出现一次：判断这一轮是否完整全靠它
+          if (choice?.finish_reason) finish = choice.finish_reason as FinishReason;
+          const delta = choice?.delta;
           if (!delta) continue;
           if (delta.content) {
             content += delta.content;
@@ -253,6 +329,8 @@ export async function chatStream(
 
   const msg: ChatMessage = { role: 'assistant', content: content || null };
   if (reasoning) msg.reasoning_content = reasoning;
+  // 缺省按「完整」处理：网关没给 finish_reason 时不该把正常回复误判成残缺轮次
+  if (finish) msg.finish_reason = finish;
   const calls = Object.values(toolCalls);
   if (calls.length > 0) msg.tool_calls = calls;
   return msg;

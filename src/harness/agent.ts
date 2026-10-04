@@ -1,7 +1,15 @@
 import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
 import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
 import { getSettings } from '../store/settings';
-import { CallLedger, answerReserve, resolveMaxRounds, roundMaxTokens } from './loopGuard';
+import {
+  CallLedger,
+  answerReserve,
+  isUnreplayableTurn,
+  resolveMaxRounds,
+  roundMaxTokens,
+  truncatedByTokenLimit,
+  truncatedToolResult,
+} from './loopGuard';
 import { estimateTokens } from './context';
 
 /**
@@ -19,13 +27,25 @@ import { estimateTokens } from './context';
  * | `loop` | 同一工具 + **同一参数**在本轮里第二次出现 | 模型没有内在的「够了」判断，检索不满意会换说法再查；而完全相同的一遍拿到的结果必然一模一样，循环不会自己结束 |
  * | `tokens` | 工具结果累积 token 超预算 | `out` 只增不减（历史裁剪只在**每轮对话开始时**做一次），不设闸就会撞上下文窗口报 400 |
  * | `empty` | 这一轮**既没有正文也没有工具调用** | 它长得像「正常收工」，实际什么都没说；当成正常结束 = 界面只剩一句兜底文案，且那文案只能靠猜（实测印出「0 次工具调用，已到轮次上限」，而轮次闸根本没触发） |
+ * | `error` | 网关回报 `finish_reason` 是 `error` / `aborted` | 这一轮是**残缺**的（可能只有 reasoning 没有正文）。重放它会触发 API 报错，连收尾请求都不能基于它发 |
  * | `aborted` | 调用方 abort（停止生成按钮） | 用户必须有刹车；不经这里，调用方的 `signal` 直接抛 AbortError |
  *
  * 四种非人为停止都会先走**强制收尾**（无 tools 的一轮 + 一次有界宽限），保证不留空气泡。
+ * `error` 不走收尾：收尾请求基于的正是那个坏状态，发过去只会再失败一次。
+ *
+ * ## `out` 允许不合法 —— 修在请求边界
+ *
+ * 上面每道闸都可能在**执行工具之前**停下，于是 `out` 里会留下「没人应答的 tool_calls」；
+ * `empty` 那道闸还会留下一条空 assistant。这两种消息发出去网关直接 400
+ * （`Invalid assistant message: content or tool_calls must be set`）。
+ *
+ * 不在这里手忙脚乱地擦屁股，而是照 pi-mono 的分工：**`out` 只记录真实发生的事**，
+ * 由 `api/messageHygiene.ts` 在请求边界统一洗干净（补齐合成结果、丢弃空 assistant）。
+ * 收口点只有一处，所以新加的调用方也不会漏掉这条约束。
  */
 
 /** 循环为什么停（`aborted` 由调用方的 signal 自行处理，不走这里） */
-export type StopReason = 'rounds' | 'loop' | 'tokens' | 'empty';
+export type StopReason = 'rounds' | 'loop' | 'tokens' | 'empty' | 'error';
 
 export interface AgentStopInfo {
   reason: StopReason;
@@ -130,6 +150,15 @@ export async function runAgentLoop(
     );
     out.push(msg);
 
+    // 残缺轮次不进历史（pi：`stopReason === 'error' | 'aborted'` 直接 continue 跳过）。
+    // 它可能带着「有 reasoning 没有正文」的半截状态，留着重放会让下一次请求直接报错；
+    // 也不能走收尾轮 —— 收尾请求基于的正是这个坏状态。撤掉它，上层出兜底文案。
+    if (isUnreplayableTurn(msg.finish_reason)) {
+      out.pop();
+      cb.onStop?.({ reason: 'error', rounds: round + 1, requestedTools: [], granted: false });
+      return out;
+    }
+
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       // 有正文 = 模型真的答完了，正常收工
       if (textOf(msg).trim()) return out;
@@ -142,6 +171,22 @@ export async function runAgentLoop(
 
     // 记下「最后一轮仍要调什么」，收尾时用来给用户解释（见 onStop）
     msg0 = msg;
+
+    // 输出撞了 `max_tokens` 上限：这一批 tool_calls 的参数可能是半截 JSON。
+    // 流式参数逐段拼接，截断发生在中途时它仍可能是合法 JSON —— show_widget 的 html 形态
+    // （实测能到 6 万字符）几乎必然中招，而 `{"format":"html"}` 这种半截参数照样解析得过，
+    // 照常执行等于画一张缺了大半的图。所以一个都不执行，全判失败让模型用完整参数重发
+    // （pi 的 `failToolCallsFromTruncatedMessage`，理由与做法都一致）。
+    if (truncatedByTokenLimit(msg.finish_reason)) {
+      for (const call of msg.tool_calls) {
+        const note = truncatedToolResult(call.function.name);
+        cb.onToolStart?.(call.function.name, call.function.arguments);
+        cb.onToolEnd?.(call.function.name, note);
+        out.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: note });
+      }
+      continue;
+    }
+
     for (const call of msg.tool_calls) {
       // 原地打转：同样的工具 + 同样的参数。再查一遍拿到的结果必然一模一样，
       // 与其等它自己撞上限，不如停下来说清楚它在重复什么
@@ -215,8 +260,10 @@ export async function runAgentLoop(
     }
     pending = finalMsg.tool_calls?.map((c) => c.function.name) ?? pending;
     if (attempt === 0) {
-      // 不把这条不吭声的消息塞回历史：它带着**没人应答**的 tool_calls，
-      // 下一轮请求里 assistant(tool_calls) 没有配对的 tool 消息，严格实现会直接 400。
+      // 不把这条不吭声的消息塞回历史：它带着**没人应答**的 tool_calls，模型下一轮看到
+      // 会以为那个工具真的返回了空结果。已经发出去的那次请求由 `sanitizeMessages` 兜底
+      // （补一条合成结果），这里不 push 是为了让 `out` 只记录真实发生的事 ——
+      // 两层各司其职，不互相依赖。
       out.push({ role: 'user', content: wrapUpNudge(stop.reason) });
     }
   }
@@ -277,10 +324,12 @@ export function noAnswerNotice(ctx: NoAnswerContext): string {
       ? `助手在第 ${ctx.rounds} 轮开始重复调用「${ctx.detail ?? '同一个工具'}」（同样的参数），再查一遍结果也不会变，所以我先把它停下来${wanted}，但它没能说出一句总结。`
       : ctx.reason === 'tokens'
         ? `助手已经读了约 ${ctx.detail ?? '很多'} tokens 的材料，接近模型能接受的上下文长度，我先让它收尾${wanted}，但它没能说出一句总结。`
-        : ctx.reason === 'empty'
-          ? `助手跑完 ${ran} 轮后返回了一条**空回复**（既没有正文，也没有再调工具）${wanted}。` +
-            '这种回复不是它没话说，而是这一轮没能吐出任何内容，所以我停下来让它重新组织语言，但没能拿到一句总结。'
-          : `助手检索了 ${ran} 轮${wanted}，已经到设置里的轮次上限，所以我让它收尾，但没能拿到一句总结。`;
+        : ctx.reason === 'error'
+          ? `助手这一轮的回复**中途断掉了**（模型或网关没有正常结束它），所以这一轮的检索结果我不敢直接接着用${wanted}，也没能拿到一句总结。`
+          : ctx.reason === 'empty'
+            ? `助手跑完 ${ran} 轮后返回了一条**空回复**（既没有正文，也没有再调工具）${wanted}。` +
+              '这种回复不是它没话说，而是这一轮没能吐出任何内容，所以我停下来让它重新组织语言，但没能拿到一句总结。'
+            : `助手检索了 ${ran} 轮${wanted}，已经到设置里的轮次上限，所以我让它收尾，但没能拿到一句总结。`;
   const lines = [head];
   // 旁白与工具提示分开说：把它们揉成一句「它最后说到：正在加载技能规范…」会误导 ——
   // 后者是界面状态提示，不是模型说的话。
@@ -290,9 +339,11 @@ export function noAnswerNotice(ctx: NoAnswerContext): string {
     '',
     ctx.reason === 'loop'
       ? '换个说法或把问题说具体一点，通常就能让它继续查下去；也可以到设置里调大「问答 agent 检索轮次上限」。'
-      : ctx.reason === 'empty'
-        ? '直接再问一次通常就能拿到回答（这类空回复是偶发的）；如果反复出现，把问题拆短一点再问，或换一个模型试试。'
-        : '再说一句「继续」，我会接着上次的进度往下做；也可以到设置里调大「问答 agent 检索轮次上限」。',
+      : ctx.reason === 'error'
+        ? '直接再问一次通常就能拿到回答；如果反复出现，换一个模型或服务商试试（有些模型长输出时更容易中途断掉）。'
+        : ctx.reason === 'empty'
+          ? '直接再问一次通常就能拿到回答（这类空回复是偶发的）；如果反复出现，把问题拆短一点再问，或换一个模型试试。'
+          : '再说一句「继续」，我会接着上次的进度往下做；也可以到设置里调大「问答 agent 检索轮次上限」。',
   );
   return lines.join('\n');
 }

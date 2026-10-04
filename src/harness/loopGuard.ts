@@ -110,3 +110,40 @@ export class CallLedger {
     return false;
   }
 }
+
+/**
+ * 这一轮是不是**撞到了 `max_tokens` 上限**（`finish_reason: 'length'`）。
+ *
+ * 为什么单独拎出一道闸：命中它意味着**这一批 tool_calls 的参数可能是半截 JSON**。
+ * 流式参数是逐段拼起来的，截断发生在中途时它仍可能是合法 JSON（`{"format":"svg"}` 就齐了，
+ * 但 `html` 形态的图形卡缺了整张图），照常执行等于执行一个残缺调用 —— 更糟的是模型会
+ * 觉得「工具返回了错的东西」，换个说法再调一遍。pi 的 `failToolCallsFromTruncatedMessage`
+ * 就是这个判断：一个都不执行，全判失败，让模型用完整参数重发。
+ */
+export function truncatedByTokenLimit(finishReason?: string | null): boolean {
+  return finishReason === 'length';
+}
+
+/**
+ * 不可重放的轮次：`finish_reason` 是 `error` / `aborted`。
+ *
+ * 这些轮次是**不完整**的（可能只有 reasoning 没有正文、工具调用只发了一半），把它们留在
+ * 历史里重放会触发 API 报错（pi 的 `transformMessages` 直接 `continue` 跳过，理由一致）。
+ * 注意与「用户按停」区分：那是 `AbortSignal` 抛 AbortError，由调用方自己处理，走不到这里。
+ */
+export function isUnreplayableTurn(finishReason?: string | null): boolean {
+  return finishReason === 'error' || finishReason === 'aborted';
+}
+
+/**
+ * 截断那一轮里 tool_call 的失败结果文案。
+ *
+ * 三件事都要说清：**没执行**（不是执行失败）、**为什么**（撞了输出上限，参数可能残缺）、
+ * **下一步**（用完整参数重发）。少任何一条模型都会误判 —— 只说「失败」它会改参数重试，
+ * 而参数残缺这件事只有它自己知道。
+ */
+export function truncatedToolResult(toolName: string): string {
+  return `工具「${toolName}」没有执行：这一轮的输出撞到了 max_tokens 上限，参数可能已被截断。` +
+    `请用完整的参数重新调用一次。`;
+}
+

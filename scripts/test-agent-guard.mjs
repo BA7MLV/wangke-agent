@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 
 // 只导入纯模块：agent.ts 本身带运行时依赖（api / store），Node 里解析不了
-const { CallLedger, answerReserve, callKey, CONTEXT_BUFFER, resolveMaxRounds, roundMaxTokens, UNLIMITED_ROUNDS } = await import('../src/harness/loopGuard.ts');
+const { CallLedger, answerReserve, callKey, CONTEXT_BUFFER, isUnreplayableTurn, resolveMaxRounds, roundMaxTokens, truncatedByTokenLimit, truncatedToolResult, UNLIMITED_ROUNDS } = await import('../src/harness/loopGuard.ts');
 
 let passed = 0;
 const failures = [];
@@ -140,5 +140,33 @@ test('token 闸的预留必须放得下真正的回答（否则是我们自己�
   }
 });
 
+test('输出被截断（finish_reason: length）才判失败，其余 finish_reason 一律照常执行', () => {
+  assert.equal(truncatedByTokenLimit('length'), true);
+  for (const r of ['stop', 'tool_calls', 'content_filter', 'error', 'aborted', undefined, null, '']) {
+    assert.equal(truncatedByTokenLimit(r), false, `${r} 不该触发截断闸`);
+  }
+});
+
+test('截断结果文案要说清三件事：没执行 / 为什么 / 下一步', () => {
+  const note = truncatedToolResult('show_widget');
+  assert.match(note, /show_widget/, '要带上工具名');
+  assert.match(note, /没有执行/, '要说清是「没执行」而不是「执行失败」—— 模型会据此改参数重试');
+  assert.match(note, /max_tokens/, '要说清原因是撞了输出上限，参数可能已被截断');
+  assert.match(note, /完整的参数.*重新调用/, '要说清下一步');
+});
+
+test('残缺轮次只认 error / aborted，且不能与「用户按停」混淆', () => {
+  assert.equal(isUnreplayableTurn('error'), true);
+  assert.equal(isUnreplayableTurn('aborted'), true);
+  // length 不算残缺：那一轮的内容是「被截断」而非「坏了」，agent 循环另有截断闸处理
+  assert.equal(isUnreplayableTurn('length'), false);
+  // 网关没给 finish_reason 时按完整处理，否则正常回复会被误判成坏轮次
+  assert.equal(isUnreplayableTurn(undefined), false);
+  assert.equal(isUnreplayableTurn(null), false);
+  // 用户按停走的是 AbortSignal → AbortError，由调用方处理，不该走这两个值
+  assert.equal(isUnreplayableTurn('stop'), false);
+});
+
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exit(1);
+
