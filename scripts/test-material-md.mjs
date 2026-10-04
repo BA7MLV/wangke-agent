@@ -9,6 +9,7 @@ import assert from 'node:assert/strict';
 import {
   extractMdUnits,
   isMarkdownFile,
+  mdCoverText,
   MD_MIME,
 } from '../src/materials/md.ts';
 
@@ -128,6 +129,68 @@ test('markdown 文件识别：扩展名与 MIME', () => {
   assert.equal(isMarkdownFile({ name: 'a.txt', type: 'text/markdown' }), true);
   assert.equal(isMarkdownFile({ name: 'a.pdf', type: 'application/pdf' }), false);
   assert.equal(isMarkdownFile({ name: 'SKILL.md', type: '' }), true);
+});
+
+// ── 封面文案（mdCoverText）────────────────────────────────────────────────
+// 封面标题卡的唯一输入。规则刻意与 extractMdUnits 同源：阅读器看到的第一段
+// 就是封面上的那段，两边不该各认一套「首段」。
+
+test('封面取首个标题当标题、首段正文当预览', () => {
+  const { title, preview } = mdCoverText(SAMPLE);
+  assert.equal(title, '矩阵');
+  assert.equal(preview, '矩阵 A 与向量 b。');
+});
+
+test('封面标题：setext 标题同样算数', () => {
+  assert.equal(mdCoverText('概述\n===\n\n一段话。\n').title, '概述');
+});
+
+test('封面标题：没有标题时为 null，交给调用方回落文件名', () => {
+  const c = mdCoverText('只有一段正文，没有标题。\n\n第二段。\n');
+  assert.equal(c.title, null);
+  assert.equal(c.preview, '只有一段正文，没有标题。');
+});
+
+test('封面标题：取全文首个标题，不要求是 H1', () => {
+  assert.equal(mdCoverText('前面一段正文。\n\n## 真正的名字\n\n后面。\n').title, '真正的名字');
+});
+
+test('封面标题：frontmatter 里的 title 不算数（阅读器也不显示它）', () => {
+  assert.equal(mdCoverText('---\ntitle: 讲义\n---\n\n# 正文\n\n内容。\n').title, '正文');
+});
+
+test('封面预览：剥掉行内标记与块标记', () => {
+  const { preview } = mdCoverText(
+    '# T\n\n这是**粗体**与*斜体*、`code`，还有[链接](http://a.b)与![图](x.png)。\n',
+  );
+  assert.equal(preview, '这是粗体与斜体、code，还有链接与图。');
+});
+
+test('封面预览：剥掉行内公式的美元符号，只留内容', () => {
+  assert.equal(mdCoverText('# T\n\n设 $A$ 是 $n \\times n$ 方阵。\n').preview, '设 A 是 n \\times n 方阵。');
+  // 美元符号当货币用时不能被吃掉：`$5` 没有配对的收尾 `$`
+  assert.equal(mdCoverText('# T\n\n定价 $5 一份。\n').preview, '定价 $5 一份。');
+});
+
+test('封面预览：剥掉列表项、引用与围栏首行，并压成一行', () => {
+  const { preview } = mdCoverText('# T\n\n- 第一项\n- 第二项\n\n> 引用一句\n\n```python\nprint(1)\n```\n');
+  // 取的是**首段**正文，不是全文：列表整体算一段，引用与代码块是后面的段
+  assert.equal(preview, '第一项 第二项');
+  assert.equal(mdCoverText('# T\n\n> 引用一句\n').preview, '引用一句');
+  assert.equal(mdCoverText('# T\n\n```python\nprint(1)\n```\n').preview, 'print(1)');
+});
+
+test('封面预览：首单元只有标题时往后找正文', () => {
+  const c = mdCoverText('# 甲\n\n# 乙\n\n终于有正文了。\n');
+  assert.equal(c.title, '甲');
+  // 连续两个标题是一个单元里的**整块开头**，两个都得剥掉，不能漏第二个
+  assert.equal(c.preview, '终于有正文了。');
+});
+
+test('封面文案：空文档两者都空', () => {
+  assert.deepEqual(mdCoverText(''), { title: null, preview: '' });
+  assert.deepEqual(mdCoverText('\n\n  \n'), { title: null, preview: '' });
+  assert.deepEqual(mdCoverText('# 只有标题'), { title: '只有标题', preview: '' });
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

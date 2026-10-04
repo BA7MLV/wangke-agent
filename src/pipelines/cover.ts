@@ -1,7 +1,9 @@
 import { db, type CoverRow, type VideoRow } from '../store/db';
 import { getMaterialFile, getVideoFile } from '../store/fileStore';
 import { COVER_EDGE, downscaleToCover, encodeCanvas, pickCoverFrame } from '../media/frames';
+import { paintTextCover } from '../media/textCover';
 import { openPdf } from '../materials/pdf';
+import { mdCoverText, readMdText } from '../materials/md';
 import { getColorFromImage } from '../ui/mdui';
 
 /**
@@ -16,7 +18,7 @@ import { getColorFromImage } from '../ui/mdui';
  *
  * 选帧质量的三级来源：
  *   1. `slide`　讲义已经抽好的幻灯片帧（课程首页即课件，质量最稳）
- *   2. `material-page`　PDF 首页渲染
+ *   2. `material-page`　PDF 首页渲染 / `material-title`　Markdown 标题卡
  *   3. `auto`　自己对视频多点采样打分（见 `media/frames.ts` 的 pickCoverFrame）
  */
 
@@ -65,12 +67,8 @@ async function pickVideoCover(id: string, blob: Blob): Promise<PickedCover> {
  * 「CSS 宽度 × dpr」推出来（要跟文本层的 viewport 严格同源，否则划词会错位），
  * 落到封面这里就会出现 floor 误差（A4 算出来 479 而不是 480）。
  * 封面只要一张确定尺寸的位图，所以直接按目标尺寸算 scale、一次性画到位。
- *
- * 只认 PDF —— **Word 没有「首页画面」这回事**，硬渲染要自己排版一张标题卡，
- * 收益不大还容易做得难看，所以那边返回 null，由调用方标记完成并保留文档图标占位。
  */
-async function pickMaterialCover(row: VideoRow, blob: Blob): Promise<PickedCover | null> {
-  if (row.materialFormat !== 'pdf') return null;
+async function pickPdfCover(blob: Blob): Promise<PickedCover | null> {
   const url = URL.createObjectURL(blob);
   try {
     const doc = await openPdf(url);
@@ -108,6 +106,39 @@ async function pickMaterialCover(row: VideoRow, blob: Blob): Promise<PickedCover
 }
 
 /**
+ * Markdown：排一张标题卡。
+ *
+ * 没有「首页画面」可截，但有结构好的标题和开头一段话 —— 取出来排成 16:9 的图
+ * （见 `media/textCover.ts`）。`title` 取不到时回落文件名，所以只有「正文与文件名
+ * 都空」才会返回 null，那正是「这张卡上什么字都没有」的情形，留文档图标反而更好。
+ *
+ * 顺带把 `dominantColor` 也带出来：标题卡底色是哈希色相，取出来的主色就是它，
+ * 于是卡片在封面生成前的那一瞬间（LQIP 纯色块）也是对的颜色。
+ */
+async function pickMdCover(fallbackTitle: string, blob: Blob): Promise<PickedCover | null> {
+  const { title, preview } = mdCoverText(await readMdText(blob));
+  const heading = (title ?? fallbackTitle).trim();
+  if (!heading && !preview) return null;
+  const painted = await paintTextCover({ title: heading, preview });
+  return { blob: painted.blob, w: painted.width, h: painted.height, ts: 1, source: 'material-title' };
+}
+
+/**
+ * 材料封面分派。
+ *
+ * 只认两种格式：
+ *   - `pdf`　渲染首页（`material-page`）
+ *   - `md`　 排标题卡（`material-title`）
+ * 其余（`docx` / `html`）**返回 null**：Word 的样式千差万别、HTML 要处理 iframe 与
+ * 远程资源，硬画一张标题卡的收益不抵那份脆弱性，所以那边保留文档图标占位。
+ */
+async function pickMaterialCover(row: VideoRow, blob: Blob): Promise<PickedCover | null> {
+  if (row.materialFormat === 'md') return pickMdCover(row.name, blob);
+  if (row.materialFormat === 'pdf') return pickPdfCover(blob);
+  return null;
+}
+
+/**
  * 从封面图里取主色，用作「封面还没生成好」时的占位底色（LQIP）。
  *
  * 复用 mdui 的 Material You 取色，与播放页的动态取色同一套量化 —— 免得站内出现
@@ -131,10 +162,11 @@ async function extractColor(source: Blob): Promise<string | undefined> {
 /**
  * 为一份资源补齐封面。**幂等**：已有 `covers` 记录就直接返回（`force` 可强制重做）。
  *
- * 三种「不生成」的收尾都写 `coverState`，好让回填扫描别再反复试：
+ * 四种「不生成」的收尾都写 `coverState`，好让回填扫描别再反复试：
  * - 文件本体已删（`fileDeleted`）→ `skipped`
  * - 文件读不出来 → `skipped`
- * - Word 材料（没有可渲染的首页）→ `done`，保留文档图标
+ * - Word / HTML 材料（没有可渲染的首页，也不排标题卡）→ `done`，保留文档图标
+ * - 空 Markdown（正文与文件名都空，标题卡上无字可排）→ `done`，同上
  *
  * @returns 是否真的写入了新封面（调用方据此决定要不要通知界面刷新）
  */

@@ -190,6 +190,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 导入之后：
 
 - 视频卡片自动生成封面（抽帧里的幻灯片帧），底边按播放进度画进度条 —— **没看过、进度不足 1%、阅读材料都不画**；
+- 阅读材料也有封面：**PDF** 渲染首页，**Markdown** 排一张标题卡（标题哈希派色相 + 首段预览，16:9 铺满不���黑边），Word / HTML 暂用文档图标；
 - 阅读材料**写盘成功即算导入完成**，解析在后台跑，列表行上能看到 job 进度，不阻塞你继续导入下一个。
 
 **HTML 材料**（[设计文档](docs/plans/2026-09-26-html-faithful-import-design.md)）
@@ -477,7 +478,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 **卡片（Anki）** —— 一键从字幕提炼知识点生成问答候选卡（一卡一事实 / 自包含 / 答案唯一，带时间戳来源）→ Tinder 式滑动审核 → 保留卡导出 .apkg（本地生成 collection.anki2 旧版包，Anki 桌面 / AnkiMobile / AnkiDroid 均可导入；sql.js 懒加载 + PWA 预缓存，离线可导出）。
 
-**封面与动态取色** —— 导入后自动抽帧生成封面（小图档位存库、失败进队列回填、删除不残留）；可选 Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化，取不到封面时回落默认配色。
+**封面与动态取色** —— 导入后自动生成封面（小图档位存库、失败进队列回填、删除不残留）：视频抽帧择优、PDF 渲首页、Markdown 排标题卡；可选 Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化，取不到封面时回落默认配色。
 
 **学习时长与热力图** —— GitHub 提交图样式的一年热力图（53 周 × 7 天，四档绿，悬浮 / 点按看当天时长，可切区间）+ 累计 / 今日 / 近 7 天 / 连续天数四张统计卡 + 最近 30 天明细。计时口径是「页面在前台 + 没长时间离开」，**播放视频时不判空闲**；数据一天一行存 IndexedDB（v11）。
 
@@ -612,7 +613,7 @@ node scripts/test-agent-loop.mjs            # agent 循环端到端：假网关�
 node scripts/test-material-units.mjs      # 页 / 段引用标记：格式化 / 反解 / linkify 往返 / 代码块不动
 node scripts/test-material-chunk.mjs      # 归一化与分块：中文空格修正 / 软换行拼接 / 扫描件判定 / 长页再切
 node scripts/test-material-docx.mjs       # Word 抽取：段落 / 表格 / 三种标题写法 / section 归属 / 真 zip 解包
-node scripts/test-material-md.mjs         # Markdown 抽取：围栏整段保留 / 三种标题 / 段号与 section
+node scripts/test-material-md.mjs         # Markdown 抽取：围栏整段保留 / 三种标题 / 段号与 section / 封面取文案
 node scripts/test-material-html.mjs       # HTML：整文档净化 / CSP 逐字 / 段号锚点同源同序 / 沙箱同源假设 /
                                           #       字符集（GB2312 不乱码）；自己起 headless Chromium，不起服务
 node scripts/test-material-region.mjs     # 框选区域：矩形规范化 / 误触判定 / 选区清洗与截断
@@ -661,6 +662,7 @@ node scripts/e2e-library.mjs              # 首页交互：分组 / 移动 / 折
 node scripts/e2e-library-progress.mjs     # 卡片进度条 + 实测填充宽度占比
 node scripts/e2e-library-copy.mjs         # 长说明收进问号
 node scripts/e2e-covers.mjs               # 封面：导入即有 / 小图档位 / PDF 首页 / 删除不残留
+node scripts/e2e-md-covers.mjs            # Markdown 封面：导入即有 / 16:9 标题卡 / 历史数据回填
 node scripts/e2e-materials.mjs            # 阅读材料链路：真实导入 PDF → 解析 → 阅读器 → 划词与框选 → 跳页
 node scripts/e2e-course-chat-cards.mjs    # 课程助手：提问卡 / 方案卡确认与取消 / 切页继续（页内假模型，不花 API）
 node scripts/e2e-handout-position.mjs      # 讲义阅读位置：写回 → 刷新落回同一锚点 → 锚点失效回顶部（自播种讲义）

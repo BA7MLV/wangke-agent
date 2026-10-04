@@ -159,3 +159,68 @@ export function extractMdUnits(src: string): RawUnit[] {
 export async function readMdText(blob: Blob): Promise<string> {
   return blob.text();
 }
+
+// ── 封面文案 ───────────────────────────────────────────────────────────────
+
+/** 封面标题卡要的文案：从原文里取「一个标题 + 一段正文」 */
+export interface MdCoverText {
+  /** 封面主标题：全文首个标题。**没有标题时为 null**，由调用方回落文件名 */
+  title: string | null;
+  /** 首段正文的单行预览，已剥掉 markdown 标记 */
+  preview: string;
+}
+
+/**
+ * 剥掉块级与行内标记，压成一行可读文字。
+ *
+ * 顺序有讲究：先拆链接（`[文字](url)` 里含 `*` 与 `_`，晚了会被强调规则咬掉），
+ * 再拆围栏首行与列表标记，最后才是强调 —— 强调用非贪婪 + 排除换行，
+ * 宁可漏掉一处斜体，也不要把两段正文粘成一句。
+ */
+function flattenMd(text: string): string {
+  return text
+    .replace(/^\s*(`{3,}|~{3,}).*$/gm, '') // 围栏首行（围栏正文保留，那些往往是代码本身）
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, '$1') // 链接 / 图片 → 只留文字
+    .replace(/^\s*(?:[-+*]|\d+[.)])\s+/gm, '') // 列表项
+    .replace(/^\s*>\s?/gm, '') // 引用
+    .replace(/^\s{0,3}#{1,6}\s+/gm, '') // 行内标题
+    .replace(/(\*\*|__)(.+?)\1/g, '$2') // 粗体
+    .replace(/(^|[^*])\*([^*\n]+)\*/g, '$1$2') // 斜体
+    .replace(/`+([^`]*)`+/g, '$1') // 行内代码
+    // 行内公式只留内容：`$A$` 显示成 `A`，不然封面上会是一排裸露的美元符号
+    .replace(/(?<![$\\])\$([^$\n]+)\$(?!\$)/g, '$1')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+/**
+ * 取封面标题卡要用的「标题 + 首段预览」。
+ *
+ * **直接用 `piecesOf`**（与阅读器、抽取同一套切块规则），不另写一套解析，也不再从
+ * `extractMdUnits` 的产物反推：那个函数把标题并进了正文（`标题\n\n正文`，多个标题还是
+ * `甲\n\n乙\n\n正文`），想只留正文就得按「剥掉开头那几行标题」把它拆回去 —— 而标题在
+ * 产物里已经和正文长得一模一样，拆回去必然出错。`pieces` 里标题与正文是两个独立条目，
+ * 各拿各的，一行判断都不用。
+ *
+ * 标题取**首个标题、不要求是 H1**：只从 H2 起的文档（导出常见）拿 H2 当标题，
+ * 远比回落文件名贴切。没有标题返回 `null` 而不是空串 —— 调用方据此决定用不用文件名，
+ * 空串会被误当成「有标题但排不出来」。
+ *
+ * 预览取**第一个正文条目**，前面的标题条目自然被跳过（连续两行标题的写法很常见）。
+ */
+export function mdCoverText(src: string): MdCoverText {
+  const pieces = piecesOf(stripFrontmatter(src.replace(/^\uFEFF/, '')));
+  let title = '';
+  let preview = '';
+  // 不 break：标题取**全文**首个、预览取**首个正文条目**，两者位置未必挨着
+  // （正文开头没有标题、标题出现在第二段的文档很常见），提前退出会把标题漏掉。
+  for (const p of pieces) {
+    if (p.title) {
+      // piecesOf 的标题恒为单行（ATX 捕获整行、setext 只留 `===` 上一行），直接就是标题文字
+      if (!title) title = p.text;
+      continue;
+    }
+    if (!preview) preview = flattenMd(p.text);
+  }
+  return { title: title || null, preview };
+}

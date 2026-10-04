@@ -64,8 +64,14 @@ async function pump(): Promise<void> {
  * 覆盖三类历史数据：这个功能上线之前导入的视频、上次生成失败留下的、
  * 以及被删过文件又重新导入的。走同一条队列，因此不会和正在进行的生成抢解码器。
  *
- * **不处理** `skipped`（文件已删）与 `done`（Word 材料这类没有画面的资源）——
+ * **不处理** `skipped`（文件已删）与 `done`（Word / HTML 材料这类没有画面的资源）——
  * 那不是「还没轮到」，是「本来就不会有」。
+ *
+ * 一条例外：**Markdown 的 `done` 要重新试**。Markdown 是后来才接上标题卡的（此前它
+ * 和 Word 一样直接标 `done`），所以库里凡是「md + done + 实际没有封面行」的都是旧数据，
+ * 得补一次。判据是「`covers` 里没有它」而不是「`coverState` 不是 done」—— 前者是
+ * 事实，补完就再也不会命中，因此不必写迁移、也不必升 DB 版本。跑两次的代价是零：
+ * `ensureCover` 见到已有封面就立刻返回。
  *
  * @returns 本次入队的数量（0 表示没有要补的）
  */
@@ -77,7 +83,8 @@ export async function backfillCovers(): Promise<number> {
   let n = 0;
   for (const row of rows) {
     if (have.has(row.id)) continue;
-    if (row.coverState === 'skipped' || row.coverState === 'done') continue;
+    if (row.coverState === 'skipped') continue;
+    if (row.coverState === 'done' && row.materialFormat !== 'md') continue;
     enqueueCover(row.id);
     n++;
   }
