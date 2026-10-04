@@ -104,6 +104,10 @@ const META = {
   // 容器样式与行内样式谁该让开、以及输出必须严格升序不重叠（RangeSetBuilder 会抛）。
   // 纯逻辑：@lezer/markdown 是纯 JS 解析器，node 里能跑，不需要 DOM。
   'test-md-live-preview': { service: 'none', antd: false, timeout: 120 },
+  // agent 编辑 .md 的匹配逻辑：唯一命中 / 未命中 / 多处命中 / 区间重叠的诊断文案，
+  // 以及高亮坐标从「旧文档」换算到「新文档」的平移（错了绿色高亮会落在无关的字上）。
+  // 纯逻辑：@codemirror/state 无 DOM 依赖。
+  'test-md-edit-tool': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
   // 在 Node 里用 pdf.js 抽 fixture 的中文文本（确认「fixture 可解析」，e2e 失败时好分清
   // 是 fixture 的问题还是阅读器的问题）。纯 Node，不起服务。
@@ -122,6 +126,9 @@ const META = {
   // 解析器不认就会把值读成字面量 `>-`、静默丢掉真正的描述 —— 导入成功、能选中、永远不生效。
   'test-skill-parse': { service: 'none', antd: false, timeout: 120 },
   'test-study-log': { service: 'none', antd: false, timeout: 120 },
+  // 思考参数必须跟着模型声明走：effort 型发 reasoning_effort、budget 型按声明区间
+  // 折算、只有开关/没声明就一个深度参数都不发。纯逻辑（灌一份 models.dev 形状的夹具）。
+  'test-thinking-depth': { service: 'none', antd: false, timeout: 120 },
   // 主页进度条纯逻辑：材料的 null / 非法时长的 null / finished 优先于比例 / 1% 阈值两侧
   'test-video-progress': { service: 'none', antd: false, timeout: 120 },
   // show_widget 的纯逻辑：入参校验 + 两条回执文案。守住「拒绝时必须给出可执行的改法」——
