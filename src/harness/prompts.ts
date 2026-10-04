@@ -250,13 +250,15 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
   },
 
   /**
-   * 阅读材料（PDF / Word / Markdown / HTML）的问答系统提示词。与 `qaSystem` 同构，只换四件事：
+   * 阅读材料（PDF / Word / Markdown / HTML）的问答系统提示词。与 `qaSystem` 同构，只换五件事：
    *
    * 1. 检索工具换成 `search_material` / `get_material_range`；
    * 2. 引用标记从 `[mm:ss]` 换成 `[第N页]` / `[第N段]`；
    * 3. **不注入 `list_frames` 规则** —— 材料没有画面可引用；
    * 4. **全文不提时间戳** —— 材料没有播放器，模型若输出 `[03:25]` 会渲染成一个
    *    点了没反应的死链（渲染层在材料模式下也不跑 `linkifyTimestamps`，这是双保险）。
+   * 5. `editable` 为真时**追加**一条「可以直接改这份材料」—— 与 `list_frames` 一样按能力注入：
+   *    不给这条而给了工具，模型多半想不到去调；给了这条而没给工具，它会说「我已改好」而其实没改。
    */
   qaSystemMaterial: (
     materialName: string,
@@ -264,6 +266,7 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
     skillMetaList?: string,
     shotCount?: number,
     selectionCount?: number,
+    editable?: boolean,
   ) => {
     const noun = kind === 'page' ? '页' : '段';
     const docType = kind === 'page' ? 'PDF 文档' : '文档';
@@ -291,6 +294,15 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
     if (skillMetaList) {
       rules.push(
         `可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及某技能的用途领域时，先用 use_skill 工具加载该技能正文，再按其规范回答；需要技能附带的参考文档时，用 read_skill_reference 工具读取。`,
+      );
+    }
+    if (editable) {
+      rules.push(
+        '这份 Markdown 材料此刻是**打开着编辑面的**，你也可以直接改它的正文：用 edit_markdown 工具。' +
+        '每条 edit 的 old_string 必须从文档里**原样逐字复制**（标点、空格、换行都算），它是精确字符串匹配而不是行号；' +
+        '找不到、或找到多处而无法确定改哪一处，都会报错让你重新读一遍原文再来。' +
+        '**改动要克制**：只改确实需要改的那几处，别顺手重写全文，也别动与本轮问题无关的段落 —— ' +
+        '改的是用户自己的笔记，每一处改动都会高亮给他看，而他未必想让整篇被动过。',
       );
     }
     return `你是阅读材料《${materialName}》的学习助教。请根据材料内容回答学生的问题。

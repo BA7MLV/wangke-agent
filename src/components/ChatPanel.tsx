@@ -5,7 +5,14 @@ import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRo
 import { getSettings, useSettings } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
-import { QA_TOOLS, MATERIAL_QA_TOOLS, LIST_FRAMES_TOOL, createToolExecutor } from '../harness/tools';
+import {
+  QA_TOOLS,
+  MATERIAL_QA_TOOLS,
+  LIST_FRAMES_TOOL,
+  EDIT_MARKDOWN_TOOL,
+  mdEditorOpen,
+  createToolExecutor,
+} from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
@@ -46,6 +53,15 @@ interface Props {
    * **不传 = 视频课程**，此时走字幕检索 + 时间戳引用。
    */
   materialKind?: UnitKind;
+  /**
+   * 材料的原始格式（视频课程不传）。**只有 `'md'` 有编辑面**，
+   * `edit_markdown` 工具与「材料可编辑」那条提示词都据此开关（见 send 里那段注释）。
+   *
+   * 为什么与 materialKind 分开两个 prop：kind 是**定位单位**（页码 / 段落号），
+   * format 是**文件格式**（能不能改）。`'html'` 与 `'md'` 的定位单位相同但一个能改一个不能，
+   * 合成一个 prop 就得在两边各自反推「这个 kind 是不是可编辑的」，那是两处会漂移的判断。
+   */
+  materialFormat?: 'pdf' | 'docx' | 'md' | 'html';
 }
 
 interface ChatMsg {
@@ -228,6 +244,7 @@ export default function ChatPanel({
   playerRef,
   readerRef,
   materialKind,
+  materialFormat,
 }: Props) {
   /** 材料课程（PDF / Word / Markdown / HTML）：没有字幕、没有播放器，检索与引用都走材料那一套 */
   const isMaterial = materialKind !== undefined;
@@ -361,8 +378,11 @@ export default function ChatPanel({
   // 上下文用量估算（system + 历史 + 当前输入/截图/引用），仅作 UI 提示
   const ctxEst = useMemo(() => {
     // 注意 estimateTokens：两个 qaSystem 返回的都是**提示词文本**，忘了包就变成字符串拼接
+    // 末尾的 canEditMd 参数：这里用「格式是 md」代替 send 里的完整判断（材料 + 编辑面开着）——
+    // 注册表是模块级的，点「编辑」不会触发本组件重渲染，按状态算就得把它塞进 useMemo 依赖。
+    // 于是按「最坏情况 = 多带一条可编辑规则」估：估高只是用量条早一点变色，估低会让用户以为还有余量。
     const sysText = isMaterial
-      ? PROMPTS.qaSystemMaterial(videoName, materialKind!, undefined, shots.length, refs.length)
+      ? PROMPTS.qaSystemMaterial(videoName, materialKind!, undefined, shots.length, refs.length, materialFormat === 'md')
       : PROMPTS.qaSystem(videoName, undefined, undefined, shots.length, refs.length);
     const sys = estimateTokens(sysText);
     // 历史只发送 content，reasoning 不计入
@@ -826,9 +846,27 @@ export default function ChatPanel({
       // 材料没有画面可引用，直接跳过这次查询
       const meta = isMaterial ? [] : await loadFramesMeta();
       const hasFrames = meta.length > 0;
+      /**
+       * 这份材料此刻能不能被直接改：**格式是 md，且编辑面确实开着**。
+       *
+       * 第二个条件依赖「用户此刻点开了编辑」——注册一个当下不可用的工具只会诱发无效调用
+       * （模型会先调一次、拿到「没有打开编辑面」、再白烧一轮），与 list_frames 只在有抽帧时
+       * 注册是同一个思路：按课程**实际具备的能力**给工具。
+       * 代价是中途关掉编辑会退化：那一轮仍会调它、回执会引导用户重新点开「编辑」。
+       *
+       * 在 send 里算而不是在组件体里：编辑面是模块级注册表，用户点「编辑」不会让本组件重渲染，
+       * 挂在组件体里算出来的值会一直是旧的那次（false）。
+       *
+       * ⚠️ `&&` 短路不是可有可无的写法优化：mdEditorOpen 会动态 import md-editor/bridge，
+       * 那条链上挂着 CodeMirror。让它只在**确实可能是 md 材料**时才走，
+       * 视频课与 PDF / Word / HTML 材料就完全不会去碰那个 chunk（理由见 harness/tools.ts 里那段）。
+       */
+      const canEditMd = materialFormat === 'md' && (await mdEditorOpen(videoId));
       const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
+      // ⚠️ 工具与提示词必须用**同一个** canEditMd：只注册工具不给提示词，模型多半想不到去用它；
+      // 只给提示词不给工具，它会写一段「我已修改」而其实什么都没发生 —— 比不给更糟。
       const systemPrompt = isMaterial
-        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length)
+        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length, canEditMd)
         : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length);
       const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
       // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
@@ -877,10 +915,20 @@ export default function ChatPanel({
           patchAi({ widget: w });
         },
       });
+      /**
+       * 本轮工具集：只给**当下真的能用**的能力。
+       * 材料没有字幕、没有画面（工具集本身就少两样），md 且编辑面开着才多一个 edit_markdown。
+       */
+      const tools = isMaterial
+        ? canEditMd
+          ? [...MATERIAL_QA_TOOLS, EDIT_MARKDOWN_TOOL]
+          : MATERIAL_QA_TOOLS
+        : hasFrames
+          ? [...QA_TOOLS, LIST_FRAMES_TOOL]
+          : QA_TOOLS;
       await runAgentLoop(
         messages,
-        // 材料用材料工具集（没有 search_transcript）；视频按是否有抽帧加 list_frames
-        isMaterial ? MATERIAL_QA_TOOLS : hasFrames ? [...QA_TOOLS, LIST_FRAMES_TOOL] : QA_TOOLS,
+        tools,
         executeTool,
         {
           thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
@@ -910,6 +958,7 @@ export default function ChatPanel({
               if (name === 'list_frames') hint = '正在查看课程画面…';
               if (name === 'present_quiz') hint = '正在出题…';
               if (name === 'show_widget') hint = '正在预检图形…';
+              if (name === 'edit_markdown') hint = '正在修改材料正文…';
               if (name === 'use_skill') hint = `正在加载技能：${args.name ?? ''}`;
               if (name === 'read_skill_reference') hint = '正在查阅参考文档…';
             } catch {

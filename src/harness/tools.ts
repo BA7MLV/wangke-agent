@@ -12,6 +12,15 @@ import {
 } from './searchMaterial';
 import { fmtUnitRef, unitNoun, type UnitKind } from '../materials/units.ts';
 import { isSkillAllowed } from '../skills/scope';
+// 工具层与 md 编辑面的**唯一**耦合点（注册表 + 窄接口，见该文件开头的边界说明）。
+// 别在这里 import md-editor 里的别的模块：edits / agentDiff 都是 CodeMirror 侧的，
+// 绕过 bridge 就等于把「工具层不认 CodeMirror」这条边界拆了。
+//
+// ⚠️ 这里**只有 type 导入是静态的**。bridge 静态依赖 @codemirror/view 与
+// @codemirror/commands，而本文件在**每一门课**（含视频课）的首屏就加载 —— 普通 import
+// 会把 CodeMirror 拉回主 chunk，正好抵消掉 MdReader 把 MdEditor 隔离成 lazy chunk
+// 换来的按需加载（理由见 components/MdReader.tsx 顶部）。取值一律走动态 import，见 mdEditorOpen。
+import type { MdEditorController } from '../md-editor/bridge';
 // 校验必须**走渲染层同一个函数**，否则「预检通过」没有意义 ——
 // 两处净化逻辑一旦分叉，工具就成了摆设。
 import { sanitizeSvg } from '../components/mermaid/svgRender';
@@ -266,6 +275,78 @@ export const LIST_FRAMES_TOOL: ToolDef = {
   },
 };
 
+/**
+ * 直接改用户那份 md 正文（**仅当这份材料的编辑面此刻开着**时注册，见 ChatPanel）。
+ *
+ * 为什么与其它工具不同：前九个工具的产物都在**回答里**（引用的时间戳、题卡、图），
+ * 写错了用户最多觉得答得不对；这一个写的是**用户自己的笔记**。所以描述里必须把
+ * 「改动会立刻出现在用户眼前」和「old_string 是逐字匹配、不是行号」写在最前面 ——
+ * 模型只有知道改的是别人的东西，才会克制；而行号这个说法一旦漏掉，它就会按
+ * 「读到的第几行」去猜，那是把用户没让改的地方改掉的形状（edits.ts 顶部的取舍）。
+ */
+export const EDIT_MARKDOWN_TOOL: ToolDef = {
+  type: 'function',
+  function: {
+    name: 'edit_markdown',
+    description:
+      '直接修改用户当前打开的这份 Markdown 材料的正文。改动**立刻出现在用户正在看的那份文档里**（并高亮出来），' +
+      '用户可以一键撤销。每条 edit 的 old_string 必须从文档里**原样逐字复制**（标点、空格、换行都算），' +
+      '它按精确字符串匹配定位，不是行号：找不到、或找到多处而无法确定改哪一处，都会报错让你重来（报错里会写明命中了几处）。' +
+      '只改确实需要改的那几段，不要顺手重写全文。',
+    parameters: {
+      type: 'object',
+      properties: {
+        edits: {
+          type: 'array',
+          description: '要做的改动，一次调用可含多条；同一次调用里各条的替换区间不能重叠',
+          items: {
+            type: 'object',
+            properties: {
+              old_string: {
+                type: 'string',
+                description:
+                  '要被替换的原文，从文档里逐字复制（多带几个字保证它在文中唯一）。默认要求唯一命中；确实要改所有出现处时才用 replace_all',
+              },
+              new_string: {
+                type: 'string',
+                description: '替换成的新文本。传空字符串 "" 表示删掉 old_string 这一段（可撤销）',
+              },
+              replace_all: {
+                type: 'boolean',
+                description: 'old_string 在文中出现多次时是否全部替换；默认 false（要求唯一命中）',
+              },
+            },
+            required: ['old_string', 'new_string'],
+          },
+        },
+      },
+      required: ['edits'],
+    },
+  },
+};
+
+/**
+ * `edits` 的元素形状。**从控制器的方法签名上取**，而不是从 md-editor/edits 再 import 一次：
+ * 那是同一份类型的第二个引用点，两边漂移要等到运行时才发现（见上面 bridge 导入那段）。
+ */
+type AgentEdit = Parameters<MdEditorController['applyEdits']>[0];
+
+/**
+ * 这份材料此刻有没有打开编辑面 —— 也就是「要不要注册 edit_markdown」的判据。
+ *
+ * ⚠️ bridge 走**动态** import 是一处刻意的取舍，不是写法偏好：本文件在每门课的首屏都加载，
+ * 而 bridge 静态依赖 CodeMirror（实测普通 import 会让主 chunk +252 kB / gzip +84 kB），
+ * 那正好抵消掉 MdReader 把 MdEditor 隔离成 lazy chunk 的全部理由（理由同上面那段注释）。
+ * 代价（第一次用要等一次 import）在这里近乎为零：工具能被注册的前提就是编辑面开着，
+ * 而那一刻 bridge 早已随 MdEditor 一起加载完，模块直接从缓存解析。
+ * 唯一真会多付一次的形状是「md 材料、用户没点编辑就提问」——那也正是本功能唯一的受益者，
+ * 比让所有人在所有首屏都付要划算得多。
+ */
+export async function mdEditorOpen(materialId: string): Promise<boolean> {
+  const { getMdEditor } = await import('../md-editor/bridge');
+  return getMdEditor(materialId) !== undefined;
+}
+
 export interface ToolExecutorOptions {
   /**
    * 课程形态：
@@ -425,6 +506,36 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
         // 模型据此改完重试。真到渲染那步失败才是「静默降级成显示源码」，也正是这里要挡掉的。
         return widgetRejectedText(e);
       }
+    }
+    if (name === 'edit_markdown') {
+      /**
+       * courseId 在材料课程里就是 materialId（ChatPanel 对视频与材料传的是同一个 id），
+       * 所以直接拿它去问注册表 —— 不另开一个参数，改一处调用点不会漏掉另一处。
+       * 动态 import 的理由见文件里 mdEditorOpen 那段（此时编辑面开着，模块必已在缓存里）。
+       */
+      const { getMdEditor } = await import('../md-editor/bridge');
+      const ctl = getMdEditor(courseId);
+      /**
+       * 编辑面不在 = 这个工具此刻不可用。**必须说清原因与下一步**，且只说一次就够：
+       * 模型拿到「请让用户在材料页点编辑」会去转告用户；拿到一句含糊的「不可用」
+       * 则多半会换个 old_string 再试，把整轮工具调用烧光（这里一白跑就是一次往返）。
+       */
+      if (!ctl) {
+        return '这份材料现在没有打开编辑面，无法修改正文。请先让用户在材料页点开它的「编辑」，之后重新调用本工具。';
+      }
+      /**
+       * 参数**不**在这里预校验：planAgentEdits 对 edits 的形状（不是数组、字段缺失、
+       * 传了数字、old_string 是空串…）都有逐条的诊断，写得比这里能写的更细。
+       * 原样透传，别在外面包一层「编辑失败」——那会把「第几条 edit、命中几处、下一步怎么改」全吞掉。
+       */
+      const r = ctl.applyEdits(args.edits as AgentEdit);
+      if (!r.ok) return r.error;
+      /**
+       * 成功回执要做两件事：说清**改了几处**（changed 是区间数，与用户看到的绿色高亮条数一致，
+       * 一条 replace_all 命中 5 处就是 5），以及告诉模型**还欠一句人话** ——
+       * 模型常把工具回执当成终点，用户于是只看到文档变了却不知道 agent 做了什么。
+       */
+      return `已修改 ${r.changed} 处，改动已高亮在用户正在看的那份文档里，用户可以一键撤销。请用一两句话说明你改了什么。`;
     }
     return `未知工具：${name}`;
   };

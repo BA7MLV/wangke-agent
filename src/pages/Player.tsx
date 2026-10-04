@@ -457,6 +457,8 @@ export default function Player() {
             playerRef={playerRef}
             readerRef={readerRef}
             materialKind={video.materialFormat === 'pdf' || !video.materialFormat ? 'page' : 'para'}
+            // 格式原样传下去：md 才有编辑面，ChatPanel 据此决定是否给 agent 挂 edit_markdown
+            materialFormat={video.materialFormat}
           />
         ),
       }
