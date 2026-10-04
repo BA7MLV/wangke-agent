@@ -16,6 +16,7 @@ import {
   type RegionImage,
 } from '../materials/region';
 import { useSelectionAsk } from '../store/selectionAsk';
+import { Shimmer } from './motion';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -258,7 +259,7 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
           <mdui-sym-chevron-right className="mr-bar__flip" />
         </mdui-button-icon>
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {numPages === 0 ? '载入中…' : `${current} / ${numPages}`}
+          {numPages === 0 ? <Shimmer text="载入中…" /> : `${current} / ${numPages}`}
         </span>
         <mdui-button-icon
           data-testid="reader-next"

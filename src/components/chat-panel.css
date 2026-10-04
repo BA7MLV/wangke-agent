@@ -104,6 +104,9 @@
   transform: rotate(90deg);
 }
 
+/* 正文现在是 accordion 的内层（.t-acc-panel-inner）：
+   margin / padding / max-height 全部落在内层，0fr 轨道本身不带任何盒模型，
+   否则收起时会剩一条收不掉的残余高度。滚动上限仍由这里提供。 */
 .chat-reason__body {
   margin-top: 4px;
   padding-left: 8px;
@@ -377,7 +380,7 @@
   display: block;
   width: 100%;
   border: 0;
-  transition: height 160ms ease;
+  transition: height var(--duration-fast, 250ms) var(--ease-smooth-out);
 }
 
 .widget-block--loading,

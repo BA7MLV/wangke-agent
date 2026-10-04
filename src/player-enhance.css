@@ -191,7 +191,7 @@
   object-fit: cover;
   /* 第一帧解出来之前先不显示，否则会闪一下纯黑 */
   opacity: 0;
-  transition: opacity var(--duration-quick, 150ms) ease-out;
+  transition: opacity var(--duration-quick, 150ms) var(--ease-out);
 }
 
 .player-preview-video[data-ready] {
@@ -240,9 +240,9 @@
   cursor: pointer;
   transform: translate(-50%, -50%);
   transition:
-    background-color var(--duration-quick, 150ms) ease-out,
-    transform var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out);
-  animation: big-play-in var(--duration-medium, 350ms) var(--ease-smooth-out, ease-out);
+    background-color var(--duration-quick, 150ms) var(--ease-out),
+    transform var(--duration-quick, 150ms) var(--ease-smooth-out);
+  animation: big-play-in var(--duration-medium, 350ms) var(--ease-smooth-out);
 }
 
 .player-big-play:hover {
@@ -309,7 +309,7 @@
   font-weight: 500;
   white-space: nowrap;
   flex: 0 0 auto;
-  transition: background-color var(--duration-quick, 150ms) ease-out;
+  transition: background-color var(--duration-quick, 150ms) var(--ease-out);
 }
 
 .vds-video-layout .rate-btn:hover {
@@ -348,7 +348,7 @@
   border-radius: 6px;
   font-size: 14px;
   font-weight: 600;
-  transition: background-color var(--duration-quick, 150ms) ease-out;
+  transition: background-color var(--duration-quick, 150ms) var(--ease-out);
 }
 
 .vds-video-layout .dm-toggle-btn:hover {
@@ -480,7 +480,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: seek-pulse var(--duration-very-slow, 500ms) var(--ease-smooth-out, ease-out) forwards;
+  animation: seek-pulse var(--duration-very-slow, 500ms) var(--ease-smooth-out) forwards;
 }
 
 .seek-pulse-left {
@@ -512,7 +512,7 @@
 @media (prefers-reduced-motion: reduce) {
   /* 保留淡出反馈（onAnimationEnd 仍触发，state 能正常清理），仅去掉缩放 */
   .seek-pulse {
-    animation: seek-pulse-fade var(--duration-medium, 350ms) ease-out forwards;
+    animation: seek-pulse-fade var(--duration-medium, 350ms) var(--ease-out) forwards;
   }
 }
 

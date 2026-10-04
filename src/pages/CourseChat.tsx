@@ -5,7 +5,7 @@ import { useAppNav } from '../components/appNav';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
-import { StreamParagraph, ThinkLine } from '../components/motion';
+import { StreamParagraph, ThinkLine, Collapse } from '../components/motion';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import { supportsThinking } from '../api/modelCaps';
@@ -56,7 +56,9 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
         <mdui-sym-chevron-right className={open ? 'course-chat__reason-icon course-chat__reason-icon--open' : 'course-chat__reason-icon'} />
         {active ? '思考中…' : '思考过程'}
       </button>
-      {open && <div className="course-chat__reason-body" id={bodyId}>{reasoning}</div>}
+      <Collapse open={open} id={bodyId} innerClassName="course-chat__reason-body">
+        {reasoning}
+      </Collapse>
     </div>
   );
 }

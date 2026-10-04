@@ -12,6 +12,7 @@ import {
   useMduiEvent,
 } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { IconSwap, NumberPop } from '../components/motion';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
@@ -993,11 +994,20 @@ export default function Library() {
           disabled={hasFilters}
         >
           <span className="group-header__icon" aria-hidden="true">
-            {isCollapsed ? <mdui-sym-chevron-right /> : <mdui-sym-keyboard-arrow-down />}
+            {/* icon-swap：两个箭头同时在 DOM 里叠在同一格，交叉淡入淡出。
+                之前是条件渲染，展开 / 收起时箭头是硬跳的。 */}
+            <IconSwap
+              active={isCollapsed ? 'a' : 'b'}
+              a={<mdui-sym-chevron-right />}
+              b={<mdui-sym-keyboard-arrow-down />}
+            />
           </span>
           <span className="group-header__icon" aria-hidden="true"><mdui-sym-folder /></span>
           <span className="group-header__name">{g.name}</span>
-          <span className="group-header__count">{g.videos.length}</span>
+          <span className="group-header__count">
+            {/* number-pop-in：导入 / 删除后数量变化时逐位重新入场 */}
+            <NumberPop text={g.videos.length} />
+          </span>
         </button>
         {g.folder && (
           <mdui-dropdown>

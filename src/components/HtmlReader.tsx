@@ -11,6 +11,7 @@ import { cleanSelectionText, isUsableSelection } from '../materials/region';
 import { useSelectionAsk } from '../store/selectionAsk';
 import { useSettings } from '../store/settings';
 import { useMduiEvent } from '../ui/useMduiEvent';
+import { Shimmer } from './motion';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -457,7 +458,7 @@ export default function HtmlReader({
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {ready ? `第 ${current} / ${total} 段` : '载入中…'}
+          {ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
         </span>
         <div className="mr-bar__spacer" />
         <mdui-segmented-button-group

@@ -38,6 +38,8 @@ export default function Study() {
   const [range, setRange] = useState<RangeKey>('1y');
   const [today, setToday] = useState(() => dateKey(Date.now()));
   const [tip, setTip] = useState<{ cell: HeatCell; x: number; y: number } | null>(null);
+  /** 提示气泡是否已进入。挂载帧 false、下一帧 true，给 .t-tt 一个可插值的起点。 */
+  const [tipShown, setTipShown] = useState(false);
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const pending = useStudyTime((s) => s.pending);
@@ -100,6 +102,17 @@ export default function Study() {
   const rangeRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
     setRange(el.value as RangeKey),
   );
+
+  // 提示气泡的进入动画：挂载帧 data-show=false，下一帧翻 true，
+  // CSS 才有一条「从透明缩到实」的插值可走（直接渲染 true 等于没有起点）。
+  useEffect(() => {
+    if (!tip) {
+      setTipShown(false);
+      return;
+    }
+    const id = requestAnimationFrame(() => setTipShown(true));
+    return () => cancelAnimationFrame(id);
+  }, [tip]);
 
   /**
    * 悬浮 / 点击某一格 → 提示条。
@@ -283,7 +296,15 @@ export default function Study() {
             </div>
           </div>
           {tip && (
-            <div className="heat-tip" data-testid="heat-tip" style={{ left: tip.x, top: tip.y }}>
+            <div
+              className="heat-tip t-tt"
+              /* 首次挂载时 data-show 已经是 true：CSS 的进入过渡靠「属性从
+                 缺省变到 true」触发，直接渲染 true 等于没有起始帧可插值。
+                 所以挂载帧给 false，下一帧再翻 true。 */
+              data-show={tipShown ? 'true' : 'false'}
+              data-testid="heat-tip"
+              style={{ left: tip.x, top: tip.y }}
+            >
               <strong>{formatStudyDuration(tip.cell.seconds)}</strong>
               <span>
                 {relativeDayLabel(tip.cell.date, today)} · {tip.cell.date}

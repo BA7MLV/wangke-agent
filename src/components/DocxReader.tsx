@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db, type MaterialBlockRow } from '../store/db';
+import { Shimmer } from './motion';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -176,7 +177,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {ready ? `第 ${current} / ${total} 段` : '载入中…'}
+          {ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
         </span>
         <div className="mr-bar__spacer" />
       </div>

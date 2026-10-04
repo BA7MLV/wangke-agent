@@ -21,7 +21,7 @@ import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
 import { Panel, PanelBar, PanelSpacer, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
-import { ThinkLine, StreamParagraph } from './motion';
+import { ThinkLine, StreamParagraph, Collapse } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
@@ -173,7 +173,9 @@ function ReasoningBlock({ reasoning, active }: { reasoning: string; active: bool
         <mdui-sym-chevron-right className={open ? 'chat-reason__chevron chat-reason__chevron--open' : 'chat-reason__chevron'} />
         {active ? '思考中…' : '思考过程'}
       </button>
-      {open && <div className="chat-reason__body" id={bodyId}>{reasoning}</div>}
+      <Collapse open={open} id={bodyId} innerClassName="chat-reason__body">
+        {reasoning}
+      </Collapse>
     </div>
   );
 }

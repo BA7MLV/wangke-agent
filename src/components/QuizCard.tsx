@@ -3,6 +3,7 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { QuizData } from '../harness/quiz';
 import { linkifyTimestamps, parseTs } from '../utils/linkify';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
+import { NumberPop } from './motion';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -148,7 +149,10 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = tru
       })}
       {done && (
         <div className="quiz-score">
-          答对 {score}/{quiz.questions.length}
+          答对{' '}
+          {/* number-pop-in：每答一题分数变一次，逐位重新入场。
+              注意 digits 只包数字本身，单位（「答对」/「/」/总数）留在外面。 */}
+          <NumberPop text={score} />/{quiz.questions.length}
         </div>
       )}
     </div>

@@ -4,6 +4,7 @@ import { SectionCard, Field, confirmDialog, toast, useMduiEvent } from '../ui';
 import { useSettings } from '../store/settings';
 import { clearStudyDays, loadStudyDays, useStudyTime } from '../store/studyTime';
 import { computeStats, dateKey, formatStudyDuration } from '../utils/studyLog';
+import { NumberPop, Shimmer } from './motion';
 
 /** 空闲判定的候选档位（分钟）：播放视频时不做空闲判定，所以这几档只影响「没在播放」的时候 */
 const IDLE_OPTIONS = [2, 5, 10, 15];
@@ -92,9 +93,16 @@ export default function StudyTimeCard() {
       <Field label="已有记录" testId="field-study-summary">
         <div className="row row--between" style={{ width: '100%' }}>
           <span className="text-secondary" data-testid="study-summary">
-            {summary
-              ? `活跃 ${summary.days} 天 · 累计 ${formatStudyDuration(summary.total)}`
-              : '读取中…'}
+            {summary ? (
+              <>
+                活跃 <NumberPop text={summary.days} /> 天 · 累计{' '}
+                <NumberPop text={formatStudyDuration(summary.total)} />
+              </>
+            ) : (
+              /* shimmer-text：纯 CSS 的高亮扫过，占位文案因此「有生命」，
+                 不用再叠一个转圈 */
+              <Shimmer text="读取中…" />
+            )}
           </span>
           <mdui-button
             variant="text"

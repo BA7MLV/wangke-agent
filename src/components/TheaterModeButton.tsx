@@ -1,4 +1,5 @@
 import { DefaultTooltip } from '@vidstack/react/player/layouts/default';
+import { IconSwap } from './motion';
 
 interface TheaterModeButtonProps {
   active: boolean;
@@ -25,13 +26,22 @@ export default function TheaterModeButton({ active, onToggle }: TheaterModeButto
         aria-pressed={active}
         onClick={onToggle}
       >
-        <svg className="vds-icon" viewBox="0 0 24 24" aria-hidden="true">
-          {active ? (
-            <path d="M3 5.5h18v13H3v-13Zm2 2v9h14v-9H5Zm2 1.5h10v6H7V9Z" />
-          ) : (
-            <path d="M3 5.5h18v13H3v-13Zm2 2v9h14v-9H5Zm2 1.5 10-1v8l-10-1V9Z" />
-          )}
-        </svg>
+        {/* icon-swap：影院 / 全屏两个图标叠在同一格交叉淡入淡出。
+            之前是同一个 <svg> 里条件换 <path>，切换时是硬跳。
+            vds-icon 留在内层 svg 上 —— 它带尺寸，只放在外层换 wrapper 会丢。 */}
+        <IconSwap
+          active={active ? 'b' : 'a'}
+          a={
+            <svg className="vds-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 5.5h18v13H3v-13Zm2 2v9h14v-9H5Zm2 1.5 10-1v8l-10-1V9Z" />
+            </svg>
+          }
+          b={
+            <svg className="vds-icon" viewBox="0 0 24 24" aria-hidden="true">
+              <path d="M3 5.5h18v13H3v-13Zm2 2v9h14v-9H5Zm2 1.5h10v6H7V9Z" />
+            </svg>
+          }
+        />
       </button>
     </DefaultTooltip>
   );

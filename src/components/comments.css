@@ -50,7 +50,7 @@
 .comments-toggle__chev {
   margin-left: auto;
   color: rgb(var(--mdui-color-on-surface-variant));
-  transition: transform 0.2s;
+  transition: transform var(--duration-quick, 150ms) var(--ease-smooth-out);
 }
 
 .comments-block--open .comments-toggle__chev {

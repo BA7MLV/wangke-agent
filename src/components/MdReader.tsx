@@ -4,6 +4,7 @@ import { db, type MaterialBlockRow } from '../store/db';
 import type { MaterialReaderHandle } from '../materials/types';
 import { extractMdUnits } from '../materials/md';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
+import { Shimmer } from './motion';
 import '../materials/material-reader.css';
 
 const MD_COMPONENTS = { code: MarkdownCode, pre: MarkdownPre };
@@ -127,7 +128,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {ready ? `第 ${current} / ${total} 段` : '载入中…'}
+          {ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
         </span>
         <div className="mr-bar__spacer" />
       </div>

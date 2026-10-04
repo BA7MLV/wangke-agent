@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { CardRow } from '../store/db';
 import { fmtTime } from '../utils/vtt';
-import { ms } from './motion';
+import { ms, NumberPop } from './motion';
 
 interface Props {
   /** 待审卡片（按时间排序），顶卡 = pending[0] */
@@ -56,7 +56,7 @@ export default function SwipeDeck({ pending, keptCount, judgedCount, onJudge, on
     flyTimer.current = window.setTimeout(() => {
       onJudge(top, dir === 'right');
       setLeaving(null);
-    }, ms('fast', 250));
+    }, ms('--duration-fast', 250));
   };
 
   const setDragVisual = (dx: number) => {
@@ -222,7 +222,8 @@ export default function SwipeDeck({ pending, keptCount, judgedCount, onJudge, on
         </mdui-button>
       </div>
       <div className="deck-status" data-testid="swipe-status">
-        已审 {judgedCount} · 待审 {pending.length} · 已保留 {keptCount}
+        已审 <NumberPop text={judgedCount} /> · 待审 <NumberPop text={pending.length} /> · 已保留{' '}
+        <NumberPop text={keptCount} />
       </div>
     </>
   );

@@ -364,12 +364,16 @@
 
 .course-chat__reason-icon {
   font-size: 16px;
+  /* 之前完全没有过渡，展开是硬跳；用 accordion 的 chevron 时长 / 缓动 */
+  transition: transform var(--acc-chevron, 250ms) var(--acc-ease, cubic-bezier(0.22, 1, 0.36, 1));
 }
 
 .course-chat__reason-icon--open {
   transform: rotate(90deg);
 }
 
+/* accordion 内层：margin / padding / max-height 都落在这里，
+   0fr 轨道（.t-acc-panel）本身不带盒模型。 */
 .course-chat__reason-body {
   max-height: 220px;
   margin-top: 5px;

@@ -7,7 +7,7 @@ import { UNLIMITED_ROUNDS } from '../harness/loopGuard';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
 import { buildInfoLabel } from '../utils/buildInfo';
-import { SuccessCheck, ms } from '../components/motion';
+import { SuccessCheck, ms, IconSwap } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
 import StudyTimeCard from '../components/StudyTimeCard';
@@ -764,7 +764,12 @@ export default function Settings() {
           <span className="text-secondary" style={{ flex: 1, fontSize: 14 }}>
             备用出口：代理地址 / B 站 Cookie
           </span>
-          {advOpen ? <mdui-sym-keyboard-arrow-down /> : <mdui-sym-chevron-right />}
+          {/* icon-swap：折叠 / 展开两个箭头叠在同一格交叉淡入淡出 */}
+          <IconSwap
+            active={advOpen ? 'b' : 'a'}
+            a={<mdui-sym-chevron-right />}
+            b={<mdui-sym-keyboard-arrow-down />}
+          />
         </button>
         {advOpen && (
           <div data-testid="bili-adv" id="bili-advanced-settings">

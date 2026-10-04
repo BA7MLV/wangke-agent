@@ -189,7 +189,7 @@
   }
 }
 .mr-flash {
-  animation: mr-flash 800ms ease-out;
+  animation: mr-flash 800ms var(--ease-out);
 }
 
 /* ── Word 阅读器 ────────────────────────────────────────────────────────── */

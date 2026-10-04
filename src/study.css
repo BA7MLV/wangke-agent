@@ -230,6 +230,9 @@ html.mdui-theme-dark .page-study {
   box-shadow: 0 0 0 1px rgb(var(--mdui-color-primary));
 }
 
+/* tooltip open/close：出现带 80ms 延迟 + 淡入 + 微缩放，离开立即消失。
+   之前是硬切。位移继续用 transform（.t-tt 的 translate 通道留给 tooltip
+   自己的定位），所以这里把 .t-tt 的定位偏移清零、只借它的淡入淡出节奏。 */
 .heat-tip {
   position: absolute;
   transform: translate(-50%, -100%);
