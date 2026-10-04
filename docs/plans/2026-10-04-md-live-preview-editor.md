@@ -458,6 +458,20 @@ git commit -m "test: 登记 test-md-live-preview"
 
 `src/md-editor/livePreview.ts`：
 
+> ⚠️ **实现时实测推翻了本任务原定的两处写法**，实际落地与下面这段不同，
+> 已实现在 `src/md-editor/livePreview.ts` 里（含完整注释与源码位置引用）：
+>
+> 1. **不能用 `ViewPlugin.fromClass`** —— CodeMirror 禁止插件提供的装饰携带 block 语义，
+>    围栏折叠会抛 `RangeError: Block decorations may not be specified via plugins`。
+>    改用 `StateField` + `EditorView.decorations.from(field)`（记得把 `field` 本身一起返回，
+>    否则抛 `Field is not present in this state`）。
+> 2. **不要加「IME 组合期间不重算」的守卫** —— 它恰恰制造了要防的错位（实测：带守卫时
+>    `` 和 `cod`。 `` → `` 和 `coe`。 `` 乱跳；不带守卫全程稳定）。CodeMirror 组合期间
+>    每次按键都派发 `docChanged`，文档真实增长，跳过重算会让旧装饰错位。始终重算。
+> 3. 附带：`CollapsedLine.toDOM()` 必须返回**元素**（空 `span`），返回 Text 节点会抛
+>    `getBoundingClientRect is not a function`；重算条件还要加上「语法树对象变了」
+>    （lezer 异步补完只派发 `Language.setState`）。
+
 ```ts
 /**
  * 把 planDecorations 的结果包成 CodeMirror 装饰。**薄适配层**：所有决策都在

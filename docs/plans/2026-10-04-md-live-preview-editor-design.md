@@ -120,6 +120,38 @@ ChatPanel（问答）→ agent 调 edit_markdown
 **只在编辑器打开时注册该工具**：与 `LIST_FRAMES_TOOL` 只在有抽帧时注册同一思路 ——
 按课程实际具备的能力给工具，注册一个当前不可用的工具只会诱发无效调用。
 
+### 实测推翻的两处初稿设计（2026-10-04 实现时）
+
+初稿里对装饰机制有两处推断，实现时用 Chromium 实测证明是**反的**。
+记在这里是因为它们都「看起来显然」，下一个人很可能再推错一遍：
+
+**① 装饰必须走 `StateField`，不能走 `ViewPlugin`。**
+CodeMirror 禁止「由插件提供的装饰」携带 block 语义：插件的 decorations 回调
+被包成 `decorations.of(view => ...)`（函数形式装饰源），而 `TileUpdate.emit` 里
+`disallowBlockEffectsFor` 标记的正是所有函数形式的源，于是打开含围栏代码块的
+文档就抛 `RangeError: Block decorations may not be specified via plugins`。
+围栏折叠又**必须**是 block 的（内联 widget 只抹掉 ``` 而保留行高，实测 8 行 → 8 行、
+高度 154 → 154，等于没折）。唯一出路是 `StateField` + `EditorView.decorations.from(field)`。
+
+**② 「IME 组合期间不重算」这条守卫，恰恰制造了它要防的症状。**
+初稿的直觉是：组合期间文档与选区处于不一致中间态，跳过重算可避免装饰错位。
+实测（Chromium + CDP `Input.imeSetComposition` 逐步喂 n/ni/nih/nihao）结论相反：
+
+| | 组合过程中的 DOM |
+|---|---|
+| 带守卫 | `和 \`cod\`。` → `和 \`coe\`。` → `和 \`cde\`。` → `和 code\`。` |
+| 不带守卫 | 全程 `和 code。`，稳定 |
+
+原因是 CodeMirror 在组合期间每次按键都派发带 `docChanged` 的事务，文档**逐步真实增长**
+（实测 docLength 27→28→29）。跳过重算后装饰停在旧长度上，只能靠「插入点在哪」把旧装饰
+映射到新文档，落在结构化区间（行内代码、强调）内部时就错位。
+初稿那句「组合结束时必然会补上」也不成立 —— 错位在组合**过程中**就已画在屏幕上了。
+结论：始终按当前 state 重算，整段逻辑因此能保持成纯函数 `state → 装饰`。
+
+顺带一条：lezer 的解析是**异步**的，补完会派发只带 `Language.setState` effect 的事务
+（既非 `docChanged` 也非 `selectionSet`）。所以重算条件还必须加上「语法树对象变了」——
+5.6 万字符文档上，只认前两个标志时树已完整而装饰只有 624 条，加上后是 10499 条。
+
 ### 重新分块这条路上的坑
 
 `materials/parse.ts` **静态 import 了 `./pdf.ts`**（pdfjs-dist）。
@@ -183,3 +215,10 @@ ChatPanel（问答）→ agent 调 edit_markdown
 - 2026-10-04：初稿。编辑器选型定为 CodeMirror 6（用户要求「所见即所得」，
   排除分栏预览与 Editor.md 类整块组件）；agent 落笔方式定为「直接改 + diff 高亮 +
   可撤销」，不做逐条采纳清单。
+- 2026-10-04（实现中）：实测推翻初稿两处推断 —— ① 装饰必须走 `StateField`
+  而非 `ViewPlugin`（block 装饰被 CodeMirror 禁止从插件提供）；② IME 组合期
+  「不重算」的守卫会自己制造错位，正确做法是始终重算。详见「实测推翻的两处初稿设计」。
+- 2026-10-04（实现中）：装饰规则落地时修正了初稿的三处推断 ——
+  「露出的判定范围」应是标记所属的结构（块级标记取所在行、行内标记取外层行内容器）
+  而非标记自身；重叠不能靠丢弃后来者解决（会让整行样式整条丢失，改为外层挖洞让开）；
+  围栏的子节点里就有 `CodeMark`（即首尾两行 ```），那里跳过子树是承重的。
