@@ -209,6 +209,18 @@ HTML 有两种读法，阅读器右上角可切，选择会记住：
 >
 > 两种情况下**脚本都不会执行**（沙箱不给 `allow-scripts`，CSP 里 `default-src 'none'` 兜底），相对路径的资源一律不解析（单文件导入下它们本来也没有对应文件），缺失数量会在提示条里说明。
 
+**Markdown 材料**（[设计文档](docs/plans/2026-10-04-md-live-preview-editor-design.md)）
+
+Markdown 是唯一能改的材料。点工具条上的「**编辑**」进入所见即所得的编辑面：语法符号
+（`#` / `**` / 反引号 / 列表的 `-`）自动隐藏，光标移到哪就露到哪 —— 看不见符号也照样能改；
+点「完成」先存再退回阅读视图，两边内容一致。停止输入约一秒后自动落盘，并**同步重新分块**，
+所以刚改的内容立刻能被告问检索到（只存文件不重建块的话，看着生效了其实问不出来）。
+
+问答时 agent 也能直接改这一份文档：它的工具是「把这段替换成那段」（精确字符串匹配，
+不按行号 —— 行号对它极易过期，改到错位置比匹配失败更糟）。改动会在编辑面里**高亮**出来，
+顶部浮着「撤销本次」一键还原，撤销前会校验你有没有动过那几段（动过就明说撤不掉，
+不静默吃掉你的字）。**全程没有确认弹窗** —— 看着不对就撤。
+
 ### 生成字幕
 
 播放页 → 面板「**字幕**」→「生成字幕」。
@@ -432,6 +444,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 |---|---|---|
 | 📚 | **库与文件夹** | 文件夹分组、封面、卡片底边的播放进度条（没看过 / 不足 1% / 材料不画） |
 | 📖 | **阅读材料** | PDF / Word / Markdown / HTML 导入后抽文本 → 分块，**与字幕同等参与检索**；HTML 可选「原样」或「分段」视图；扫描件显式告知 |
+| ✏️ | **md 所见即所得编辑** | `.md` 可点开直接编辑：**语法符号自动隐藏、光标处自动露出**（看不到 `#` / `**` / 反引号），改完存回去与阅读视图一致；**agent 可共编辑** —— 问答时它能直接改同一份文档，改动高亮、一键撤销、撤销前校验 |
 | ✍️ | **选区提问** | 划词 / 框选，引用条可堆叠可删除，`[第3页]` 可点击跳转 |
 | 🎬 | **B 站导入** | 链接 / BV / 短链，油猴桥本机直连，DASH 重封装为 mp4（不重编码、不丢画质） |
 | 📝 | **字幕** | VAD 分段 + ASR 并发转写，**边转边显**、断点续做，导出 VTT / SRT |
@@ -535,7 +548,12 @@ src/
                 subtitle.ts(自带字幕) dmview.ts(弹幕) wire.ts index.ts
   materials/    pdf.ts(pdf.js 封装/文本层/书签) docx.ts(Word 抽取，Node 可测) md.ts(Markdown 抽取)
                 html.ts(HTML 整文档净化/段号锚点/字符集嗅探，与渲染分离) parse.ts(流水线)
-                chunk.ts(归一化分块) units.ts(页/段引用) region.ts(框选裁图) types.ts material-reader.css
+                chunk.ts(归一化分块) reindex.ts(块重建，导入与编辑落盘共用，不牵 pdfjs)
+                units.ts(页/段引用) region.ts(框选裁图) types.ts material-reader.css
+  md-editor/    hideRanges.ts(隐藏区间的纯函数，Node 可测) livePreview.ts(StateField 装饰层)
+                theme.ts(编辑态样式) MdEditor.tsx(React 外壳，MdReader 按需引入)
+                edits.ts(agent 编辑的匹配与诊断，纯函数) agentDiff.ts(agent 改动高亮)
+                bridge.ts(工具层↔编辑面注册表) save.ts(debounce 落盘 + 重新分块)
   harness/      agent.ts(循环) tools.ts context.ts prompts.ts search.ts(字幕检索)
                 searchMaterial.ts(材料检索) quiz.ts ankiCard.ts comments.ts(讨论串清洗/排序/分组)
   pipelines/    transcribe.ts transcribeQueue.ts handout.ts handoutEdit.ts embedIndex.ts
@@ -617,6 +635,10 @@ node scripts/test-material-md.mjs         # Markdown 抽取：围栏整段保留
 node scripts/test-material-html.mjs       # HTML：整文档净化 / CSP 逐字 / 段号锚点同源同序 / 沙箱同源假设 /
                                           #       字符集（GB2312 不乱码）；自己起 headless Chromium，不起服务
 node scripts/test-material-region.mjs     # 框选区域：矩形规范化 / 误触判定 / 选区清洗与截断
+
+# md 所见即所得编辑
+node scripts/test-md-live-preview.mjs     # 编辑态装饰：隐藏区间 / 光标处露出 / 围栏折叠 / 空白与重叠
+node scripts/test-md-edit-tool.mjs        # edit_markdown：old_string 匹配诊断 / 一批编辑合成一个 ChangeSet
 
 # 其它纯逻辑
 node scripts/test-study-log.mjs           # 学习时长：本地日期键（UTC 陷阱）/ 跨零点切分 / 热力图几何 / 连续天数
@@ -706,6 +728,8 @@ SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-quiz.mjs         #
 - 旧版本存 IndexedDB 的视频会在首次打开时自动迁移到 OPFS
 - HTML 材料的**原样视图会联网**：按原文档渲染意味着加载它引用的远程图片 / 样式 / 字体，这会向第三方暴露你的 IP，断网后同一份材料也会长得不一样。设置页可全局关掉，阅读器里也能对当前这份点「本次离线」（详见上方「HTML 材料」）
 - HTML 原样视图里**相对路径的图片只显示 alt 文字**（单文件导入没有同目录资源可解析），有几项缺失会在阅读器顶部提示条里说明
+- `.md` 编辑面**顶部的 frontmatter 会照常显示**（开头那几行 `---` / `title:`）。它不在 markdown 语法树里，要藏只能靠文本层启发式猜，猜错会把正文里的水平线整条藏掉 —— 宁可多显示几行，也不让你以为内容没了（阅读视图看不到它，只有编辑面会露出来）
+- `.md` 编辑面是**所见即所得的源码编辑器**，不是富文本：有序列表的序号、链接的 `[]()`、表格的对齐线、图片的 `![alt](src)` 都按源码显示，隐藏它们只会让「这句是哪一段」变得没法辨认
 
 <div align="center">
 <sub>数据只在本机 · 不上传任何服务器</sub>

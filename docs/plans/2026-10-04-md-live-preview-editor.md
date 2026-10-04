@@ -1,5 +1,11 @@
 # .md 所见即所得编辑 + Agent 共编辑 · 实现计划
 
+状态：**已实现**（`b622847` … `66b8a23`）。实现中有若干处与下面的计划不同 ——
+装饰改走 `StateField` 而非 `ViewPlugin`、撤销改按 `from` 降序、`agentDiff` 挂顶层而非
+Compartment、`tools.ts` 改动态 import bridge —— **以代码与
+[设计文档](2026-10-04-md-live-preview-editor-design.md)为准**（那份文档的「实测推翻的设计」
+与「变更记录」记了全部差异与理由）。下面的任务列表按执行记录原样保留，不回改。
+
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
 **Goal:** 让 `.md` 阅读材料可在 CodeMirror 6 里「所见即所得」地编辑，并让问答 agent 通过 `edit_markdown` 工具改同一份文档（diff 高亮 + 一键撤销）。
