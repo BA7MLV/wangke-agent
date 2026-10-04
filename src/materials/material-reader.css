@@ -300,11 +300,16 @@
 }
 
 /* 保存状态文案。等宽数字不必要（这里没有数字），但要 nowrap：
-   文案变长时不该把分段按钮挤到下一行。 */
+   文案变长时不该把分段按钮挤到下一行。
+   min-width: 0 + ellipsis 是窄屏（手机 360px）下的保险：这条工具条刻意不换行
+   （见上面 .mr-edit-bar 的注释），所以空间不够时必须牺牲文案而不是让控件溢出。 */
 .mr-edit-state {
   font-size: 12px;
   color: rgb(var(--mdui-color-on-surface-variant));
   white-space: nowrap;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 /* 「有未保存的修改」用主色：这是当前唯一需要用户注意的状态，
@@ -313,6 +318,22 @@
 .mr-edit-state--dirty {
   color: rgb(var(--mdui-color-primary));
   font-weight: 500;
+}
+
+/* 「保存失败」用 error 色，且必须与上面那条一眼分开：
+   dirty/saving 是「还没存 / 正在存」，随时会自己好；error 是「出了故障」，
+   底下还挂着一整条说明（原文没存下去，还是存下了但检索是旧的）——
+   两种情况若都画成主色，用户会把「数据可能对不上」当成「还没存完」。 */
+.mr-edit-state--error {
+  color: rgb(var(--mdui-color-error));
+  font-weight: 500;
+}
+
+/* 「撤销本次 agent 改动」。flex: none 是因为左边那条文案会 ellipsis，
+   中间那个 flex:1 的撑杆不能被挤掉；按钮自己不许被压缩（图标+四个字要一整块）。 */
+.mr-edit-undo {
+  flex: none;
+  white-space: nowrap;
 }
 
 /* 编辑面容器。高度靠 flex 撑满（.mr-root 是 column flex），

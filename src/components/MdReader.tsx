@@ -1,8 +1,12 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { XMarkdown } from '@ant-design/x-markdown';
 import { db, type MaterialBlockRow } from '../store/db';
+import { getMaterialFile } from '../store/fileStore';
 import type { MaterialReaderHandle } from '../materials/types';
 import { extractMdUnits } from '../materials/md';
+// ⚠️ **只要类型**。写成普通 import 会把整棵 CodeMirror 依赖图拖进 MdReader 的静态图，
+// 那正是这个文件用 React.lazy 隔离掉的那 120KB（理由见上面那段注释）。
+import type { MdEditorHandle } from '../md-editor/MdEditor';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { Shimmer } from './motion';
 import '../materials/material-reader.css';
@@ -50,28 +54,48 @@ interface Props {
  */
 export default function MdReader({ blob, materialId, initialUnit, handleRef, onUnitChange }: Props) {
   /**
-   * 阅读态当前渲染的原文。`null` = 还没从 blob 读出来（首屏骨架）。
+   * 阅读态当前渲染的原文。`null` = 还没读出来（首屏骨架 / 换材料）。
    *
-   * 为什么它是 state 而不是每次 render 现读：编辑态退出来时要把用户改过的内容
-   * 带回阅读态，而那**不能**靠重新读 blob —— blob 里还是落盘前的旧版本，
-   * 当前阶段又没有保存管线（下一个任务才有）。从 blob 读一次存进来，
-   * 之后阅读/编辑两个方向都在这一份文本上改。
+   * 它是 state 而不是每次 render 现读：编辑态退出来时要把用户改过的内容带回阅读态，
+   * 而那一瞬不能靠「重新读 blob」——`blob` 是落盘前那一版的不可变快照（见下面 ①）。
+   * 于是编辑期间另有一份草稿接着（draftRef），退出时先接回来，
+   * 紧接着保存成功触发的重读会把盘上那一版换进来（两者逐字相同）。
    */
   const [text, setText] = useState<string | null>(null);
-  /** 段标签（来自库里的分块结果），只随 materialId 变 —— 与正文内容无关。 */
+  /** 段标签（来自库里的分块结果）：随 materialId 变，保存成功后也变（块集换过了，见下面 ②） */
   const [labels, setLabels] = useState<ReadonlyMap<number, string>>(NO_LABELS);
   const [error, setError] = useState<string | null>(null);
   const [mark, setMark] = useState<number | null>(null);
   const [editing, setEditing] = useState(false);
 
   /**
-   * 编辑态的最新全文。
+   * 「这份材料已经换过一版」的标记，值是 save.ts 的 savedAt（毫秒时间戳）。
    *
-   * 刻意放 ref 而不放 state：每次按键都会调 onDirty，写 state 会让整个阅读器
-   * （含工具条、切段观察器）跟着每个键重渲染一遍，而阅读区此时根本没挂载。
-   * 只有「退出编辑」这一个时刻才需要读它 —— 那时统一写回 text。
+   * 它只当**依赖项**用，不当「这是不是当前材料」的判据（那是 readForRef 的事）：
+   * savedAt「每次成功落盘必变」，每次落盘都换一个值，于是依赖必然失效。
+   * 刻意不自己计数 —— 计数在 StrictMode 双挂载下会被多拨一轮，
+   * 多出来的那个 token 会凭空再读一次文件（无害，但白做功且让日志失真）。
+   */
+  const [savedAt, setSavedAt] = useState<number | null>(null);
+
+  /** 上一次读的是哪份材料。见下面 ① 里它把「换材料」与「同材料重读」分开的那段。 */
+  const readForRef = useRef<string | null>(null);
+
+  /**
+   * 编辑态的最新全文（逐键更新，走 ref 不走 state）。
+   *
+   * 走 ref：每次按键都会调 onDirty，写 state 会让整个阅读器（含工具条、切段观察器）
+   * 跟着每个键重渲染一遍，而阅读区此时根本没挂载。
+   *
+   * 它的职责现在只剩一个：**「完成」那一瞬把内容接回来**。
+   * flush 成功之后盘上那一版与这份草稿必然逐字相同（flush 写的就是它），
+   * 所以它不是第二份真相，只是让切换不必等一次 OPFS 重读；
+   * 真正说了算的还是下面 ① 从盘上重读回来的那一版。
    */
   const draftRef = useRef<string | null>(null);
+
+  /** 编辑面交上来的 flush。null = 编辑面还没挂上（lazy chunk 还在路上）或已经卸载 */
+  const editorRef = useRef<MdEditorHandle | null>(null);
 
   const [current, setCurrent] = useState(1);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -94,29 +118,73 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
   }, [handleRef, goto]);
 
   // ① 读文件全文。
+  //
+  // 触发它的是两件事，同一个出口：
+  //   - **换材料**（materialId 变）：读 MaterialReader 传进来的 blob，并把阅读器整个复位；
+  //   - **同材料重读**（savedAt 变）：回 OPFS 重读盘上那一版。
+  //
+  // 分开判据而不是看 savedAt 是不是 null：复位那一段里有 setEditing(false)，
+  // 而它一旦因为「顺便又跑了一趟」而误触发，就会把用户从正在编辑的文档里踢出去
+  // （丢的是没落盘的那部分）。只有 materialId 真的变了才允许复位。
   useEffect(() => {
     let cancelled = false;
-    setText(null);
-    setError(null);
-    // 换材料必须把编辑态一起复位：草稿属于上一篇材料，留着会在新文章里凭空多出内容。
-    draftRef.current = null;
-    setEditing(false);
-    void blob
-      .text()
-      .then((raw) => {
-        if (!cancelled) setText(raw);
-      })
-      .catch((e: unknown) => {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      });
+    const switched = readForRef.current !== materialId;
+    readForRef.current = materialId;
+    const reload = !switched && savedAt !== null;
+    if (switched) {
+      setText(null);
+      setError(null);
+      // 换材料必须把编辑态一起复位：草稿属于上一篇材料，留着会在新文章里凭空多出内容。
+      draftRef.current = null;
+      setEditing(false);
+    }
+    /**
+     * 重读为什么不复用 `blob` 这个 prop：Blob 是**不可变快照**，对同一个对象再 text()
+     * 永远拿落盘前那一版（MaterialReader 只在换材料时读一次）。
+     *
+     * 而阅读视图该显示什么，唯一说了算的是盘上那份。落盘是三步（写 blob → 重建块 →
+     * 清阅读位置，详见 save.ts 的 persistMd），中间可能只成了一半 —— 只让编辑器的
+     * 汇报驱动界面，就会在「原文存下了、检索还是旧的」这种状态下显示一份与检索不一致的正文。
+     */
+    const read = reload
+      ? getMaterialFile(materialId).then((fresh) => fresh?.text() ?? null)
+      : blob.text();
+    void read.then(
+      (raw) => {
+        if (cancelled) return;
+        if (raw === null) {
+          /**
+           * 只有重读会走到这里（初读时 blob 已经在手上，不可能是 null）：文件读不回来了。
+           * **不清正文** —— 清了就只剩一块空白，而用户刚刚才把这一版写上去；
+           * 讲清楚「显示的还是上一次读到的版本」比假装没事好。
+           */
+          setError('保存之后没能从磁盘重新读到这份材料（文件可能已被删除），正文暂时还是上一次读到的版本。');
+          return;
+        }
+        setText(raw);
+        // 读到正文就说明「正文这一侧」没有失败：上一次留下的「重读失败」不该一直挂着
+        // （段标签那边的失败会由 ② 自己重新报，它在同一个 savedAt 上也会重跑）。
+        setError(null);
+      },
+      (e: unknown) => {
+        if (cancelled) return;
+        const detail = e instanceof Error ? e.message : String(e);
+        setError(reload ? `保存后重新读取失败：${detail}` : `Markdown 打开失败：${detail}`);
+      },
+    );
     return () => {
       cancelled = true;
     };
-  }, [blob]);
+  }, [blob, materialId, savedAt]);
 
   // ② 段标签。
   //
   // 刻意与 ① 拆成两个 effect：如果合成一个，正文每改一个字都要重查一遍 materialBlocks。
+  //
+  // savedAt 在依赖里，是因为它意味着**块集换过了**：save.ts 的 persistMd 重建了整张
+  // materialBlocks 表，unit 与 unitLabel 的对应关系随之改变。不重查的话，
+  // 阅读视图会拿新正文配旧段标签（问答按段号引用时跳到的标题就不对了）。
+  // 换材料时顺带多跑一趟是无害的：查询按 materialId 过滤，拿回来的只会是当前这份的标签。
   useEffect(() => {
     let cancelled = false;
     void (async () => {
@@ -136,7 +204,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
     return () => {
       cancelled = true;
     };
-  }, [materialId]);
+  }, [materialId, savedAt]);
 
   /**
    * 切段。纯函数，所以可以放 useMemo 而不是「setState + effect」那一套：
@@ -163,8 +231,8 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
   const total = blocks?.length ?? 0;
 
   /**
-   * 「阅读 → 编辑」。以**当前阅读文本**为初值，而不是重新读 blob：
-   * 见上面 draftRef 那段注释 —— 这一阶段 blob 里还是旧的。
+   * 「阅读 → 编辑」。以**当前已知的那一版**为初值，而不是重新读 blob：
+   * 见 draftRef 那段注释 —— 它保证「退出再立刻进」也不会退回旧内容。
    */
   const enterEdit = useCallback(() => {
     if (text === null) return;
@@ -173,14 +241,30 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
   }, [text]);
 
   /**
-   * 「编辑 → 阅读」。把草稿带回去。
+   * 「编辑 → 阅读」：**先存再退**。
    *
-   * 这一步是「往返不丢编辑」的全部实现：编辑态里 EditorView 是被销毁的
-   * （退出就卸载），内容靠 draftRef 这个 ref 活下来。没有它的话，
-   * 点一次「完成」就会把用户敲的字全丢掉 —— 而当前阶段又没有保存管线兜底。
-   * 落盘管线接上之后（下一个任务），这一句会变成「先存再退」，本函数可以删掉。
+   * 保存发生在 MdEditor 里（那里才有 saver 与 OPFS 句柄），这里是唯一的调用方：
+   * `await flush()` 的承诺是「这一版确实在盘上」，没落成它会 reject。
+   *
+   * 失败就**不切**。此刻 EditorView 还活着、用户敲的字一个字都没丢，
+   * 而失败原因就显示在编辑面自己的提示条上（原文没写下去 / 原文存下了但检索还是旧的 /
+   * 只剩阅读位置没重置 —— 三种后果不同，用户该做的事也不同，见 save.ts 的 MdSaveError）。
+   * 静默切回阅读态等于宣布「保存成功」，用户会以为存好了然后关掉页面。
    */
-  const exitEdit = useCallback(() => {
+  const exitEdit = useCallback(async () => {
+    const editor = editorRef.current;
+    if (!editor) {
+      // 编辑面还没挂上（lazy chunk 还在路上）：没有改动，也就没什么可存的
+      setEditing(false);
+      return;
+    }
+    try {
+      await editor.flush();
+    } catch {
+      return;
+    }
+    // 存成了：把草稿立刻接回来，切回阅读态不必等那次 OPFS 重读（① 会用盘上那版覆盖它，
+    // 两者逐字相同，所以谁先落地都看不出差别）。
     const draft = draftRef.current;
     setEditing(false);
     if (draft !== null && draft !== text) setText(draft);
@@ -188,6 +272,16 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
 
   const handleDirty = useCallback((next: string) => {
     draftRef.current = next;
+  }, []);
+
+  /** 编辑面挂上/卸载时交上来的 flush 句柄（存到 ref：切按钮时不该触发重渲染） */
+  const handleEditor = useCallback((h: MdEditorHandle | null) => {
+    editorRef.current = h;
+  }, []);
+
+  /** 落盘成功 → 记下这一刻，作为 ① 与 ② 的重跑信号 */
+  const handleSaved = useCallback((at: number) => {
+    setSavedAt(at);
   }, []);
 
   useEffect(() => {
@@ -246,7 +340,9 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
       {error && (
         <div className="mr-hint" data-testid="reader-error">
           <mdui-sym-error />
-          Markdown 打开失败：{error}
+          {/* 文案自带「发生了什么」的前缀（见上面 ① 里的两处 setError），
+              所以这里不再统一加「Markdown 打开失败：」—— 保存后重读失败不是打开失败。 */}
+          <span>{error}</span>
         </div>
       )}
       {editing ? (
@@ -258,7 +354,18 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
             </div>
           }
         >
-          <MdEditor initialText={text ?? ''} onDirty={handleDirty} />
+          {/*
+            initialText 传的是**当前已知的那一版**：进入编辑前 text 一定已就绪（enterEdit 的前提），
+            而它要么来自 blob、要么来自上一次保存成功后的 OPFS 重读 —— 不会是落盘前的旧内容。
+            materialId 必传：它是落盘的目标文件、也是 agent 桥的注册键。
+          */}
+          <MdEditor
+            initialText={text ?? ''}
+            materialId={materialId}
+            onDirty={handleDirty}
+            onSaved={handleSaved}
+            onHandle={handleEditor}
+          />
         </Suspense>
       ) : (
         <div className="mr-scroll" ref={scrollRef}>
