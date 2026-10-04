@@ -75,6 +75,69 @@
   vertical-align: top;
 }
 
+/* —— 流式落画（```svg 未闭合时）——
+   class 由 LiveSvg 在元素**插入之后**打上，所以只有真正新到的那几个节点带 class：
+   动画每个元素只跑一次，重渲染不会让整张图重播一遍。
+
+   时长 / 缓动 / 错开步长一律读 transitions.css 的动效令牌，不写死数值 —— 全局档位要能一处改完。 */
+
+/* ⚠️ 下面三个 class 共用**同一条** animation 声明，各自定义的那条装进自己的 `--xmd-anim-*`。
+   写成两条就撞车：`animation` 是简写属性、整体覆盖，而「有描边又有填充」的图元
+   （带边框的矩形）两个 class 都在 —— 只会跑到最后声明的那条动画，另一个的初值留在原地。
+   丢的正好是 dashoffset=1，于是**描边直接看不见**（e2e-svg-stream 的 fill+stroke 那条守的就是它）。
+   两条规则算出的是同一个值，所以谁最后生效都一样。 */
+.xmd-svg-stroke,
+.xmd-svg-fill,
+.xmd-svg-fade {
+  /* 错开起跑：序数由 LiveSvg 写在顶层节点上（自定义属性会继承下来），
+     同一个 <g> 里的图元共用一个延迟，一起动比逐个错开更连贯 */
+  --xmd-draw-delay: min(calc(var(--xmd-draw-order, 0) * var(--duration-stagger)), var(--duration-very-slow));
+  animation: var(--xmd-anim-draw, none), var(--xmd-anim-fade, none);
+}
+
+/* 描边「走」一遍：pathLength=1 时全长正好 1 个用户单位，于是 dasharray/dashoffset 都是常数 1 */
+.xmd-svg-stroke {
+  --xmd-anim-draw: xmd-svg-draw var(--duration-slow) var(--ease-smooth-out) var(--xmd-draw-delay) forwards;
+  stroke-dasharray: 1;
+  stroke-dashoffset: 1;
+}
+
+/* 填充与文字：淡入。`both` 让它们在错开的那段时间里保持全透明，不会先闪一下再消失 */
+.xmd-svg-fill,
+.xmd-svg-fade {
+  --xmd-anim-fade: xmd-svg-fade var(--duration-quick) var(--ease-out) var(--xmd-draw-delay) both;
+}
+
+@keyframes xmd-svg-draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes xmd-svg-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* 「生成中」退成画布下方的一行小字（图已经在长了，大占位就多余了） */
+.xmd-mermaid-live {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px 10px;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.xmd-mermaid-live .xmd-mermaid-dots {
+  width: 6px;
+  height: 6px;
+}
+
 /* foreignObject 内的 HTML 标签继承图内字体，避免落回浏览器默认字体 */
 .xmd-mermaid-canvas foreignObject,
 .xmd-mermaid-zoom-inner foreignObject {

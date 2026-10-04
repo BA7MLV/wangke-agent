@@ -162,6 +162,11 @@ const META = {
   // 题卡解析的出图链路：mermaid 与 svg 两种围栏各一个脚本（自播种题卡，不调真实 API）
   'e2e-quiz-mermaid': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   'e2e-svg-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
+  // ```svg 围栏的**流式落画**：waiting → drawing → ok 三相位、画布元素数单调增长、
+  // 描边 dashoffset 真在走、终态落回 sanitizeSvg 的完整产物。
+  // 必须 dev 档 —— 取样要在应用自己那份模块与 React 树上做，而整段流只有 1.5s，
+  // 跨进程往返会漏掉大半中间态（脚本改成页面内自跑 rAF 循环）。
+  'e2e-svg-stream': { service: 'dev', antd: false, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-svg-stream-test.mp4' },
   // 阅读材料（PDF / Word）+ 选区提问：走**真实导入路径**（setInputFiles），不播种 OPFS，
   // 所以整条 isImportable → 写盘 → 解析 → 建索引 都被覆盖。不需要 key。
   // 在 preview 档跑还顺带验「构建产物里的 pdf.js worker 与 /pdfjs/cmaps/ 是否齐」——
@@ -258,6 +263,9 @@ const META = {
   'probe-mermaid': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '缺失 public/probe-mermaid.html，页面 404，无法加载' },
   // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
   'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
+  // peekSvgProgress 的增量契约（半截源码切分）。守的是完整源码那条碰不到的失效方式：
+  // 把半条路径提前画出去、把闭合标签算错、某一拍漏元素 / 多元素 —— 只在流式下才成立。
+  'probe-svg-stream': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
   // 沙箱 widget 的隔离边界：Node 里没有同源策略 / sandbox / CSP，
   // 「widget 里的脚本到底能碰到什么」这个问题只有真浏览器能作证。
   // 证明的是**碰不到什么**：不透明源读不到父页面、CSP 断掉一切外发、桥接只有两个能力。

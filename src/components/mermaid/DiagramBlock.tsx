@@ -2,19 +2,23 @@ import { useCallback, useState } from 'react';
 import { toast, useMduiEvent } from '../../ui';
 import { copyText } from '../../utils/clipboard';
 import { toStandaloneSvg } from './mermaidRender';
+import type { SvgProgress } from './svgRender';
+import LiveSvg from './LiveSvg';
 import './mermaid.css';
 
 /** 播放器快捷键（vidstack 的 keyTarget 默认是 document）——弹层里按这些键要拦下来，否则会误触播放/快进 */
 const PLAYER_KEY_RE = /^(?: |Spacebar|k|j|l|m|f|c|i|arrowleft|arrowright|arrowup|arrowdown|home|end|\d)$/i;
 
 /**
- * 图表块的四态机。两条链路（mermaid / 原生 svg）共用同一组状态，语义也一致：
- * - waiting：围栏还没闭合（流式中）→ 只提示并给源码预览，不解析、不抖。
+ * 图表块的状态机。两条链路（mermaid / 原生 svg）共用同一组状态，语义也一致：
+ * - waiting：围栏还没闭合、且暂时落不了画 → 只提示并给源码预览，不解析、不抖。
+ * - drawing：**只有 svg 链路会停在这个态**：半截 SVG 已经能画出个大概了，边生成边往画布上追加，
+ *   下面那句「生成中」退成一行小提示（见 LiveSvg）。
  * - rendering：内容齐了、正在出图（只有 mermaid 会停在这个态，svg 是同步净化）。
  * - ok：出图成功 → SVG + 工具条（复制源码 / 下载 / 大图 / 源码折叠）。
  * - error：语法或安全校验没过 → 错误摘要 + 源码 + 重试，用户至少能拿走源码。
  */
-export type DiagramPhase = 'waiting' | 'rendering' | 'ok' | 'error';
+export type DiagramPhase = 'waiting' | 'drawing' | 'rendering' | 'ok' | 'error';
 
 export interface DiagramBlockProps {
   /** data-testid 前缀：`mermaid` / `svg`，决定 `-block` / `-canvas` / `-copy` … 这一整组测试钩子 */
@@ -23,6 +27,8 @@ export interface DiagramBlockProps {
   tag: string;
   phase: DiagramPhase;
   svg?: string | null;
+  /** 流式落画快照（`phase === 'drawing'` 时才有）：根属性 + 已写完整的元素。mermaid 链路不传。 */
+  stream?: SvgProgress | null;
   err?: string;
   /** 围栏里的原始源码（已去掉尾部空白） */
   source: string;
@@ -54,6 +60,7 @@ export default function DiagramBlock({
   tag,
   phase,
   svg,
+  stream,
   err,
   source,
   copyLabel,
@@ -131,6 +138,18 @@ export default function DiagramBlock({
           <span className="xmd-mermaid-dots" />
           <span>{phase === 'waiting' ? waitingText : renderingText}</span>
         </div>
+      ) : phase === 'drawing' && stream ? (
+        <>
+          {/* 画布先出，提示退成一行小字：空图也有正确的宽高比（viewBox 一到手就定了），
+              所以整块不会随着内容增长来回跳。追加过程见 LiveSvg。 */}
+          <div className="xmd-mermaid-canvas" data-testid={`${testId}-canvas`}>
+            <LiveSvg rootAttrs={stream.rootAttrs} elements={stream.elements} />
+          </div>
+          <div className="xmd-mermaid-live" data-testid={`${testId}-live`}>
+            <span className="xmd-mermaid-dots" />
+            <span>{waitingText}</span>
+          </div>
+        </>
       ) : phase === 'error' ? (
         <div className="xmd-mermaid-error" data-testid={`${testId}-error`}>
           <div className="xmd-mermaid-error-title">
