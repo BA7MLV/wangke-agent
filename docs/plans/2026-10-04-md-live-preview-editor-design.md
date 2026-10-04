@@ -124,8 +124,9 @@ ChatPanel（问答）→ agent 调 edit_markdown
 
 `materials/parse.ts` **静态 import 了 `./pdf.ts`**（pdfjs-dist）。
 从编辑器里动态 import 它会把 pdfjs 拖进这条链路 —— 而材料阅读器那边
-是刻意让 pdfjs 保持懒加载的。所以要走一条 md 专用的重建路径，
-不顺手把 pdfjs 的 import 改成动态（那是另一个话题，不在本次范围）。
+是刻意让 pdfjs 保持懒加载的。所以把 `parseMaterial` 尾巴那段
+（`chunkUnits` → `judgeMaterialText` → 事务重建块）**整段拆进 DOM 无关的
+`materials/reindex.ts`**，两条路径共用它，而不是另写一份 md 专用重建。
 
 段号会漂移：编辑后「第 12 段」可能指向别的内容。
 `videos.lastUnit` 记的阅读位置在重建后语义已变，重建时一并清掉。
@@ -141,8 +142,8 @@ ChatPanel（问答）→ agent 调 edit_markdown
 | `src/md-editor/theme.ts` | 编辑态样式（走 MD3 令牌，不自造颜色） |
 | `src/md-editor/MdEditor.tsx` | React 外壳：挂载 / 卸载 / 保存状态 / 工具条 |
 | `src/md-editor/bridge.ts` | `materialId ↔ controller` 注册表 + `applyAgentEdits` / `undoAgentBatch` |
-| `src/md-editor/save.ts` | debounce 保存 + 重新分块（md 专用路径） |
-| `src/materials/reindexMd.ts` | md 重新分块（不牵 pdfjs） |
+| `src/md-editor/save.ts` | debounce 保存 + 触发重新分块 |
+| `src/materials/reindex.ts` | **从 `parse.ts` 拆出**的「块重建」尾巴（DOM 无关、不牵 pdfjs），`parse.ts` 与编辑落盘共用 |
 | `scripts/test-md-live-preview.mjs` | 一层单测：隐藏区间计算 |
 | `scripts/test-md-edit-tool.mjs` | 一层单测：`old_string` 匹配与 ChangeSet 构造 |
 | `scripts/e2e-md-editor.mjs` | 二层 e2e：编辑 → 落盘 → 重新分块；agent 改 → diff → 撤销 |
@@ -155,6 +156,9 @@ ChatPanel（问答）→ agent 调 edit_markdown
 | `package.json` | 加 `codemirror`、`@codemirror/lang-markdown`、`@codemirror/commands`、`@lezer/markdown` |
 | `src/components/MdReader.tsx` | 工具条加「编辑」入口 + 编辑态挂载 `MdEditor` |
 | `src/harness/tools.ts` | 新增 `EDIT_MARKDOWN_TOOL` 及其执行分支 |
+| `src/materials/parse.ts` | 把「块重建」尾巴搬进 `reindex.ts`，自身改为调用（对外 API 不变） |
+| `src/components/ChatPanel.tsx` | 多接一个 `materialFormat` prop，据此决定是否注册 `edit_markdown` |
+| `src/pages/Player.tsx` | 把 `video.materialFormat` 传给 `ChatPanel` |
 | `src/harness/prompts.ts` | 告诉模型：当前材料可编辑，以及工具契约 |
 
 ## 验证
