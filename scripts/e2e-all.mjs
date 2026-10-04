@@ -248,6 +248,15 @@ const META = {
   'e2e-chat-skill-scope': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-skill-scope-test.mp4' },
   // 只能跑 dev：动态取色那段要往 IndexedDB 种封面帧，得拿应用同一份 Dexie 实例
   'e2e-material-you': { service: 'dev', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
+  // md 所见即所得编辑面 + agent 与用户共编辑同一份文档。
+  // 语法符号「该藏时藏 / 光标处必须露」成对断言（只藏不露 = 藏过头、根本没法编辑）、
+  // 落盘必须**重建 materialBlocks**（只写 blob 的话界面上看着生效了、问答检索到的还是旧内容）、
+  // agent 改动的高亮必须扛住「预览 ⇄ 源码」的 Compartment 重配（挂错层就一点源码全清空）。
+  // **只能跑 dev(5173)**：B 组要读应用同一份 Dexie、C 组要拿 agent 桥的 getMdEditor，
+  // 生产构建里模块已打包（rollup 还会改写 bridge 的导出名），两条路都取不到句柄。
+  // agent 那半直接调 bridge.applyEdits —— 就是 edit_markdown 工具落地后执行的那段代码，
+  // 不经模型所以不依赖 SF_KEY（提示词契约属于另一层，未覆盖）。
+  'e2e-md-editor': { service: 'dev', antd: false, base: true, timeout: 300 },
   'probe': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
   // 控制栏 hover 显隐（悬停出现 / 移出收起，含未播放过 / 播放中 / 暂停中三态），要 TEST_FILE
   'probe-controls-hover': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
