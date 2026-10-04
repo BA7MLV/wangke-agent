@@ -29,6 +29,15 @@ import { applyDiff, clearDiff } from './agentDiff';
 export type ApplyEditsResult = { ok: true; changed: number } | { ok: false; error: string };
 
 /**
+ * 撤销的回执。**为什么不回一个 boolean**：「撤不掉」有三种截然不同的原因，
+ * 而它们对用户是完全不同的三件事（重新点一次 / 关掉页面再打开 / 先手动处理一下冲突）。
+ * 只回 false 的话，UI 唯一能做的就是静默什么都不做 —— 用户点了按钮、屏幕毫无反应，
+ * 既不知道是「没有可撤的」还是「你的改动和它冲突了」，也不知道该怎么办。
+ * 这是**给人看的文案**，所以写成能直接展示的句子。
+ */
+export type UndoResult = { ok: true } | { ok: false; error: string };
+
+/**
  * 编辑面愿意暴露给 agent 的全部能力。**故意只有这三个方法** ——
  * 工具层要的是「把这段改了」和「撤回去」，不该拿到 EditorView 去 dispatch 任意事务
  * （那等于给模型一把万能钥匙：它可以顺手把光标、乱序、选区全改掉）。
@@ -42,10 +51,10 @@ export interface MdEditorController {
    */
   applyEdits(edits: AgentEdit[]): ApplyEditsResult;
   /**
-   * 撤掉**最近一次** applyEdits 留下的全部改动（含纯删除），返回有没有真的撤掉。
-   * 没有可撤的、或撤销前的校验没过（见 stillIntact）都返回 false —— 此时不动文档。
+   * 撤掉**最近一次** applyEdits 留下的全部改动（含纯删除）。
+   * 撤不掉时不动文档，并给一句能直接展示的原因（见 UndoResult）。
    */
-  undoAgentBatch(): boolean;
+  undoAgentBatch(): UndoResult;
   /** 现在有没有一批可撤的改动。撤销按钮据此决定亮不亮 */
   hasAgentBatch(): boolean;
 }
@@ -127,12 +136,23 @@ export function createMdEditorController(view: EditorView): MdEditorController {
     return { ok: true, changed: plan.changes.length };
   }
 
-  function undoAgentBatch(): boolean {
-    if (batch === null || batch.length === 0) return false;
-    if (isGone(view)) return false;
-    // 校验不过就**什么都不做**：返回 false 而不是「尽力撤一点」。
+  function undoAgentBatch(): UndoResult {
+    if (batch === null || batch.length === 0) {
+      return { ok: false, error: '没有可撤销的改动（agent 还没改过这份材料，或刚才那次已经撤过了）。' };
+    }
+    if (isGone(view)) {
+      return { ok: false, error: '编辑面已经关掉了，无法撤销。' };
+    }
+    // 校验不过就**什么都不做**：返回失败而不是「尽力撤一点」。
     // 撤销的位置一旦偏了就是静默丢字（见 stillIntact），那比撤不了糟糕得多。
-    if (!stillIntact(view.state.doc, batch)) return false;
+    if (!stillIntact(view.state.doc, batch)) {
+      return {
+        ok: false,
+        error:
+          '撤不掉了：agent 改的那几处（或它们前面的内容）在之后被你编辑过，原文已经对不上。' +
+          '为了不覆盖你写的内容，这里没有强行撤销。你可以手动改回，或者关掉编辑面重新打开。',
+      };
+    }
 
     // ⚠️ 降序，理由见 undoOrder —— 按升序撤会吃掉已经还原回去的内容
     const changes = [...batch].sort(undoOrder);
@@ -142,7 +162,7 @@ export function createMdEditorController(view: EditorView): MdEditorController {
 
     clearDiff(view);
     batch = null;
-    return true;
+    return { ok: true };
   }
 
   return {
@@ -189,9 +209,7 @@ function undoOrder(a: UndoSpec, b: UndoSpec): number {
  *
  * 为什么不能省：撤销凭据存的是 apply 那一刻的坐标。用户在这之后又打字，
  * 坐标就漂了 —— 漂到前面的会把无关的字当成 agent 写的删掉（丢字，且屏幕上毫无异样）。
- * 与其那样，不如不撤：返回 false，UI 就当这次撤销没发生。
- * （接口只回一个布尔，够区分「撤了 / 没撤」；要区分「为什么撤不了」需要把失败原因也带出来，
- * 那是接线时的事，本层不替 UI 决定。）
+ * 与其那样，不如不撤：撤销返回失败并说明为什么（见 UndoResult），UI 把它讲给用户听。
  *
  * 为什么不改成「跟着文档改动映射坐标」：那需要给 view 挂一个 updateListener，
  * 而编辑器是在 MdEditor 里建出来的（扩展只能在创建时给），本模块拿不到那个口子。
