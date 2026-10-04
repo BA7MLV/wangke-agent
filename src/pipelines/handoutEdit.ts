@@ -6,7 +6,7 @@
  *    重建失败不丢内存状态（下次编辑带全量 IR 重试即自愈）。
  */
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot } from '../store/settings';
 import { db } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { extractFramesAt } from '../media/frames';
@@ -50,8 +50,7 @@ export async function rewriteBlockWithLLM(
   instruction: string,
   ctx: { title: string; heading?: string; prev?: string; next?: string },
 ): Promise<Block> {
-  const settings = getSettings();
-  if (!settings.apiKey) throw new Error('请先在「设置」中填写硅基流动 API Key');
+  const target = targetOfSlot(getSettings(), 'chat');
 
   const extraRule =
     original.type === 'table'
@@ -70,8 +69,7 @@ export async function rewriteBlockWithLLM(
   let lastErr: unknown;
   for (let attempt = 0; attempt < 2; attempt++) {
     try {
-      const msg = await chatOnce(settings, {
-        model: settings.llmModel,
+      const msg = await chatOnce(target, {
         max_tokens: 2000,
         messages: [{ role: 'user', content: prompt }],
       });

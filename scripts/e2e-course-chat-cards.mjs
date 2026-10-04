@@ -44,15 +44,24 @@ page.on('pageerror', (e) => fail(`页面异常：${e.message}\n${String(e.stack 
 await page.addInitScript((baseUrl) => {
   localStorage.setItem('wangke-settings', JSON.stringify({
     state: {
-      apiKey: 'test-key',
-      baseUrl,
-      llmModel: 'test-model',
-      visionModel: 'test-model',
-      asrModel: 'test-model',
+      // 供应商注册表：凭据在 providers[i].apiKey，模型是带 provider 的引用
+      providers: [
+        {
+          id: 'sf',
+          name: '硅基流动',
+          baseUrl,
+          apiKey: 'test-key',
+          serves: ['chat', 'vision', 'asr'],
+          catalogId: 'siliconflow-cn',
+        },
+      ],
+      llmModel: { providerId: 'sf', model: 'test-model' },
+      visionModel: { providerId: 'sf', model: 'test-model' },
+      asrModel: { providerId: 'sf', model: 'test-model' },
       contextWindow: 32768,
       agentRounds: 6,
     },
-    version: 0,
+    version: 2,
   }));
 
   /**

@@ -11,7 +11,7 @@
  * 设计文档：docs/plans/2026-09-23-cloud-sync-design.md
  */
 
-import type { Settings } from '../store/settings';
+import type { Provider, Settings } from '../store/settings';
 import type { VideoRow } from '../store/db';
 
 // ── 单元 id ─────────────────────────────────────────────────────────────────
@@ -239,7 +239,11 @@ export const ALL_VIDEO_FIELDS_CLASSIFIED: [keyof VideoRow] extends [VideoFieldCo
  * 跟着同步走。白名单则是「新字段默认留在本机」，泄漏需要人为动作。
  */
 export const SYNC_SETTINGS_KEYS = [
-  'baseUrl',
+  // 供应商表：**只有 id / 名称 / 端点 / 能力 / 能力数据源会同步**，apiKey 由 pickSyncSettings
+  // 就地剥掉（见下）。为什么表要同步而 key 不同步：模型选型、收藏夹、上下文窗口这些
+  // 「这台设备该怎么用模型」的信息跨设备有意义，而付费凭据同步它等于把 Key 复制到服务端，
+  // 且多设备共享一个 Key 会让用量与限流互相干扰 —— 与旧的顶层 apiKey 是同一条理由。
+  'providers',
   'asrModel',
   'llmModel',
   'visionModel',
@@ -265,15 +269,17 @@ export const SYNC_SETTINGS_KEYS = [
 /**
  * 设置中**明确不参与同步**的字段。必须逐个写明理由，否则下一个人会觉得它只是被忘了。
  *
- * - `apiKey`：付费凭据。同步它等于把 Key 复制到服务端，且多设备共享一个 Key 会让
- *   用量与限流互相干扰。
  * - `bilibiliCookie`：含 `SESSDATA`，是账号登录态。泄漏等于账号被冒用。
  * - `bilibiliProxy`：指向代理部署位置，跟「当前设备怎么出网」绑定，跨设备无意义。
  * - `syncEnabled` / `syncEndpoint` / `syncToken`：**同步自身的配置必须本机独立** ——
  *   否则「关掉同步」这个动作本身要先同步过去，逻辑上成了先有鸡还是先有蛋。
+ *
+ * ⚠️ 供应商 API Key **不在这个列表里**，因为它已经不是一个顶层字段：每家的 key 都在
+ * `providers[i].apiKey`，由 `pickSyncSettings` 逐条剥掉。`ALL_SETTINGS_FIELDS_CLASSIFIED`
+ * 管不到「结构体内部的字段」，所以这道防线由 `stripProviderKeys` + 单测守着，
+ * 不能因为白名单里没有 apiKey 就以为凭据安全了。
  */
 export const NON_SYNC_SETTINGS_KEYS = [
-  'apiKey',
   'bilibiliCookie',
   'bilibiliProxy',
   'syncEnabled',
@@ -295,15 +301,39 @@ export const ALL_SETTINGS_FIELDS_CLASSIFIED: [keyof Settings] extends [SettingsK
   ? true
   : false = true;
 
+/** 同步载荷里的供应商：**逐字段剥掉凭据**后的形状 */
+export type SyncedProvider = Omit<Provider, 'apiKey'>;
+
+/**
+ * 白名单里 `providers` 单独处理，其余字段原样带出。
+ *
+ * 这是「凭据永不同步」的唯一执行点，而它**不是**靠白名单实现的 —— 白名单是按顶层字段名
+ * 过滤的，管不到 `providers[i].apiKey` 这种嵌套字段。所以这里显式重建每个供应商对象，
+ * 只保留 id / name / baseUrl / serves / catalogId。
+ *
+ * **返回的对象是新引用**：调用方（同步层）若就地改它，不会污染本机设置里的真身。
+ */
+function stripProviderKeys(s: Settings): SyncedProvider[] {
+  return s.providers.map(({ id, name, baseUrl, serves, catalogId }) => ({
+    id,
+    name,
+    baseUrl,
+    serves: [...serves],
+    catalogId,
+  }));
+}
+
 /**
  * 按白名单提取可同步的设置。
  *
- * **不深拷贝**：返回的是同引用，调用方（同步层）序列化后即丢弃，不做二次修改。
+ * **不深拷贝**（`providers` 除外，它必须重建）：返回的是同引用，调用方序列化后即丢弃。
  */
-export function pickSyncSettings(s: Settings): Pick<Settings, SyncSettingsKey> {
-  const out = {} as Pick<Settings, SyncSettingsKey>;
+export function pickSyncSettings(s: Settings): Omit<Pick<Settings, SyncSettingsKey>, 'providers'> & {
+  providers: SyncedProvider[];
+} {
+  const out = {} as Record<string, unknown>;
   for (const k of SYNC_SETTINGS_KEYS) {
-    (out as Record<string, unknown>)[k] = s[k];
+    out[k] = k === 'providers' ? stripProviderKeys(s) : s[k];
   }
-  return out;
+  return out as ReturnType<typeof pickSyncSettings>;
 }

@@ -1,20 +1,35 @@
 /**
- * 模型能力元数据：来自 models.dev 的实时数据（含硅基流动在架模型），
+ * 模型能力元数据：来自 models.dev 的实时数据，**逐供应商**索引，
  * 本地缓存 + 7 天 TTL；未拉取/过期/失败时由 modelCaps.ts 回退到名称启发式。
+ *
+ * ## 为什么缓存键要带供应商
+ *
+ * models.dev 的能力表本来就是「provider → models → 能力」的三层结构，而**同一个模型 id
+ * 在不同供应商下能力可以不同**。实测全库 3914 个 id 里有 1150 个出现在多个供应商下，
+ * 其中大量上下文窗口/模态不一致，例如：
+ *
+ * - `Qwen/Qwen3.6-35B-A3B`：国际站只支持文本，国内站支持图像 + 视频
+ * - `thinkingmachines/Inkling`：deepinfra 524288 上下文，官方只有 65536
+ *
+ * 旧实现把 `siliconflow` 与 `siliconflow-cn` 拍平成一张 `id → 能力` 表，两者有 31 个同名 id
+ * 其中 7 个能力冲突，取到的是「后合并的那一站」的值 —— 能用纯属合并顺序的巧合，
+ * 上游改任一侧就会静默失效（视觉识图首当其冲）。现在键是 `catalogId \0 modelId`，冲突从根上消失。
  */
 
 const API_URL = 'https://models.dev/api.json';
 const CACHE_KEY = 'wangke-model-meta';
 const TTL_MS = 7 * 24 * 3600 * 1000;
+
 /**
- * 缓存结构版本。**字段含义变了就得 +1**：老缓存里没有 `thinking`，
- * 而「没有」和「模型没声明旋钮」在数据上长得一样 —— 不升版本会把老缓存
- * 误读成「这个模型不支持深度」，于是深度控件凭空消失且没人知道为什么。
+ * 缓存结构版本。**字段含义变了就得 +1**，老缓存必须整体作废而不是被误读。
  *
- * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs）：
- * 版本写错的话那份夹具会被当成过期缓存丢掉，测试表现为「能力数据凭空失效」。
+ * v2 → v3：键从裸模型 id 变成 `catalogId \0 modelId`。不升版本的话老缓存里那批无前缀的键
+ * 会被当成「catalog 为空的数据」，命中不上任何查询（表现为「能力数据凭空失效」）。
+ *
+ * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs、
+ * scripts/test-thinking-depth.mjs）：版本写错的话那份夹具会被当成过期缓存丢掉。
  */
-export const MODEL_META_CACHE_VERSION = 2;
+export const MODEL_META_CACHE_VERSION = 3;
 
 export interface ModelMeta {
   context: number;
@@ -48,6 +63,7 @@ export interface ThinkingControl {
 interface MetaCache {
   version: number;
   updatedAt: number;
+  /** 键 = `${catalogId}\0${modelId}` */
   models: Record<string, ModelMeta>;
 }
 
@@ -68,6 +84,11 @@ interface ModelsDevEntry {
   reasoning?: boolean;
   reasoning_options?: ReasoningOption[];
   tool_call?: boolean;
+}
+
+/** 缓存键。分隔符用 `\0`：模型 id 里不可能出现 NUL，撞键因此不可能发生 */
+export function metaKey(catalogId: string, modelId: string): string {
+  return `${catalogId}\0${modelId}`;
 }
 
 /**
@@ -124,8 +145,15 @@ function load(): MetaCache | null {
   return mem;
 }
 
-export function getModelMeta(id: string): ModelMeta | null {
-  return load()?.models[id] ?? null;
+/**
+ * 查一个模型在某家供应商下的能力。元数据没有收录（或供应商没填 catalogId）时返回 null。
+ *
+ * `catalogId` 为空串时**不会**退化成「按模型名全局查」：那正是 v2 拍平表的老 bug，
+ * 同名模型在别家的能力会被当成本家的。
+ */
+export function getModelMeta(catalogId: string, modelId: string): ModelMeta | null {
+  if (!catalogId) return null;
+  return load()?.models[metaKey(catalogId, modelId)] ?? null;
 }
 
 type MetaListener = () => void;
@@ -153,29 +181,42 @@ export function isModelMetaStale(): boolean {
   return !c || Date.now() - c.updatedAt > TTL_MS;
 }
 
-/** 拉取 models.dev 并精简为硅基流动（国际站 + 国内站合并，国内站优先）的能力表 */
-export async function refreshModelMeta(): Promise<{ count: number }> {
+/**
+ * 拉取 models.dev 并按 `catalogId \0 modelId` 建能力表。
+ *
+ * @param catalogs 用户登记过的 models.dev 供应商 key（`Provider.catalogId`）。
+ *   **只保留这几家的数据** —— models.dev 全库 226 家 / 3914 个模型，整份存下来对
+ *   localStorage 是纯浪费（而配额满了会静默让整份缓存写不进去）。
+ *   传空数组则整份都不保留（没有登记就没有查询入口）。
+ */
+export async function refreshModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
+  const wanted = [...new Set(catalogs.filter((c) => c.trim().length > 0))];
+  if (wanted.length === 0) return { count: 0 };
+
   const res = await fetch(API_URL);
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
-  const json = await res.json();
-  const src: Record<string, ModelsDevEntry> = {
-    ...json?.siliconflow?.models,
-    ...json?.['siliconflow-cn']?.models,
-  };
+  const json = (await res.json()) as Record<string, { models?: Record<string, ModelsDevEntry> }>;
+
   const models: Record<string, ModelMeta> = {};
-  for (const [id, m] of Object.entries(src)) {
-    const context = m?.limit?.context;
-    if (!context) continue;
-    models[id] = {
-      context,
-      output: m.limit?.output ?? 8192,
-      vision: !!m.modalities?.input?.includes('image'),
-      reasoning: !!m.reasoning,
-      toolCall: !!m.tool_call,
-      thinking: parseThinking(m),
-    };
+  for (const catalog of wanted) {
+    const src = json?.[catalog]?.models;
+    if (!src) continue;
+    for (const [id, m] of Object.entries(src)) {
+      const context = m?.limit?.context;
+      if (!context) continue;
+      models[metaKey(catalog, id)] = {
+        context,
+        output: m.limit?.output ?? 8192,
+        vision: !!m.modalities?.input?.includes('image'),
+        reasoning: !!m.reasoning,
+        toolCall: !!m.tool_call,
+        thinking: parseThinking(m),
+      };
+    }
   }
-  if (Object.keys(models).length === 0) throw new Error('models.dev 返回数据为空');
+  if (Object.keys(models).length === 0) {
+    throw new Error(`models.dev 里没有 ${wanted.join(' / ')} 的模型数据`);
+  }
   mem = { version: MODEL_META_CACHE_VERSION, updatedAt: Date.now(), models };
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(mem));

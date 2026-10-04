@@ -1,6 +1,6 @@
 import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
 import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot } from '../store/settings';
 import {
   CallLedger,
   answerReserve,
@@ -93,8 +93,10 @@ export async function runAgentLoop(
   maxRounds = 6,
 ): Promise<ChatMessage[]> {
   const settings = getSettings();
+  const target = targetOfSlot(settings, 'chat');
+  const { catalogId, model } = target;
   const out = [...messages];
-  const thinking = cb.thinkingEffort ? thinkingParams(settings.llmModel, cb.thinkingEffort) : {};
+  const thinking = cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort) : {};
   /** 护栏 1：循环检测的账本（同一工具 + 同一参数本轮只能出现一次） */
   const ledger = new CallLedger();
   /**
@@ -126,17 +128,16 @@ export async function runAgentLoop(
    */
   const budgetFor = () =>
     roundMaxTokens(
-      outputLimitOf(settings.llmModel),
-      effectiveContextWindow(settings.llmModel, settings.contextWindow),
+      outputLimitOf(catalogId, model),
+      effectiveContextWindow(catalogId, model, settings.contextWindow),
       out.reduce((n, m) => n + estimateTokens(textOf(m)), 0),
     );
 
   for (let round = 0; round < maxRounds; round++) {
     cb.onRoundStart?.(round);
     const msg = await chatStream(
-      settings,
+      target,
       {
-        model: settings.llmModel,
         messages: out,
         tools,
         temperature: 0.3,
@@ -235,9 +236,8 @@ export async function runAgentLoop(
   cb.onRoundStart?.(stop.rounds);
   for (let attempt = 0; attempt < 2; attempt++) {
     const finalMsg = await chatStream(
-      settings,
+      target,
       {
-        model: settings.llmModel,
         messages: out,
         temperature: 0.3,
         max_tokens: budgetFor(),

@@ -1,5 +1,5 @@
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot } from '../store/settings';
 import { db, type SegmentRow } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
 import { segmentsToTranscript } from '../handout/docx';
@@ -88,8 +88,7 @@ export async function runDanmaku(
   videoId: string,
   onProgress: (p: DanmakuProgress) => void,
 ): Promise<number> {
-  const settings = getSettings();
-  if (!settings.apiKey) throw new Error('请先在「设置」中填写硅基流动 API Key');
+  const target = targetOfSlot(getSettings(), 'chat');
 
   const video = await db.videos.get(videoId);
   if (!video) throw new Error('视频不存在');
@@ -113,8 +112,7 @@ export async function runDanmaku(
 
       try {
         const msg = await withRetry(() =>
-          chatOnce(getSettings(), {
-            model: getSettings().llmModel,
+          chatOnce(target, {
             max_tokens: 1200,
             messages: [
               { role: 'user', content: PROMPTS.danmaku(video.name, segmentsToTranscript(chunk), context) },

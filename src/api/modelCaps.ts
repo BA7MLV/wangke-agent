@@ -1,6 +1,10 @@
 /**
- * 模型能力查询：优先用 models.dev 实时元数据（见 modelMeta.ts），
+ * 模型能力查询：优先用 models.dev 实时元数据（见 modelMeta.ts，**按供应商逐家索引**），
  * 未拉取/未收录时回退到按模型名的启发式推断，可能误判。
+ *
+ * 每个查询都要带 `catalogId`（来自 `Provider.catalogId`）：同一个模型 id 在不同供应商下
+ * 能力可以不同，只按模型名查等于把别家的能力当成本家的。元数据缺失时启发式仍只看模型名 ——
+ * 那是兜底，宁可不准也不能不给。
  *
  * **例外是思考参数**（`thinkingParams`）：它不靠猜模型名，而是查模型自己声明的
  * 旋钮 —— 厂商 API 参考点名的走文档，其余走元数据，两处都没有就不发深度参数。
@@ -12,12 +16,12 @@ import { getModelMeta, type ThinkingControl } from './modelMeta';
 const VISION_RE = /([-_/]vl|vision|gpt-4o|gpt-5|gemini|claude|qwen3-vl|internvl|minicpm-v|glm-4v|step-1v|kimi-latest|moonshot-v1-.*-vision)/i;
 const THINK_RE = /(r1|qwen3|qwq|glm-z1|glm-5|glm-4\.[56]|hunyuan-t1|thinking|reasoner|deepseek-v3\.2|deepseek-v4|k2-thinking)/i;
 
-export function isVisionModel(id: string): boolean {
-  return getModelMeta(id)?.vision ?? VISION_RE.test(id);
+export function isVisionModel(catalogId: string, id: string): boolean {
+  return getModelMeta(catalogId, id)?.vision ?? VISION_RE.test(id);
 }
 
-export function supportsThinking(id: string): boolean {
-  return getModelMeta(id)?.reasoning ?? THINK_RE.test(id);
+export function supportsThinking(catalogId: string, id: string): boolean {
+  return getModelMeta(catalogId, id)?.reasoning ?? THINK_RE.test(id);
 }
 
 /**
@@ -31,11 +35,21 @@ export function supportsThinking(id: string): boolean {
  * **为什么这三条要盖过元数据**：models.dev 的 siliconflow 条目把 DeepSeek-V4-Flash
  * 记成了 `thinking_budget`，与厂商文档冲突。厂商文档钦定了字段，就以它为准 ——
  * 否则这个模型上深度旋钮会静默失效（网关不报错，只是不听）。
+ *
+ * **按 catalogId 分组**：这份文档只对硅基流动成立。同一个模型 id 接到别家时，
+ * 别的供应商未必认 `reasoning_effort`，拿这份文档去覆盖它是错的。
  */
-const DOC_EFFORT_MODELS: Record<string, string[]> = {
-  'Pro/deepseek-ai/DeepSeek-V4': ['high', 'max'],
-  'deepseek-ai/DeepSeek-V4-Flash': ['high', 'max'],
-  'Pro/zai-org/GLM-5.2': ['high', 'max'],
+const DOC_EFFORT_MODELS: Record<string, Record<string, string[]>> = {
+  siliconflow: {
+    'Pro/deepseek-ai/DeepSeek-V4': ['high', 'max'],
+    'deepseek-ai/DeepSeek-V4-Flash': ['high', 'max'],
+    'Pro/zai-org/GLM-5.2': ['high', 'max'],
+  },
+  'siliconflow-cn': {
+    'Pro/deepseek-ai/DeepSeek-V4': ['high', 'max'],
+    'deepseek-ai/DeepSeek-V4-Flash': ['high', 'max'],
+    'Pro/zai-org/GLM-5.2': ['high', 'max'],
+  },
 };
 
 /** 档位 → 预算占声明上限的比例。低=1/4 够快，高=1/2，最大=拉满 */
@@ -51,29 +65,27 @@ const EFFORT_ORDER: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xh
  * 取**不超过目标的最强档**；若声明的全都比目标强（在 GLM-5.2 上选「低」），
  * 退到其中最弱的那档，即「用户要更弱，但模型最弱也就这样」。
  */
-function toEffortValue(model: string, effort: ReasoningEffort): string {
-  const lanes = (thinkingControlOf(model)?.effort ?? [])
-    .filter((lane) => EFFORT_ORDER.includes(lane))
-    .sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
-  if (lanes.length === 0) return effort;
+function toEffortValue(lanes: readonly string[], effort: ReasoningEffort): string {
+  const sorted = [...lanes].sort((a, b) => EFFORT_ORDER.indexOf(a) - EFFORT_ORDER.indexOf(b));
+  if (sorted.length === 0) return effort;
   const want = EFFORT_ORDER.indexOf(effort);
-  const notStronger = lanes.filter((lane) => EFFORT_ORDER.indexOf(lane) <= want);
-  return notStronger.length > 0 ? notStronger[notStronger.length - 1] : lanes[0];
+  const notStronger = sorted.filter((lane) => EFFORT_ORDER.indexOf(lane) <= want);
+  return notStronger.length > 0 ? notStronger[notStronger.length - 1] : sorted[0];
 }
 
 /**
  * 模型声明的思考控制方式。**厂商文档点名的走文档，其余走 models.dev 元数据**，
  * 两处都没有就是 null（= 不知道，不猜）。
  */
-export function thinkingControlOf(id: string): ThinkingControl | null {
-  const lanes = DOC_EFFORT_MODELS[id];
+export function thinkingControlOf(catalogId: string, id: string): ThinkingControl | null {
+  const lanes = DOC_EFFORT_MODELS[catalogId]?.[id];
   if (lanes) return { toggle: true, effort: lanes };
-  return getModelMeta(id)?.thinking ?? null;
+  return getModelMeta(catalogId, id)?.thinking ?? null;
 }
 
 /** 这个模型能不能调思考深度：只有它声明了 effort 档位或 budget 区间才算 */
-export function hasThinkingDepth(id: string): boolean {
-  const control = thinkingControlOf(id);
+export function hasThinkingDepth(catalogId: string, id: string): boolean {
+  const control = thinkingControlOf(catalogId, id);
   return !!control && (!!control.effort?.length || !!control.budget);
 }
 
@@ -90,10 +102,10 @@ export function hasThinkingDepth(id: string): boolean {
  * 猜错就等于把一个模型不认的参数发出去（旋钮静默失效，或直接被网关拒）。
  * 现在没声明就没有深度参数 —— 深度控件也跟着不显示（见 `hasThinkingDepth`）。
  */
-export function thinkingParams(model: string, effort: ReasoningEffort) {
-  const control = thinkingControlOf(model);
+export function thinkingParams(catalogId: string, model: string, effort: ReasoningEffort) {
+  const control = thinkingControlOf(catalogId, model);
   if (control?.effort?.length) {
-    return { enable_thinking: true, reasoning_effort: toEffortValue(model, effort) };
+    return { enable_thinking: true, reasoning_effort: toEffortValue(control.effort, effort) };
   }
   const ceiling = control?.budget?.max;
   if (ceiling != null) {
@@ -114,8 +126,8 @@ export function thinkingParams(model: string, effort: ReasoningEffort) {
  * 实测在架模型（models.dev）：DeepSeek-V4-Pro 384k、Kimi-K3 / GLM-5.2 262k、
  * Qwen3.5-122B 64k，但也有 Qwen2.5-72B 只有 4k —— **所以必须逐模型取，不能取全局最大**。
  */
-export function outputLimitOf(id: string): number {
-  return getModelMeta(id)?.output ?? 8192;
+export function outputLimitOf(catalogId: string, id: string): number {
+  return getModelMeta(catalogId, id)?.output ?? 8192;
 }
 
 /**
@@ -129,8 +141,12 @@ export function outputLimitOf(id: string): number {
  * 取 max 而不是无条件信元数据：设置值可能被用户**调大**过（换过窗口更大的服务），
  * 那是显式意图，不能被元数据拉回去。两者都缺时返回 null，交给调用方按未知处理。
  */
-export function effectiveContextWindow(id: string, configured?: number | null): number | null {
-  const meta = getModelMeta(id)?.context ?? null;
+export function effectiveContextWindow(
+  catalogId: string,
+  id: string,
+  configured?: number | null,
+): number | null {
+  const meta = getModelMeta(catalogId, id)?.context ?? null;
   const conf = configured != null && configured > 0 ? configured : null;
   if (meta == null && conf == null) return null;
   return Math.max(meta ?? 0, conf ?? 0);
@@ -150,8 +166,8 @@ const WINDOW_TABLE: [RegExp, number][] = [
   [/gemini/i, 1048576],
 ];
 
-export function guessContextWindow(id: string): number {
-  const meta = getModelMeta(id);
+export function guessContextWindow(catalogId: string, id: string): number {
+  const meta = getModelMeta(catalogId, id);
   if (meta) return meta.context;
   for (const [re, win] of WINDOW_TABLE) if (re.test(id)) return win;
   return 131072;

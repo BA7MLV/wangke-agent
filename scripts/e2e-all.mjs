@@ -146,6 +146,9 @@ const META = {
   // （src/sync/units.ts 的 ALL_SETTINGS_FIELDS_CLASSIFIED / ALL_VIDEO_FIELDS_CLASSIFIED，
   // `npm run build` 的 tsc 会拦），两者不重叠。
   'test-sync-units': { service: 'none', antd: false, timeout: 120 },
+  // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
+  // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
+  'test-providers': { service: 'none', antd: false, timeout: 120 },
   // 抽音频的坏帧容忍：自己造损坏样片、自己起虚拟静态服务器（page.route），不依赖任何常驻服务
   'e2e-audio-corrupt-frame': { service: 'none', antd: false, timeout: 300 },
 
@@ -163,6 +166,10 @@ const META = {
   // 课程助手的两张生成式卡片（提问选方案 / 目录整理方案）+ 跨页继续。
   // 模型流是页内假的（addInitScript 换掉 window.fetch），所以既不依赖 SF_KEY 也不花时间。
   'e2e-course-chat-cards': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 多供应商：迁移（只有浏览器里才有真实条件，persist 依赖 window）、
+  // 设置页的供应商注册表、以及**运行时**请求真的打到了各家的地址与凭据。
+  // 模型流与 /models 都是页内假的，不需要 key。
+  'e2e-providers': { service: 'preview', antd: false, base: true, timeout: 300 },
   // agent 循环护栏：循环检测（重复调用就停，且不误伤换关键词的检索）/「不限」档真能跑 12 轮 /
   // 停止生成（点一下就停、已流出内容保留并落库）。模型流是页内假的，不花 API。
   'e2e-agent-guard': { service: 'preview', antd: false, base: true, timeout: 300 },

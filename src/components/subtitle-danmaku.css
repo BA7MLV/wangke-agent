@@ -18,6 +18,19 @@
   color: rgb(var(--mdui-color-primary));
 }
 
+/* 供应商名：多供应商后模型 id 不再唯一，独立一列才不会认错。
+   固定宽度并右对齐，让各行的模型 id 仍然对齐 —— 否则每行长度不同参差成锯齿。 */
+.model-picker__provider {
+  flex: none;
+  max-width: 96px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  opacity: 0.72;
+  text-align: right;
+}
+
 .model-picker__id {
   overflow: hidden;
   text-overflow: ellipsis;

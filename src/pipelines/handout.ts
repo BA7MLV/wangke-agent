@@ -1,5 +1,5 @@
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot, type ModelTarget } from '../store/settings';
 import { db, type FrameRow, type SegmentRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { extractFrames, extractFramesAt, blobToDataURL, type ExtractedFrame } from '../media/frames';
@@ -81,14 +81,21 @@ interface FrameWithCaption extends ExtractedFrame {
   isSlide: boolean;
 }
 
-/** VL：描述帧内容，判断是否教学画面 */
-async function captionFrame(frame: ExtractedFrame, limiter: AdaptiveLimit): Promise<FrameWithCaption> {
-  const settings = getSettings();
+/**
+ * VL：描述帧内容，判断是否教学画面。
+ *
+ * `target` 由调用方解析好传进来 —— 视觉模型可能配在另一家供应商，
+ * 帧理解是并发跑的（几十帧），不该每帧都重读一遍设置。
+ */
+async function captionFrame(
+  frame: ExtractedFrame,
+  limiter: AdaptiveLimit,
+  target: ModelTarget,
+): Promise<FrameWithCaption> {
   const dataUrl = await blobToDataURL(frame.blob);
   const msg = await withAdaptiveRetry(
     () =>
-      chatOnce(settings, {
-        model: settings.visionModel,
+      chatOnce(target, {
         // caption 最终截断到 120 字，300 的预留纯属浪费 TPM 配额
         max_tokens: 160,
         messages: [
@@ -118,7 +125,9 @@ export async function runHandout(
   onProgress: (p: HandoutProgress) => void,
 ): Promise<void> {
   const settings = getSettings();
-  if (!settings.apiKey) throw new Error('请先在「设置」中填写硅基流动 API Key');
+  // 文本与视觉可以配在两家不同的供应商，各自独立校验凭据
+  const chatTarget = targetOfSlot(settings, 'chat');
+  const visionTarget = targetOfSlot(settings, 'vision');
 
   const video = await db.videos.get(videoId);
   const blob = await getVideoFile(videoId);
@@ -130,7 +139,15 @@ export async function runHandout(
 
   await acquireWakeLock();
   try {
-    await runHandoutInner(videoId, doneSegs, blob, video.name, onProgress);
+    await runHandoutInner(
+      videoId,
+      doneSegs,
+      blob,
+      video.name,
+      onProgress,
+      chatTarget,
+      visionTarget,
+    );
   } finally {
     await releaseWakeLock();
   }
@@ -142,9 +159,9 @@ async function runHandoutInner(
   videoBlob: Blob,
   videoName: string,
   onProgress: (p: HandoutProgress) => void,
+  chat: ModelTarget,
+  vision: ModelTarget,
 ): Promise<void> {
-  const settings = getSettings();
-
   // 1. 抽帧（间隔 25s + 阈值 16：PPT 翻页差异大仍会被抓到，滤掉讲师晃动类低信息帧，省 TPM 配额）
   const frames = await extractFrames(videoBlob, {
     interval: 25,
@@ -159,7 +176,7 @@ async function runHandoutInner(
   let capDone = 0;
   await adaptivePool(frames, limiter, async (frame, i) => {
     try {
-      captioned[i] = await captionFrame(frame, limiter);
+      captioned[i] = await captionFrame(frame, limiter, vision);
     } catch {
       captioned[i] = { ...frame, caption: '课程画面', isSlide: true };
     }
@@ -214,8 +231,7 @@ async function runHandoutInner(
     for (let i = 0; i < transcript.length; i += chunkSize) {
       const chunk = transcript.slice(i, i + chunkSize);
       const msg = await withRetry(() =>
-        chatOnce(settings, {
-          model: settings.llmModel,
+        chatOnce(chat, {
           max_tokens: 1500,
           messages: [{ role: 'user', content: PROMPTS.chunkSummary(chunk) }],
         }),
@@ -227,8 +243,7 @@ async function runHandoutInner(
   }
 
   const outlineMsg = await withRetry(() =>
-    chatOnce(settings, {
-      model: settings.llmModel,
+    chatOnce(chat, {
       max_tokens: 4000,
       messages: [{ role: 'user', content: PROMPTS.outline(transcript, videoName, skillBlock) }],
     }),
@@ -258,8 +273,7 @@ async function runHandoutInner(
     let blocks: Block[] | null = null;
     for (let attempt = 0; attempt < 2 && !blocks; attempt++) {
       const msg = await withRetry(() =>
-        chatOnce(settings, {
-          model: settings.llmModel,
+        chatOnce(chat, {
           max_tokens: 3000,
           messages: [
             {

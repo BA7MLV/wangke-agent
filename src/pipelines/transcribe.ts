@@ -1,5 +1,5 @@
 import { transcribe } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot } from '../store/settings';
 import { db, type SegmentRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { extractAndSegment } from '../media/extractClient';
@@ -20,7 +20,7 @@ export interface TranscribeOptions {
 }
 
 /**
- * 字幕转写流水线：抽音频 → VAD 分段 → 自适应并发调硅基流动 ASR → 写入 segments 表。
+ * 字幕转写流水线：抽音频 → VAD 分段 → 自适应并发调 ASR（ASR 槽位配的那家供应商）→ 写入 segments 表。
  * 支持断点续做：已完成的段（status=1）会跳过；并发按 AIMD 调节，遇限流自动降速。
  *
  * 重 CPU 的「抽音频 + VAD」在 Worker 里跑（见 `media/extractClient.ts`），
@@ -33,7 +33,8 @@ export async function runTranscription(
   opts: TranscribeOptions = {},
 ): Promise<void> {
   const settings = getSettings();
-  if (!settings.apiKey) throw new Error('请先在「设置」中填写硅基流动 API Key');
+  // 供应商与凭据都在这里一次性解析完：ASR 可以配在跟文本模型完全不同的一家
+  const target = targetOfSlot(settings, 'asr');
 
   const blob = await getVideoFile(videoId);
   const video = await db.videos.get(videoId);
@@ -104,7 +105,7 @@ export async function runTranscription(
       const endSample = Math.min(pcm.length, Math.ceil(seg.end * 16000));
       const segBlob = wavBlob(pcm.subarray(startSample, endSample));
       const result = await withAdaptiveRetry(
-        () => transcribe(settings, settings.asrModel, segBlob, `seg-${idx}.wav`),
+        () => transcribe(target, segBlob, `seg-${idx}.wav`),
         limiter,
         3,
         () => !!opts.signal?.aborted, // 退避等待期间也要能响应取消

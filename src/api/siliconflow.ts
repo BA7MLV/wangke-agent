@@ -1,7 +1,14 @@
-import type { Settings } from '../store/settings';
+import type { ModelTarget } from '../store/settings';
 import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
 
-/** 硅基流动 API 客户端（浏览器直调，OpenAI 兼容协议） */
+/**
+ * OpenAI 兼容 API 客户端（浏览器直调）。
+ *
+ * 过去这里接的是整个 `Settings`（只有一个全局 apiKey/baseUrl 时那样最省事）；
+ * 现在接的是 `ModelTarget` —— **端点与模型绑定成一个整体**（见 settings.ts 的说明）。
+ * 这样「拿文本模型的连接去打别家供应商的视觉模型」这类错配在类型上就写不出来，
+ * 而多供应商下它会变成真的把请求发到错误的地址。
+ */
 
 export class ApiError extends Error {
   status: number;
@@ -58,7 +65,7 @@ export function diagnose400(serverMessage: string, messages: readonly ChatMessag
 }
 
 async function request(
-  s: Pick<Settings, 'apiKey' | 'baseUrl'>,
+  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'>,
   path: string,
   init: RequestInit = {},
   /** 出错时用来定位的消息历史（只有对话请求才有） */
@@ -67,7 +74,9 @@ async function request(
   const res = await fetch(`${s.baseUrl}${path}`, {
     ...init,
     headers: {
-      Authorization: `Bearer ${s.apiKey}`,
+      // apiKey 为空时**不发** Authorization 头：发一个空 Bearer 会让「忘了填 key」
+      // 表现为 401 认证失败，而不是「你没填 key」—— 两件事的排查方向完全不同。
+      ...(s.apiKey ? { Authorization: `Bearer ${s.apiKey}` } : {}),
       ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...init.headers,
     },
@@ -90,7 +99,8 @@ async function request(
   return res;
 }
 
-export async function listModels(s: Pick<Settings, 'apiKey' | 'baseUrl'>): Promise<string[]> {
+/** 拉某家供应商在架的模型 id 列表（用于设置页的候选与「检查模型可用性」） */
+export async function listModels(s: Pick<ModelTarget, 'apiKey' | 'baseUrl'>): Promise<string[]> {
   const res = await request(s, '/models');
   const data = await res.json();
   return (data.data as { id: string }[]).map((m) => m.id);
@@ -124,15 +134,14 @@ function parseSegments(data: unknown): TranscriptionSegment[] | undefined {
 }
 
 export async function transcribe(
-  s: Settings,
-  model: string,
+  s: ModelTarget,
   audio: Blob,
   filename = 'chunk.wav',
 ): Promise<TranscriptionResult> {
   const submit = (verbose: boolean) => {
     const form = new FormData();
     form.append('file', audio, filename);
-    form.append('model', model);
+    form.append('model', s.model);
     if (verbose) form.append('response_format', 'verbose_json');
     return request(s, '/audio/transcriptions', { method: 'POST', body: form });
   };
@@ -214,7 +223,6 @@ function wire(messages: readonly ChatMessage[]): ChatMessage[] {
 }
 
 export interface ChatOptions {
-  model: string;
   messages: ChatMessage[];
   tools?: ToolDef[];
   temperature?: number;
@@ -228,14 +236,18 @@ export interface ChatOptions {
   thinking_budget?: number;
 }
 
-/** 非流式对话（用于工具调用循环中的决策） */
-export async function chatOnce(s: Settings, opts: ChatOptions): Promise<ChatMessage> {
+/**
+ * 非流式对话（用于工具调用循环中的决策）。
+ *
+ * `target` 同时给出端点与模型 id —— 两者不再分开传，调用方无法把它们配错。
+ */
+export async function chatOnce(t: ModelTarget, opts: ChatOptions): Promise<ChatMessage> {
   const messages = wire(opts.messages);
-  const res = await request(s, '/chat/completions', {
+  const res = await request(t, '/chat/completions', {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify({
-      model: opts.model,
+      model: t.model,
       messages,
       tools: opts.tools,
       temperature: opts.temperature,
@@ -252,17 +264,17 @@ export async function chatOnce(s: Settings, opts: ChatOptions): Promise<ChatMess
 
 /** 流式对话：onDelta 回调正文增量，onReasoning 回调思考增量，返回完整 assistant 消息（含 tool_calls） */
 export async function chatStream(
-  s: Settings,
+  t: ModelTarget,
   opts: ChatOptions,
   onDelta?: (content: string) => void,
   onReasoning?: (text: string) => void,
 ): Promise<ChatMessage> {
   const messages = wire(opts.messages);
-  const res = await request(s, '/chat/completions', {
+  const res = await request(t, '/chat/completions', {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify({
-      model: opts.model,
+      model: t.model,
       messages,
       tools: opts.tools,
       temperature: opts.temperature,

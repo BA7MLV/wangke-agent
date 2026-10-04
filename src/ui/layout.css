@@ -662,6 +662,28 @@
   margin-top: 8px;
 }
 
+/* 按供应商分组：多供应商后收藏夹里可能有同名模型（两家都叫 Qwen/Qwen3），
+   没有分组就分不清勾的是哪一家的。组头 sticky，滚到下面的组仍看得出归属。 */
+.fav-group {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.fav-group__head {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  padding: 8px 8px 4px;
+  font-size: 12px;
+  font-weight: 600;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  background: rgb(var(--mdui-color-surface));
+}
+
 /* mdui-checkbox 是 inline-flex，宽度不收满会导致整行点击区域只有文字那么长 */
 .fav-list mdui-checkbox {
   width: 100%;
@@ -674,10 +696,60 @@
   min-width: 0;
 }
 
+/* 供应商名固定一列、右对齐：模型 id 会被省略号截断，若供应商名跟着变长，
+   各行的 id 就会参差成锯齿。 */
+.fav-label__provider {
+  flex: none;
+  max-width: 128px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  text-align: right;
+}
+
 .fav-label__id {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  min-width: 0;
+}
+
+/* ── 模型供应商卡 ────────────────────────────────────────────────────────
+   每家一个独立块（ProviderCard）。凭据、地址、能力、能力数据源都在这里，
+   与下面的「模型配置」（槽位 → 供应商 + 模型）分成两层。 */
+.provider-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px 12px;
+  margin-bottom: 12px;
+  border-radius: var(--mdui-shape-corner-medium);
+  background: rgb(var(--mdui-color-surface-container-low));
+}
+
+/* 槽位行：供应商下拉与模型输入并排。窄屏下由 layout.css 的容器查询折成上下排 */
+.slot-field {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.slot-field > mdui-select {
+  flex: 0 0 160px;
+}
+
+.slot-field > .field {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 能力缺失提示独占一行：它是整行的说明，不该跟下拉并排 */
+.slot-field > .text-secondary {
+  flex: 1 0 100%;
+  margin-top: -4px;
 }
 
 /* ── 写作技能列表行 ────────────────────────────────────────────────────────

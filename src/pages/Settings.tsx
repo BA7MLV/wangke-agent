@@ -1,6 +1,17 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { useSettings, type AppTheme, type ModelSlot } from '../store/settings';
+import {
+  SLOT_LABEL,
+  catalogOf,
+  nextProviderId,
+  providersForSlot,
+  sameRef,
+  useSettings,
+  type AppTheme,
+  type ModelSlot,
+  type Provider,
+  type Settings,
+} from '../store/settings';
 import { listModels } from '../api/siliconflow';
 import { guessContextWindow, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { UNLIMITED_ROUNDS } from '../harness/loopGuard';
@@ -23,11 +34,18 @@ import {
 import { probeBiliLogin } from '../bilibili/api';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
-/** 各收藏槽位的相关性启发式：相关模型在列表中置顶 */
-const SLOT_RELEVANT: Record<ModelSlot, (id: string) => boolean> = {
-  chat: (id) => supportsThinking(id) || isVisionModel(id),
-  vision: isVisionModel,
-  asr: (id) => ASR_MODEL_RE.test(id),
+/**
+ * 各收藏槽位的相关性启发式：相关模型在列表中置顶。**只影响排序**，不决定谁能进这个槽位。
+ *
+ * 带 catalogId 是因为能力判断必须按供应商查（同一模型 id 在别家可能不支持视觉/思考）。
+ */
+const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string) => boolean> = {
+  chat: (cat, id) => supportsThinking(cat, id) || isVisionModel(cat, id),
+  vision: (cat, id) => isVisionModel(cat, id),
+  // ASR 只能靠名字猜 —— models.dev 的 modalities.input 里有 'audio'，但那含 TTS，
+  // 而 /audio/transcriptions 只认 ASR 模型，两者在数据上区分不开。这里仍按名字排，
+  // 但真正的准入靠供应商的 serves 勾选（见 ProviderCard）。
+  asr: (_cat, id) => ASR_MODEL_RE.test(id),
 };
 
 const SLOT_TABS: { key: ModelSlot; label: string }[] = [
@@ -37,6 +55,12 @@ const SLOT_TABS: { key: ModelSlot; label: string }[] = [
 ];
 
 type ModelFieldName = 'asrModel' | 'llmModel' | 'visionModel';
+
+/** 收藏夹一项在 UI 里的唯一键（供应商 + 模型） */
+const refKey = (r: { providerId: string; model: string }) => `${r.providerId}\0${r.model}`;
+
+/** 槽位全集：勾选能力、下拉候选、遍历都用它，避免三处各写一份字面量而漏一项 */
+const ALL_SLOTS: readonly ModelSlot[] = ['asr', 'chat', 'vision'];
 
 /**
  * 模型输入行。
@@ -52,6 +76,7 @@ function ModelField({
   label,
   value,
   options,
+  catalogId,
   checkState,
   onValueChange,
   onPick,
@@ -60,6 +85,8 @@ function ModelField({
   label: string;
   value: string;
   options: string[];
+  /** 能力判断的数据源（供应商在 models.dev 的 key） */
+  catalogId: string;
   /** undefined = 还没检查过；true/false = 检查结果 */
   checkState: boolean | undefined;
   onValueChange: (v: string) => void;
@@ -72,9 +99,10 @@ function ModelField({
   const fieldRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => onValueChange(el.value));
   const filterRef = useMduiEvent('mdui-text-field', 'input', (_e, el) => setKw(el.value));
 
+  const relevant = SLOT_RELEVANT.asr;
   const list = options
     .filter((id) => !kw.trim() || id.toLowerCase().includes(kw.trim().toLowerCase()))
-    .sort((a, b) => Number(SLOT_RELEVANT.asr(a)) - Number(SLOT_RELEVANT.asr(b)));
+    .sort((a, b) => Number(relevant(catalogId, b)) - Number(relevant(catalogId, a)));
 
   return (
     <Field
@@ -143,25 +171,282 @@ function ModelField({
   );
 }
 
-/** 收藏夹里的一个勾选项：需要独立 hook，所以拆成子组件 */
+/**
+ * 收藏夹里的一个勾选项：需要独立 hook，所以拆成子组件。
+ *
+ * 一行 = 一个「供应商 + 模型」组合，所以**供应商名必须印出来**：`Qwen/Qwen3` 在两家
+ * 都可能存在，只显示模型 id 的勾选框没法分辨自己收藏的是哪一家的。
+ */
 function FavRow({
-  id,
+  slot,
+  model,
+  providerName,
+  catalogId,
   checked,
   onToggle,
 }: {
-  id: string;
+  slot: ModelSlot;
+  model: string;
+  providerName: string;
+  catalogId: string;
   checked: boolean;
   onToggle: (next: boolean) => void;
 }) {
   const ref = useMduiEvent('mdui-checkbox', 'change', (_e, el) => onToggle(el.checked));
   return (
-    <mdui-checkbox ref={ref} checked={checked} data-testid={`fav-${id}`} style={{ display: 'flex' }}>
+    <mdui-checkbox
+      ref={ref}
+      checked={checked}
+      // ⚠️ testid 必须带槽位：mdui-tabs 会把所有面板都留在 DOM 里（只切显隐），
+      // 同一个模型于是会在三个页签下各渲染一行 —— 不带 slot 的话选择器会命中 3 个元素。
+      data-testid={`fav-${slot}-${providerName}-${model}`}
+      style={{ display: 'flex' }}
+    >
       <span className="fav-label">
-        <span className="fav-label__id">{id}</span>
-        {isVisionModel(id) && <span className="tag-mini">多模态</span>}
-        {supportsThinking(id) && <span className="tag-mini">可思考</span>}
+        <span className="fav-label__provider">{providerName}</span>
+        <span className="fav-label__id">{model}</span>
+        {isVisionModel(catalogId, model) && <span className="tag-mini">多模态</span>}
+        {supportsThinking(catalogId, model) && <span className="tag-mini">可思考</span>}
       </span>
     </mdui-checkbox>
+  );
+}
+
+/**
+ * 一个槽位的完整配置行：供应商下拉 + 模型输入。
+ *
+ * 供应商下拉**只列 `serves` 含该槽位的那几家** —— 这是「手动标能力」的实际用途：
+ * 标了不提供 ASR 的供应商就不会出现在 ASR 槽位里，从源头上排掉「拿文本接口当 ASR 用」。
+ * 当前指的那家没标这个能力时仍列出来（否则用户改不回去），但旁边标红说明。
+ *
+ * 拆成独立组件而不是内联进 Settings：`useMduiEvent` 是 hook，内联进 map 会在
+ * 供应商数量变化时打乱调用顺序。
+ */
+function SlotField({
+  name,
+  slot,
+  label,
+  settings,
+  options,
+  checkState,
+  onProvider,
+}: {
+  name: ModelFieldName;
+  slot: ModelSlot;
+  label: string;
+  settings: Settings;
+  options: string[];
+  checkState: boolean | undefined;
+  onProvider: (name: ModelFieldName, providerId: string) => void;
+}) {
+  const ref = settings[name];
+  const candidates = providersForSlot(settings, slot);
+  const missingCap = !candidates.some((p) => p.id === ref.providerId);
+  const update = useSettings((s) => s.update);
+  const selectRef = useMduiEvent('mdui-select', 'change', (_e, el) =>
+    onProvider(name, String(el.value)),
+  );
+  return (
+    <div className="slot-field">
+      {/* 选项用 mdui-menu-item 而不是 mdui-select-item：mdui 的 select 只认 menu-item，
+          项目里其他几处下拉（会话选择等）也都是这么写的 */}
+      <mdui-select
+        ref={selectRef}
+        data-testid={`provider-${name}`}
+        aria-label={`${label}使用的供应商`}
+        value={ref.providerId}
+      >
+        {candidates.map((p) => (
+          <mdui-menu-item key={p.id} value={p.id}>
+            {p.name}
+          </mdui-menu-item>
+        ))}
+      </mdui-select>
+      <ModelField
+        label={label}
+        value={ref.model}
+        options={options}
+        catalogId={catalogOf(settings, ref.providerId)}
+        checkState={checkState}
+        onValueChange={(v) => update({ [name]: { ...ref, model: v } })}
+        onPick={(v) => update({ [name]: { ...ref, model: v } })}
+        testId={`model-${name}`}
+      />
+      {missingCap && (
+        <div
+          className="text-secondary"
+          style={{ fontSize: 12, color: 'rgb(var(--mdui-color-error))' }}
+          data-testid={`provider-${name}-nocap`}
+        >
+          当前供应商「{settings.providers.find((p) => p.id === ref.providerId)?.name ?? ref.providerId}
+          」没有勾选「{SLOT_LABEL[slot]}」能力，可能不支持这个槽位
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 一家供应商的配置块：名称 / 地址 / Key / 能力勾选 / 能力数据源。
+ *
+ * 拆成组件是因为每家都要独立的 mdui 事件钩子（key 抖动、checkbox change），
+ * 内联渲染的话这些 hook 排在同一个组件里，供应商增删就会打乱调用顺序。
+ */
+function ProviderCard({
+  provider,
+  others,
+  note,
+  onChange,
+  onRemove,
+  removable,
+  shaking,
+}: {
+  provider: Provider;
+  /** 除了自己以外的供应商（重名校验用） */
+  others: readonly Provider[];
+  /** 上次「检查模型可用性」的结论 */
+  note?: string;
+  onChange: (patch: Partial<Provider>) => void;
+  onRemove: () => void;
+  removable: boolean;
+  shaking: boolean;
+}) {
+  const inputRef = useRef<HTMLDivElement>(null);
+  const [dupName, setDupName] = useState(false);
+
+  // 与其他家重名时提示：模型选型都按供应商名显示，重名会让设置页与面板都对不上是哪一家
+  useEffect(() => {
+    setDupName(others.some((p) => p.name.trim() === provider.name.trim()));
+  }, [provider.name, others]);
+
+  // key 缺失时的抖动。className 由父组件驱动（挂/摘 .is-shaking），
+  // remove → reflow → re-add 让重复触发时可以重放
+  useEffect(() => {
+    if (!shaking) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.classList.remove('is-shaking');
+    void el.offsetWidth;
+    el.classList.add('is-shaking');
+    const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
+    const t = window.setTimeout(() => el.classList.remove('is-shaking'), shakeMs + 20);
+    return () => clearTimeout(t);
+  }, [shaking]);
+
+  return (
+    <div className="provider-card" data-testid={`provider-card-${provider.id}`}>
+      <div className="row row--between">
+        <mdui-text-field
+          value={provider.name}
+          data-testid={`provider-name-${provider.id}`}
+          aria-label="供应商名称"
+          placeholder="供应商名称"
+          value-error={dupName ? '与另一家同名' : undefined}
+          onInput={(e) => onChange({ name: (e.target as HTMLElement & { value: string }).value })}
+          style={{ flex: '1 1 auto', minWidth: 0 }}
+        />
+        {removable && (
+          <mdui-button
+            variant="text"
+            data-testid={`provider-remove-${provider.id}`}
+            onClick={onRemove}
+            aria-label={`删除供应商 ${provider.name}`}
+          >
+            <mdui-sym-delete />
+          </mdui-button>
+        )}
+      </div>
+      <Field label="API 地址" testId={`field-base-url-${provider.id}`}>
+        <mdui-text-field
+          value={provider.baseUrl}
+          data-testid={`base-url-${provider.id}`}
+          aria-label="API 地址"
+          placeholder="https://api.example.com/v1"
+          clearable
+          onInput={(e) =>
+            onChange({ baseUrl: (e.target as HTMLElement & { value: string }).value.trim() })
+          }
+        />
+      </Field>
+      <Field
+        label="API Key"
+        hint="仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它"
+        className={shaking ? 't-input-wrap is-error' : 't-input-wrap'}
+        testId={`field-api-key-${provider.id}`}
+      >
+        <div>
+          <div ref={inputRef} className={shaking ? 't-input is-error' : 't-input'}>
+            <mdui-text-field
+              data-testid={`api-key-${provider.id}`}
+              aria-label={`${provider.name} 的 API Key`}
+              aria-invalid={shaking}
+              type="password"
+              toggle-password
+              clearable
+              placeholder="sk-..."
+              value={provider.apiKey}
+              onInput={(e) =>
+                onChange({ apiKey: (e.target as HTMLElement & { value: string }).value.trim() })
+              }
+            />
+          </div>
+          <p className="t-error-msg" data-testid={`key-error-${provider.id}`}>
+            请先填写这家供应商的 API Key
+          </p>
+        </div>
+      </Field>
+      <Field
+        label="能做的活"
+        hint="手动勾选它实现了哪些接口。槽位的供应商下拉只列勾选了该槽位的那些家 —— 靠模型名猜不出来"
+        className="field--stack"
+        testId={`field-serves-${provider.id}`}
+      >
+        <div className="row" data-testid={`serves-${provider.id}`}>
+          {ALL_SLOTS.map((slot) => (
+            <mdui-checkbox
+              key={slot}
+              checked={provider.serves.includes(slot)}
+              data-testid={`serves-${provider.id}-${slot}`}
+              style={{ display: 'flex' }}
+              onChange={(e) => {
+                const on = (e.target as HTMLInputElement).checked;
+                const next = on
+                  ? [...new Set([...provider.serves, slot])]
+                  : provider.serves.filter((s) => s !== slot);
+                onChange({ serves: next });
+              }}
+            >
+              {SLOT_LABEL[slot]}
+            </mdui-checkbox>
+          ))}
+        </div>
+      </Field>
+      <Field
+        label="能力数据源"
+        hint="models.dev 上的供应商 key（如 siliconflow-cn）。填了才能查到这个模型的上下文窗口 / 视觉 / 思考能力；留空则按模型名猜"
+        testId={`field-catalog-${provider.id}`}
+      >
+        <mdui-text-field
+          value={provider.catalogId}
+          data-testid={`catalog-${provider.id}`}
+          aria-label="models.dev 供应商 key"
+          placeholder="siliconflow-cn"
+          clearable
+          onInput={(e) =>
+            onChange({ catalogId: (e.target as HTMLElement & { value: string }).value.trim() })
+          }
+        />
+      </Field>
+      {note && (
+        <div
+          className="text-secondary"
+          style={{ fontSize: 12, marginTop: 4 }}
+          data-testid={`provider-note-${provider.id}`}
+        >
+          {note}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -180,8 +465,12 @@ export default function Settings() {
   const nav = useAppNav('settings');
   const settings = useSettings();
   const [checking, setChecking] = useState(false);
-  const [modelOptions, setModelOptions] = useState<string[]>([]);
+  /** 每家供应商各自拉到的在架模型（key = provider id）。分家存是因为各家列表互不相干。 */
+  const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
+  /** 检查结果按「供应商+模型」记，而不是按槽位 —— 同一模型在两家都上架是常事 */
   const [checkResult, setCheckResult] = useState<Record<string, boolean> | null>(null);
+  /** 上次检查的逐家结论（成功/失败），让用户看得见是哪一家出的问题 */
+  const [providerNotes, setProviderNotes] = useState<Record<string, string>>({});
   const [favTab, setFavTab] = useState<ModelSlot>('chat');
   const [favSearch, setFavSearch] = useState<Record<ModelSlot, string>>({
     chat: '',
@@ -255,7 +544,8 @@ export default function Settings() {
     }
   };
 
-  const [keyError, setKeyError] = useState(false);
+  /** 哪一家的 key 缺失（provider id）。null = 都没问题 */
+  const [keyError, setKeyError] = useState<string | null>(null);
   const keyInputRef = useRef<HTMLDivElement>(null);
   const revertTimerRef = useRef<number | undefined>(undefined);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
@@ -284,11 +574,24 @@ export default function Settings() {
     };
   }, [bridgeTick]);
 
+  /**
+   * 要拉哪些供应商的能力数据：所有**填了 models.dev key** 的那几家。
+   *
+   * 只拉登记过的（`refreshModelMeta` 内部也只保留这几家）：models.dev 全库 226 家，
+   * 整份缓存下来对 localStorage 纯浪费，而配额满了会静默让整份缓存写不进去。
+   * 供应商增删后依赖要跟着变 —— 所以这里是 settings.providers 而不是挂载时取一次。
+   */
+  const catalogs = useMemo(
+    () => settings.providers.map((p) => p.catalogId).filter((c) => c.trim().length > 0),
+    [settings.providers],
+  );
+  const catalogsKey = catalogs.join('\0');
+
   // 能力数据过期则进入设置页时静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
-    if (!isModelMetaStale()) return;
+    if (catalogs.length === 0 || !isModelMetaStale()) return;
     let cancelled = false;
-    refreshModelMeta()
+    refreshModelMeta(catalogs)
       .then(() => {
         if (!cancelled) setMetaInfo(modelMetaInfo());
       })
@@ -296,7 +599,7 @@ export default function Settings() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [catalogsKey]);
 
   useEffect(() => {
     const t = window.setInterval(() => setBridgeTick((n) => n + 1), 1500);
@@ -305,11 +608,18 @@ export default function Settings() {
 
   /** 手动刷新：更新缓存并把当前文本模型的上下文窗口回填为最新元数据（仍可手改） */
   const handleRefreshMeta = async () => {
+    if (catalogs.length === 0) {
+      toast.warning('没有供应商填写 models.dev 供应商 key，无从拉取能力数据');
+      return;
+    }
     setMetaRefreshing(true);
     try {
-      const { count } = await refreshModelMeta();
+      const { count } = await refreshModelMeta(catalogs);
       setMetaInfo(modelMetaInfo());
-      const meta = getModelMeta(settings.llmModel);
+      const meta = getModelMeta(
+        catalogOf(settings, settings.llmModel.providerId),
+        settings.llmModel.model,
+      );
       if (meta) settings.update({ contextWindow: meta.context });
       toast.success(`已更新 ${count} 个模型的能力数据`);
     } catch (e) {
@@ -320,18 +630,19 @@ export default function Settings() {
   };
 
   /** error-state-shake：红边 + 消息由 keyError 驱动，hold 后自动回退；输入即取消 */
-  const triggerKeyError = () => {
-    setKeyError(true);
+  const triggerKeyError = (providerId: string) => {
+    setKeyError(providerId);
     if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
     const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
     revertTimerRef.current = window.setTimeout(() => {
       revertTimerRef.current = undefined;
-      setKeyError(false);
+      setKeyError(null);
     }, shakeMs + ms('--revert-hold', 3000));
   };
 
   // React 提交 className 后再挂 .is-shaking（否则会被重渲染的 className 覆盖），
-  // remove → reflow → re-add 保证重复触发时抖动可重放
+  // remove → reflow → re-add 保证重复触发时抖动可重放。
+  // 依赖换成 keyError 的 provider id —— 多供应商下每家的输入框独立抖动。
   useEffect(() => {
     if (!keyError) return;
     const input = keyInputRef.current;
@@ -349,35 +660,61 @@ export default function Settings() {
       clearTimeout(revertTimerRef.current);
       revertTimerRef.current = undefined;
     }
-    setKeyError(false);
+    setKeyError(null);
   };
 
+  /**
+ * 「检查模型可用性」：**逐家**拉 `/models`。
+   *
+ * 为什么不能第一家失败就整轮放弃：多供应商之后，一家的 key 过期是常态（用户换了新 key
+ * 但没删旧供应商）。整体失败会让其余几家连候选列表都拉不出来 —— 于是用户为了修一家
+ * 的问题，必须先把另外几家也全部弄好。所以逐家独立记录结果，汇总成一句提示。
+   */
   const handleCheck = async () => {
-    if (!settings.apiKey) {
-      triggerKeyError();
+    const providers = settings.providers;
+    const noKey = providers.filter((p) => !p.apiKey.trim());
+    if (noKey.length === providers.length) {
+      triggerKeyError(noKey[0].id);
+      toast.warning('请先填写至少一家供应商的 API Key');
       return;
     }
     setChecking(true);
-    try {
-      const ids = await listModels({ apiKey: settings.apiKey, baseUrl: settings.baseUrl });
-      setModelOptions(ids);
-      const result: Record<string, boolean> = {
-        asrModel: ids.includes(settings.asrModel),
-        llmModel: ids.includes(settings.llmModel),
-        visionModel: ids.includes(settings.visionModel),
-      };
-      setCheckResult(result);
-      const missing = Object.entries(result).filter(([, ok]) => !ok);
-      if (missing.length === 0) {
-        toast.success('所有模型均可用');
-      } else {
-        toast.warning(`有 ${missing.length} 个模型未上架，请从下拉列表选择替代模型`);
-      }
-    } catch (e) {
-      toast.error(`检查失败：${e instanceof Error ? e.message : String(e)}`);
-    } finally {
-      setChecking(false);
+    const opts: Record<string, string[]> = {};
+    const notes: Record<string, string> = {};
+    const result: Record<string, boolean> = {};
+    await Promise.all(
+      providers.map(async (p) => {
+        if (!p.apiKey.trim()) {
+          notes[p.id] = '未填写 API Key，已跳过';
+          return;
+        }
+        try {
+          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim() });
+          opts[p.id] = ids;
+          notes[p.id] = `${ids.length} 个模型在架`;
+        } catch (e) {
+          notes[p.id] = `拉取失败：${e instanceof Error ? e.message : String(e)}`;
+        }
+      }),
+    );
+    // 三个槽位各自按「自己那家」的列表判定
+    for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
+      const ref = settings[name];
+      const ids = opts[ref.providerId];
+      if (ids) result[refKey(ref)] = ids.includes(ref.model);
     }
+    setModelOptions(opts);
+    setCheckResult(result);
+    setProviderNotes(notes);
+
+    const failed = Object.entries(notes).filter(([, note]) => note.startsWith('拉取失败'));
+    const missing = Object.values(result).filter((ok) => !ok).length;
+    const parts: string[] = [];
+    if (failed.length > 0) parts.push(`${failed.length} 家拉取失败`);
+    if (missing > 0) parts.push(`${missing} 个模型未上架`);
+    if (parts.length === 0) toast.success('所有模型均可用');
+    else toast.warning(`${parts.join('，')}，详见各供应商下方说明`);
+    setChecking(false);
   };
 
   /** 播放器倍速：内置档位之外再补几个常用档（0.25–4，存 settings.customRates） */
@@ -396,27 +733,36 @@ export default function Settings() {
     settings.update({ customRates: settings.customRates.filter((x) => !sameRate(x, r)) });
   };
 
-  /** 各槽位的模型值读写 */
-  const modelValue = (name: ModelFieldName) => settings[name];
-  const setModelValue = (name: ModelFieldName, v: string) => {
+  /**
+   * 切槽位的供应商。
+   *
+   * 换供应商时**模型 id 原样保留**而不是清空 —— 用户换的往往只是同一模型在另一家的
+   * 镜像 id（`Qwen/Qwen3` 两家都有同名），清空会逼他重新找一遍。真的不存在也不拦：
+   * 保留用户输入 + 候选列表里打对勾/红叉，比强制清空更可解释。
+   */
+  const setSlotProvider = (name: ModelFieldName, providerId: string) => {
+    const next = { ...settings[name], providerId };
     if (name === 'llmModel') {
-      // 切文本模型时按内置表回填上下文窗口默认值（仍可手改）
-      settings.update({ llmModel: v, contextWindow: guessContextWindow(v) });
+      settings.update({
+        llmModel: next,
+        contextWindow: guessContextWindow(catalogOf(settings, providerId), next.model),
+      });
     } else {
-      settings.update({ [name]: v });
+      settings.update({ [name]: next });
     }
   };
 
-  const modelField = (name: ModelFieldName, label: string) => (
-    <ModelField
+  /** 一个槽位配置行（见 SLOT_FIELD_CARD 的注释：供应商与模型分两层配置） */
+  const slotField = (name: ModelFieldName, slot: ModelSlot, label: string) => (
+    <SlotField
       key={name}
+      name={name}
+      slot={slot}
       label={label}
-      value={modelValue(name)}
-      options={modelOptions}
-      checkState={checkResult ? checkResult[name] : undefined}
-      onValueChange={(v) => setModelValue(name, v)}
-      onPick={(v) => setModelValue(name, v)}
-      testId={`model-${name}`}
+      settings={settings}
+      options={modelOptions[settings[name].providerId] ?? []}
+      checkState={checkResult ? checkResult[refKey(settings[name])] : undefined}
+      onProvider={setSlotProvider}
     />
   );
 
@@ -449,14 +795,33 @@ export default function Settings() {
     setRateDraft(el.value.trim() === '' || !Number.isFinite(n) ? null : n);
   });
 
-  /** 收藏夹单个 tab：搜索筛选 + 相关模型置顶的勾选列表 */
+  /** 收藏夹单个 tab：按供应商分组，每组内搜索筛选 + 相关模型置顶 */
   const favTabContent = (slot: ModelSlot) => {
     const kw = favSearch[slot].trim().toLowerCase();
     const relevant = SLOT_RELEVANT[slot];
-    const list = modelOptions
-      .filter((id) => !kw || id.toLowerCase().includes(kw))
-      .sort((a, b) => Number(relevant(b)) - Number(relevant(a)));
     const selected = settings.favorites[slot];
+    // 只列勾了该能力的供应商：收藏这个槽位就是给这个槽位用
+    const groups = providersForSlot(settings, slot).map((p) => {
+      const ids = (modelOptions[p.id] ?? [])
+        .filter((id) => !kw || id.toLowerCase().includes(kw))
+        .sort((a, b) => Number(relevant(p.catalogId, b)) - Number(relevant(p.catalogId, a)));
+      return { provider: p, ids };
+    });
+    // 收藏夹里指向已删除供应商 / 已取消勾选能力的项仍要列出来，
+    // 否则用户勾过的东西会凭空消失，且没有任何提示说明为什么
+    const orphans = selected.filter(
+      (r) => !groups.some((g) => g.provider.id === r.providerId),
+    );
+    const toggle = (ref: { providerId: string; model: string }, next: boolean) =>
+      settings.update({
+        favorites: {
+          ...settings.favorites,
+          [slot]: next
+            ? [...selected.filter((x) => !sameRef(x, ref)), ref]
+            : selected.filter((x) => !sameRef(x, ref)),
+        },
+      });
+
     return (
       <>
         <mdui-text-field
@@ -467,23 +832,48 @@ export default function Settings() {
           clearable
           value={favSearch[slot]}
         />
-        <div className="fav-list" data-testid="fav-list">
-          {list.map((id) => (
-            <FavRow
-              key={id}
-              id={id}
-              checked={selected.includes(id)}
-              onToggle={(next) =>
-                settings.update({
-                  favorites: {
-                    ...settings.favorites,
-                    [slot]: next ? [...selected, id] : selected.filter((x) => x !== id),
-                  },
-                })
-              }
-            />
-          ))}
-        </div>
+        {groups.every((g) => g.ids.length === 0) && orphans.length === 0 ? (
+          <div className="text-secondary">没有匹配的模型</div>
+        ) : (
+          <div className="fav-list" data-testid="fav-list">
+            {orphans.map((ref) => (
+              <FavRow
+                key={refKey(ref)}
+                slot={slot}
+                model={ref.model}
+                providerName={`（${settings.providers.find((p) => p.id === ref.providerId)?.name ?? ref.providerId}：已不可用）`}
+                catalogId=""
+                checked
+                onToggle={(next) => toggle(ref, next)}
+              />
+            ))}
+            {groups.map(
+              ({ provider, ids }) =>
+                ids.length > 0 && (
+                  <div key={provider.id} className="fav-group">
+                    <div className="fav-group__head" data-testid={`fav-group-${provider.id}`}>
+                      {provider.name}
+                      <span className="text-secondary">（{ids.length}）</span>
+                    </div>
+                    {ids.map((id) => {
+                      const ref = { providerId: provider.id, model: id };
+                      return (
+                        <FavRow
+                          key={refKey(ref)}
+                          slot={slot}
+                          model={id}
+                          providerName={provider.name}
+                          catalogId={provider.catalogId}
+                          checked={selected.some((x) => sameRef(x, ref))}
+                          onToggle={(next) => toggle(ref, next)}
+                        />
+                      );
+                    })}
+                  </div>
+                ),
+            )}
+          </div>
+        )}
       </>
     );
   };
@@ -516,66 +906,69 @@ export default function Settings() {
       rail={nav.rail}
       bottomNav={nav.bottom}
     >
-      <SectionCard title="硅基流动 API" testId="card-api">
-        <Field
-          label="API Key"
-          hint="仅保存在本机浏览器 localStorage 中"
-          className={keyError ? 't-input-wrap is-error' : 't-input-wrap'}
-          testId="field-api-key"
-        >
-          <div>
-            <div ref={keyInputRef} className={keyError ? 't-input is-error' : 't-input'}>
-              <mdui-text-field
-                data-testid="api-key"
-                aria-label="API Key"
-                aria-invalid={keyError}
-                type="password"
-                toggle-password
-                clearable
-                placeholder="sk-..."
-                value={settings.apiKey}
-                onInput={(e) => {
-                  clearKeyError();
-                  settings.update({ apiKey: (e.target as HTMLElement & { value: string }).value.trim() });
-                }}
-              />
-            </div>
-            <p className="t-error-msg" data-testid="key-error">
-              请先填写 API Key
-            </p>
-          </div>
-        </Field>
-        <Field label="API 地址" testId="field-base-url">
-          <mdui-text-field
-            data-testid="base-url"
-            aria-label="API 地址"
-            value={settings.baseUrl}
-            clearable
-            onInput={(e) =>
-              settings.update({ baseUrl: (e.target as HTMLElement & { value: string }).value.trim() })
+      <SectionCard
+        title="模型供应商"
+        subtitle="每家一个连接：地址 + Key + 它能做的活。三个槽位各自挑一家，ASR 可以和文本模型不在同一家"
+        testId="card-api"
+        actions={
+          <mdui-button
+            variant="tonal"
+            data-testid="btn-add-provider"
+            onClick={() => {
+              const id = nextProviderId(settings);
+              settings.update({
+                providers: [
+                  ...settings.providers,
+                  { id, name: '', baseUrl: '', apiKey: '', serves: ['chat'], catalogId: '' },
+                ],
+              });
+            }}
+          >
+            添加供应商
+          </mdui-button>
+        }
+      >
+        {settings.providers.map((p, i) => (
+          <ProviderCard
+            key={p.id}
+            provider={p}
+            others={settings.providers.filter((x) => x.id !== p.id)}
+            note={providerNotes[p.id]}
+            shaking={keyError === p.id}
+            removable={settings.providers.length > 1 || i > 0}
+            onChange={(patch) =>
+              settings.update({
+                providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)),
+              })
             }
+            onRemove={() => {
+              // 删掉一家之后，指向它的槽位与收藏项必须一起处理，否则界面上留着
+              // 一个解析不出端点的引用，表现为「所有请求都报供应商已被删除」。
+              // 槽位改指第一家（id 必然存在：至少剩一家）；收藏项直接丢。
+              const rest = settings.providers.filter((x) => x.id !== p.id);
+              const fallback = rest[0].id;
+              const patch: Partial<Settings> = { providers: rest };
+              for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
+                if (settings[name].providerId === p.id) {
+                  patch[name] = { ...settings[name], providerId: fallback };
+                }
+              }
+              const favs = { ...settings.favorites };
+              for (const slot of ALL_SLOTS) {
+                const kept = favs[slot].filter((r) => r.providerId !== p.id);
+                if (kept.length !== favs[slot].length) favs[slot] = kept;
+              }
+              patch.favorites = favs;
+              settings.update(patch);
+              toast.info(`已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」`);
+            }}
           />
-        </Field>
-        <Field
-          label={`字幕转写并发（当前 ${settings.asrConcurrency}）`}
-          hint="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
-          className="field--stack"
-          testId="field-asr-concurrency"
-        >
-          <mdui-slider
-            ref={concurrencyRef}
-            data-testid="asr-concurrency"
-            aria-label="字幕转写并发数"
-            min={1}
-            max={12}
-            step={1}
-            value={settings.asrConcurrency}
-          />
-        </Field>
+        ))}
       </SectionCard>
 
       <SectionCard
         title="模型配置"
+        subtitle="凭据在上面那层，这里只管「哪个槽位用哪家的哪个模型」"
         testId="card-models"
         actions={
           <mdui-button
@@ -588,9 +981,9 @@ export default function Settings() {
           </mdui-button>
         }
       >
-        {modelField('asrModel', '语音识别（ASR）')}
-        {modelField('llmModel', '文本生成（讲义 / 问答）')}
-        {modelField('visionModel', '视觉（截图理解）')}
+        {slotField('asrModel', 'asr', '语音识别（ASR）')}
+        {slotField('llmModel', 'chat', '文本生成（讲义 / 问答）')}
+        {slotField('visionModel', 'vision', '视觉（截图理解）')}
         <Field
           label="上下文窗口（tokens）"
           hint={`${metaHint}。这个值用来裁历史；每轮回答的输出上限另按模型真实能力给（取本值与模型实际窗口里更大的那个），所以这里填得偏小不会浪费模型的输出额度`}
@@ -631,10 +1024,26 @@ export default function Settings() {
             <mdui-segmented-button value={String(UNLIMITED_ROUNDS)}>不限</mdui-segmented-button>
           </mdui-segmented-button-group>
         </Field>
+        <Field
+          label={`字幕转写并发（当前 ${settings.asrConcurrency}）`}
+          hint="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
+          className="field--stack"
+          testId="field-asr-concurrency"
+        >
+          <mdui-slider
+            ref={concurrencyRef}
+            data-testid="asr-concurrency"
+            aria-label="字幕转写并发数"
+            min={1}
+            max={12}
+            step={1}
+            value={settings.asrConcurrency}
+          />
+        </Field>
       </SectionCard>
 
       <SectionCard title="模型收藏夹" testId="card-favorites">
-        {modelOptions.length === 0 ? (
+        {Object.keys(modelOptions).length === 0 ? (
           <div className="text-secondary">先点击上方「检查模型可用性」拉取模型列表</div>
         ) : (
           <mdui-tabs ref={tabsRef} data-testid="fav-tabs" value={favTab}>

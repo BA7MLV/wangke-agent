@@ -1,5 +1,5 @@
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings } from '../store/settings';
+import { getSettings, targetOfSlot } from '../store/settings';
 import { db } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
 import { loadEnabledSkillMeta, loadSkillBodies, skillMetaBlock, type SkillMeta } from './store';
@@ -40,9 +40,9 @@ export async function routeHandoutSkills(
 
   let autoIds: Set<number>;
   try {
-    const settings = getSettings();
-    const msg = await chatOnce(settings, {
-      model: settings.llmModel,
+    // 解析失败会掉进下面的兜底（全部启用），所以这里不让凭据问题炸掉整条讲义流水线
+    const target = targetOfSlot(getSettings(), 'chat');
+    const msg = await chatOnce(target, {
       max_tokens: 300,
       messages: [{ role: 'user', content: PROMPTS.routeSkills(videoName, sample, skillMetaBlock(metas)) }],
     });

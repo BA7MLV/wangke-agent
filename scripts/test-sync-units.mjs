@@ -157,7 +157,6 @@ test('设置白名单与排除项逐项吻合', () => {
     'agentRounds',
     'asrConcurrency',
     'asrModel',
-    'baseUrl',
     'captionScale',
     'contextWindow',
     'customRates',
@@ -166,6 +165,7 @@ test('设置白名单与排除项逐项吻合', () => {
     'favorites',
     'htmlRemoteAssets',
     'llmModel',
+    'providers',
     'studyIdleMinutes',
     'studyTrackingEnabled',
     'theme',
@@ -174,7 +174,6 @@ test('设置白名单与排除项逐项吻合', () => {
     'visionModel',
   ]);
   assert.deepEqual([...NON_SYNC_SETTINGS_KEYS].sort(), [
-    'apiKey',
     'bilibiliCookie',
     'bilibiliProxy',
     'syncEnabled',
@@ -189,20 +188,34 @@ test('白名单与排除项**没有交集**（类型管不到，只能在这里�
   assert.deepEqual(overlap, [], `同时出现在两张表里: ${overlap.join(', ')}`);
 });
 
-test('凭据永远不可同步：apiKey / bilibiliCookie 必须在排除项里', () => {
-  // 即便有人重写了整张白名单，这两条也不许松动 —— 单列一个测试，让它红得显眼。
-  assert.ok(NON_SYNC_SETTINGS_KEYS.includes('apiKey'));
+test('B 站 Cookie 必须在排除项里', () => {
   assert.ok(NON_SYNC_SETTINGS_KEYS.includes('bilibiliCookie'));
 });
 
 /** 一份「所有字段都填了值」的设置，含敏感值，用于验证白名单真的在拦 */
 const FULL_SETTINGS = {
-  apiKey: 'sk-SECRET',
-  baseUrl: 'https://api.siliconflow.cn/v1',
-  asrModel: 'asr-1',
-  llmModel: 'llm-1',
-  visionModel: 'vision-1',
-  favorites: { chat: ['a'], vision: [], asr: [] },
+  providers: [
+    {
+      id: 'sf',
+      name: '硅基流动',
+      baseUrl: 'https://api.siliconflow.cn/v1',
+      apiKey: 'sk-SECRET',
+      serves: ['chat', 'vision', 'asr'],
+      catalogId: 'siliconflow-cn',
+    },
+    {
+      id: 'or',
+      name: 'OpenRouter',
+      baseUrl: 'https://openrouter.ai/api/v1',
+      apiKey: 'or-SECRET',
+      serves: ['chat'],
+      catalogId: 'openrouter',
+    },
+  ],
+  asrModel: { providerId: 'sf', model: 'asr-1' },
+  llmModel: { providerId: 'or', model: 'llm-1' },
+  visionModel: { providerId: 'sf', model: 'vision-1' },
+  favorites: { chat: [{ providerId: 'or', model: 'a' }], vision: [], asr: [] },
   contextWindow: 131072,
   asrConcurrency: 4,
   thinkingEnabled: true,
@@ -222,6 +235,32 @@ const FULL_SETTINGS = {
   syncToken: 'TOKEN-SECRET',
 };
 
+test('每家供应商的 API Key 都不在同步载荷里（白名单管不到嵌套字段，靠剥除）', () => {
+  // 供应商 API Key 已经不是一个顶层字段了：它在 providers[i].apiKey。
+  // SYNC_SETTINGS_KEYS 是按顶层字段名过滤的，**管不到嵌套** —— 所以这道防线是
+  // stripProviderKeys 逐条重建对象。这条测试单列，让「白名单里没有 apiKey」
+  // 不会被误当成「凭据已经安全了」。
+  const out = pickSyncSettings(FULL_SETTINGS);
+  for (const p of out.providers) {
+    assert.equal('apiKey' in p, false, `供应商 ${p.id} 的载荷里不该有 apiKey 字段`);
+    assert.equal(p.apiKey, undefined);
+  }
+  assert.equal(JSON.stringify(out).includes('sk-SECRET'), false);
+  assert.equal(JSON.stringify(out).includes('or-SECRET'), false);
+});
+
+test('供应商表里非凭据字段原样同步（模型选型跨设备有意义）', () => {
+  const out = pickSyncSettings(FULL_SETTINGS);
+  assert.deepEqual(
+    out.providers.map((p) => p.id),
+    ['sf', 'or'],
+  );
+  assert.equal(out.providers[1].name, 'OpenRouter');
+  assert.equal(out.providers[1].baseUrl, 'https://openrouter.ai/api/v1');
+  assert.deepEqual(out.providers[1].serves, ['chat']);
+  assert.equal(out.providers[1].catalogId, 'openrouter');
+});
+
 test('pickSyncSettings 只带出白名单字段', () => {
   const out = pickSyncSettings(FULL_SETTINGS);
   assert.deepEqual(Object.keys(out).sort(), [...SYNC_SETTINGS_KEYS].sort());
@@ -239,11 +278,23 @@ test('pickSyncSettings 不泄漏任何凭据 / 同步自身配置', () => {
 test('pickSyncSettings 保留值，且不修改入参', () => {
   const snapshot = JSON.stringify(FULL_SETTINGS);
   const out = pickSyncSettings(FULL_SETTINGS);
-  assert.equal(out.baseUrl, FULL_SETTINGS.baseUrl);
+  assert.deepEqual(out.llmModel, FULL_SETTINGS.llmModel);
   assert.deepEqual(out.favorites, FULL_SETTINGS.favorites);
   assert.deepEqual(out.customRates, FULL_SETTINGS.customRates);
   assert.equal(out.studyIdleMinutes, 10);
   assert.equal(JSON.stringify(FULL_SETTINGS), snapshot);
+});
+
+test('pickSyncSettings 不把本机的供应商对象泄露给调用方', () => {
+  // providers 必须重建对象（因为要剥 apiKey），但 serves 数组也不该是同一个引用 ——
+  // 同步层若就地改它，会静默改到本机设置里的真身。
+  const out = pickSyncSettings(FULL_SETTINGS);
+  for (let i = 0; i < out.providers.length; i++) {
+    assert.notEqual(out.providers[i], FULL_SETTINGS.providers[i]);
+    assert.notEqual(out.providers[i].serves, FULL_SETTINGS.providers[i].serves);
+  }
+  out.providers[0].serves.push('asr');
+  assert.deepEqual(FULL_SETTINGS.providers[0].serves, ['chat', 'vision', 'asr']);
 });
 
 // ── 分片 ────────────────────────────────────────────────────────────────────

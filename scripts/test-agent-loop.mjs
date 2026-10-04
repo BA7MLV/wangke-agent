@@ -23,7 +23,7 @@
  */
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -47,9 +47,20 @@ const OUT = mkdtempSync(join(tmpdir(), 'agent-loop-'));
 // zustand/persist 在导入期就要看到 localStorage（Node 里没有），给个最小桩
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
 
+// ⚠️ 必须打成一个入口（而不是多个 entryPoints）：多个入口各打一份 settings.js，
+// 于是「改 store」改的是另一份实例，agent 那边读到的仍是没配凭据的默认 state。
+// 单入口 + re-export 才能保证 store 是同一个（与 test-thinking-depth.mjs 同理）。
+const entry = join(OUT, 'entry.ts');
+writeFileSync(
+  entry,
+  `export { runAgentLoop } from '${join(ROOT, 'src/harness/agent.ts')}';
+   export { messageDefects, sanitizeMessages } from '${join(ROOT, 'src/api/messageHygiene.ts')}';
+   export { useSettings } from '${join(ROOT, 'src/store/settings.ts')}';
+  `,
+);
 await build({
-  entryPoints: [join(ROOT, 'src/harness/agent.ts'), join(ROOT, 'src/api/messageHygiene.ts')],
-  outdir: OUT,
+  entryPoints: [entry],
+  outfile: join(OUT, 'bundle.mjs'),
   bundle: true,
   format: 'esm',
   platform: 'node',
@@ -57,11 +68,26 @@ await build({
   // 全部打进 bundle：产物落在临时目录里，外部依赖（zustand）在那儿解析不到
   define: { 'process.env.NODE_ENV': '"test"' },
 });
-// esbuild 以两个入口的公共根（src/）为基准保留目录结构
-const agent = await import(pathToFileURL(join(OUT, 'harness/agent.js')).href);
-const hygiene = await import(pathToFileURL(join(OUT, 'api/messageHygiene.js')).href);
-const { runAgentLoop } = agent;
-const { messageDefects, sanitizeMessages } = hygiene;
+const { runAgentLoop, messageDefects, sanitizeMessages, useSettings } = await import(
+  pathToFileURL(join(OUT, 'bundle.mjs')).href
+);
+
+// 给 chat 槽位配一家带凭据的供应商（端点不真用，假网关会接管）。
+// 多供应商后 agent 要先解析出「端点 + 凭据」，缺 key 会抛中文错；这条测试不关心凭据，
+// 但需要一个能解析出目标的环境 —— 改 store 比造一份 localStorage 干净。
+useSettings.getState().update({
+  providers: [
+    {
+      id: 'sf',
+      name: '硅基流动',
+      baseUrl: 'https://fake.test/v1',
+      apiKey: 'test-key',
+      serves: ['chat', 'vision', 'asr'],
+      catalogId: 'siliconflow-cn',
+    },
+  ],
+  llmModel: { providerId: 'sf', model: 'test-model' },
+});
 
 // ── 假网关 ────────────────────────────────────────────────────────────────
 

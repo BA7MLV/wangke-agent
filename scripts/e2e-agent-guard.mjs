@@ -47,11 +47,20 @@ page.on('pageerror', (e) => fail(`页面异常：${e.message}`));
 await page.addInitScript((baseUrl) => {
   localStorage.setItem('wangke-settings', JSON.stringify({
     state: {
-      apiKey: 'test-key',
-      baseUrl,
-      llmModel: 'test-model',
-      visionModel: 'test-model',
-      asrModel: 'test-model',
+      // 供应商注册表：凭据在 providers[i].apiKey，模型是带 provider 的引用
+      providers: [
+        {
+          id: 'sf',
+          name: '硅基流动',
+          baseUrl,
+          apiKey: 'test-key',
+          serves: ['chat', 'vision', 'asr'],
+          catalogId: 'siliconflow-cn',
+        },
+      ],
+      llmModel: { providerId: 'sf', model: 'test-model' },
+      visionModel: { providerId: 'sf', model: 'test-model' },
+      asrModel: { providerId: 'sf', model: 'test-model' },
       contextWindow: 32768,
       // 0 = 「不限」。护栏改成「循环检测 + token 预算 + 停止键」之后，
       // 靠轮数收尾的必要性下降了，这条档位要真的能跑到十几轮
@@ -339,11 +348,21 @@ await check('模型窗口远大于设置值时，按真实窗口给（不被保�
   // 若拿设置值当上限，max_tokens 会被压到 ~2 万，白扔模型能力。
   await page.evaluate((cacheVersion) => {
     // version 必须跟 modelMeta 的 CACHE_VERSION 一致：版本对不上，这份夹具会被当成
-    // 过期缓存整个丢掉（表现是「能力数据凭空失效」，与本条要验的东西毫无关系）
+    // 过期缓存整个丢掉（表现是「能力数据凭空失效」，与本条要验的东西毫无关系）。
+    // 键也必须带供应商前缀（`catalogId\0modelId`）—— 这正是 v2 拍平表的老 bug：
+    // 同一模型 id 在不同供应商下能力可以不同，只按模型名索引会取到别家的值。
     const meta = {
       version: cacheVersion,
       updatedAt: Date.now(),
-      models: { 'test-model': { context: 1049000, output: 384000, vision: false, reasoning: false, toolCall: true } },
+      models: {
+        'siliconflow-cn\u0000test-model': {
+          context: 1049000,
+          output: 384000,
+          vision: false,
+          reasoning: false,
+          toolCall: true,
+        },
+      },
     };
     localStorage.setItem('wangke-model-meta', JSON.stringify(meta));
   }, MODEL_META_CACHE_VERSION);

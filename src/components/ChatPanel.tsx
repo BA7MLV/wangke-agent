@@ -2,7 +2,7 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
-import { getSettings, useSettings } from '../store/settings';
+import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
 import {
@@ -290,6 +290,8 @@ export default function ChatPanel({
   // 讲义抽帧元数据：决定 list_frames 工具/提示词注入，也供 AI 气泡里的画面引用渲染
   const [framesMeta, setFramesMeta] = useState<FrameMeta[]>([]);
   const llmModel = useSettings((s) => s.llmModel);
+  // 思考能力要按**这家供应商**的能力数据源查（同一模型 id 在别家可能不支持思考）
+  const llmCatalog = useSettings((s) => catalogOf(s, s.llmModel.providerId));
   const thinking = useSettings((s) => s.thinkingEnabled);
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
@@ -663,8 +665,13 @@ export default function ChatPanel({
     const shotTag = (s: Snapshot) =>
       isMaterial ? `[选区@${fmtUnitRef(materialKind!, s.ts)}]` : `[截图@${fmtTime(s.ts)}]`;
 
+    // 文本模型与视觉模型可能分属不同供应商，各查各的能力数据源
+    const chatTarget = targetOrNull(settings, settings.llmModel);
+    const visionTarget = targetOrNull(settings, settings.visionModel);
+    const llmSeesImages = chatTarget ? isVisionModel(chatTarget.catalogId, chatTarget.model) : false;
+
     // 降级链 tier 3 前置检查：模型无图能力且未配视觉模型时直接拦截，不清空输入与截图，保留草稿
-    if (curShots.length > 0 && !isVisionModel(settings.llmModel) && !settings.visionModel) {
+    if (curShots.length > 0 && !llmSeesImages && !visionTarget) {
       toast.error('当前模型不支持图片，请在设置中配置视觉模型或切换多模态模型');
       return;
     }
@@ -789,7 +796,7 @@ export default function ChatPanel({
       const shotLead =
         curShots.length === 0
           ? ''
-          : isVisionModel(settings.llmModel)
+          : llmSeesImages
             ? isMaterial
               ? `本轮附带 ${curShots.length} 张选区截图：正文中 [选区@第N${materialKind === 'para' ? '段' : '页'}] 标记后紧跟的就是该处框出来的画面。截图是最高优先级证据，请先按画面实际内容作答，材料文字只作背景；两者冲突时以截图为准。`
               : `本轮附带 ${curShots.length} 张截图：正文中 [截图@mm:ss] 标记后紧跟的就是该时刻的画面。截图是最高优先级证据，请先按画面实际内容作答，字幕只作背景；两者冲突时以截图为准。`
@@ -800,7 +807,7 @@ export default function ChatPanel({
       let descBlock = '';
       let descFailed = false;
       if (curShots.length > 0) {
-        if (isVisionModel(settings.llmModel)) {
+        if (llmSeesImages) {
           // 每张图前插入位置文本，模型才能把画面归属到对应的标记
           imageParts = curShots.flatMap(
             (s): ContentPart[] => [
@@ -808,12 +815,12 @@ export default function ChatPanel({
               { type: 'image_url', image_url: { url: s.dataUrl } },
             ],
           );
-        } else {
-          // 前置检查已保证 visionModel 非空；描述提示词带上该处上下文，并声明以画面为准
+        } else if (visionTarget) {
+          // 前置检查已保证走到这里 visionTarget 非空；描述提示词带上该处上下文，并声明以画面为准。
+          // 视觉模型可能配在另一家供应商，所以用 visionTarget（自带那家的端点），不是 settings。
           const results = await Promise.allSettled(
             curShots.map((s) =>
-              chatOnce(settings, {
-                model: settings.visionModel,
+              chatOnce(visionTarget, {
                 messages: [
                   {
                     role: 'user',
@@ -936,7 +943,8 @@ export default function ChatPanel({
         {
           // 开着思考就把档位传下去：thinkingParams 按模型声明决定发哪个字段 ——
           // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发
-          thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
+          thinkingEffort:
+            thinking && supportsThinking(llmCatalog, llmModel.model) ? effort : undefined,
           onReasoningDelta: (t) => {
             reasoning += t;
             patchAi({ reasoning });
@@ -1157,7 +1165,7 @@ export default function ChatPanel({
         {iconBtn('copy-session-btn', '复制整个会话（Markdown）', <mdui-sym-content-copy />, copySession, loading || msgs.length === 0)}
         {iconBtn('export-session-btn', '导出 .md 文件', <mdui-sym-download />, downloadSession, loading || msgs.length === 0)}
         {iconBtn('chat-delete-session', '删除当前会话', <mdui-sym-delete />, confirmDeleteSession, loading)}
-        {isMobile && supportsThinking(llmModel) && (
+        {isMobile && supportsThinking(llmCatalog, llmModel.model) && (
           <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
             <mdui-button-icon
               data-testid="chat-thinking-toggle"
@@ -1175,7 +1183,7 @@ export default function ChatPanel({
         <ModelPicker slot="chat" field="llmModel" />
         <SkillPicker value={skillIds} onChange={updateSkillIds} />
         <PanelSpacer />
-        {supportsThinking(llmModel) && !isMobile && (
+        {supportsThinking(llmCatalog, llmModel.model) && !isMobile && (
           <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
             <mdui-button-icon
               data-testid="chat-thinking-toggle"
@@ -1189,7 +1197,9 @@ export default function ChatPanel({
         )}
         {/* 深度控件只在模型声明了 effort 档位或 budget 区间时出现；窄屏省掉文字标签，
             那三档字在只有图标的行里已经挤不下主语了 */}
-        {supportsThinking(llmModel) && thinking && hasThinkingDepth(llmModel) && (
+        {supportsThinking(llmCatalog, llmModel.model) &&
+          thinking &&
+          hasThinkingDepth(llmCatalog, llmModel.model) && (
           <span className="chat-effort-field">
             {!isMobile && <span className="chat-effort-label">思考深度</span>}
             <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} data-testid="chat-effort" aria-label="思考深度">

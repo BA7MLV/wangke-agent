@@ -10,7 +10,7 @@ import { StreamParagraph, ThinkLine, Collapse } from '../components/motion';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import { hasThinkingDepth, supportsThinking } from '../api/modelCaps';
-import { useSettings } from '../store/settings';
+import { catalogOf, useSettings } from '../store/settings';
 import { useCourseChat, type CourseChatMessage } from '../store/courseChat';
 import type { ReasoningEffort } from '../api/siliconflow';
 import { confirmDialog, PageShell, toast, useMduiEvent } from '../ui';
@@ -103,6 +103,8 @@ export default function CourseChat() {
   const cancelPlan = useCourseChat((s) => s.cancelPlan);
 
   const llmModel = useSettings((state) => state.llmModel);
+  // 思考能力按这家供应商的能力数据源查（同一模型 id 在别家可能不支持思考）
+  const llmCatalog = useSettings((state) => catalogOf(state, state.llmModel.providerId));
   const thinking = useSettings((state) => state.thinkingEnabled);
   const effort = useSettings((state) => state.thinkingEffort);
   const updateSettings = useSettings((state) => state.update);
@@ -259,7 +261,7 @@ export default function CourseChat() {
             <span className="course-chat__toolbar-divider" aria-hidden="true" />
             <ModelPicker slot="chat" field="llmModel" />
             <SkillPicker value={skillIds} onChange={setSkillIds} />
-            {supportsThinking(llmModel) && (
+            {supportsThinking(llmCatalog, llmModel.model) && (
               <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
                 <mdui-button-icon
                   aria-label={thinking ? '关闭思考' : '开启思考'}
@@ -273,7 +275,9 @@ export default function CourseChat() {
             )}
             {/* 深度控件只在模型**声明了**档位或预算区间时出现：只有开关的模型
               （Qwen3.5 系、部分 DeepSeek）给不出深度，给个装饰性旋钮反而是骗人 */}
-            {supportsThinking(llmModel) && thinking && hasThinkingDepth(llmModel) && (
+            {supportsThinking(llmCatalog, llmModel.model) &&
+              thinking &&
+              hasThinkingDepth(llmCatalog, llmModel.model) && (
               <span className="course-chat__effort-field">
                 <span className="course-chat__effort-label">思考深度</span>
                 <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort" aria-label="思考深度">

@@ -1,6 +1,7 @@
 import { zipSync, unzipSync, strToU8, strFromU8 } from 'fflate';
 import { db } from './db';
-import { useSettings } from './settings';
+import { mergeImportedProviders, useSettings, type Settings } from './settings';
+import { pickSyncSettings } from '../sync/units';
 
 /**
  * 数据迁移：导出 / 导入迁移包（不含视频本体，含讲义帧）。
@@ -135,7 +136,9 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
 
   const s = useSettings.getState();
   const settings = {
-    baseUrl: s.baseUrl,
+    // 供应商**逐条剥掉 apiKey**：迁移包是要发出去的（用户可能拿去另一台设备 / 存网盘），
+    // 凭据不随包走。与同步载荷走同一个函数，两条外发路径共用一条防线。
+    providers: pickSyncSettings(s).providers,
     asrModel: s.asrModel,
     llmModel: s.llmModel,
     visionModel: s.visionModel,
@@ -415,9 +418,21 @@ export async function importMigrationZip(
     bump('skillRefs', refBatch.length);
   }
 
-  // 6) 设置：勾选时覆盖（apiKey 保持本机现值，密钥不随包走）
+  // 6) 设置：勾选时覆盖（凭据保持本机现值，密钥不随包走）
+  //
+  // 供应商表要**按 id 合并**而不是整表替换：包里只有 id/名称/端点/能力，没有 apiKey。
+  // 直接替换会把本机所有 key 清空，用户导入一次配置就发现整份 API 都不能用了。
   if (opts.restoreSettings && pkg.settings) {
-    useSettings.getState().update(pkg.settings as never);
+    const incoming = pkg.settings;
+    const patch: Partial<Settings> = { ...(incoming as Partial<Settings>) };
+    const list = incoming.providers;
+    if (Array.isArray(list)) {
+      patch.providers = mergeImportedProviders(
+        useSettings.getState().providers,
+        list.filter((p): p is { id: string } => !!p && typeof p.id === 'string'),
+      );
+    }
+    useSettings.getState().update(patch);
     result.settingsRestored = true;
   }
 
