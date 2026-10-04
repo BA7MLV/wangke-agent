@@ -100,6 +100,10 @@ const META = {
   'test-material-md': { service: 'none', antd: false, timeout: 120 },
   'test-material-region': { service: 'none', antd: false, timeout: 120 },
   'test-material-units': { service: 'none', antd: false, timeout: 120 },
+  // md 所见即所得编辑的装饰规则：语法符号该不该藏、**光标落在符号内时必须露出**、
+  // 容器样式与行内样式谁该让开、以及输出必须严格升序不重叠（RangeSetBuilder 会抛）。
+  // 纯逻辑：@lezer/markdown 是纯 JS 解析器，node 里能跑，不需要 DOM。
+  'test-md-live-preview': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
   // 在 Node 里用 pdf.js 抽 fixture 的中文文本（确认「fixture 可解析」，e2e 失败时好分清
   // 是 fixture 的问题还是阅读器的问题）。纯 Node，不起服务。
