@@ -278,6 +278,62 @@
   scroll-margin-top: 12px;
 }
 
+/* ── Markdown 编辑面（所见即所得） ─────────────────────────────────────────
+   编辑态**刻意不复用 .mr-scroll**：那条规则带 12px/24px 内边距，
+   而 CodeMirror 的 .cm-editor 是 height:100% 的定高盒 —— 父级带 padding 时
+   它的 100% 按内容盒算，编辑器上方会凭空多出一截内边距、滚动条也比内容短一截。
+   滚动改由 CodeMirror 自己的 .cm-scroller 负责（见下面最后一条）。 */
+
+/* 编辑态的第二条工具条（保存状态 + 预览/源码开关）。
+   不复用 .mr-bar：.mr-bar 带 flex-wrap: wrap，手机上宽度不够时工具会掉到第二行，
+   而这是一条「控件条」，掉行会让它跟文档正文一样会滚动、越用越占地方。
+   高度也比 .mr-bar 收一收 —— 两条 40px 的条在手机上就吃掉 80px。 */
+.mr-edit-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 10px;
+  /* 面层色而不是底色：它属于「编辑器」而不是「文档」，
+     阅读/编辑两种状态因此有一道明确的视觉分界，切过去时不会以为还在读。 */
+  background: rgb(var(--mdui-color-surface-container));
+  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
+}
+
+/* 保存状态文案。等宽数字不必要（这里没有数字），但要 nowrap：
+   文案变长时不该把分段按钮挤到下一行。 */
+.mr-edit-state {
+  font-size: 12px;
+  color: rgb(var(--mdui-color-on-surface-variant));
+  white-space: nowrap;
+}
+
+/* 「有未保存的修改」用主色：这是当前唯一需要用户注意的状态，
+   而主色在本项目里就是「注意/进行中」的口径（工具条按钮、focus 环都用它）。
+   不用 error 色 —— 「未保存」不是故障，不该用警告色。 */
+.mr-edit-state--dirty {
+  color: rgb(var(--mdui-color-primary));
+  font-weight: 500;
+}
+
+/* 编辑面容器。高度靠 flex 撑满（.mr-root 是 column flex），
+   overflow: hidden 是必须的：CodeMirror 自己的 .cm-scroller 已经负责滚动，
+   这里要是还能滚就会出现双滚动条，且 iOS 键盘弹出时（--vvh 收缩）
+   外层那条会把编辑器顶出可视区。 */
+.mr-edit-wrap {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* 真正滚动的是 .cm-scroller（CodeMirror 把 .cm-content 放进它里面）。
+   overscroll-behavior 不是继承属性，写在 .mr-edit-wrap 上没用，必须点名这一层：
+   不 contain 的话滚到边界会连带把 .page 一起带起来，软键盘收起时整页跟着弹。 */
+.mr-edit-wrap .cm-scroller {
+  overscroll-behavior: contain;
+  /* iOS 惯性滚动。.mr-scroll 上有同一条，编辑面要自己再写一遍（同理，不可继承）。 */
+  -webkit-overflow-scrolling: touch;
+}
+
 /* ── HTML 阅读器 ────────────────────────────────────────────────────────── */
 
 /* 原样视图：整份文档塞在沙箱 iframe 里，**滚动由 iframe 自己负责** ——
