@@ -50,6 +50,20 @@
   background: rgb(var(--mdui-color-outline-variant));
 }
 
+/* 思考深度：文字标签 + 档位，标签让「低/高/最大」有主语（否则那三个字不知在调什么） */
+.course-chat__effort-field {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.course-chat__effort-label {
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-label-medium-size);
+  white-space: nowrap;
+}
+
 .course-chat__effort {
   flex: 0 0 auto;
 }
@@ -82,11 +96,6 @@
 .course-chat__context-label > mdui-sym-toc {
   color: rgb(var(--mdui-color-primary));
   font-size: 18px;
-}
-
-.course-chat__context-auto {
-  min-width: 0;
-  color: rgb(var(--mdui-color-on-surface-variant));
 }
 
 .course-chat__context-chips {
@@ -433,10 +442,16 @@
     display: none;
   }
 
+  /* 窄屏：整组（标签 + 档位）推到行尾并吃掉剩余宽度，档位等分 */
+  .course-chat__effort-field {
+    flex: 1 1 auto;
+    max-width: 264px;
+    margin-left: auto;
+  }
+
   .course-chat__effort {
     flex: 1 1 auto;
-    max-width: 232px;
-    margin-left: auto;
+    min-width: 0;
   }
 
   .course-chat__effort > mdui-segmented-button {

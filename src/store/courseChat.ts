@@ -394,6 +394,9 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         COURSE_ASSISTANT_TOOLS,
         executeTool,
         {
+          // 开着思考就把档位传下去：thinkingParams 会按模型声明决定发哪个字段 ——
+          // 只有开关的模型（Qwen3.5 系、部分 DeepSeek）拿不到深度参数，但 `enable_thinking` 照发，
+          // 所以这里用 supportsThinking 而不是 hasThinkingDepth（后者只管 UI 显示）
           thinkingEffort:
             settings.thinkingEnabled && supportsThinking(settings.llmModel) ? settings.thinkingEffort : undefined,
           onReasoningDelta: (delta) => {

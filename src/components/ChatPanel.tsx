@@ -17,7 +17,7 @@ import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
-import { isVisionModel, supportsThinking } from '../api/modelCaps';
+import { hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
 import { fmtTime } from '../utils/vtt';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
@@ -27,6 +27,7 @@ import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citatio
 import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
+import { useModelMetaRevision } from '../utils/useModelMeta';
 import { Panel, PanelBar, PanelSpacer, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
 import { ThinkLine, StreamParagraph, Collapse } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
@@ -300,6 +301,8 @@ export default function ChatPanel({
   const listRef = useRef<HTMLDivElement | null>(null);
   // 手机端：思考开关上移到会话行，第二行只留 ModelPicker（+思考深度），省一行高度
   const isMobile = useIsMobile();
+  // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
+  useModelMetaRevision();
 
   /** 截取当前视频画面，加入待发送列表（最多 4 张） */
   const addShot = () => {
@@ -931,6 +934,8 @@ export default function ChatPanel({
         tools,
         executeTool,
         {
+          // 开着思考就把档位传下去：thinkingParams 按模型声明决定发哪个字段 ——
+          // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发
           thinkingEffort: thinking && supportsThinking(llmModel) ? effort : undefined,
           onReasoningDelta: (t) => {
             reasoning += t;
@@ -1058,7 +1063,7 @@ export default function ChatPanel({
     if (Number.isFinite(n)) setActiveId(n);
   });
   // 输入框：mdui-text-field 的 input 事件没有 payload，值要从元素上读（composerInput 声明在组件上方）
-  // 思考深度：低 / 高 / 最大
+  // 思考深度：低 / 高 / 最大（仅模型声明了档位时才渲染，见 hasThinkingDepth）
   const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
     updateSettings({ thinkingEffort: el.value as ReasoningEffort }),
   );
@@ -1182,12 +1187,17 @@ export default function ChatPanel({
             </mdui-button-icon>
           </mdui-tooltip>
         )}
-        {supportsThinking(llmModel) && thinking && (
-          <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} data-testid="chat-effort">
-            <mdui-segmented-button value="low">低</mdui-segmented-button>
-            <mdui-segmented-button value="high">高</mdui-segmented-button>
-            <mdui-segmented-button value="max">最大</mdui-segmented-button>
-          </mdui-segmented-button-group>
+        {/* 深度控件只在模型声明了 effort 档位或 budget 区间时出现；窄屏省掉文字标签，
+            那三档字在只有图标的行里已经挤不下主语了 */}
+        {supportsThinking(llmModel) && thinking && hasThinkingDepth(llmModel) && (
+          <span className="chat-effort-field">
+            {!isMobile && <span className="chat-effort-label">思考深度</span>}
+            <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} data-testid="chat-effort" aria-label="思考深度">
+              <mdui-segmented-button value="low">低</mdui-segmented-button>
+              <mdui-segmented-button value="high">高</mdui-segmented-button>
+              <mdui-segmented-button value="max">最大</mdui-segmented-button>
+            </mdui-segmented-button-group>
+          </span>
         )}
       </PanelBar>
 

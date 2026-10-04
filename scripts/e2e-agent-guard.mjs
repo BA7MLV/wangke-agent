@@ -16,6 +16,8 @@
 // 用法：npm run preview &  然后 node scripts/e2e-agent-guard.mjs
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+// 下面要手写一份模型元数据缓存塞进 localStorage，版本号得跟源码一致（modelMeta 无 import，可直接引）
+import { MODEL_META_CACHE_VERSION } from '../src/api/modelMeta.ts';
 
 const BASE = process.env.BASE_URL || 'http://localhost:4173';
 /** 假的 OpenAI 兼容端点：请求打到这里就被脚本接管 */
@@ -335,10 +337,16 @@ await check('模型窗口远大于设置值时，按真实窗口给（不被保�
   await reset();
   // 播种一份模型元数据：该模型输出上限 384k、上下文 1049k，而设置里的窗口只有 32768。
   // 若拿设置值当上限，max_tokens 会被压到 ~2 万，白扔模型能力。
-  await page.evaluate(() => {
-    const meta = { updatedAt: Date.now(), models: { 'test-model': { context: 1049000, output: 384000, vision: false, reasoning: false, toolCall: true } } };
+  await page.evaluate((cacheVersion) => {
+    // version 必须跟 modelMeta 的 CACHE_VERSION 一致：版本对不上，这份夹具会被当成
+    // 过期缓存整个丢掉（表现是「能力数据凭空失效」，与本条要验的东西毫无关系）
+    const meta = {
+      version: cacheVersion,
+      updatedAt: Date.now(),
+      models: { 'test-model': { context: 1049000, output: 384000, vision: false, reasoning: false, toolCall: true } },
+    };
     localStorage.setItem('wangke-model-meta', JSON.stringify(meta));
-  });
+  }, MODEL_META_CACHE_VERSION);
   await page.reload({ waitUntil: 'networkidle' });
   await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
   await page.evaluate(() => {

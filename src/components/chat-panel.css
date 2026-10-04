@@ -13,6 +13,20 @@
   max-width: 260px;
 }
 
+/* ── 思考深度：文字标签 + 档位（窄屏只剩档位，见 ChatPanel 里的 isMobile 分支）── */
+.chat-effort-field {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.chat-effort-label {
+  color: rgb(var(--mdui-color-on-surface-variant));
+  font-size: var(--mdui-typescale-label-medium-size);
+  white-space: nowrap;
+}
+
 /* ── 消息流 ─────────────────────────────────────────────────────────────── */
 /* PanelBody 已负责滚动，这里只管消息的纵向节奏 */
 .chat-list-wrap {

@@ -6,6 +6,7 @@ import Player from './pages/Player';
 import Settings from './pages/Settings';
 import Study from './pages/Study';
 import { useMobileGlobals } from './utils/useMobile';
+import { isModelMetaStale, refreshModelMeta } from './api/modelMeta';
 import { resumePendingTranscriptions } from './pipelines/transcribeQueue';
 import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
@@ -27,6 +28,14 @@ export default function App() {
   // 不会和用户此刻正在做的事抢解码器。
   useEffect(() => {
     void backfillCovers();
+  }, []);
+
+  // 模型能力元数据（models.dev）：思考参数长什么样**完全由它决定**，所以不能只在
+  // 设置页拉 —— 首次使用或缓存结构升级后，元数据缺失会让「思考深度」控件直接不出现。
+  // 失败静默：离线时回退到「只知道能不能思考」，其余功能不受影响。
+  useEffect(() => {
+    if (!isModelMetaStale()) return;
+    void refreshModelMeta().catch(() => {});
   }, []);
 
   return (

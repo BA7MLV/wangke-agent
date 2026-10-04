@@ -254,7 +254,7 @@ Markdown 是唯一能改的材料。点工具条上的「**编辑**」进入所�
 | **出题** | 一键出题 / 对话式出题，生成可点选答题卡，点选即判、解析带时间戳、作答持久化 |
 | **Mermaid 出图** | 回答里的 ```mermaid 围栏自动渲染成图，可看源码 / 复制 / 下载 SVG / 全屏 |
 | **技能范围** | 工具条上的拼图按钮可**按会话限定**可用技能（默认全部）；限定后模型只能从勾选的技能里挑，工具层同步拦截 |
-| **思考深度** | 低 / 高 / 最大可调，可控制思考过程是否显示 |
+| **思考深度** | 灯泡开关旁是「思考深度」低 / 高 / 最大；档位**只发给模型自己声明支持的那种参数**（声明 effort 档位的发 `reasoning_effort`，声明预算区间的按区间折算 `thinking_budget`，只有开关的模型压根不给深度参数，控件也就不显示） |
 | **停止生成** | 生成中发送键变成停止键，随时打断；已流出的部分**保留并落库**（不落库就等于白生成一轮） |
 | **轮次上限** | 可选 3 / 6 / 12 / 20 / **不限**。不限也稳：同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、随时能按停止 |
 
@@ -515,7 +515,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 | 文本生成 | `deepseek-ai/DeepSeek-V4-Flash` |
 | 视觉 | `Qwen/Qwen3.6-35B-A3B` |
 
-设置页可拉取模型列表并按用途收藏（供各面板下拉选用）；上下文窗口 / 多模态 / 思考能力来自 models.dev 实时元数据（本地缓存 7 天，设置页可手动刷新），未收录模型回退名称启发式，上下文窗口也可手动修改。
+设置页可拉取模型列表并按用途收藏（供各面板下拉选用）；上下文窗口 / 多模态 / 思考能力来自 models.dev 实时元数据（本地缓存 7 天，启动时静默补拉、设置页可手动刷新），未收录模型回退名称启发式，上下文窗口也可手动修改。思考参数更进一步：元数据里的 `reasoning_options` 就是「这个模型怎么控思考深度」的声明（档位型 / 预算型 / 只有开关），厂商 API 参考点名的模型（如 `deepseek-ai/DeepSeek-V4-Flash`）以文档为准 —— 两者都没有就不发深度参数，绝不按模型名猜。
 
 ### 技术栈
 
@@ -616,6 +616,7 @@ node scripts/test-builtin-skills.mjs      # 内置 skill 资产（frontmatter / 
 node scripts/test-chat-frames.mjs         # 画面引用：linkify / 清单格式化 / qaSystem 规则注入
 node scripts/test-chat-export.mjs         # 会话导出 Markdown：结构 / 折叠块 / 题卡作答 / 文件名清洗
 node scripts/test-qa-skill-scope.mjs      # 问答技能范围：undefined / [] / [id] 三态、白名单×启用集合求交、工具放行条件
+node scripts/test-thinking-depth.mjs      # 思考参数跟着模型声明走：effort 档位映射（取不超过目标的最强档）/ budget 按声明区间折算 / 只有开关时压根不发深度参数
 node scripts/test-lexical.mjs             # 词法检索：分词（CJK 单字+二字组）/ BM25 打分 / 覆盖率加成 / 排序稳定
 node scripts/test-db-schema.mjs           # Dexie 建表版本：v13 删两张向量表（含 v12 带数据升级的路径）
 node scripts/test-quiz.mjs                # 答题卡：present_quiz 参数校验 / 清洗

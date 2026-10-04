@@ -2,13 +2,14 @@ import { useEffect, useId, useRef, useState, useCallback } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import { useNavigate } from 'react-router-dom';
 import { useAppNav } from '../components/appNav';
+import { useModelMetaRevision } from '../utils/useModelMeta';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
 import { StreamParagraph, ThinkLine, Collapse } from '../components/motion';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
-import { supportsThinking } from '../api/modelCaps';
+import { hasThinkingDepth, supportsThinking } from '../api/modelCaps';
 import { useSettings } from '../store/settings';
 import { useCourseChat, type CourseChatMessage } from '../store/courseChat';
 import type { ReasoningEffort } from '../api/siliconflow';
@@ -105,6 +106,9 @@ export default function CourseChat() {
   const thinking = useSettings((state) => state.thinkingEnabled);
   const effort = useSettings((state) => state.thinkingEffort);
   const updateSettings = useSettings((state) => state.update);
+
+  // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
+  useModelMetaRevision();
 
   useEffect(() => {
     void bootstrap();
@@ -267,23 +271,28 @@ export default function CourseChat() {
                 </mdui-button-icon>
               </mdui-tooltip>
             )}
-            {supportsThinking(llmModel) && thinking && (
-              <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort" aria-label="思考强度">
-                <mdui-segmented-button value="low">低</mdui-segmented-button>
-                <mdui-segmented-button value="high">高</mdui-segmented-button>
-                <mdui-segmented-button value="max">最大</mdui-segmented-button>
-              </mdui-segmented-button-group>
+            {/* 深度控件只在模型**声明了**档位或预算区间时出现：只有开关的模型
+              （Qwen3.5 系、部分 DeepSeek）给不出深度，给个装饰性旋钮反而是骗人 */}
+            {supportsThinking(llmModel) && thinking && hasThinkingDepth(llmModel) && (
+              <span className="course-chat__effort-field">
+                <span className="course-chat__effort-label">思考深度</span>
+                <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort" aria-label="思考深度">
+                  <mdui-segmented-button value="low">低</mdui-segmented-button>
+                  <mdui-segmented-button value="high">高</mdui-segmented-button>
+                  <mdui-segmented-button value="max">最大</mdui-segmented-button>
+                </mdui-segmented-button-group>
+              </span>
             )}
           </div>
 
-          <div className="course-chat__context" data-testid="course-chat-context">
-            <span className="course-chat__context-label">
-              <mdui-sym-toc aria-hidden="true" />
-              课程上下文
-            </span>
-            {contextCourses.length === 0 ? (
-              <span className="course-chat__context-auto">助手自动选择</span>
-            ) : (
+          {/* 只在助手**真的选定**了课程时才出现这条信息栏：没有选中时一行字都是废话
+              （曾经那里写着「助手自动选择」，说的就是「这里本来是空的」）。 */}
+          {contextCourses.length > 0 && (
+            <div className="course-chat__context" data-testid="course-chat-context">
+              <span className="course-chat__context-label">
+                <mdui-sym-toc aria-hidden="true" />
+                课程上下文
+              </span>
               <div className="course-chat__context-chips">
                 {contextCourses.map((course) => (
                   <span className="course-chat__context-chip" key={course.id} title={course.name}>
@@ -291,8 +300,6 @@ export default function CourseChat() {
                   </span>
                 ))}
               </div>
-            )}
-            {contextCourses.length > 0 && (
               <mdui-tooltip content="清除课程上下文，恢复自动选择">
                 <mdui-button-icon
                   className="course-chat__context-reset"
@@ -303,8 +310,8 @@ export default function CourseChat() {
                   <mdui-sym-refresh />
                 </mdui-button-icon>
               </mdui-tooltip>
-            )}
-          </div>
+            </div>
+          )}
 
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
             {messages.length === 0 && (
