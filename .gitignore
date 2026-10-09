@@ -19,3 +19,5 @@ scripts/.tmp-*
 /.tmp-*
 .workbuddy/
 vite.config.ts.timestamp-*
+
+.worktrees/
