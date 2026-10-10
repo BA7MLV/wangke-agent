@@ -650,6 +650,7 @@ node scripts/test-pcm-resample.mjs        # 重采样契约：跨帧不丢相位
 node scripts/test-ort-config.mjs          # ORT wasm 路径与单线程降级
 node scripts/test-migration.mjs           # 旧数据迁移判定
 node scripts/test-sync-units.mjs          # 同步单元：id 构造/解析往返 / 名字编码无歧义 / 分片边界 / 设置白名单与排除项互斥
+node scripts/test-livelink-protocol.mjs    # 实时链路协议：帧编解码 / 坏帧 / gzip 分片
 node scripts/test-bilingual.mjs           # 双语字幕处理
 node scripts/test-diagram-export.mjs      # 图表导出：只改根标签，不碰子元素几何
 node scripts/test-error-text.mjs          # 错误文案归一

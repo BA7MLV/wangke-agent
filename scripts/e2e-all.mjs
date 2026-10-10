@@ -146,6 +146,9 @@ const META = {
   // （src/sync/units.ts 的 ALL_SETTINGS_FIELDS_CLASSIFIED / ALL_VIDEO_FIELDS_CLASSIFIED，
   // `npm run build` 的 tsc 会拦），两者不重叠。
   'test-sync-units': { service: 'none', antd: false, timeout: 120 },
+  // 实时链路协议（最底层，三方共用）：文本/二进制帧往返、坏帧一律 null（gzip 除外）、
+  // 线格式逐字节小端、分片边界。零依赖纯函数（fflate + units 的 PART_BYTES 常量）。
+  'test-livelink-protocol': { service: 'none', antd: false, timeout: 120 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },
