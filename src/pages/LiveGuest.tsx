@@ -206,11 +206,10 @@ export default function LiveGuest() {
   /**
    * offline 时的自救轮询。
    *
-   * 为什么需要它：设计上 host 宽限期内回来应由中继补发 host-link-up，guest 无感
-   * 恢复。但 Task 7 计划里的中继代码（DO 的 webSocketClose / alarm）并没有实现
-   * 补发 —— 真实部署下 guest 会卡在 offline。轮询让「主机重新打开后自动恢复」
-   * 这条 UX 承诺不依赖中继是否补帧：socket 还活着就每 3s 问一次索引，问到就算数。
-   * 两条恢复路径（host-link-up 与轮询）都收敛到 ready，重复也无害。
+   * 主恢复路径是中继补发 host-link-up（live-relay 的 host 重连即广播，收到即恢复）；
+   * 轮询是兜底：socket 若因别的原因半死（中继换了房间、host 换了配对码），
+   * 每 3s 问一次索引，问到就算数。它让「主机重新打开后自动恢复」这条 UX 承诺
+   * 不依赖单一信号源。两条路径都收敛到 ready，重复也无害。
    */
   useEffect(() => {
     if (phase !== 'offline') return;
