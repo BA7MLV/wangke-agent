@@ -12,6 +12,7 @@ import { resumePendingTranscriptions } from './pipelines/transcribeQueue';
 import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
+import LiveGuest from './pages/LiveGuest';
 
 export default function App() {
   useMobileGlobals();
@@ -63,6 +64,9 @@ export default function App() {
           <Route path="/player/:id" element={<Player />} />
           <Route path="/study" element={<Study />} />
           <Route path="/settings" element={<Settings />} />
+          {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂底部/侧边导航 ——
+              它读的是主机的内容，与本机导航的目的地不是一回事（见 LiveGuest.tsx 文件头）。 */}
+          <Route path="/live" element={<LiveGuest />} />
         </Routes>
       </div>
     </HashRouter>
