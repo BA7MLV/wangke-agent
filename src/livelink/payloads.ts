@@ -28,6 +28,12 @@
  * 必须跨设备的字段。guest 侧没有本地文件（它是纯镜像），所以对面的删除状态无从推断；
  * 索引不带它，用户就只能等播放器报错才知道这门课看不了。
  *
+ * `coverState` 连例外都不算，与 sync 侧同哲学：guest 是纯内存镜像、**永不生成封面**，
+ * host 端的 `skipped`（典型成因就是「本机文件已删，没法生成」）照抄过来只会在 guest 上
+ * 显示成「待生成」且永远等不到——把一台设备的状态 facts 投射成另一台的等待，纯噪音。
+ * guest 判断「有没有封面」的唯一依据是 cover 单元拉不拉得到（`video:<id>:cover`
+ * 失败 → 无封面占位），不靠任何状态字段。
+ *
  * 设计文档：docs/plans/2026-10-09-live-link-design.md
  */
 
@@ -94,10 +100,10 @@ export function buildMetaUnit(row: VideoRow): string {
     finished: row.finished ?? 0,
     folderId: row.folderId,
     dominantColor: row.dominantColor,
-    coverState: row.coverState,
     // 0|1 → 布尔：host 库里老数据这两个字段都没有，guest 两边判等必须一致
     scanned: row.scanned === 1,
     empty: row.empty === 1,
+    // coverState **故意不发**，理由见文件头「字段取舍的总原则」末段。
   });
 }
 

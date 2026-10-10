@@ -651,6 +651,8 @@ node scripts/test-ort-config.mjs          # ORT wasm 路径与单线程降级
 node scripts/test-migration.mjs           # 旧数据迁移判定
 node scripts/test-sync-units.mjs          # 同步单元：id 构造/解析往返 / 名字编码无歧义 / 分片边界 / 设置白名单与排除项互斥
 node scripts/test-livelink-protocol.mjs    # 实时链路协议：帧编解码 / 坏帧 / gzip 分片
+node scripts/test-livelink-window.mjs      # 拉流窗口：pos 锚定 / 重叠防护 / 尾部钳制 / 背压
+node scripts/test-livelink-index.mjs       # 实时链路 host 载荷：索引白名单 / meta 不发 coverState / content 段轨 / cover 可逆
 node scripts/test-bilingual.mjs           # 双语字幕处理
 node scripts/test-diagram-export.mjs      # 图表导出：只改根标签，不碰子元素几何
 node scripts/test-error-text.mjs          # 错误文案归一

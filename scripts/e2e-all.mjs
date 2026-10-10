@@ -149,6 +149,14 @@ const META = {
   // 实时链路协议（最底层，三方共用）：文本/二进制帧往返、坏帧一律 null（gzip 除外）、
   // 线格式逐字节小端、分片边界。零依赖纯函数（fflate + units 的 PART_BYTES 常量）。
   'test-livelink-protocol': { service: 'none', antd: false, timeout: 120 },
+  // 实时链路拉流窗口：窗口锚在播放头、与已缓冲区间防重叠、尾部按 size 钳制、
+  // 在途数背压。「pos 锚定」是修掉「首窗填满后永久停摆」（8MB 窗口约 13 秒就饿死）
+  // 后的回归；脏输入安静空转——它跑在 timeupdate 回调里，抛异常会打死整条 socket。
+  'test-livelink-window': { service: 'none', antd: false, timeout: 120 },
+  // host 侧单元载荷：索引字段白名单（fileDeleted 是唯一进索引的本机事实）、
+  // meta 不发 coverState（guest 按 cover 单元能否拉到判空）、content 段/对照轨
+  // （status 0 的未转写段也发）、cover blob→base64 分片进制可逆且不爆栈。
+  'test-livelink-index': { service: 'none', antd: false, timeout: 120 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },

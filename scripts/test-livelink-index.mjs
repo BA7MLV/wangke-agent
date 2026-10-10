@@ -9,9 +9,10 @@
  *   - `fileDeleted` 是少见的「本机事实却必须跨设备」字段：本机 OPFS 里文件被删了，
  *     guest 那边 openFile 必然失败。索引不带它，guest 只能等到播放器报错才知道看不了，
  *     而用户可以也应该在列表上就看到「这台机器上文件已删」；
- *   - meta 单元的字段取舍必须**逐字段钉住**：多给（htmlView / skillOverride 这类本机
- *     偏好与覆盖）等于把一台设备的选择强加给另一台；少给（lastPosition 缺省成 0 之外的
- *     undefined）会让 guest 镜像的进度条算出 NaN；
+ *   - meta 单元的字段取舍必须**逐字段钉住**：多给（htmlView / skillOverride / coverState
+ *     这类本机偏好与状态）等于把一台设备的选择强加给另一台——host 的 coverState=skipped
+ *     照抄过来，guest 上就是一张永远等不到的「待生成」占位；少给（lastPosition 缺省成
+ *     0 之外的 undefined）会让 guest 镜像的进度条算出 NaN；
  *   - 空字幕段数组也必须是合法载荷——没转写完的课程正好是链路最常见的场景，
  *     此时 content 单元返回 `{segments: [], tracks: []}`，guest 侧不能当成坏帧；
  *   - cover 走 blob→base64：分片进制写错在 40KB 小封面上看不出来，材料封面一宽就
@@ -86,8 +87,13 @@ const meta = JSON.parse(
 );
 assert.equal(meta.id, 'a');
 assert.equal(meta.lastPosition, 12.5);
-assert.equal(meta.coverState, 'done');
 assert.equal(meta.dominantColor, '#123456');
+
+// coverState **不发**：guest 是纯内存镜像、永不生成封面，host 端的 skipped（典型成因是
+// 「本机文件已删，没法生成」）照抄过来只会在 guest 上显示成「待生成」且永远等不到——
+// 把一台设备的状态 facts 投射成另一台的等待，纯噪音。guest 判空的唯一依据是 cover
+// 单元拉不拉得到，所以这里连键都不该出现（而不是发个 false / null 让它猜）
+assert.equal('coverState' in meta, false);
 
 // 缺省值：没播过的课 lastPosition/finished 必须是「显式的 0」，不是 undefined ——
 // guest 侧进度条直接拿它算比例，undefined 会变成 NaN 进度
@@ -103,11 +109,31 @@ assert.equal(JSON.parse(buildMetaUnit({ id: 'x', name: 'x', duration: 0, size: 0
 // 白名单内的可选字段原样透传：materialFormat 决定 guest 用 PDF 渲染器还是 MD 渲染器
 assert.equal(JSON.parse(buildMetaUnit({ id: 'm', name: '讲义', duration: 0, size: 9, mimeType: 'application/pdf', kind: 'material', materialFormat: 'pdf', createdAt: 0, status: 'transcribed' })).materialFormat, 'pdf');
 
-// 白名单外一律不带：fileDeleted / htmlView / skillOverride 是「这台机器的事实与偏好」
+// 白名单外一律不带：fileDeleted / htmlView / skillOverride / coverState 是
+// 「这台机器的事实与偏好」，跟着走只会污染对面（coverState 的额外理由见上）
 assert.equal(meta.fileDeleted, undefined);
 assert.equal(meta.htmlView, undefined);
 assert.equal(meta.skillOverride, undefined);
-assert.equal(JSON.parse(buildMetaUnit({ id: 'y', name: 'y', duration: 0, size: 0, mimeType: 'video/mp4', createdAt: 0, status: 'new', fileDeleted: 1, htmlView: 'segment', skillOverride: { pin: [1], drop: [] } })).htmlView, undefined);
+assert.equal(
+  JSON.parse(
+    buildMetaUnit({
+      id: 'y',
+      name: 'y',
+      duration: 0,
+      size: 0,
+      mimeType: 'video/mp4',
+      createdAt: 0,
+      status: 'new',
+      fileDeleted: 1,
+      htmlView: 'segment',
+      coverState: 'pending',
+      skillOverride: { pin: [1], drop: [] },
+    }),
+  ).coverState,
+  undefined,
+);
+// dominantColor 仍在白名单里：guest 列表要用它画封面占位底色（它不是状态，是内容属性）
+assert.equal(meta.dominantColor, '#123456');
 
 // 载荷自描述：id 写进 JSON，与单元 id（video:<id>:meta）能互相校验 ——
 // 「索引指向 A、载荷里装着 B」这类错乱要在 guest 写入前就能发现
