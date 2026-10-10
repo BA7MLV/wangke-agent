@@ -1,0 +1,13 @@
+name = "wangke-live-relay"
+main = "src/index.ts"
+compatibility_date = "2026-10-09"
+
+# DO 类需要显式登记 + 首次迁移。dashboard 纯粘贴做不到这件事，
+# 所以本中继用 wrangler 一条命令部署——这是引入 DO 的必然成本。
+[[durable_objects.bindings]]
+name = "ROOM"
+class_name = "Room"
+
+[[migrations]]
+tag = "v1"
+new_classes = ["Room"]

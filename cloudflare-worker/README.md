@@ -60,3 +60,20 @@ A: 该视频可能是付费/地区限制/仅 APP 可播，或需要更高权限 
 
 **Q: 速度很慢？**  
 A: Worker 免费额度有每秒请求数限制，大视频下载需要几分钟；B 站 CDN 本身也可能限速。
+
+## 实时链路上传中继（live-relay）
+
+> 部署一次，之后 host 与 guest 都只是打开网页连上去，Mac 上不需要常驻任何进程。
+
+```bash
+cd cloudflare-worker/live-relay
+npx wrangler login     # 首次：浏览器授权你的 Cloudflare 账号
+npx wrangler deploy    # 输出 https://wangke-live-relay.<你的子域>.workers.dev
+```
+
+把输出的地址（`https://` 换成 `wss://`）填进应用「设置 → 实时链路 → 中继地址」。
+
+- 中继**不存储、不解析**任何业务数据，只按配对码转发帧；
+- host 断开有 60 秒宽限，期间重连 guest 无感；房间空闲或宽限到点即回收；
+- 免费额度按 DO 活跃时长计费，看视频是小时级会话——开始之前先看一眼 Cloudflare 当时的价目表；
+- 真正的带宽约束是你家的上行：1080p 可看，4K 会卡。
