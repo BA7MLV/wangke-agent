@@ -170,6 +170,7 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 | [播放器操作](#播放器操作) | 播放页 |
 | [看学习时长](#学习时长) | 左侧导航「学习」 |
 | [手机 / iPad 上怎么用](#移动端) | —— |
+| [其他设备实时看这台](#实时链路多设备实时镜像) | 设置 → 实时链路 |
 | [B 站导入怎么配](#b-站导入的两条通道) | 设置 → 哔哩哔哩导入 |
 
 ### 导入课程
@@ -339,6 +340,43 @@ Markdown 是唯一能改的材料。点工具条上的「**编辑**」进入所�
 - **手机横屏**：改为「左视频 / 右面板」左右分栏，切换条落在右栏顶部、默认停在「问答」，复刻桌面边看边聊的姿势
 - safe-area 避让刘海与 Home 条；键盘弹出经 `interactive-widget` + `visualViewport` 同步收缩页面避免遮挡输入框；输入框 16px 防 iOS 聚焦缩放；触控目标 ≥40px
 
+### 实时链路（多设备实时镜像）
+
+一个链接让其他设备（iPad / 手机 / 户外网络）**实时读你这台设备的内容**：课程列表、封面、字幕（含 B 站对照轨）与 mp4 / webm 边流边播。中继是全托管的 Cloudflare Worker + Durable Object——只按配对码把两端接进同一房间转发帧，不解析、不存任何业务数据——所以 **Mac 上零常驻**，除了一次性部署中继，再没有需要常驻运行的东西。（[设计文档](docs/plans/2026-10-09-live-link-design.md)）
+
+**三步用法**
+
+1. **设置 → 实时链路**，填「中继地址」。首次需先部署一次中继：`cd cloudflare-worker/live-relay && npx wrangler deploy`（DO 要 binding 与类迁移，dashboard 纯粘贴做不到，见 [cloudflare-worker/README.md](cloudflare-worker/README.md)），把输出的 `https://…workers.dev` 换成 `wss://` 填进去
+2. 打开「**开启共享**」，状态变「在线」后出现 8 位配对码
+3. 点「**复制链接**」发给其他设备 —— 链接形如 `#/live?relay=<wss>&pair=<配对码>`，对方打开即自动带上配对码，不用再输码
+
+**能看什么 / 不能看什么**
+
+| 能看 | 不能看（P1） |
+|---|---|
+| 课程列表、封面（连接时拉取主机当前课程，主机重连后刷新） | **mkv / flv / ts / rmvb 视频**：打开时就明确告知「来宾端播不了」，回主机或本地看 |
+| 字幕 + 对照轨：字幕列表可点跳转，B 站导入的中英对照轨同样在、同样可点 | 讲义与阅读材料的正文（P1 未送上链路，content 单元只发字幕与对照轨） |
+| **mp4 / webm 视频按字节段边流边播**，seek 就是重新拉一段；码率 = 源文件，不转码 | 写操作：问答记录 / 制卡审核 / 播放进度 / 学习时长（属 P2，且由 host 权威落库） |
+
+**三条硬约束**
+
+- **主机必须开着应用**：这是实时链路的本质——host 关机 / 断网 / 刷新页面，guest 立刻显示「主机已离线」；host 在 60 秒宽限内重连则自动恢复（中继补发 host-link-up，guest 侧闪一下「重连中」再重新拉取，另有 3 秒轮询兜底，全程不用手动操作）。**它不是云备份**，要副本是云同步那份设计的事
+- **视频的硬约束是 host 家的上行带宽**：1080p 可看，4K / 高码率会卡——物理上限，卡了明说，不假装。mp4 还要求 moov 前置（faststart）：moov 在尾部的文件 MSE 解析不了（B 站导入经 mediabunny 重封装的产物是否满足，待真机验证）
+- **guest 是只读镜像，且不落库**：拉到的数据只进对方内存，关页面即焚——在 guest 上落库会产生「iPad 上半个课程库、与 Mac 静默分叉」的脏状态，那正是云同步的场景
+
+**安全**
+
+- 配对码 8 位随机（去掉 0/O/1/I 易混字符），可**轮换**——轮换即断所有旧连接，需重新配对
+- 房间级限速：同一房间连续 5 次错误配对，锁定 5 分钟
+- **凭据不过链路**：API Key / B 站 Cookie 永不出本机——host 侧从构造上只放白名单字段出库，不是「正好没有」
+- 全链路 WSS / HTTPS；中继不解析不存，房间空闲即回收
+
+**已知限制（如实）**
+
+- **配对码错误 / 房间过期是硬失败**：中继直接 close(4000 / 4001 / 4403)，guest 不会自动重连——手动刷新页面、找主机要一条新链接再来一次
+- **MSE 缓冲被淘汰后不会自动重拉**：内存压力下浏览器淘汰已播数据后，guest 的字节账本不知道（8MB 窗口内罕触；刷新即恢复）
+- **host 的 range 读并发上限 2**：超限的请求被静默丢弃，由 guest 下一轮重规划补上——观感是片刻停顿
+
 ### B 站导入的两条通道
 
 | 通道 | 何时用 | 怎么配 |
@@ -458,6 +496,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 | 🎨 | **封面与动态取色** | 导入即抽帧生成封面；Material You 动态取色随课程变化 |
 | ⏱️ | **学习时长** | 一年热力图 + 四张统计卡 + 30 天明细，只在本机 |
 | 📱 | **PWA / 移动端** | 离线外壳、Wake Lock、横屏左视频右面板、safe-area 避让 |
+| 🔗 | **实时链路** | 一个链接让其他设备实时读你当前设备的内容：课程列表 / 字幕（含对照轨）/ 封面 + mp4 边流边播（全托管中继，Mac 零常驻） |
 | 🏷️ | **版本信息** | 设置页底部「版本 · 构建时间 · commit」，构建期注入，专治「改了怎么还是老的」 |
 
 <details>
@@ -565,12 +604,15 @@ src/
   anki/         apkgCore.ts(写入器核心，Node 可测) apkg.ts(浏览器封装，sql.js 懒加载)
   skills/       types.ts builtin/(6 个内置技能) builtin.ts store.ts(升级/导入) router.ts(讲义路由)
                 scope.ts(会话技能范围的三态判定，零依赖可单测) zip.ts
+  livelink/     protocol.ts(帧/分片) window.ts(拉流窗口) payloads.ts(单元载荷)
+                host.ts(host 服务逻辑) guest.ts(guest 客户端) mse.ts(MSE 播放管道)
+                store.ts(共享运行时状态)
   components/   SubtitlePanel HandoutPanel HandoutDocView ChatPanel MaterialReader PdfReader DocxReader
                 MdReader HtmlReader(沙箱 iframe 原样视图 + 分段视图)
                 SelectionAsk mermaid/ QuizCard DanmakuPanel DanmakuLayer CardsPanel SwipeDeck
-                CommentsSection(视频下方讨论区)
+                CommentsSection(视频下方讨论区) LiveShareBar(实时链路常驻共享指示条)
                 SkillsCard StorageCard StudyTimeCard MigrationCard ModelPicker SkillPicker appNav.tsx motion.tsx
-  pages/        Library(课程库) Player(播放) Study(热力图) Settings(设置)
+  pages/        Library(课程库) Player(播放) Study(热力图) Settings(设置) LiveGuest(实时链路镜像页)
   store/        db.ts(Dexie schema) settings.ts(zustand persist) studyTime.ts fileStore.ts(OPFS)
                 storageStats.ts jobs.ts covers.ts subtitles.ts selectionAsk.ts migration.ts
   ui/           mdui.ts(注册元素/语言包/函数式 API) theme.ts layout.tsx panel.tsx
@@ -709,6 +751,7 @@ node scripts/e2e-live-subs.mjs            # 增量字幕：边转边显与下游
 node scripts/e2e-danmaku.mjs              # 弹幕链路：飘屏 / 开关持久化 / seek 重发
 node scripts/e2e-bg-transcribe.mjs        # 后台转写：任务外置 / 续跑
 node scripts/e2e-audio-corrupt-frame.mjs  # 抽音频坏帧容忍（自造损坏样片，不依赖常驻服务）
+node scripts/e2e-livelink.mjs             # 实时链路全链路（需 npm run dev；真解码需 ffmpeg，缺失自动降级）
 
 # 需要真实 API（SF_KEY）
 SF_KEY=sk-... TEST_FILE=/path/to/lecture.mp4 node scripts/e2e-smoke.mjs        # 字幕链路
