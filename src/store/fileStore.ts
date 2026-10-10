@@ -155,3 +155,21 @@ export function getMaterialFile(id: string) {
 export function deleteMaterialFile(id: string) {
   return deleteCourseFile(id, DIR_MATERIALS);
 }
+
+/**
+ * 按字节段读取课程文件（实时链路 host 侧视频流用）。
+ * OPFS 的 File.slice() 天然支持随机读；IndexedDB 回退路径同样 slice。
+ * 不做缓存：窗口由 guest 侧 window.ts 管，host 再缓存一份只会让内存翻倍。
+ */
+export async function readCourseFileRange(
+  id: string,
+  start: number,
+  len: number,
+  dirName: string = DIR_VIDEOS,
+): Promise<ArrayBuffer | null> {
+  const file = await getCourseFile(id, dirName);
+  if (!file) return null;
+  const s = Math.max(0, Math.min(file.size, start));
+  const e = Math.min(file.size, s + Math.max(0, len));
+  return file.slice(s, e).arrayBuffer();
+}
