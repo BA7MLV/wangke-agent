@@ -11,6 +11,7 @@ import { useSettings } from './store/settings';
 import { resumePendingTranscriptions } from './pipelines/transcribeQueue';
 import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
+import LiveShareBar from './components/LiveShareBar';
 
 export default function App() {
   useMobileGlobals();
@@ -50,13 +51,20 @@ export default function App() {
 
   return (
     <HashRouter>
-      <Routes>
-        <Route path="/" element={<Library />} />
-        <Route path="/chat" element={<CourseChat />} />
-        <Route path="/player/:id" element={<Player />} />
-        <Route path="/study" element={<Study />} />
-        <Route path="/settings" element={<Settings />} />
-      </Routes>
+      {/* 实时共享指示条：常驻在任意页面上方（隐私不变量，见 LiveShareBar.tsx 文件头）。
+          外面这层 .live-share-host 把它的高度从页面里「扣」出来 —— .page 自身写死
+          var(--vvh) 满高，直接当兄弟节点会把文档撑高一条、body 多出滚动条。
+          完整理由见 components/live-share-bar.css 顶部注释。 */}
+      <div className="live-share-host">
+        <LiveShareBar />
+        <Routes>
+          <Route path="/" element={<Library />} />
+          <Route path="/chat" element={<CourseChat />} />
+          <Route path="/player/:id" element={<Player />} />
+          <Route path="/study" element={<Study />} />
+          <Route path="/settings" element={<Settings />} />
+        </Routes>
+      </div>
     </HashRouter>
   );
 }

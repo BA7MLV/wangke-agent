@@ -12,12 +12,14 @@ import {
   type Provider,
   type Settings,
 } from '../store/settings';
+import { useLiveLink } from '../livelink/store';
 import { listModels } from '../api/siliconflow';
 import { guessContextWindow, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { UNLIMITED_ROUNDS } from '../harness/loopGuard';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../api/modelMeta';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../utils/rate';
 import { buildInfoLabel } from '../utils/buildInfo';
+import { copyText } from '../utils/clipboard';
 import { SuccessCheck, ms, IconSwap } from '../components/motion';
 import SkillsCard from '../components/SkillsCard';
 import StorageCard from '../components/StorageCard';
@@ -464,6 +466,9 @@ export default function Settings() {
   const navigate = useNavigate();
   const nav = useAppNav('settings');
   const settings = useSettings();
+  /** 实时链路 host 侧状态（开关 / 配对码 / 已连设备）。整 store 订阅即可：
+      设置页不是热更新界面，guest 进出带来的重渲染成本可忽略。 */
+  const live = useLiveLink();
   const [checking, setChecking] = useState(false);
   /** 每家供应商各自拉到的在架模型（key = provider id）。分家存是因为各家列表互不相干。 */
   const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
@@ -795,6 +800,29 @@ export default function Settings() {
     setRateDraft(el.value.trim() === '' || !Number.isFinite(n) ? null : n);
   });
 
+  const liveEnableRef = useMduiEvent('mdui-switch', 'change', (_e, el) => {
+    if (el.checked) live.enable();
+    else live.disable();
+    // enable() 可能被拒绝（没填中继地址）：那一刻 mdui 已经把自己拨到「开」，
+    // 而 store 里 enabled 仍是 false。React 的 props diff 看不出这次差异
+    // （前后两次渲染都是 checked={false}，不会写回元素），不显式拨回去就会
+    // 出现「开关开着但其实没在共享」。disable 永远成功，这一写对它等于确认。
+    el.checked = useLiveLink.getState().enabled;
+  });
+
+  /**
+   * 复制 guest 链接。失败时把链接原文 toast 出来让人手抄。
+   *
+   * 走 utils/clipboard 而不是裸 navigator.clipboard：guest 链路的主场景就是
+   * iPad 经局域网 http://IP 打开（非安全上下文里 navigator.clipboard 根本不存在），
+   * 那里只有 execCommand 兜底能复制。
+   */
+  const copyLiveLink = async () => {
+    const link = `${location.origin}${location.pathname}#/live?relay=${encodeURIComponent(settings.liveRelay)}&pair=${live.code}`;
+    if (await copyText(link)) toast.success('链接已复制，发给要实时观看的设备');
+    else toast.warning(`复制失败，请手动复制：${link}`);
+  };
+
   /** 收藏夹单个 tab：按供应商分组，每组内搜索筛选 + 相关模型置顶 */
   const favTabContent = (slot: ModelSlot) => {
     const kw = favSearch[slot].trim().toLowerCase();
@@ -896,6 +924,15 @@ export default function Settings() {
       </mdui-button>
     </div>
   );
+
+  /** 实时链路状态文案。error 优先于「未开启」：onerror 之后 onclose 会紧跟而来，
+      那时 status 已被改写成 off，只有 error 还记着「为什么没连上」。 */
+  const liveStatusText =
+    live.status === 'online'
+      ? `在线 · ${live.guests.length} 台设备已连接`
+      : live.status === 'connecting'
+        ? '连接中…'
+        : live.error || (live.enabled ? '连接已断开' : '未开启');
 
   return (
     <PageShell
@@ -1247,6 +1284,67 @@ export default function Settings() {
               </div>
             </Field>
           </div>
+        )}
+      </SectionCard>
+
+      <SectionCard
+        title="实时链路"
+        subtitle="其他设备打开链接实时读你这台设备的内容（主机下线即断，不是云备份）"
+        testId="card-livelink"
+      >
+        <Field
+          label="中继地址"
+          hint="部署 cloudflare-worker/live-relay 后得到；只配对转发，不存任何数据"
+          testId="field-live-relay"
+        >
+          <mdui-text-field
+            data-testid="live-relay"
+            aria-label="实时链路中继地址"
+            value={settings.liveRelay}
+            clearable
+            placeholder="wss://wangke-live-relay.xxx.workers.dev"
+            onInput={(e) =>
+              settings.update({
+                liveRelay: (e.target as HTMLElement & { value: string }).value.trim(),
+              })
+            }
+          />
+        </Field>
+        <Field label="开启共享" testId="field-live-enable">
+          <div className="row row--nowrap" style={{ alignItems: 'center', gap: 8 }}>
+            <mdui-switch
+              ref={liveEnableRef}
+              data-testid="live-enable"
+              aria-label="开启实时链路共享"
+              checked={live.enabled}
+            />
+            <span className="text-secondary" data-testid="live-status">
+              {liveStatusText}
+            </span>
+          </div>
+        </Field>
+        {live.enabled && (
+          <Field label="配对码" hint="轮换后旧连接全部断开，需要重新配对" testId="field-live-code">
+            <div className="row row--nowrap" style={{ gap: 8 }}>
+              <mdui-text-field
+                data-testid="live-code"
+                aria-label="配对码"
+                value={live.code}
+                readonly
+                style={{ flex: '1 1 auto', minWidth: 0 }}
+              />
+              <mdui-button
+                variant="tonal"
+                data-testid="live-copy-link"
+                onClick={() => void copyLiveLink()}
+              >
+                复制链接
+              </mdui-button>
+              <mdui-button variant="text" data-testid="live-rotate" onClick={() => live.rotate()}>
+                轮换
+              </mdui-button>
+            </div>
+          </Field>
         )}
       </SectionCard>
 

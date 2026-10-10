@@ -1,0 +1,51 @@
+/* ── 实时共享指示条（常驻） ──────────────────────────────────────────────────
+ *
+ * ⚠️ .live-share-host 这层的高度账必须这么算，不能省：
+ * .page 的 height 写死 `var(--vvh, 100%)`（满高 + 内部自己滚，见 theme.css）。
+ * 指示条若只当一个普通流内兄弟节点插在它前面，文档会整整多出一条的高度 ——
+ * body 跟着多出一根滚动条，页面自己的滚动容器被顶出视口一截（窄屏底部导航
+ * 会被顶到折叠线以下，点都点不到）。所以 App 里用一层同高的 flex 列包住
+ * 「指示条 + 路由页」，让 .page 从「写死满高」改成「吃掉剩余高度」：
+ * 有指示条时页面矮一条，没有时原样满高，两种状态下各页面的视觉表现完全一致，
+ * --vvh 的键盘收缩链路（useMobile.ts）也不受影响。
+ */
+.live-share-host {
+  display: flex;
+  flex-direction: column;
+  height: var(--vvh, 100%);
+}
+
+.live-share-host > .page {
+  /* height:auto + flex 而不是继续用 var(--vvh)：高度改由 flex 容器分配 */
+  height: auto;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* 取色走 MD3 语义令牌：共享中是「主色事件」，primary-container 作容器底、
+ * on-primary-container 作其上前景 —— 与 chat-panel.css 的 .chat-ref__where
+ * 同一套写法，深浅两套色板都由主题令牌自动成立，不写死任何颜色。 */
+.live-share-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  background: rgb(var(--mdui-color-primary-container));
+  color: rgb(var(--mdui-color-on-primary-container));
+  font-size: 13px;
+}
+
+.live-share-bar__text {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+/* 「停止」骑在容器底色上：mdui 的 text 按钮默认取 primary 作前景色，在
+ * primary-container 上对比度不稳（深色主题尤其）。覆盖令牌是 mdui 官方支持的
+ * 定制方式（令牌在宿主上解析，shadow 内的 var() 读到的是继承值，必然生效），
+ * 与 layout.css 的 .t-input.is-error 同一套路。 */
+.live-share-bar__stop {
+  --mdui-color-primary: rgb(var(--mdui-color-on-primary-container));
+  flex: none;
+}

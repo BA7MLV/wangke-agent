@@ -271,6 +271,8 @@ export const SYNC_SETTINGS_KEYS = [
  *
  * - `bilibiliCookie`：含 `SESSDATA`，是账号登录态。泄漏等于账号被冒用。
  * - `bilibiliProxy`：指向代理部署位置，跟「当前设备怎么出网」绑定，跨设备无意义。
+ * - `liveRelay`：与 `bilibiliProxy` 同性质——「当前设备从哪出网」（实时链路的中继）
+ *   跨设备无意义；跟着同步过去只会让对面连到一个不属于它的房间。
  * - `syncEnabled` / `syncEndpoint` / `syncToken`：**同步自身的配置必须本机独立** ——
  *   否则「关掉同步」这个动作本身要先同步过去，逻辑上成了先有鸡还是先有蛋。
  *
@@ -282,6 +284,7 @@ export const SYNC_SETTINGS_KEYS = [
 export const NON_SYNC_SETTINGS_KEYS = [
   'bilibiliCookie',
   'bilibiliProxy',
+  'liveRelay',
   'syncEnabled',
   'syncEndpoint',
   'syncToken',

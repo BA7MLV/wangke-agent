@@ -103,6 +103,8 @@ export interface Settings {
   agentRounds: number;
   /** 哔哩哔哩导入代理地址（油猴桥不可用时的回退，Cloudflare Worker 常被拒 IP） */
   bilibiliProxy: string;
+  /** 实时链路中继地址（Cloudflare Worker），如 wss://wangke-live-relay.xxx.workers.dev */
+  liveRelay: string;
   /** 用户自己的 B 站 Cookie（可选，含 SESSDATA 时解锁更高清晰度） */
   bilibiliCookie: string;
   /** 思考题弹幕飘屏开关（控制栏可切，持久化） */
@@ -201,6 +203,7 @@ function initialSettings(): Settings {
     captionScale: 1,
     agentRounds: 6,
     bilibiliProxy: '',
+    liveRelay: '',
     bilibiliCookie: '',
     danmakuEnabled: true,
     customRates: [],
@@ -301,6 +304,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     captionScale: typeof s.captionScale === 'number' ? s.captionScale : base.captionScale,
     agentRounds: typeof s.agentRounds === 'number' ? s.agentRounds : base.agentRounds,
     bilibiliProxy: s.bilibiliProxy ?? base.bilibiliProxy,
+    liveRelay: s.liveRelay ?? base.liveRelay,
     bilibiliCookie: s.bilibiliCookie ?? base.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled ?? base.danmakuEnabled,
     customRates: Array.isArray(s.customRates) ? s.customRates : base.customRates,
@@ -336,6 +340,7 @@ export function getSettings(): Settings {
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
     bilibiliProxy: s.bilibiliProxy,
+    liveRelay: s.liveRelay,
     bilibiliCookie: s.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled,
     customRates: [...s.customRates],
