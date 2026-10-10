@@ -136,11 +136,16 @@ const MP4_TYPES = [
 ] as const;
 
 /** webm 候选 type：VP9/VP8 × opus/vorbis，组合同序。 */
+/**
+ * webm 候选序：**video-only 在前**。实测（本机 Chrome 155）带音频轨的组合
+ * （vp9,opus / vp8,vorbis）一 append 就 error——先试 video-only，少走一轮
+ * 「白拉 4MB 才发现选错」。同族内 vp9 先于 vp8（选错只损失一轮）。
+ */
 const WEBM_TYPES = [
-  'video/webm; codecs="vp9, opus"',
   'video/webm; codecs="vp9"',
-  'video/webm; codecs="vp8, vorbis"',
   'video/webm; codecs="vp8"',
+  'video/webm; codecs="vp8, vorbis"',
+  'video/webm; codecs="vp9, opus"',
   'video/webm; codecs="vp9, vorbis"',
   'video/webm; codecs="vp8, opus"',
 ] as const;
