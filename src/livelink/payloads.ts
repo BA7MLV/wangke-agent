@@ -112,11 +112,18 @@ export function buildMetaUnit(row: VideoRow): string {
  *
  * `status` 0 的未转写段**原样发**：哪句转完了是 guest 显示层的事。host 侧替它过滤，
  * 「正在转写中」的课在 guest 上会看着像空课——而它恰恰是最常被实时打开的场景。
+ *
+ * **段的 `cues`（句级时间戳）不发**（终审裁定）：guest 的 `segmentsOf` 只读
+ * idx/start/end/text，从不看 cues —— 白搬一份可观的带宽（长课的字幕 cues 比正文
+ * 还大），而 payloads.ts 早先的注释还写着「句级跳转的依据」，与事实矛盾。真要做
+ * 句级跳转，那也是 guest 渲染层自己按 text 切分（SubtitlePanel 在本机的做法），
+ * 不该由 host 决定。**轨的 `cues` 照发**：对照轨整行就是一条 cue，guest 直接渲染，
+ * 没有替代来源。
  */
 export function buildContentUnit(videoId: string, segments: SegmentRow[], tracks: SubtitleTrackRow[]): string {
   return JSON.stringify({
     videoId,
-    segments: segments.map((s) => ({ idx: s.idx, start: s.start, end: s.end, text: s.text, cues: s.cues })),
+    segments: segments.map((s) => ({ idx: s.idx, start: s.start, end: s.end, text: s.text })),
     tracks: tracks.map((t) => ({ lang: t.lang, lanDoc: t.lanDoc, primary: t.primary === 1, cues: t.cues })),
   });
 }

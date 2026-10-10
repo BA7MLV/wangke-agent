@@ -142,7 +142,7 @@ assert.equal(bare.id, 'x');
 // ---------- 3. content 单元：段 + 对照轨；空数据也是合法载荷 ----------
 
 const content = JSON.parse(
-  buildContentUnit('a', [{ idx: 0, start: 0, end: 1, text: '你好', status: 1 }], [
+  buildContentUnit('a', [{ idx: 0, start: 0, end: 1, text: '你好', status: 1, cues: [{ start: 0, end: 1, text: '你' }] }], [
     { lang: 'ai-en', lanDoc: '英语', primary: 0, cues: [{ start: 0, end: 1, text: 'hi' }] },
   ]),
 );
@@ -150,13 +150,18 @@ assert.equal(content.videoId, 'a');
 assert.equal(content.segments[0].text, '你好');
 assert.equal(content.tracks[0].lang, 'ai-en');
 
-// 段字段：idx/start/end/text/cues 全带（cues 是句级跳转的依据，显示层切分也靠它），
-// 而 DB 的自增主键 id / videoId 不带——它们只在本机库里有意义
+// 段字段：idx/start/end/text 全带，而 DB 的自增主键 id / videoId 不带——它们只在
+// 本机库里有意义。**段的 cues 不发**：guest 的 segmentsOf 只读 idx/start/end/text，
+// 从不看句级时间戳；早先的注释写着「cues 是句级跳转的依据」与事实矛盾，而且那是一份
+// 可观的带宽浪费（长课的字幕 cues 比正文还大）。真要做句级跳转也是 guest 渲染层自己
+// 按 text 切分的事（本机 SubtitlePanel 的做法），不该由 host 决定 —— 终审裁定 YAGNI。
 assert.deepEqual(content.segments[0], { idx: 0, start: 0, end: 1, text: '你好' });
-// cues 缺失时 JSON 里干脆没这个键（而不是 null / "undefined" 字符串），
-// guest 侧要靠「键在不在」区分「ASR 给了句级时间戳」和「没有，按字数估算」
+// 所以 cues 在 JSON 里**干脆没这个键**（而不是 null / "undefined" 字符串 / 空数组）：
+// host 侧不该为了一条没人读的字段留一个「发了但是空」的中间态
 assert.equal('cues' in content.segments[0], false);
+// 轨的 cues 照发：对照轨整行就是一条 cue，guest 的 tracksOf 直接渲染，没有替代来源
 assert.deepEqual(content.tracks[0], { lang: 'ai-en', lanDoc: '英语', primary: false, cues: [{ start: 0, end: 1, text: 'hi' }] });
+assert.equal('cues' in content.tracks[0], true);
 
 // primary 归一成布尔：老轨没有这个字段，false 与显式 0 必须判等一致
 assert.equal(JSON.parse(buildContentUnit('a', [], [{ lang: 'ai-zh', lanDoc: '中文', cues: [] }])).tracks[0].primary, false);

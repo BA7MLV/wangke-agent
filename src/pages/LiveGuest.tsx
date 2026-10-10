@@ -75,6 +75,19 @@ const RECONNECT_MAX_MS = 8000;
 const POLL_INTERVAL_MS = 3000;
 /** 中继明说「这门亲事不成」的 close code：房间回收 / 配对码不存在 / 错误配对限流。 */
 const FATAL_CLOSE_CODES = [4000, 4001, 4403];
+/**
+ * 中继 close code → 中文文案。
+ *
+ * 中继的 close reason 是英文协议值（'room expired' / 'bad code' / 'too many attempts'，
+ * 见 live-relay/src/index.ts），原样塞进中文界面等于没翻译。这里每种说清「是什么 +
+ * 怎么办」；英文 reason 降级成 console 诊断信息（下面 onClosed 里）。新增 code 要同时
+ * 改中继那侧的三常量 —— 两侧的对应关系写在它的文件头。
+ */
+const CLOSE_REASON_TEXT: Record<number, string> = {
+  4000: '房间已过期：主机下线超过 60 秒（或房间被回收），让主机重新打开「实时链路」再试',
+  4001: '配对码不存在：主机没在共享，或链接里的码已过期，向主机重新索取链接',
+  4403: '配对尝试次数过多，这个房间已被临时锁定：等 5 分钟再用同一个链接',
+};
 
 export default function LiveGuest() {
   const [params] = useSearchParams();
@@ -89,6 +102,17 @@ export default function LiveGuest() {
   const [closeReason, setCloseReason] = useState('');
   const [courses, setCourses] = useState<IndexEntry[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
+  /**
+   * 「换过连接」计数器。**与下面 genRef 的「实例代际」是两件事，别混**：
+   * genRef 让**旧实例的回调作废（防串台）**；connGen 让**播放器重建**。
+   *
+   * 为什么播放器要跟着它重建：断线重连会新建一个 LiveGuestClient，而播放器 effect
+   * 原先只依赖 videoCourseId —— 旧播放器闭包里的 io.requestRange 指着已经关掉的旧
+   * client，send() 是 no-op：视频静静停住，没有报错也没有提示（iPad 休眠 / 切 Wi-Fi
+   * 与 4G / 中继重启都会触发，终审 C）。所以连接换代时把它 +1，让播放器 effect
+   * 重跑、用新 client 重建管道（重建会重拉首窗，可接受）。
+   */
+  const [connGen, setConnGen] = useState(0);
 
   /** 连接代际：断线重连会让旧实例的回调全部作废（拿不到状态就悄悄丢，不炸） */
   const genRef = useRef(0);
@@ -134,12 +158,15 @@ export default function LiveGuest() {
       onClosed: ({ byUs, code, reason }) => {
         if (byUs || gen !== genRef.current) return;
         if (FATAL_CLOSE_CODES.includes(code)) {
-          // 中继把原因说死了：房间回收、配对码不存在、错误配对限流。重连没意义
-          setCloseReason(reason || `连接已断开（${code}）`);
+          // 中继把原因说死了：房间回收、配对码不存在、错误配对限流。重连没意义。
+          // 英文 reason 只进 console（诊断用），界面上给中文文案
+          if (reason) console.warn(`[live-guest] 中继关闭连接：${code} ${reason}`);
+          setCloseReason(CLOSE_REASON_TEXT[code] ?? reason ?? `连接已断开（${code}）`);
           setPhase('offline');
           return;
         }
-        // 网络抖动 / 中继重启：退避重连。host 在 60s 宽限内回来就无感恢复
+        // 网络抖动 / 中继重启：退避重连。host 在 60s 宽限内回来就自动恢复
+        // （guest 侧会闪一下「重连中」再重新拉取，全程不用手动操作）
         const next = attemptRef.current + 1;
         attemptRef.current = next;
         setAttempt(next);
@@ -161,6 +188,10 @@ export default function LiveGuest() {
           if (gen !== genRef.current) return;
           setCourses(list);
           markLive();
+          // 连接换代 → 播放器重建。这一下是终审 C 的修复：旧播放器闭包里的
+          // requestRange 指着马上要被顶替的旧 client，不重建的话视频会静静停住
+          // （无报错、无提示）。依赖见 connGen 的声明处。
+          setConnGen((n) => n + 1);
         } catch {
           // 链路通着但没人应答（典型：配对码不存在，房间里没有 host）。
           // 落 offline 靠轮询等主机出现，不诈活
@@ -269,13 +300,16 @@ export default function LiveGuest() {
   };
 
   /**
-   * 播放器生命周期挂在**课程 id** 上（不是整个 detail 对象！）：video 元素随详情
-   * 渲染，ref 就位后建管道；换课 / 卸载时 cleanup 里 dispose（否则旧 MediaSource
-   * 还挂在 video.src 上）。
+   * 播放器生命周期挂在**课程 id + 连接代际**上（不是整个 detail 对象！）：video 元素
+   * 随详情渲染，ref 就位后建管道；换课 / 换代 / 卸载时 cleanup 里 dispose（否则旧
+   * MediaSource 还挂在 video.src 上）。
    *
    * ⚠️ 依赖必须是 entry.id 而不是 detail：onError → setDetail(playErr) 会造出新
    * 的 detail 对象，以 detail 为依赖会把「报错 → 重渲染 → 新建播放器 → 再报错」
    * 走成死循环（冒烟测试里实测过：一个 rid=1 的 range 请求连发了 8 次）。
+   * ⚠️ connGen 必须进依赖：断线重连会换一个 LiveGuestClient 实例，旧播放器闭包里的
+   * io.requestRange 指着已关闭的旧 client，send() no-op → 视频停住且没有任何提示
+   * （终审 C）。代价是重建会重拉首窗，可接受。
    */
   const videoCourseId = detail && detail.entry.kind === 'video' ? detail.entry.id : null;
   useEffect(() => {
@@ -306,7 +340,9 @@ export default function LiveGuest() {
       player.dispose();
       playerRef.current = null;
     };
-  }, [videoCourseId]);
+    // connGen：连接换代就重建播放器（理由见上方注释）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoCourseId, connGen]);
 
   const seekTo = (t: number) => {
     const v = videoRef.current;
@@ -359,7 +395,7 @@ export default function LiveGuest() {
         <EmptyState
           icon={<mdui-sym-video-library />}
           title="主机还没有课程"
-          description="主机导入课程后会实时出现在这里（实时读取，不写入本机）。"
+          description="连接时读取主机当前课程；主机新导入的课程，重连或主机重新开启共享后会出现（实时读取，不写入本机）。"
           testId="live-empty"
         />
       )}
@@ -390,7 +426,10 @@ export default function LiveGuest() {
           subtitle={
             detail.entry.kind === 'video'
               ? `${formatSize(detail.entry.size)} · ${formatDuration(detail.entry.duration)}`
-              : '阅读材料 · 只渲染正文，不落本机'
+              : // P1 未送上链路：别再写「只渲染正文」假装能看，正文压根没发（payloads.ts
+                // 只发 meta/content/cover，content 里只有字幕与对照轨）。如实说清，比让
+                // 用户点开发现一片空白好。
+                'P1 未送上链路：阅读材料正文将在后续版本支持'
           }
           testId="card-live-detail"
         >

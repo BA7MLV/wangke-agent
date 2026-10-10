@@ -12,10 +12,12 @@
  * 2. **用 DO 而不是纯 Worker**。Worker 无状态，而「把两个 socket 配成一对」需要
  *    共享状态；DO 按名字寻址（idFromName(code)）天然就是「一间房」：同配对码的
  *    连接必然落到同一个实例，跨实例同步问题从根上不存在。
- * 3. **host 宽限 60 秒**。host 刷新页面、短暂断网时会重连，宽限期内 guest 无感：
- *    重连瞬间中继向全体 guest 补发 host-link-up（guest 端收到即恢复 ready，另有
- *    3 秒轮询兜底）；60 秒还不够回来才广播 host-link-down 并让宽限 alarm 收房间。
- *    宽限 alarm 在 host 重连时取消（见 fetch 的 host 分支）。
+ * 3. **host 宽限 60 秒**。host 刷新页面、短暂断网时会重连，宽限期内回来则 guest
+ *    自动恢复：断开那一刻**立刻**向全体 guest 广播 host-link-down（不变量 7 要求
+ *    「host 消失必须被显式感知」），host 回来时再补发 host-link-up（guest 端收到即
+ *    回到 ready，另有 3 秒轮询兜底）。两头都有提示，不是「无感」——  guest 侧会先
+ *    看到「主机已离线」再看到恢复，全程不用手动操作。60 秒还不够回来才让宽限
+ *    alarm 收房间（close 4000）。宽限 alarm 在 host 重连时取消（见 fetch 的 host 分支）。
  * 4. **限速计数在 DO storage 而不是内存**。Hibernation 下 DO 内存会被逐出，
  *    「房间没人碰」的空窗里变量清零，爆破者等一个空窗就把计数洗了；storage 才
  *    活得过空窗（代价是每次计数一次写，可忽略）。
@@ -45,7 +47,8 @@ interface Attachment {
   role: Role;
 }
 
-/** host 断开后的宽限：刷新页面 / 短暂断网，这么短时间内回来 guest 无感（取舍 3）。 */
+/** host 断开后的宽限：刷新页面 / 短暂断网，这么短时间内回来 guest 能自动恢复
+ * （会闪一次「主机已离线 / 重连中」，不用手动操作；取舍 3）。 */
 const HOST_GRACE_MS = 60_000;
 
 /** 配对限速：无 host 的 guest 连接计到这么多次就锁定该房间的 guest 接入。 */
@@ -138,7 +141,9 @@ export class Room extends DurableObject {
       if (!hasOtherHost) {
         const guests = this.ctx.getWebSockets().filter((s) => this.roleOf(s) === 'guest');
         if (guests.length > 0) {
-          // host 在宽限内回来了：guest 无感恢复的契约在这一句（取舍 3）。
+          // host 在宽限内回来了：guest「自动恢复」的契约在这一句（取舍 3）。
+          // 注意断开那一刻已经广播过 host-link-down，所以 guest 侧是先看到离线
+          // 提示、再看到恢复—— 两半合起来才是完整的宽限语义，别只记这一句。
           for (const g of guests) g.send(HOST_LINK_UP);
           // 宽限 alarm 作废（无 host 时到点要 close 全体 guest 的那个）。
           // 毛边：若未到期的其实是配对限速 alarm，计数会残留——后果仅是宽限期内

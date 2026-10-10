@@ -28,6 +28,9 @@
  * - **坏 gzip 会抛异常**：decodeUnitPayload 是 protocol.ts 唯一会抛的解码出口，
  *   loadUnit 必须让它变成 Promise reject（async 函数里直接调即可）。漏在外面的后果
  *   是错误表现为 30s 超时才暴露，或异常钻进 socket 事件回调把整条链路打死。
+ * - **`unit.res` 的 `len` 必须对账**：分片数齐了不等于字节数对。收齐拼接后校验
+ *   `byteLength === len`，不等立刻 reject（有分片被换成别的内容、或 relay 吞了半帧）。
+ *   少了这道，裁剪过的载荷要等到解压 / JSON.parse 才以另一个难懂的面目报错。
  *
  * 另外两条链路行为：
  * - **hello id 每台 guest 唯一**（host 的 guests Map 按帧 id 去重，同 id 两台 guest
@@ -106,6 +109,12 @@ interface UnitCtx {
   parts: Map<number, Uint8Array>;
   /** unit.res 里的分片总数（chunkUnit 恒 ≥1） */
   expect: number;
+  /**
+   * unit.res 里声明的**载荷总字节数**。收齐分片后必须 `byteLength === len`，
+   * 不等就是有分片被换成了别的内容（或 relay 吞了半帧）—— 立刻 reject，
+   * 比挂在 30s 超时上快得多，也避免把裁剪过的载荷解压成坏 JSON。
+   */
+  len: number;
   resolve: (bytes: Uint8Array) => void;
   reject: (e: Error) => void;
   timer: number;
@@ -260,6 +269,7 @@ export class LiveGuest {
         rid: null,
         parts: new Map(),
         expect: 0,
+        len: -1,
         resolve,
         reject,
         timer: 0,
@@ -292,6 +302,11 @@ export class LiveGuest {
     this.pending.clear();
     for (const ctx of [...this.unitWaiters.values()]) this.forgetUnit(ctx);
     this.unitWaiters.clear();
+    // unitSites 里的现场**也要逐个 forgetUnit**（不能只 clear 表）：它们身上挂着
+    // 30s 超时定时器，clear() 只是把表倒空，定时器照旧到点，对着一个已经没人等的
+    // ctx 空转 —— 与 forgetUnit 自己那句「别让它们挂到超时」正好相反。
+    // forgetUnit 内部会按 ctx.rid 从 unitSites 删，所以循环后再 clear 一遍兜底。
+    for (const ctx of [...this.unitSites.values()]) this.forgetUnit(ctx);
     this.unitSites.clear();
   }
 
@@ -344,13 +359,15 @@ export class LiveGuest {
     this.unitWaiters.delete(f.id);
     const rid = Number(f.rid);
     const parts = Number(f.parts);
-    if (!Number.isInteger(rid) || rid < 0 || !Number.isInteger(parts) || parts < 1) {
+    const len = Number(f.len);
+    if (!Number.isInteger(rid) || rid < 0 || !Number.isInteger(parts) || parts < 1 || !Number.isInteger(len) || len < 0) {
       this.forgetUnit(ctx);
-      ctx.reject(new Error(`unit.res 字段非法：rid=${String(f.rid)} parts=${String(f.parts)}`));
+      ctx.reject(new Error(`unit.res 字段非法：rid=${String(f.rid)} parts=${String(f.parts)} len=${String(f.len)}`));
       return;
     }
     ctx.rid = rid;
     ctx.expect = parts;
+    ctx.len = len;
     this.unitSites.set(rid, ctx);
   }
 
@@ -371,6 +388,16 @@ export class LiveGuest {
     this.forgetUnit(site);
     // 每片是各自 WS 消息的缓冲视图，互不重叠、也没有人回写，直接拼不用复制
     // （protocol.ts 的视图语义在这里成立的前提就是「一条消息一块独立缓冲」）。
-    site.resolve(joinUnit(parts));
+    const bytes = joinUnit(parts);
+    // 与 unit.res 声明的 len 对账：分片数齐了但字节数不对，说明有分片的内容被换了
+    // （或 relay 吞了半帧）。不等就 reject —— 比 30s 超时快得多，也避免把一份
+    // 裁剪过的载荷送去解压（坏 gzip 会是另一个更难懂的错误）。
+    if (bytes.byteLength !== site.len) {
+      site.reject(
+        new Error(`单元分片长度不符：收到 ${bytes.byteLength} 字节，unit.res 声明 ${site.len}`),
+      );
+      return;
+    }
+    site.resolve(bytes);
   }
 }

@@ -10,17 +10,25 @@
  *    covers / files，永远不碰 providers 的 apiKey 与 bilibiliCookie。不靠
  *    自觉——从头到尾没有任何 import 或查询能触到 settings 表；新增单元类型
  *    时同理，要发什么字段由 payloads.ts 的白名单决定，那里也不含凭据。
- * 2. **range 读并发上限 2，超限直接丢弃不排队**：OPFS slice 是磁盘 IO，
- *    家和云之间带宽通常先打满。排队只会让在途字节堆在 socket 缓冲里，延迟
- *    一分不少还多吃内存。丢一片的代价只是 guest 下一轮重规划（window.ts 的
- *    规划是幂等的，同一片区位重算不会重复拉），付得起。
+ * 2. **range 读盘并发上限 4，超限有界 FIFO 等待不丢帧**：OPFS slice 是磁盘 IO，
+ *    家和云之间带宽通常先打满，真正同时在读盘的操作要有个上限（否则一次 seek
+ *    之后几十个请求一起涌上来，磁盘队列反而更慢）。但**上限不是丢弃的理由** ——
+ *    超过配额的请求排队等前面的读完再做。最初写的是「超限直接丢弃」，终审时被
+ *    推翻：guest 一次 fill() 最多发 4 个请求（mse.ts 的 MAX_INFLIGHT=4），被丢的
+ *    rid 永远不会有应答帧，而 guest 唯一的清理路径是 teardown。那个 rid 于是被
+ *    planBuffered 永久算成「已覆盖」（区间在 pendingRanges 里，洞被填上）、
+ *    在途水位永久少一格（窗口预算腰斩）—— 文件留一个永久的洞，播放头到那里
+ *    MSE 只是卡住（waiting，没有 error、没有 UI 变化），本功能最不能容忍的
+ *    静默失败形态。「下一轮重规划会补救」不成立：窗口规划只看覆盖表，被丢的
+ *    区间已经在覆盖表里了，重算一百轮也不会再拉它。队列长度天然有界（guest 的
+ *    MAX_INFLIGHT × 在席 guest 数），不另设上限。
  * 3. **容器白名单在 openFile 时就拒绝**：播到一半才发现播不了，比打开时明说
  *    更糟——半途而废会留下「看似在播其实黑屏」的怪状态。
  * 4. **RANGE_CHUNK = 1MB 的匹配关系**：guest 侧窗口 WINDOW_BYTES = 8MB、
  *    MAX_INFLIGHT = 4、planFetches 的 chunk 也是 1MB，即「窗口内约 8 个请求、
- *    在途字节 ≤ 4MB」。host 读盘并发 2 是这 4 个在途里真正同时在读 OPFS 的
- *    上限。1MB 同时是 seek 粒度：拖进度条废掉窗口内未到的字节，浪费上限就是
- *    一个分片。
+ *    在途字节 ≤ 4MB」。host 读盘并发与 guest 的 MAX_INFLIGHT 对齐（都是 4），
+ *    即「guest 一次愿意等多少，host 就给它多少」。1MB 同时是 seek 粒度：拖进度条
+ *    废掉窗口内未到的字节，浪费上限就是一个分片。
  *
  * 设计文档：docs/plans/2026-10-09-live-link.md
  */
@@ -38,8 +46,14 @@ import {
 } from './protocol';
 import { buildIndex, buildMetaUnit, buildContentUnit, coverUnitFromBlob } from './payloads';
 
-/** range 读盘并发上限，见文件头取舍 2。 */
-const MAX_RANGE_INFLIGHT = 2;
+/**
+ * range 读盘并发上限，见文件头取舍 2。
+ *
+ * 与 guest 的 MAX_INFLIGHT（mse.ts）= 4 对齐：guest 一次愿意等多少，host 就
+ * 给它多少读盘名额。低于它没有意义（guest 多发的部分只会排队），高于它也没有
+ * 意义（磁盘队列更长，吞吐不升反降）。
+ */
+const MAX_RANGE_INFLIGHT = 4;
 /** 单帧字节数（也是再切粒度）。与 guest 的 WINDOW_BYTES=8MB / MAX_INFLIGHT=4 匹配，见取舍 4。 */
 const RANGE_CHUNK = 1024 * 1024;
 /**
@@ -78,7 +92,10 @@ export class LiveHost {
    * 所以 Task 6 必须保证每台 guest 的 hello id 唯一。
    */
   private guests = new Map<string, { id: string }>();
-  private rangeInflight = 0;
+  /** 已发放且未归还的读盘名额数（含排队等名额的请求），见 waitRangeSlot。 */
+  private rangeSlots = 0;
+  /** 等名额的 FIFO 队列：resolve = 轮到你了。见文件头取舍 2。 */
+  private rangeQueue: (() => void)[] = [];
   private stopped = false;
   /** 单元 rid 游标，初值与理由见 rid()。 */
   private ridSeq = 0x80000000;
@@ -134,8 +151,9 @@ export class LiveHost {
 
   /**
    * 二进制帧直发。与 send 分开就为这个 readyState 守卫：单元 / range 的
-   * 响应都跨 await（读库、读盘），socket 完全可能在等待期间被关掉，而
-   * WebSocket.send 在非 OPEN 状态会抛 InvalidStateError。
+   * 响应都跨 await（读库、读盘；range 还可能先在 waitRangeSlot 排一会儿队），
+   * socket 完全可能在等待期间被关掉，而 WebSocket.send 在非 OPEN 状态会抛
+   * InvalidStateError。
    */
   private sendBinary(rid: number, seq: number, payload: Uint8Array): void {
     if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(encodeBinaryFrame(rid, seq, payload));
@@ -280,13 +298,38 @@ export class LiveHost {
     this.send({ v: PROTOCOL_VERSION, t: 'video.meta', id: f.id, ok: true, size: file.size, mime: row.mimeType });
   }
 
+  /**
+   * 领一个读盘名额：有余额立刻给，否则进 FIFO 队列等前面的读完。
+   *
+   * **为什么不「超限就丢」**：被丢的 rid 永远收不到应答帧，而 guest 唯一的清理
+   * 路径是 teardown —— 那个区间会被永久算成已覆盖、在途水位永久少一格，文件留洞
+   * 而播放只是卡住（没有任何报错）。排队最多让这一片晚到，等待期间 socket 上
+   * 只是少几帧在飞，不会把缓冲堆爆（host 自己就在按 1MB 分片、串行发送）。
+   * 完整推演见文件头取舍 2。
+   */
+  private waitRangeSlot(): Promise<void> {
+    this.rangeSlots++;
+    if (this.rangeSlots <= MAX_RANGE_INFLIGHT) return Promise.resolve();
+    return new Promise<void>((resolve) => this.rangeQueue.push(resolve));
+  }
+
+  /** 还名额：有人排队就直接移交（名额不经手，计数不变），否则计数减一。 */
+  private releaseRangeSlot(): void {
+    const next = this.rangeQueue.shift();
+    if (next) {
+      next();
+      return;
+    }
+    this.rangeSlots--;
+  }
+
   private async handleVideoRange(f: Frame): Promise<void> {
-    // 超限直接丢弃不排队（取舍 2）：在途已满说明磁盘 / 带宽正忙，再排只会把
-    // 在途字节堆在 socket 缓冲里。丢一片的代价是 guest 下一轮重规划——窗口
-    // 规划是幂等的。
-    if (this.rangeInflight >= MAX_RANGE_INFLIGHT) return;
-    this.rangeInflight++;
+    // 并发配额内的有界等待：满了就在这儿等前面的读完，一个字节都不丢（取舍 2）
+    await this.waitRangeSlot();
     try {
+      // 等名额期间被 stop（host 主动停了共享）：socket 已经关了，读出来也没人
+      // 要。立刻归还名额，让排后面的也一起散掉，别白白读一遍 OPFS。
+      if (this.stopped) return;
       const videoId = String(f.videoId);
       // rid 取自远端帧，必须 >>> 0 消毒：protocol.ts 的 setUint32 对 NaN 会
       // 静默写 0，与真实 rid 0 撞车，表现为「视频字节记到另一个请求头上」
@@ -294,7 +337,13 @@ export class LiveHost {
       const start = Number(f.start) || 0;
       const len = Math.min(Number(f.len) || RANGE_CHUNK, RANGE_CHUNK);
       const buf = await readCourseFileRange(videoId, start, len);
-      if (!buf) return; // 文件取不到：openFile 那关已经拒过，这里静默即可
+      if (!buf) {
+        // 文件取不到：openFile 那关已经拒过，这一格静默即可。guest 侧有
+        // 「15s 没有任何字节就重规划」的兜底（mse.ts 的 stale sweep），
+        // 不会永久卡住；这里若也补一帧空响应，会与「start 压在 EOF 上」的
+        // 正常回收信号混在一起，分不清是哪一种。
+        return;
+      }
       const payload = new Uint8Array(buf);
       if (payload.byteLength === 0) {
         // 空段也补一帧（0 字节载荷）：guest 的在途水位靠 rid 帧回收，一片都不
@@ -309,7 +358,7 @@ export class LiveHost {
         this.sendBinary(rid, start + off, payload.subarray(off, Math.min(payload.byteLength, off + RANGE_CHUNK)));
       }
     } finally {
-      this.rangeInflight--;
+      this.releaseRangeSlot();
     }
   }
 }

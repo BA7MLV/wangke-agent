@@ -35,10 +35,31 @@
  *   · mp4 门：文件是「ftyp 头 + 3MB 确定性伪随机字节」，本机播不了（预期）。
  *     它只守**协议级字节边界**——range 帧数、每次 {start,len} 不越界、转发载荷
  *     不超过文件 size。这些与能不能播无关，任何字节流都成立。
- *   · webm 门：ffmpeg 现场生成 8s/320x240/vp9、video-only（`-an`）的 fixture，
+ *   · webm 门：ffmpeg 现场生成 45s/640x360/vp9、video-only（`-an`）的 fixture，
  *     断言真解码——`video.buffered.length > 0`、`play()` 后 currentTime 增大。
  *     **ffmpeg 缺失时这一步跳过并打印原因**，不静默、不假通过（退出码仍为 0，
  *     但汇总里会写明「跳过了真解码」）。
+ *
+ * ── 为什么 webm fixture 必须 > 8MB（终审 A 的照妖镜）──────────────────────
+ * 8MB 正是 guest 的 WINDOW_BYTES，也是 host 读盘并发的历史上限（2）与
+ * MAX_INFLIGHT（4）交叠的位置。fixture 小于 8MB 时，整个文件一轮就拉完，
+ * 多 chunk / 窗口滑动 / 并发排队**一条路径都撞不到**，而「host 超限静默丢帧」
+ * 这个 Critical 恰恰只在那条路径上现形。所以用 `testsrc` + 时序噪声把码率顶到
+ * 2000kbps：45s ≈ 11MB > 8MB，一次填充必然拆成 8+ 个 1MB 请求、在途打满
+ * MAX_INFLIGHT=4。断言也因此三条一起上：
+ *   ① **video.buffered 连续无洞**：播放头前方出现任何缺口都红。丢帧的 rid 永远
+ *      等不到应答，那段区间被 guest 的覆盖表永久算成已覆盖 —— 文件留洞、播放头
+ *      卡住、没有 error 也没有 UI 变化，唯一的外在症状就是 buffered 里的洞；
+ *   ② **buffered 覆盖到接近播完**（≥75% 时长）：窗口真的在跟着播放头滑动，
+ *      不是把首窗拉满就停；
+ *   ③ **完整性**：桩中继记下的每个 `video.range` 请求的 rid，都必须出现过对应的
+ *      响应帧（给出 3s 宽限，loopback 上足够）—— 丢一个帧就红。
+ *
+ * ── 字节记账按 rid 命名空间分开（终审修）─────────────────────────────────
+ * 二进制帧有两种 rid：低半区（<0x80000000）是视频 range 的应答，高半区是 host
+ * 的单元分片（gzip 后的字幕 / 索引载荷）。早先把两者的字节数加进同一个计数器，
+ * 于是「转发载荷不超过文件 size」这条断言被几百字节的单元分片顶红 —— 假红比
+ * 漏红更糟（它会训练人跳过这条断言）。现在分开记：`rangeBytes` 只算视频字节。
  *
  * ── 时序上做了什么 ────────────────────────────────────────────────────────────
  *   · host 开共享后 status 先 connecting 再 online，断言用 waitForFunction（见下）。
@@ -51,7 +72,7 @@
  *     `getCourseFile(id).size` 当作「文件真的落盘了」的闸门。
  */
 import { setTimeout as delay } from 'node:timers/promises';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawn } from 'node:child_process';
@@ -66,6 +87,16 @@ const RELAY_PORT = 8899;
 const RELAY = `ws://127.0.0.1:${RELAY_PORT}`;
 /** mp4 门 fixture 的文件大小（确定性伪随机字节，本机 Chrome 播不了是预期）。 */
 const MP4_SIZE = 3 * 1024 * 1024;
+/**
+ * webm fixture 的名义时长（秒）。ffmpeg 的 `testsrc=duration=45:rate=15` 决定，
+ * 与 seedHost 里 videos 行的 duration 对齐。
+ *
+ * 为什么需要它兜底：`video.duration` 在 MSE 下由媒体自己解出来（webm 的 Info 段），
+ * 实测 Chrome 会给出精确值；但万一某个环境给出 Infinity / NaN（没有显式
+ * endOfStream 时规范允许），采样循环的目标值仍要有个基准，否则「覆盖到接近播完」
+ * 这条断言会因为除以 Infinity 而恒真 —— 假绿比假红更糟。
+ */
+const WEBM_EXPECT_SEC = 45;
 
 const MP4_COURSE = '实时链路测试课 mp4';
 const WEBM_COURSE = '实时链路测试课 webm';
@@ -149,13 +180,20 @@ async function dumpGuest(page, label) {
  */
 const stats = {
   rangeFrames: 0,
+  /** 视频 range 的载荷字节（**只算低半区 rid**；高半区是单元分片，另计 unitBytes） */
   rangeBytes: 0,
+  /** host 单元分片的载荷字节（gzip 后的索引 / 字幕 / 封面），不是视频文件字节 */
+  unitBytes: 0,
   /** 每个 video.range 请求的 {start,len}（视频面协议级断言的原始记录） */
   rangeRequests: [],
   /** 二进制帧（含 12 字节头）的 rid 清单，用于确认 rid 不与单元分片撞车 */
   binaryRids: [],
-  /** host 实际发出的 range 帧 {rid, seq, bytes}（反推服务区间用） */
+  /** host 实际发出的 range 帧 {rid, seq, bytes}（反推服务区间用；只含视频 range） */
   rangeResponses: [],
+  /** rid → video.range 请求 {start, len, videoId, at}（完整性断言的请求侧） */
+  rangeRequested: new Map(),
+  /** rid → 已收到的应答帧数（完整性断言的应答侧） */
+  rangeServed: new Map(),
   hostLinkDown: 0,
   hostLinkDownPayloads: [],
   /** 转发的文本帧路由（诊断用：确认 index/unit 真的过了中继） */
@@ -187,22 +225,32 @@ wss.on('connection', (ws, req) => {
     if (isBinary && data.length >= 12) {
       const rid = data.readUInt32LE(0);
       const seq = data.readDoubleLE(4);
-      stats.rangeFrames++;
-      stats.rangeBytes += data.length - 12;
+      const bytes = data.length - 12;
       stats.binaryRids.push(rid);
-      // 记下「host 实际发出来的区间」：一个 rid 可能被切成多帧（host 的
-      // handleVideoRange 按 RANGE_CHUNK 循环发），首帧的 seq 就是请求的 start，
-      // 后续帧的 seq 递增。拿到 {rid, seq, len} 三元组才能反推 host 有没有
-      // 按请求的区间回数据（而不是回了一段别的）。
-      stats.rangeResponses.push({
-        rid,
-        seq,
-        bytes: data.length - 12,
-        // 载荷指纹：用来与 host 文件同区间做「逐字节一致」比对。只存摘要不存
-        // 字节 —— 3MB 的文件随便几帧就把内存吃光，而摘要足以判定一致性
-        // （碰撞概率在这个量级上可以忽略，且我们同时比 len）。
-        sha: createHash('sha1').update(data.subarray(12)).digest('hex').slice(0, 16),
-      });
+      if (rid < 0x80000000) {
+        // 低半区 = guest 的 mse.ts 生成的 range rid，即**视频文件字节**
+        stats.rangeFrames++;
+        stats.rangeBytes += bytes;
+        // 记下「host 实际发出来的区间」：一个 rid 可能被切成多帧（host 的
+        // handleVideoRange 按 RANGE_CHUNK 循环发），首帧的 seq 就是请求的 start，
+        // 后续帧的 seq 递增。拿到 {rid, seq, len} 三元组才能反推 host 有没有
+        // 按请求的区间回数据（而不是回了一段别的）。
+        stats.rangeResponses.push({
+          rid,
+          seq,
+          bytes,
+          // 载荷指纹：用来与 host 文件同区间做「逐字节一致」比对。只存摘要不存
+          // 字节 —— 11MB 的文件随便几帧就把内存吃光，而摘要足以判定一致性
+          // （碰撞概率在这个量级上可以忽略，且我们同时比 len）。
+          sha: createHash('sha1').update(data.subarray(12)).digest('hex').slice(0, 16),
+        });
+        // 完整性断言的应答侧：这个 rid 至少有一帧回来了（0 字节的 EOF 帧也算）
+        stats.rangeServed.set(rid, (stats.rangeServed.get(rid) ?? 0) + 1);      } else {
+        // 高半区 = host 的单元分片（rid 从 0x80000000 起）。它的载荷是 gzip 后的
+        // 索引 / 字幕 / 封面，**不是视频文件字节** —— 早先并进 rangeBytes 计数，
+        // 把「转发载荷不超过文件 size」顶出了假红（见文件头字节记账）。
+        stats.unitBytes += bytes;
+      }
     }
     if (!isBinary) {
       // 记录帧类型帮诊断：index.req/unit.req 有没有真的过中继
@@ -211,6 +259,16 @@ wss.on('connection', (ws, req) => {
         stats.textTypes.push(f.t);
         if (f.t === 'video.range' || f.t === 'video.open') {
           stats.rangeRequests.push({ t: f.t, id: f.id, start: f.start, len: f.len, videoId: f.videoId });
+          if (f.t === 'video.range') {
+            // 完整性断言的请求侧。id 是字符串（协议契约），rid 路由按数字，这里
+            // 显式转成数字才能与二进制帧头的 rid 对上
+            stats.rangeRequested.set(Number(f.id), {
+              start: f.start,
+              len: f.len,
+              videoId: f.videoId,
+              at: Date.now(),
+            });
+          }
         }
       } catch {
         /* 坏帧：桩与真中继一样不解析、照样转发（中继只搬运，取舍 1） */
@@ -292,16 +350,22 @@ function findFfmpeg() {
  * 用 ffmpeg 造 video-only webm/vp9 fixture。
  *
  * `-an`（无音频轨）不是顺手加的：本机 Chrome 155 实测带音频轨的容器 MSE 全灭
- * （vp9+opus → video error 3），video-only 才能真播。`size/rate/duration` 取小值
- * 是为了让 8MB 窗口内几帧就铺满，真解码断言不被带宽拖时间。
+ * （vp9+opus → video error 3），video-only 才能真播。
+ *
+ * **duration=45 / 2000kbps 是为了把文件顶过 8MB**（终审 A 的照妖镜，见文件头）：
+ * 8MB 是 guest 的 WINDOW_BYTES，也是「一次填充拆几个请求、并发打不打满」的分水岭。
+ * 纯 `testsrc` 只有 318kbps（内容太规整），45s 才 1.8MB —— 一轮就拉完，多 chunk /
+ * 窗口滑动 / 并发排队一条路径都撞不到。加一道时序噪声（`noise=alls=25:allf=t`）把
+ * 码率顶到目标值，产物约 11MB，一次填充必然拆成 8+ 个 1MB 请求。
  */
 async function makeWebmFixture(dir) {
   const ffmpeg = findFfmpeg();
   if (!ffmpeg) return { path: null, reason: '找不到 ffmpeg（试过 /opt/homebrew/bin、/usr/local/bin、/usr/bin、PATH）' };
   const out = join(dir, 'webm-vp9.webm');
   const args = [
-    '-y', '-f', 'lavfi', '-i', 'testsrc=duration=8:size=320x240:rate=15',
-    '-c:v', 'libvpx', '-b:v', '200k', '-an', out,
+    '-y', '-f', 'lavfi', '-i', 'testsrc=duration=45:size=640x360:rate=15',
+    '-vf', 'noise=alls=25:allf=t',
+    '-c:v', 'libvpx', '-b:v', '2000k', '-an', out,
   ];
   await new Promise((resolve, reject) => {
     const p = spawn(ffmpeg, args, { stdio: 'ignore' });
@@ -377,7 +441,9 @@ async function seedHost(page, { mp4Bytes, webmPath }) {
           name: '实时链路测试课 webm',
           size: webmB64 ? fromB64(webmB64).byteLength : 0,
           mimeType: 'video/webm',
-          duration: 8,
+          // 与 fixture 的 duration=45 对齐：这个字段只进详情副标题显示，不影响拉流
+          // （mse.ts 的 pos 估算用的是 video.duration，即媒体自己解出来的时长）
+          duration: 45,
           createdAt: now,
           status: 'transcribed',
           kind: 'video',
@@ -489,7 +555,11 @@ try {
   tmpDir = mkdtempSync(join(tmpdir(), 'live-e2e-'));
   const mp4Bytes = makeMp4Fixture();
   const webm = await makeWebmFixture(tmpDir);
-  console.log(`2. fixture：mp4=${mp4Bytes.byteLength}B（确定性伪随机）；webm=${webm.path ?? '不可用'}`);
+  const webmSize = webm.path ? statSync(webm.path).size : 0;
+  console.log(
+    `2. fixture：mp4=${mp4Bytes.byteLength}B（确定性伪随机）；webm=${webm.path ? `${webmSize}B` : '不可用'}`
+    + `${webmSize > 8 * 1024 * 1024 ? '（>8MB：多 chunk + 窗口滑动 + 并发排队都会走到）' : ''}`,
+  );
   if (!webm.path) console.log(`   ⚠ ${webm.reason} —— 真解码断言将跳过`);
 
   // 两个 context = 两台设备。host 侧开着共享条（任何页面都在），guest 侧只进镜像页。
@@ -647,6 +717,8 @@ try {
   // 都是两门课混起来的数，「mp4 门没超拉」就永远验证不到。
   const mp4RangeReqCount = stats.rangeRequests.filter((r) => r.t === 'video.range').length;
   const mp4Frames = stats.rangeFrames;
+  // 只算**视频 range 的字节**（低半区 rid）。单元分片（高半区，gzip 后的字幕 /
+  // 索引）算进来会让这条断言假红 —— 终审修，见文件头「字节记账」。
   const mp4BytesForwarded = stats.rangeBytes;
   console.log(`   range 请求记录 = ${JSON.stringify(stats.rangeRequests.filter((r) => r.t === 'video.range'))}`);
   await check('每次 range 请求 {start,len} 满足 start+len <= host 文件 size', () => {
@@ -702,9 +774,10 @@ try {
       }
       return { slices: out, size: buf.byteLength };
     },
-    // 只比**视频 range** 的帧：rid < 0x80000000。高半区那些是单元分片
-    // （gzip 后的字幕/索引载荷），它们的载荷压根不是文件字节——拿它们跟文件
-    // 切片比摘要永远对不上，那是拿单元面跟视频面混为一谈。
+    // 只比**视频 range** 的帧。高半区的 rid 是单元分片（gzip 后的字幕/索引
+    // 载荷），压根不是文件字节——拿它们跟文件切片比摘要永远对不上，那是拿单元面
+    // 跟视频面混为一谈。rangeResponses 现在只收低半区（见 ws.on('message')），
+    // 这里的兜底 filter 是为了让这段代码自身仍然自明。
     [seeded.mp4Id, stats.rangeResponses.filter((r) => r.rid < 0x80000000)],
   );
   console.log(`   host 文件区间摘要 = ${hostSlices.error ?? JSON.stringify(hostSlices.slices.map((x) => [x.rid, x.seq, x.bytes, x.sha]))}`);
@@ -715,7 +788,7 @@ try {
     for (const got of hostSlices.slices) {
       assert.equal(
         got.sha,
-        stats.rangeResponses.find((r) => r.rid === got.rid && r.rid < 0x80000000)?.sha,
+        stats.rangeResponses.find((r) => r.rid === got.rid)?.sha,
         `rid=${got.rid} 区间 [${got.seq}, ${got.seq + got.bytes}) 的载荷摘要不一致`,
       );
     }
@@ -775,11 +848,98 @@ try {
 
     // play() 后 currentTime 增大 = 真解码在往前走（不只是缓冲到了）。
     // 自动播放策略在本 context 已用 --autoplay-policy=no-user-gesture-required 放开。
+    // 2 倍速：11MB 的 fixture 要走过窗口滑动的路径，1 倍速得等几十秒墙钟时间。
+    // 倍速只影响播放头，拉流仍按字节预算走（pos 前移 → 窗口前移 → 重新规划）。
     const t0 = await guestPage.evaluate(() => document.querySelector('[data-testid="live-video"]').currentTime);
     await guestPage.evaluate(() => {
       const v = document.querySelector('[data-testid="live-video"]');
-      if (v) void v.play().catch(() => {});
+      if (v) {
+        v.playbackRate = 2;
+        void v.play().catch(() => {});
+      }
     });
+
+    // ── 采样循环：一边播一边盯 video.buffered（终审 A 的照妖镜）──
+    // 后续三条断言全部来自这一次采样：
+    //   ① worstGapAhead —— 播放头**前方**的缺口。丢帧的 rid 永远等不到应答，那段
+    //      字节既不 append 也不重拉（guest 的覆盖表把它算成已覆盖），video.buffered
+    //      上就留一个洞：播放头到那里 MSE 只是 waiting，没有 error、没有 UI 变化。
+    //      播放头**后方**的缺口是浏览器淘汰已播数据，正常，不计。
+    //   ② maxEnd —— buffered 末端最远到过哪儿。≥75% 时长说明窗口跟着播放头滑过了
+    //      多个 1MB 分片，不是把首窗拉满就停。
+    //   ③ samples —— 采样次数，纯诊断（太少说明循环早退）。
+    const probe = await guestPage.evaluate(async (opts) => {
+      const v = document.querySelector('[data-testid="live-video"]');
+      const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+      const deadline = Date.now() + opts.timeoutMs;
+      let worstGapAhead = 0;
+      let worstGapAt = null;
+      let maxEnd = 0;
+      let samples = 0;
+      let lastRanges = null;
+      while (Date.now() < deadline) {
+        if (v.buffered && v.buffered.length > 0) {
+          samples++;
+          const ranges = [];
+          for (let i = 0; i < v.buffered.length; i++) ranges.push([v.buffered.start(i), v.buffered.end(i)]);
+          lastRanges = ranges;
+          maxEnd = Math.max(maxEnd, ranges[ranges.length - 1][1]);
+          for (let i = 1; i < ranges.length; i++) {
+            const gap = ranges[i][0] - ranges[i - 1][1];
+            const aheadOfPlayhead = ranges[i - 1][1] > v.currentTime + 0.05;
+            if (gap > 0.05 && aheadOfPlayhead && gap > worstGapAhead) {
+              worstGapAhead = gap;
+              worstGapAt = { t: v.currentTime, ranges };
+            }
+          }
+          if (maxEnd >= opts.targetEnd && v.currentTime >= opts.targetTime) break;
+        }
+        await sleep(100);
+      }
+      return {
+        samples,
+        worstGapAhead,
+        worstGapAt,
+        maxEnd,
+        ranges: lastRanges,
+        duration: v.duration,
+        currentTime: v.currentTime,
+        readyState: v.readyState,
+        paused: v.paused,
+        errorCode: v.error ? v.error.code : null,
+        errorMessage: v.error ? v.error.message : null,
+      };
+    }, { timeoutMs: 45000, targetEnd: 0.75 * WEBM_EXPECT_SEC, targetTime: 10 });
+
+    const dur = Number.isFinite(probe.duration) && probe.duration > 1 ? probe.duration : WEBM_EXPECT_SEC;
+    console.log(
+      `   采样 ${probe.samples} 次：buffered 末端最远 ${probe.maxEnd.toFixed(2)}s / 时长 ${dur}s，`
+        + `播放头前方最大缺口 ${probe.worstGapAhead.toFixed(3)}s，currentTime=${probe.currentTime.toFixed(2)}`
+        + `（readyState=${probe.readyState} paused=${probe.paused} video.error=${probe.errorCode ?? '无'} ${probe.errorMessage ?? ''}，`
+        + `buffered=${JSON.stringify(probe.ranges)}）`,
+    );
+    // 播放器自报的错误（如果有）先打出来：后面几条断言都可能只是它的下游
+    const webmPlayErr = await guestPage
+      .locator('[data-testid="live-play-error"]')
+      .textContent()
+      .catch(() => null);
+    console.log(`   webm 门 live-play-error = ${webmPlayErr ? JSON.stringify(webmPlayErr.slice(0, 240)) : '（未出现）'}`);
+
+    await check('video.buffered 连续无洞（播放头前方没有缺口 = 没有丢帧留洞）', () => {
+      assert.ok(probe.samples > 0, '一次都没采到 buffered');
+      assert.ok(
+        probe.worstGapAhead <= 0.05,
+        `播放头前方有 ${probe.worstGapAhead.toFixed(3)}s 的洞：${JSON.stringify(probe.worstGapAt)}`
+          + '（丢帧的 rid 永远等不到应答，区间被覆盖表永久算成已覆盖 —— 文件留洞、播放卡住且无报错）',
+      );
+    });
+    await check('video.buffered 覆盖到接近播完（窗口跟着播放头滑过多个 1MB 分片）', () => {
+      assert.ok(
+        probe.maxEnd >= dur * 0.75,
+        `buffered 末端只到 ${probe.maxEnd.toFixed(2)}s / ${dur}s —— 窗口没滑起来，或中途停摆`,
+      );
+    });
+
     await check('play() 后 currentTime 增大（真解码）', async () => {
       await guestPage.waitForFunction(
         (t0v) => {
@@ -794,7 +954,48 @@ try {
     console.log(`   currentTime：${t0.toFixed(3)} → ${t1.toFixed(3)}`);
     await check('webm 门没有 live-play-error', async () => {
       const err = await guestPage.locator('[data-testid="live-play-error"]').count();
-      assert.equal(err, 0, 'webm 门出现了播放错误');
+      assert.equal(err, 0, `webm 门出现了播放错误：${webmPlayErr ?? '?'}`);
+    });
+
+    // ── 完整性：每个请求的 rid 都收到过应答帧（终审 A 的第二条断言）──
+    // 只查 webm 门这门课的请求（mp4 门在上面已经逐字节比对过）。
+    // 匹配条件是 **rid + seq**：host 的首帧 seq 恒等于请求的 start，所以「同 rid 且
+    // 同 start 的应答出现过」才叫这个请求真的被满足过（只比 rid 的话，另一个 course
+    // 复用同一 rid 时会被误判成已应答 —— 实测踩过：rid 是每播放器各自的游标）。
+    // 也不要求「此刻一条在途都没有」—— guest 常态就挂着最多 4 个在途请求，那是设计
+    // 而不是失败；真正的失败形态是「某个 rid 自始至终一帧都没回来」。
+    const servedKeys = new Set(stats.rangeResponses.map((r) => `${r.rid}:${r.seq}`));
+    const webmReqs = stats.rangeRequests.filter((r) => r.t === 'video.range' && r.videoId === seeded.webmId);
+    const lost = webmReqs.filter((r) => !servedKeys.has(`${Number(r.id)}:${r.start}`));
+    await check(`完整性：webm 门每个 video.range 请求都收到了应答帧（共 ${webmReqs.length} 次）`, () => {
+      assert.ok(webmReqs.length > 0, '中继没记录到 webm 门的 video.range 请求');
+      assert.equal(
+        lost.length,
+        0,
+        `有 ${lost.length} 个请求没有任何应答帧：${lost.slice(0, 12).map((r) => `rid=${r.id}@${r.start}`).join(', ')}`,
+      );
+    });
+    await check('窗口真的滑过了首窗 8MB（fixture > 8MB，请求覆盖超出首窗）', () => {
+      const ivs = webmReqs
+        .map((r) => [r.start, r.start + r.len])
+        .sort((a, b) => a[0] - b[0]);
+      assert.ok(ivs.length > 8, `webm 门只发出 ${ivs.length} 个 range 请求，${webmSize}B 的 fixture 该拆成更多`);
+      // 合并相邻/重叠区间，算实际请求覆盖的字节数
+      let covered = 0;
+      let cur = ivs[0];
+      for (const iv of ivs.slice(1)) {
+        if (iv[0] <= cur[1]) cur[1] = Math.max(cur[1], iv[1]);
+        else {
+          covered += cur[1] - cur[0];
+          cur = iv;
+        }
+      }
+      covered += cur[1] - cur[0];
+      console.log(`   webm 门请求覆盖 ${covered} 字节（首窗 8MB，fixture ${webmSize}B）`);
+      assert.ok(
+        covered > 8 * 1024 * 1024,
+        `请求只覆盖 ${covered} 字节 —— 没滑出首窗 8MB，多 chunk / 窗口滑动这条路径没被走到`,
+      );
     });
   }
 
@@ -821,20 +1022,62 @@ try {
     const real = pageErrors.filter((e) => !/ResizeObserver|autoplay|play\(\)/i.test(e));
     assert.equal(real.length, 0, real.join('\n      '));
   });
+
+  // ── 3.7 「开着但没连上」时共享条仍在（终审 L）──
+  // 隐私不变量 5 的字面是「一开共享，任何页面都有消不掉的提示」。旧实现的条件是
+  // enabled && status==='online'，于是「开着但连不上」（中继地址填错）时整条消失 ——
+  // 用户以为没在共享，其实开关还开着。这里把中继换成一个必然连不上的地址再开共享，
+  // 断言条目还在、且文案说清「连不上」。
+  console.log('9. 共享条：开着但连不上时仍在，并按 status 说实话');
+  await hostPage.fill('[data-testid="live-relay"] input', 'ws://127.0.0.1:1/');
+  await hostPage.click('[data-testid="live-enable"]');
+  await check('连不上时共享条仍在（live-share-bar），文案说清连不上', async () => {
+    await hostPage.waitForFunction(
+      () => {
+        const t = document.querySelector('[data-testid="live-share-text"]')?.textContent ?? '';
+        return t.includes('连接失败');
+      },
+      null,
+      { timeout: 15000 },
+    );
+  });
+  const failText = await hostPage.textContent('[data-testid="live-share-text"]');
+  console.log(`   连不上时的共享条 = ${JSON.stringify(failText)}`);
+  await hostPage.click('[data-testid="live-share-stop"]');
+  await check('点「停止」后共享条消失（enabled=false）', async () => {
+    await hostPage.waitForSelector('[data-testid="live-share-bar"]', { state: 'detached', timeout: 10000 });
+  });
 } finally {
   // 清理：browser / 桩中继 / tmp fixture，任何一步炸了也要走到这
   await browser.close().catch(() => {});
   wss.close();
   if (tmpDir) rmSync(tmpDir, { recursive: true, force: true });
+  // 临时诊断口：DUMP_REQ=<路径> 把 range 请求明细落盘，用来分析请求风暴 / 覆盖区间。
+  // 与 E2E_FFMPEG 同一性质 —— 给自己留的测试口，正常跑不设它。
+  if (process.env.DUMP_REQ) {
+    const { writeFileSync } = await import('node:fs');
+    writeFileSync(
+      process.env.DUMP_REQ,
+      JSON.stringify({
+        requests: stats.rangeRequests.filter((r) => r.t === 'video.range'),
+        responses: stats.rangeResponses,
+      }),
+    );
+  }
 }
 
 // ───────────────────────────── 4. 汇总 ─────────────────────────────
 console.log('\n── 汇总 ──────────────────────────────────────────');
-console.log(`桩中继：range 帧 ${stats.rangeFrames}，range 载荷 ${stats.rangeBytes} 字节，host-link-down ${stats.hostLinkDown} 次`);
+console.log(
+  `桩中继：range 帧 ${stats.rangeFrames}，range 载荷 ${stats.rangeBytes} 字节`
+    + `（另有单元分片载荷 ${stats.unitBytes} 字节，不计入视频面）`
+    + `，video.range 请求 ${stats.rangeRequests.filter((r) => r.t === 'video.range').length} 次 / ${stats.rangeRequested.size} 个 rid`
+    + `，host-link-down ${stats.hostLinkDown} 次`,
+);
 if (LAST_WEBM_STATE === 'skipped') {
   console.log('真解码：跳过（ffmpeg 缺失，原因见上）—— 本轮只验了协议级与镜像链路');
 } else if (LAST_WEBM_STATE === 'ran') {
-  console.log('真解码：已验（webm buffered + currentTime 推进）');
+  console.log('真解码：已验（webm buffered 无洞 + 覆盖 ≥75% 时长 + currentTime 推进 + 每个 rid 都有应答帧）');
 }
 console.log(`断言失败 ${failed} 项`);
 if (failed === 0) {
