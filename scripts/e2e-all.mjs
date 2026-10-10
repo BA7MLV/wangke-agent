@@ -153,6 +153,10 @@ const META = {
   // 在途数背压。「pos 锚定」是修掉「首窗填满后永久停摆」（8MB 窗口约 13 秒就饿死）
   // 后的回归；脏输入安静空转——它跑在 timeupdate 回调里，抛异常会打死整条 socket。
   'test-livelink-window': { service: 'none', antd: false, timeout: 120 },
+  // 实时链路 P1 全链路：host 设置页 ↔ 桩中继 ↔ guest 镜像页。
+  // 协议级字节边界必断；MSE 真解码只对 video-only webm fixture（mp4 在本机 Chrome
+  // 放不了是实测事实，见脚本文件头），ffmpeg 缺失时该步跳过并打印原因。
+  'e2e-livelink': { service: 'dev', timeout: 300 },
   // host 侧单元载荷：索引字段白名单（fileDeleted 是唯一进索引的本机事实）、
   // meta 不发 coverState（guest 按 cover 单元能否拉到判空）、content 段/对照轨
   // （status 0 的未转写段也发）、cover blob→base64 分片进制可逆且不爆栈。
