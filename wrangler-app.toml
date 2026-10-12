@@ -1,0 +1,14 @@
+# 应用静态托管（Workers 静态资源，替代 Pages）。
+#
+# 为什么不是 Pages：wrangler pages project create 会对 package.json 的 Vite 版本做
+# 框架探测（要求 ≥6.0.0，本仓是 5.4.21），卡在创建项目那一步；Cloudflare 现在主推的
+# 也是 Workers 静态资源这条路。assets-only 不需要 main 脚本。
+#
+# 部署：npm run build && npx wrangler deploy -c wrangler-app.toml
+name = "wangke-app"
+compatibility_date = "2026-10-12"
+
+[assets]
+directory = "./dist"
+
+# SPA 不需要 _redirects：本应用是 HashRouter（/#/settings），服务端只伺服 index.html。

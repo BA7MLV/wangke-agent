@@ -24,14 +24,23 @@ export interface GuestInfo { id: string }
 
 interface LiveLinkState {
   enabled: boolean;
-  /** 配对码（中继的 room 名）。唯一持久化的字段，理由见文件头取舍 1 */
+  /** 配对码（中继的 room 名）。唯一持久化的「共享事实」，理由见文件头取舍 1 */
   code: string;
+  /**
+   * 复制链接时用的来宾入口地址；留空 = 当前页面地址。
+   *
+   * 为什么需要它：主机往往不是那张「来宾打得开的页面」——日常带着全部课程数据的是
+   * localhost:5173 或内网部署，从那里复制的链接在 iPad 上打不开。填一个来宾能访问的
+   * 应用地址（如部署在 Cloudflare 上的那个），主机跑在任何地方链接都有效。
+   */
+  guestBase: string;
   guests: GuestInfo[];
   status: 'off' | 'connecting' | 'online' | 'error';
   error: string;
   enable: () => void;
   disable: () => void;
   rotate: () => void;
+  setGuestBase: (v: string) => void;
 }
 
 /** host 实例：模块级单例。stop() 之后置 null，下一次 enable 时重建。 */
@@ -50,6 +59,7 @@ export const useLiveLink = create<LiveLinkState>()(
     (set, get) => ({
       enabled: false,
       code: '',
+      guestBase: '',
       guests: [],
       status: 'off',
       error: '',
@@ -89,12 +99,16 @@ export const useLiveLink = create<LiveLinkState>()(
         set({ code: next });
         get().enable();
       },
+      // 去掉尾斜杠：`https://x.dev/` + `#/live` 会拼出 `//#/live`，浏览器当协议相对 URL
+      setGuestBase: (v) => set({ guestBase: v.trim().replace(/\/+$/, '') }),
     }),
     {
       name: 'wangke-livelink',
-      // 只持久化 code：enabled / guests / status / error 都是这一份共享的运行事实，
+      // 持久化 code 与 guestBase：前者让刷新后凭同一个码重连（宽限期内 guest 无感），
+      // 后者是「填过一次的来宾入口」，跟 code 一样跨会话有意义。
+      // enabled / guests / status / error 都是这一份共享的运行事实，不持久化 ——
       // 把它们写进 localStorage 等于替用户决定「刷新后继续共享」。
-      partialize: (s): Pick<LiveLinkState, 'code'> => ({ code: s.code }),
+      partialize: (s): Pick<LiveLinkState, 'code' | 'guestBase'> => ({ code: s.code, guestBase: s.guestBase }),
     },
   ),
 );

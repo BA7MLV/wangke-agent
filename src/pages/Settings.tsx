@@ -816,11 +816,24 @@ export default function Settings() {
    * 走 utils/clipboard 而不是裸 navigator.clipboard：guest 链路的主场景就是
    * iPad 经局域网 http://IP 打开（非安全上下文里 navigator.clipboard 根本不存在），
    * 那里只有 execCommand 兜底能复制。
+   *
+   * 入口地址默认当前页面，但主机经常不是「来宾打得开的那一页」（数据在
+   * localhost:5173 上，链接从那里复制出来 iPad 打不开）——所以留了 guestBase
+   * 覆盖位，填一次部署好的应用地址，之后主机跑在哪链接都有效。
    */
+  const liveGuestEntry = useMemo(() => {
+    const base = live.guestBase.trim().replace(/\/+$/, '');
+    return base || `${location.origin}${location.pathname}`;
+  }, [live.guestBase]);
+  const liveLink = useMemo(
+    () =>
+      `${liveGuestEntry}#/live?relay=${encodeURIComponent(settings.liveRelay)}&pair=${live.code}`,
+    [liveGuestEntry, settings.liveRelay, live.code],
+  );
+
   const copyLiveLink = async () => {
-    const link = `${location.origin}${location.pathname}#/live?relay=${encodeURIComponent(settings.liveRelay)}&pair=${live.code}`;
-    if (await copyText(link)) toast.success('链接已复制，发给要实时观看的设备');
-    else toast.warning(`复制失败，请手动复制：${link}`);
+    if (await copyText(liveLink)) toast.success('链接已复制，发给要实时观看的设备');
+    else toast.warning(`复制失败，请手动复制：${liveLink}`);
   };
 
   /** 收藏夹单个 tab：按供应商分组，每组内搜索筛选 + 相关模型置顶 */
@@ -1345,6 +1358,31 @@ export default function Settings() {
               </mdui-button>
             </div>
           </Field>
+        )}
+        {live.enabled && (
+          <Field
+            label="来宾入口地址"
+            hint="复制出来的链接用哪个地址打开。平时就在这个部署上开着共享，留空即可；主机跑在 localhost 或内网地址时，填一个来宾能访问的应用地址（比如你部署在 Cloudflare 上的那个）"
+            testId="field-live-guest-base"
+          >
+            <mdui-text-field
+              data-testid="live-guest-base"
+              aria-label="来宾入口地址"
+              value={live.guestBase}
+              clearable
+              placeholder={`留空 = 当前地址（${location.origin}）`}
+              onInput={(e) => live.setGuestBase((e.target as HTMLElement & { value: string }).value.trim())}
+            />
+          </Field>
+        )}
+        {live.enabled && live.code && (
+          <div
+            className="text-secondary"
+            data-testid="live-link-preview"
+            style={{ fontSize: 12, wordBreak: 'break-all' }}
+          >
+            将复制：{liveLink}
+          </div>
         )}
       </SectionCard>
 
