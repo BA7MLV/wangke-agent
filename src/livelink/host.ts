@@ -89,9 +89,11 @@ import {
   type ChatErrFrame,
   type AckFrame,
 } from './protocol';
-import { buildIndex, buildMetaUnit, buildContentUnit, coverUnitFromBlob } from './payloads';
+import { buildIndex, buildMetaUnit, buildContentUnit, coverUnitFromBlob, buildCardsUnit } from './payloads';
 import { OpQueue, createLruDedup, type ApplyResult, type OpName } from './ops';
 import { runQa, qaToolHint, type QaRunResult, type QaSink } from '../harness/qaRunner';
+import { unitKindOf } from '../materials/reindex';
+import type { VideoRow } from '../store/db';
 import type { ContentPart } from '../api/siliconflow';
 
 /**
@@ -136,7 +138,7 @@ const MAX_REVIVED = 32;
 const MAX_ACK_TARGETS = 512;
 
 /**
- * 解析 guest 要的单元 id：`video:<id>:meta|content|cover`，从右侧切。
+ * 解析 guest 要的单元 id：`video:<id>:meta|content|cover|cards`，从右侧切。
  *
  * 用 lastIndexOf 而不是 endsWith + slice(-len)：id 里万一有冒号（uuid 不会，
  * 但单元 id 来自远端帧，不完全可信）时，从右侧切保证冒号全归 id 一侧，后缀
@@ -249,9 +251,11 @@ function stopLineText(info: { reason: string; rounds: number }): string {
  * 历史预算、落库全在 qaRunner 里（与播放页问答面板共用同一份，见 qaRunner 文件头）。
  * 这一层只做「回调 → 帧」的形状映射。
  *
- * `isMaterial` 固定 false：P2 的来宾镜像页只有视频课程（设计的非目标里没有材料问答），
- * 于是工具提示按视频课那支措辞（qaToolHint 收这个参数）。材料真上链路时，这里必须改成
- * 按 videoId 判材料 —— 否则来宾会看到「正在检索字幕…」而库里是页码。
+ * `isMaterial` 现在由调用方**按课程行推导**（见 handleChatReq 的「材料形态」），
+ * 默认值只留给单测与将来的其它调用点。P2 刚接线时这里是写死 false 的，那是一处**静默
+ * 错误**：来宾问材料课时主机跑的是视频课的提示词与工具集，界面上不报错、模型照常回答，
+ * 只是答的不是这节课的东西（用户看到「正在检索字幕…」而库里是页码，检索工具也选错）。
+ * 这类 bug 只在「问材料课」时才撞得上，所以下面 handleChatReq 里把这行钉住了。
  */
 export function chatSinkFor(
   to: string,
@@ -607,15 +611,51 @@ export class HostCore {
         return;
       }
       try {
-        const sessionId = await this.resolveSessionId(videoId);
-        if (sessionId === null) {
+        // 课程行先取出来，后面两件事都要用：会话归属（挂着不存在的 videoId 的会话永远
+        // 检索不到内容）与材料形态。**不存在就明说，别拿默认的视频课语义往下跑** ——
+        // 那样模型会拿视频课的提示词去答一门根本不存在的课，答完还落库，主机自己的聊天
+        // 记录里就多一条查无出处的对话。
+        const row = await this.loadCourse(videoId);
+        if (!row) {
           this.deps.send(chatErrFor(from, turnId, new Error('这门课不在主机的库里')));
           return;
         }
+        const sessionId = await this.resolveSessionId(row);
         const images = sanitizeImages(f.images);
+        /**
+         * 材料形态：qaRunner 用 `materialKind !== undefined` 判「这是不是材料课」，
+         * 并据此换掉整条系统提示词与整份工具白名单（页码语义 + search_material，
+         * 而不是时间戳语义 + search_transcript）。
+         *
+         * ⚠️ 这一段是**静默错误的守门处**：推导错了不会报任何错，模型照常回答，只是答的
+         * 不是这节课的东西（用户看到「正在检索字幕…」而库里是页码；模型调的是
+         * search_transcript，而这份材料的检索索引在 materialBlocks 里，于是它什么都搜
+         * 不到，只能靠自己的通用知识编一个看着很像的答案）。这类 bug 只在「来宾问材料课」
+         * 时才撞得上，所以推导口径必须与播放页问答面板一致（qaRunner 是共用的，提示词
+         * 只有一份）。
+         *
+         * `materialFormat` 缺失的老数据按 `'pdf'` 走页码口径：与 Player.tsx / LiveGuest
+         * 传给 ChatPanel 的那个内联判据（`format === 'pdf' || !format ? 'page' : 'para'`）
+         * 逐字一致。unitKindOf 只管四种格式之间的映射，undefined 不是格式 ——「缺字段
+         * 算哪种」是调用方的口径问题，不该悄悄塞进那张映射表里（塞进去就等于让所有调用
+         * 点共用一个没人验证过的默认）。
+         */
+        const isMaterial = row.kind === 'material';
         const res = await runQa(
-          { videoId, sessionId, text, ...(images ? { images } : {}) },
-          chatSinkFor(from, turnId, (frame) => this.deps.send(frame), turn.controller.signal),
+          {
+            videoId,
+            sessionId,
+            text,
+            videoName: row.name,
+            ...(isMaterial
+              ? {
+                  materialKind: unitKindOf(row.materialFormat ?? 'pdf'),
+                  ...(row.materialFormat ? { materialFormat: row.materialFormat } : {}),
+                }
+              : {}),
+            ...(images ? { images } : {}),
+          },
+          chatSinkFor(from, turnId, (frame) => this.deps.send(frame), turn.controller.signal, isMaterial),
         );
         this.deps.send(chatDoneFor(from, turnId, res));
         this.deps.events.onTurn?.({ turnId, guestId: from, state: 'done' });
@@ -665,20 +705,30 @@ export class HostCore {
   }
 
   /**
+   * 课程行。**来宾可能传脏 videoId**（旧链路的镜像、手输的 URL、竞态的课程行已删），
+   * 所以这里显式给「找不到」一条路：调用方据此回 chat.err，而不是拿默认值硬跑 ——
+   * 见 handleChatReq 里那段注释（跑错语义不报错，答出来的答案是错的）。
+   */
+  private async loadCourse(videoId: string): Promise<VideoRow | null> {
+    return (await db.videos.get(videoId)) ?? null;
+  }
+
+  /**
    * 这一轮该写进哪个会话。
    *
    * 来宾不带 sessionId（P2 没有「会话切换」入口，来宾镜像页只有一条会话流），所以取该课
    * **最近一个**会话，没有就建一个 —— 与 ChatPanel 初始化那段（sessions 列表为空就建
    * 「新会话」、默认激活最后一个）是同一套口径，否则来宾的提问会散进另一个会话里。
-   * 课程不存在时返回 null：建一个挂着不存在 videoId 的会话，等于凭空造一条永远检索不到
-   * 内容的对话（界面上看不出来，用户只会觉得「它答得不对」）。
+   *
+   * **收行而不是收 videoId**：课程存不存在由调用方（loadCourse）判，那里还要拿同一行推导
+   * 材料形态。判一次、读一次，别在这里再 get 一遍 —— 两次读之间课程行可能已经被删，
+   * 于是「判存在 → 建会话 → 挂着一个没有课程的会话 id」这种不一致只在并发窗口里出现。
    */
-  private async resolveSessionId(videoId: string): Promise<number | null> {
-    if (!(await db.videos.get(videoId))) return null;
-    const list = await db.chatSessions.where('videoId').equals(videoId).sortBy('createdAt');
+  private async resolveSessionId(row: VideoRow): Promise<number> {
+    const list = await db.chatSessions.where('videoId').equals(row.id).sortBy('createdAt');
     const last = list[list.length - 1];
     if (last?.id != null) return last.id;
-    return (await db.chatSessions.add({ videoId, title: '来宾会话', createdAt: Date.now() })) as number;
+    return (await db.chatSessions.add({ videoId: row.id, title: '来宾会话', createdAt: Date.now() })) as number;
   }
 
   /** 停掉某台设备发起的所有在跑轮次（bye / 主线断开时） */
@@ -826,6 +876,24 @@ export class HostCore {
         return;
       }
       this.sendUnit(reqId, rid, await coverUnitFromBlob(cover));
+      return;
+    }
+    if (parsed.suffix === 'cards') {
+      /**
+       * 制卡候选（P2）。来宾审核要用的就是这张表，只发待审的行（理由见 payloads.ts）。
+       *
+       * `sortBy('time')` 而不是 `toArray()`：后者按主键（自增 id）排序，那是**生成顺序**，
+       * 而 SwipeDeck 的 props 契约是「按时间排序」（卡片带考点时间，审核顺序应当跟着时间
+       * 走）。生成顺序与时间顺序在正常情况下恰好一致，但一旦重跑制卡 / 改过 time，两者
+       * 就会分叉 —— 来宾那侧的审核次序与主机面板不一致，而两边都没有任何提示。
+       *
+       * 课程行不存在时这里发的是**空载荷**而不是 unit.err：来宾拿到的 `cards: []` 会显示
+       * 「没有待审核的卡片」，而 unit.err 会让它挂到 30s 超时（guest.ts 的 onUnitErr
+       * 一律 reject）。「这门课没卡」与「这门课不存在」在来宾那里是同一个可接受的结果，
+       * 没有任何动作可做 —— 差别只对排障有意义，而 cards 单元不携带判别它所需的信息。
+       */
+      const rows = await db.cards.where('videoId').equals(parsed.id).sortBy('time');
+      this.sendUnit(reqId, rid, buildCardsUnit(parsed.id, rows));
       return;
     }
     // vectors / frames 等 P1 不拉的单元：明说 unsupported，别让 guest 干等超时

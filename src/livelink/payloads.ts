@@ -17,6 +17,29 @@
  * 变成「搬整课」——链路带宽是家和云之间那条，人是来看课的不是来等同步的。
  * 讲义 IR 内引用处由 guest 显示占位，真要看原图时再议（P2 或按需单帧）。
  *
+ * ## P2 为什么多了 cards 单元，以及它为什么不进 `sync/units.ts`
+ *
+ * cards（P2）是**来宾审核制卡候选**的读面：来宾要能滑动审核，候选就得从 host 拿。
+ * 单元 id 仍走 `video:<id>:<后缀>`（同一门课在两条链路上是同一个 id 空间，见本文件头），
+ * 但后缀表**故意不加进** `sync/units.ts` 的 `VIDEO_UNIT_SUFFIXES`：那张表不是「所有
+ * 可能的单元」清单，而是**云同步的契约** —— `videoUnits()` 直接喂 `tombstoneVideos()`
+ * （删课时按它写墓碑），`parseUnit()` 在云同步侧据此决定认不认远端来的单元 id。往里加
+ * 一个云同步造不出、也用不上的 `cards`，结果是另一台设备收到一份 `video:x:cards` 的墓碑
+ * 却找不到对应数据（静默删不掉该删的东西），以及云同步开始认一个它没有提供方的单元。
+ * 两套 id 空间里，「同一个字符串含义相同」这条比「只有一套」更要紧。
+ *
+ * ## 只发「待审」：已判定的卡对来宾是历史，主机已经存着
+ *
+ * 载荷只含 `status === 0` 的行，字段只有 `{id, q, a, time}`。三个理由：
+ * 1. **已判定的卡对来宾没有价值**：保留/丢弃是**用户刚做完的显式动作**，主机库就是权威
+ *    记录（来宾是纯内存镜像、不落库）。把判定过的卡也流过去，来宾那份就得跟着主机
+ *    的每一次审核不断更新，而它更新不了 —— 它只是个内存数组，来宾一关页面就没了。
+ * 2. **全量流过去会让来宾那份反复过期**：主机在另一台设备上审完一张，来宾手里的
+ *    镜像并没有跟着变（它不知道）；下次来宾重开面板拉到的是新的全量，于是同一张卡
+ *    在来宾这侧"重新变回待审"。用户会看到一张刚在 iPad 上丢掉的卡又出现在手机上，
+ *    而界面上没有任何一处解释得了这个矛盾。
+ * 3. **带宽**：一门课的卡动辄几十张，全量发是白搬（文件头的总原则：发 guest 渲染要用的）。
+ *
  * ## 字段取舍的总原则
  *
  * 发「guest 渲染要用的」，**本机事实不发** —— guest 镜像只进内存，不需要 replicas
@@ -37,7 +60,7 @@
  * 设计文档：docs/plans/2026-10-09-live-link-design.md
  */
 
-import type { CoverRow, SegmentRow, SubtitleTrackRow, VideoRow } from '../store/db';
+import type { CardRow, CoverRow, SegmentRow, SubtitleTrackRow, VideoRow } from '../store/db';
 
 /** 索引里的一门课：guest 列表渲染 + 「这门课现在能不能看」要用的全集。 */
 export interface IndexEntry {
@@ -144,6 +167,54 @@ export async function coverUnitFromBlob(cover: CoverRow): Promise<string> {
     ts: cover.ts,
     blobBase64: bytesToBase64(bytes),
   });
+}
+
+// ───────────────────────── 制卡候选（P2） ─────────────────────────
+
+/**
+ * cards 单元 id：`video:<id>:cards`。
+ *
+ * 手写字符串而**不**复用 `sync/units.ts` 的 `videoUnit()`，因为那个函数的参数类型是
+ * `VideoUnitSuffix`（云同步的五后缀联合类型），要加 `cards` 就得动那份契约 —— 理由与
+ * 代价见文件头「P2 为什么多了 cards 单元」。前缀与分隔符刻意与它逐字一致：同一门课在
+ * 两条链路上必须是同一个 id 空间，这是本文件头那条取舍在单元 id 上的落点。
+ */
+export function cardsUnit(id: string): string {
+  return `video:${id}:cards`;
+}
+
+/** cards 单元里的一张待审卡（**只有渲染与判定要用的字段**）。 */
+export interface CardsUnitCard {
+  /** 主机库里那张卡的行 id。判定 op 原样带回去（card.decide 的 cardId） */
+  id: number;
+  q: string;
+  a: string;
+  /** 考点对应的字幕时间（秒）。视频课用来跳播放头 */
+  time: number;
+}
+
+/**
+ * cards 单元载荷：**只发待审**（`status === 0`）的卡，字段 `{id, q, a, time}`。
+ *
+ * 不发 `videoId`（调用方按单元 id 已经知道是哪门课，载荷里再带一遍是冗余）、不发
+ * `status`（恒为待审 —— 它是这个单元的**不变量**，带上就得让来宾判它，而来宾没有判它的
+ * 依据）、不发 `createdAt`（SwipeDeck 不读，来宾也不排序它；主机按 `time` 排序，见
+ * host 的 handleUnitReq）。
+ *
+ * **空数组是正常载荷，不是错误**：一门课可能一张待审卡都没有（还没制卡 / 全审完了），
+ * host 照样发单元（`{videoId, cards: []}`），来宾据此显示「没有待审核的卡片」。反过来
+ * 发 `unit.err` 会让来宾把它当成故障，一路挂到 30s 超时才报错 —— 「没有卡」是常态，
+ * 按错误处理等于凭空造出一个假的故障形态。
+ */
+export function buildCardsUnit(videoId: string, rows: CardRow[]): string {
+  const cards: CardsUnitCard[] = [];
+  for (const r of rows) {
+    if (r.status !== 0) continue;
+    // 没有主键的行不可能被判定（card.decide 带的 cardId 要打中它），悄悄跳过而不是发一个 id:0
+    if (r.id == null) continue;
+    cards.push({ id: r.id, q: r.q, a: r.a, time: r.time });
+  }
+  return JSON.stringify({ videoId, cards });
 }
 
 /**

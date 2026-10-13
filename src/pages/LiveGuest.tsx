@@ -16,7 +16,7 @@
  * 播放器）+ 底部问答面板。不复刻本地播放器的全部能力（跟读高亮、倍速面板、讲义联动……）——
  * 那要把本地 store 抽象成 source 接口，是最大的工作量风险，YAGNI。
  *
- * ## P2 接线：三件事都在这一页落地
+ * ## P2 接线：四件事都在这一页落地
  *
  * 1. **问答面板**（`components/LiveChatPanel.tsx`）：问的是主机上的 agent loop
  *    （凭据不过链路），流事件由 `LiveGuest` 的 `onTurn` 回调收成本页的 `turns` 状态。
@@ -28,11 +28,14 @@
  * 3. **学习时长自动写回**：`livelink/guestStudy.ts` 的追踪器，口径与 `store/studyTime.ts`
  *    逐条对齐，切出来的「某天 N 秒」经 `study.add` op 回主机；**来宾端一个字都不写
  *    IndexedDB**（不变量 9）。为什么这件事值得做，见那个文件的头。
+ * 4. **制卡候选审核**：打开面板才拉 `video:<id>:cards` 单元（host 只发待审的，理由见
+ *    payloads.ts），复用主机的 `SwipeDeck`，判定经 `guest.decideCard` 走 outbox 回主机。
+ *    **乐观更新且不回滚**（理由见 judgeCard 的注释），撤销是再发一条 `status: 0`。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Banner, EmptyState, PageShell, SectionCard } from '../ui';
+import { Banner, EmptyState, PanelPlaceholder, PageShell, SectionCard } from '../ui';
 import {
   LiveGuest as LiveGuestClient,
   VERSION_MISMATCH_TEXT,
@@ -46,7 +49,15 @@ import {
   markGuestStudyActive,
 } from '../livelink/guestStudy';
 import LiveChatPanel from '../components/LiveChatPanel';
+// SwipeDeck 直接复用主机的那个组件：手势、飞出动画、键盘操作、卡片堆叠视觉都只有一份，
+// 复制一份的代价是下一次改交互时来宾这边静默留在旧版（同 chat-panel 的理由）。它要的
+// props 类型是 CardRow（见下面 ReviewCard 的注释），落库那份由 decideCard 那一帧负责。
+import SwipeDeck from '../components/SwipeDeck';
+// SwipeDeck 的样式在 cards.css（卡片堆叠 / 判定印章 / 操作行）。路由全是静态 import，
+// 整包早已载入它，这行是**显式声明依赖**（把这个组件搬走时样式跟着走），不是真的加载。
+import '../cards.css';
 import { CLOSE_PROTOCOL_MISMATCH } from '../livelink/protocol';
+import { cardsUnit } from '../livelink/payloads';
 import { GuestMsePlayer, feedRange } from '../livelink/mse';
 import { videoUnit } from '../sync/units';
 import { formatSize } from '../utils/format';
@@ -83,6 +94,50 @@ interface CoverUnit {
 /** meta 单元载荷里本页用得到的字段。 */
 interface MetaUnit {
   dominantColor?: string;
+}
+
+/** cards 单元载荷里的一张待审卡（payloads.ts 的 CardsUnitCard：只有 id/q/a/time）。 */
+interface CardsUnitCard {
+  id: number;
+  q: string;
+  a: string;
+  time: number;
+}
+
+/**
+ * 来宾侧的候选卡行：**结构上与 store/db 的 CardRow 完全一致，故意不 import 那个类型**。
+ *
+ * 两个理由：① SwipeDeck 的 props 写死了 `pending: CardRow[]`（它与主机面板共用同一个
+ * 组件，两边的卡片必须长得一样才谈得上「复用」），所以本地这份要与它互相可赋值；
+ * ② 本页刻意不 import `store/db` —— 那是 Dexie 的定义处，「来宾是纯内存镜像、绝不碰
+ * 本机库」（不变量 9）靠的就是「这个文件里没有 db import」这个能一眼看出的事实，连类型
+ * 都从那儿长出来都让人误会（同 LiveChatPanel 里的 QuizState：那处也是本地定义形状，
+ * 理由逐字相同）。
+ *
+ * `videoId` / `createdAt` 载荷里没有（payloads.ts 不发），补齐只是为了形状完整：
+ * `videoId` 是本地标注，SwipeDeck 不读；`createdAt` 主机按 `time` 排（见 host 的
+ * handleUnitReq），补 0 不参与任何排序。真正写进主机库的只有 `decideCard` 那一帧。
+ */
+interface ReviewCard {
+  id?: number;
+  videoId: string;
+  q: string;
+  a: string;
+  time: number;
+  status: 0 | 1 | 2;
+  createdAt: number;
+}
+
+/**
+ * cards 单元的拉取现场。**`err` 与「没有卡」必须分开**：host 对一门没有候选卡的课发的就是
+ * 空载荷（正常形态，见 payloads.ts），而 `err` 是拉取真的失败（unit.err / 超时 / 断链）。
+ * 两者显示的话术与可做的动作完全不同 —— 把失败显示成「没有待审核的卡片」，用户会以为
+ * 主机上确实一张卡都没有，而他其实什么也没读到。
+ */
+interface CardsState {
+  loading: boolean;
+  rows: ReviewCard[];
+  err?: string;
 }
 
 interface Detail {
@@ -164,6 +219,14 @@ export default function LiveGuest() {
    */
   const [connGen, setConnGen] = useState(0);
 
+  /**
+   * cards 单元的现场。**null = 还没拉过**（面板没打开）—— 与「拉到了、里面是空的」分成
+   * 两态：前者是用户还没要求看，后者是主机上确实没有候选卡，两者该说的话术不同。
+   */
+  const [cardsState, setCardsState] = useState<CardsState | null>(null);
+  /** 本次审核的判定顺序（卡片 id 栈）。撤销取栈顶，与主机面板 CardsPanel 的 history 同款 */
+  const [cardHistory, setCardHistory] = useState<number[]>([]);
+
   /** 连接代际：断线重连会让旧实例的回调全部作废（拿不到状态就悄悄丢，不炸） */
   const genRef = useRef(0);
   const guestRef = useRef<LiveGuestClient | null>(null);
@@ -173,6 +236,15 @@ export default function LiveGuest() {
   /** 打开课程的代际：连点两门课时，旧那批 loadUnit 的结果作废 */
   const openSeqRef = useRef(0);
   const attemptRef = useRef(0);
+  /** cards 拉取的代际：换课时让在途的那次 loadUnit 作废（理由见 loadCards） */
+  const cardsSeqRef = useRef(0);
+  /**
+   * `cardHistory` 的镜像：撤销要读「上一张是哪个」，而那个值在 setState 的 updater 里
+   * 拿不到（副作用不能写在 updater 里：StrictMode 会调两次，于是同一帧 op 发两遍）。
+   * 单一真源仍是 state，ref 只在渲染期同步一份（同 connectRef 的写法）。
+   */
+  const cardHistoryRef = useRef<number[]>([]);
+  cardHistoryRef.current = cardHistory;
 
   // connect 的重连路径要再调一次自己，而 useCallback 的自引用会让 TS 推不出类型，
   // 借一个 ref 拐弯（每次渲染同步最新闭包）。
@@ -390,6 +462,12 @@ export default function LiveGuest() {
     // 换课即换会话：问答轮次是按 course 发的（chat.req 带 videoId），留着上一门的
     // 轮次会让用户在这门课里看到别的课的回答，而且「停止」会停一个不属于这门的轮次。
     setTurns([]);
+    // 候选卡同理，而且比问答更危险：判定栈留着上一门的 cardId 时，「撤销」会把**A 门的
+    // cardId** 发成 `card.decide`（ops.ts 的 applyCardDecide 只看 cardId 不看 videoId，
+    // 于是它会把 A 门那张卡真的改回去，而用户以为自己在撤 B 门的判定）。面板回到未打开态。
+    cardsSeqRef.current++; // 让在途的那次 cards 拉取作废
+    setCardsState(null);
+    setCardHistory([]);
     // 先摆个空详情：封面位与视频区立刻出现，单元拉完再填内容
     setDetail({ entry, coverUrl: null, dominantColor: null, segments: [], tracks: [], playErr: '' });
     void (async () => {
@@ -525,6 +603,91 @@ export default function LiveGuest() {
   };
 
   const isMaterial = detail?.entry.kind === 'material';
+
+  // ── 制卡候选（P2）：拉 cards 单元 + 滑动审核（写回走 card.decide op） ─────────────
+
+  /**
+   * 拉这门课的待审候选卡。**打开面板时才拉**（不是跟着 openCourse 一起拉）：
+   * 绝大多数来宾只看不问也不审卡，先把一份用不上的单元拉过来是白占带宽，而 unit.req
+   * 在 host 侧要查一次 cards 表 + gzip + 分片（payloads.ts 的整条载荷构造）。
+   *
+   * 代际判断与 openCourse 的那批 loadUnit 同理：拉取期间用户换了课、点了重读，
+   * 旧那次的结果一律作废（否则会出现「面板里是 A 门的卡，而详情已经是 B 门」）。
+   */
+  const loadCards = useCallback(async () => {
+    const guest = guestRef.current;
+    const courseId = detail?.entry.id;
+    if (!guest || !courseId) return;
+    const seq = ++cardsSeqRef.current;
+    setCardsState({ loading: true, rows: [] });
+    try {
+      const unit = await guest.loadUnit(cardsUnit(courseId));
+      if (seq !== cardsSeqRef.current) return;
+      setCardsState({ loading: false, rows: reviewCardsOf(unit, courseId) });
+    } catch (e) {
+      if (seq !== cardsSeqRef.current) return;
+      // **失败不显示成「没有卡」**：那是两种完全不同的事实（见 CardsState 的注释）
+      setCardsState({ loading: false, rows: [], err: e instanceof Error ? e.message : String(e) });
+    }
+  }, [detail?.entry.id]);
+
+  /**
+   * 判定一张卡：内存里的镜像先改，再发一帧 `card.decide`。
+   *
+   * **乐观更新，落库结果不回滚到 UI**。为什么不等 ack 再改界面：滑动是连续的显式动作，
+   * 等一次网络往返（家中继通常 <1s，弱网能到好几秒）会让每一次滑动都「先停一下再走」，
+   * 手感发涩 —— 而这次手势要回滚的场景并不比 ack 丢失更糟：`card.decide` 走 outbox
+   * （guest.ts 的三条路径之一，至少送达一次，看门狗按同 opId 原样重发），断链时排队、
+   * 主机回来后自动补上；真丢了的代价是主机上少一张卡的判定，来宾重开面板就能看到
+   * （它还是待审），而**界面卡住不动**的代价是用户以为程序坏了，滑动直接不敢用。
+   * 这与主机面板 CardsPanel 的 `judge` 是同一套口径（那边也是内存先行 + fire-and-forget）。
+   *
+   * `client` 取自 guestRef 而不是 state 闭包：断线重连会换 client，页面里其它写操作
+   * （进度 / 学习时长的 effect）都刻意绑在新 client 上，这里同理 —— 拿着已关闭的旧
+   * client 发出去，那一帧会静默丢掉（send 的 readyState 守卫直接 return，不报错）。
+   */
+  const judgeCard = useCallback(
+    (card: ReviewCard, keep: boolean) => {
+      const id = card.id;
+      const guest = guestRef.current;
+      const courseId = detail?.entry.id;
+      if (id == null || !guest || !courseId) return;
+      const status: 1 | 2 = keep ? 1 : 2;
+      setCardsState((s) =>
+        s ? { ...s, rows: s.rows.map((r) => (r.id === id ? { ...r, status } : r)) } : s,
+      );
+      setCardHistory((h) => [...h, id]);
+      guest.decideCard(courseId, id, status);
+    },
+    [detail?.entry.id],
+  );
+
+  /**
+   * 撤销上一张：**再发一条 status:0 的 `card.decide`**，不是「发一条反向 op」。
+   * 与主机面板 undo 的落库语义逐字一致（`db.cards.update(id, {status: 0})`）：op 面
+   * 只有一种 op、参数里的 status 就是判定的最终值，反向 op 会让「撤销」在 outbox 里变成
+   * 第二种语义的东西，而断链重发时两种都得幂等 —— 多一种语义就多一处可能漂移的地方。
+   */
+  const undoCard = useCallback(() => {
+    const guest = guestRef.current;
+    const courseId = detail?.entry.id;
+    const last = cardHistoryRef.current[cardHistoryRef.current.length - 1];
+    if (last == null || !guest || !courseId) return;
+    cardHistoryRef.current = cardHistoryRef.current.slice(0, -1);
+    setCardHistory(cardHistoryRef.current);
+    setCardsState((s) =>
+      s ? { ...s, rows: s.rows.map((r) => (r.id === last ? { ...r, status: 0 as const } : r)) } : s,
+    );
+    guest.decideCard(courseId, last, 0);
+  }, [detail?.entry.id]);
+
+  /** 待审 / 已保留 / 已审计数。候选卡单元只发待审的，判过的那几张留在 rows 里当计数 */
+  const reviewRows = cardsState?.rows ?? [];
+  const pendingCards = reviewRows.filter((r) => r.status === 0);
+  const keptCards = reviewRows.filter((r) => r.status === 1).length;
+  const judgedCards = reviewRows.length - pendingCards.length;
+  /** 主机在不在线（与问答面板同一个判据）。离线时读单元只会挂到超时，见 loadCards 的注释 */
+  const cardsOnline = phase === 'ready';
   return (
     <PageShell title="实时链路" wide>
       {phase === 'need-code' && (
@@ -678,6 +841,99 @@ export default function LiveGuest() {
       )}
 
       {/*
+        制卡审核：放在详情之后、提问之前（审核是「看内容」的一部分，提问是最后一步）。
+        ⚠️ 复用主机的 SwipeDeck 组件，不重写手势与飞出动画（理由见 import 处）。
+      */}
+      {detail && (
+        <SectionCard
+          title="卡片审核"
+          subtitle="主机为这门课生成的问答卡：右滑保留、左滑丢弃，可撤销。判定写回主机，来宾这边不留副本（重新读一次后计数从本次开始）"
+          testId="card-live-cards"
+          actions={
+            cardsState === null ? (
+              <mdui-button
+                variant="filled"
+                data-testid="live-cards-open"
+                disabled={!cardsOnline}
+                onClick={() => void loadCards()}
+              >
+                <mdui-sym-style slot="icon" />
+                查看候选卡
+              </mdui-button>
+            ) : (
+              // 重新读取：主机那边刚生成 / 刚审完一批时，把这一份内存镜像追平
+              <mdui-button-icon
+                data-testid="live-cards-reload"
+                aria-label="重新读取候选卡"
+                disabled={cardsState.loading || !cardsOnline}
+                onClick={() => void loadCards()}
+              >
+                <mdui-sym-refresh />
+              </mdui-button-icon>
+            )
+          }
+        >
+          {cardsState === null && (
+            <PanelPlaceholder testId="live-cards-idle">
+              {/* 离线时不放行读取：loadUnit 会挂在 30s 超时上（guest.ts 的 UNIT_TIMEOUT_MS），
+                  用户看到的是一段没反应的「正在读取…」，而这里一句就能说清原因。 */}
+              {cardsOnline
+                ? '候选卡生成在主机上（播放页「卡片」）。点右上角「查看候选卡」把它读过来，滑动就能审。'
+                : '主机不在线，读不到候选卡。主机回来后（页面会自动恢复）再点右上角重试。'}
+            </PanelPlaceholder>
+          )}
+          {cardsState?.loading && <PanelPlaceholder testId="live-cards-loading">正在读取候选卡…</PanelPlaceholder>}
+          {cardsState?.err && (
+            <Banner
+              variant="error"
+              testId="live-cards-err"
+              icon={<mdui-sym-error />}
+              title={`候选卡没读到：${cardsState.err}`}
+              description="链路刚断开或主机没在席时会出现。恢复后点右上角重新读取。"
+            />
+          )}
+          {/* 「一张都没有」与「拉取失败」分开说：前者是主机上确实没有候选卡（正常形态，
+              空载荷也是正常响应），后者是这次什么也没读到。 */}
+          {cardsState && !cardsState.loading && !cardsState.err && pendingCards.length === 0 &&
+            (reviewRows.length === 0 ? (
+              <PanelPlaceholder testId="live-cards-empty">这门课没有待审核的卡片</PanelPlaceholder>
+            ) : (
+              <div className="cards-summary" data-testid="live-cards-summary">
+                <span className="text-secondary">
+                  {/* 「本次」是实话：候选卡单元只发待审的，所以重新读一次之后计数从 0 开始
+                      （主机那边保留/丢弃的总数以主机面板为准，见 payloads.ts 的取舍）。 */}
+                  本次审完：保留 {keptCards} · 丢弃 {judgedCards - keptCards}（已写回主机）
+                </span>
+                {/* 审完后仍要能反悔最后一张（与主机面板同款：撤销入口在汇总行而不是消失） */}
+                <mdui-button-icon
+                  data-testid="live-cards-undo"
+                  aria-label="撤销上一张"
+                  disabled={cardHistory.length === 0}
+                  onClick={undoCard}
+                >
+                  <mdui-sym-undo />
+                </mdui-button-icon>
+              </div>
+            ))}
+          {/* 有待审卡才挂 SwipeDeck：它 `pending` 为空时 return null，留着只会挂一个空壳 */}
+          {cardsState && !cardsState.loading && !cardsState.err && pendingCards.length > 0 && (
+            <SwipeDeck
+              pending={pendingCards}
+              keptCount={keptCards}
+              judgedCount={judgedCards}
+              onJudge={judgeCard}
+              onUndo={undoCard}
+              canUndo={cardHistory.length > 0}
+              // 卡片带的是字幕时间，跳播放头要用本机那个视频元素；材料课上没有播放器，
+              // seekTo 在 videoRef 为空时直接返回（而材料课本来也不会有候选卡：制卡是从
+              // 字幕提炼的，材料课没有字幕）
+              onSeek={seekTo}
+            />
+          )}
+        </SectionCard>
+      )}
+
+      {/*
         问答面板：放在详情卡片**之后**（而不是并排放侧栏），理由是这页的既定形态就是
         单列堆叠（PageShell 一列、卡片一张张往下），镜像页的使用姿势又以竖屏 iPad 为主 ——
         侧栏会把播放器压到不足一半宽。面板内部自己有滚动区与高度上限，所以它不会把上面的
@@ -771,6 +1027,34 @@ function sniffImageMime(b64: string): string {
 function dominantOf(u: unknown): string | null {
   const hex = (u as MetaUnit | null)?.dominantColor;
   return typeof hex === 'string' && /^#[0-9a-fA-F]{6}$/.test(hex) ? hex : null;
+}
+
+/**
+ * cards 单元 → 本地镜像的候选卡行。**逐项过形状**（与 segmentsOf / tracksOf 同款纪律：
+ * host 数据可信但载荷形状会漂，页面不赌），坏项丢掉而不是把 `undefined` 渲染到卡面上。
+ *
+ * `status` 恒为 0：单元只发待审（payloads.ts 的不变量），拉到即待审。`videoId` /
+ * `createdAt` 是补齐形状的本地字段（ReviewCard 的注释里写了理由），不发出去。
+ */
+function reviewCardsOf(u: unknown, videoId: string): ReviewCard[] {
+  const rows = (u as { cards?: CardsUnitCard[] } | null)?.cards;
+  if (!Array.isArray(rows)) return [];
+  const out: ReviewCard[] = [];
+  for (const c of rows) {
+    // 没有正整数 id 的卡判不了（card.decide 的 cardId 要打中主机那一行），丢掉
+    if (!c || typeof c.q !== 'string' || typeof c.a !== 'string') continue;
+    if (!Number.isInteger(c.id) || c.id <= 0) continue;
+    out.push({
+      id: c.id,
+      videoId,
+      q: c.q,
+      a: c.a,
+      time: Number.isFinite(c.time) ? c.time : 0,
+      status: 0,
+      createdAt: 0,
+    });
+  }
+  return out;
 }
 
 function courseDesc(c: IndexEntry): string {
