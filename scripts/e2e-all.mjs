@@ -161,6 +161,13 @@ const META = {
   // meta 不发 coverState（guest 按 cover 单元能否拉到判空）、content 段/对照轨
   // （status 0 的未转写段也发）、cover blob→base64 分片进制可逆且不爆栈。
   'test-livelink-index': { service: 'none', antd: false, timeout: 120 },
+  // P2 host 侧写 op：apply 的幂等语义（study.add 靠去重表、card.decide 的 gone 分支、
+  // position.set 的 not-found）与 OpQueue 的串行/失败传播。Dexie 靠 fake-indexeddb 自带
+  // （与 test-migration.mjs 同一套），不需要常驻服务。
+  'test-livelink-ops': { service: 'none', antd: false, timeout: 120 },
+  // P2 guest 侧 outbox：入队序、落盘恢复、失败分类（终态丢弃 / internal 退避重试）、
+  // clientOpId 去重、坏落盘不许弄崩页面、position.set 禁止入队。零依赖纯逻辑。
+  'test-livelink-outbox': { service: 'none', antd: false, timeout: 120 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },
