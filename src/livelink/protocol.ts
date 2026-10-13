@@ -6,11 +6,19 @@
  *
  * v1 → v2（P2 写面 + 问答流）。P1 的编码、字段名、二进制头全部保持原样，bump 的只有
  * 版本号与新增帧型 —— 这样「哪些是老的、哪些是新的」在协议层是**可判定的**（见
- * decodeFrame / decodeFrameLoose 两条解码路径），而不是靠人记。
+ * decodeFrame / decodeFrameLoose / decodeControlFrame 三条解码路径），而不是靠人记。
  *
- * 中继（cloudflare-worker/live-relay）是另一套部署、不共享本模块，它合成的
- * `host-link-down/up` 两帧把 `v` 写死在源码里 —— **bump 版本时必须同步改中继**，否则
- * guest 会把「主机已离线」那两帧当坏帧丢掉（P2 不变量 6 的反面：静默到用户毫无察觉）。
+ * ## 中继控制帧不进 app 协议（`ctl` 字段，与 PROTOCOL_VERSION 无关）
+ *
+ * 中继（cloudflare-worker/live-relay）是**另一个部署物**，有自己的发布节奏：app 改完
+ * 提交 ≠ 中继已经上线。把它的 `host-link-down/up` 两帧塞进 app 的 `v` 里，等于给两个
+ * 本该独立的生命周期绑一根绳 —— 每 bump 一次 app 协议就得**重新部署一次中继**，忘了
+ * 部署的表现是新来宾把「主机已离线 / 已重连」当坏帧静默丢弃（不变量 6 的反面：静默到
+ * 用户毫无察觉）。
+ *
+ * 所以控制帧用**自己的字段** `{ ctl: 1, t, id }`：没有 `v`，解码也不看 `v`，走
+ * decodeControlFrame。改 app 协议从此不必碰中继（反过来中继改形状仍要发版，那是一次
+ * 有意的动作，不是每次 bump 的税）。
  *
  * ## 为什么二进制帧自带 12 字节头（rid + seq），而不是「先发文本头再发裸字节」
  *
@@ -29,6 +37,9 @@
  *    「乱码」），调用方必须 try/catch。
  * 2. `decodeFrameLoose`：它**故意**接受版本不符的帧（只放宽版本，其它校验一律照旧）。
  *    不是漏掉，是握手的职责，见它的注释。
+ *
+ * `decodeControlFrame`（中继控制帧）不在例外之列：它照样对坏帧返 null，只是**不看
+ * 版本** —— 版本与它无关。
  */
 
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate';
@@ -77,6 +88,10 @@ export const FRAME = {
   videoOpen: 'video.open',
   videoMeta: 'video.meta',
   videoRange: 'video.range',
+  // ⚠️ 下面两个是**中继控制帧**的 t，不是 app 协议帧：它们没有 v，由中继合成、
+  // 由 decodeControlFrame 收（见文件头「中继控制帧」一节）。名字放在这张表里只是
+  // 因为它同样是「host/guest/relay 三方要逐字对齐的字符串」，不要因为它们在表里
+  // 就以为它们走 decodeFrame —— 它们走不过去。
   hostLinkDown: 'host-link-down',
   hostLinkUp: 'host-link-up',
   // P2 写面（guest→host 的 op，host→guest 的 ack）
@@ -112,7 +127,7 @@ export interface BinaryFrame {
 // 对账，因为**只有收帧的一侧知道字段该怎么用**，在这一层校验等于猜。
 // 统一 `id` 的语义（来自入队的 reqId / opId / turnId 路由）写在各自注释里。
 
-/** hello（guest→host）。`clientVersion` 是 host 判「要不要回 version.err」的唯一依据。 */
+/** hello（guest→host）。`clientVersion` 是 host 判「版本不匹配 → close(4400)」的唯一依据。 */
 export interface HelloFrame extends Frame {
   t: typeof FRAME.hello;
   clientVersion: number;
@@ -124,7 +139,7 @@ export interface WelcomeFrame extends Frame {
   hostVersion: number;
 }
 
-/** version.err（host→guest）：「我听不懂你」的最后一句话，带上两边的版本号好说人话。 */
+/** version.err（host→guest）：带 host/you 两个版本号的一帧。host 当前**不发**它，见 versionErrFrame。 */
 export interface VersionErrFrame extends Frame {
   t: typeof FRAME.versionErr;
   host: number;
@@ -293,6 +308,61 @@ export function decodeFrameLoose(text: string): { frame: Frame; version: number 
   return { frame: f as Frame, version: f.v as number };
 }
 
+/**
+ * 中继控制帧：`{ ctl: 1, t: 'host-link-down' | 'host-link-up', id: 'relay' }`。
+ *
+ * **它没有 `v`，也不认 `v`** —— 中继是另一个部署物，它的生命周期不跟着 app 协议走
+ * （文件头「中继控制帧」一节）。于是它与 app 帧是两条互不相干的解码路径：
+ * `decodeFrame` 会因 `f.v !== PROTOCOL_VERSION`（缺字段与错版本是同一条路）拒掉它，
+ * `decodeFrameLoose` 会因「版本必须是整数」拒掉它 —— 两条路都不通，这是**刻意的**，
+ * 下面那条顺序要求就是从这个事实里来的。
+ */
+export interface ControlFrame {
+  t: typeof FRAME.hostLinkDown | typeof FRAME.hostLinkUp;
+}
+
+/**
+ * 控制帧的形状标记。**与 PROTOCOL_VERSION 是两回事**：它标的是「这是控制帧」这个
+ * 形状（ctl: 1 = 当前唯一的控制帧形状），而不是「哪一版协议」。将来中继要加第三种
+ * 控制帧时改的是这个数字，改它**不需要**动 app 的 PROTOCOL_VERSION，也不需要
+ * 重新部署 app。
+ */
+const CONTROL_FRAME_SHAPE = 1;
+
+/**
+ * 解中继控制帧；不是控制帧（或坏帧）一律返回 null。
+ *
+ * ## ⚠️ 调用顺序：`decodeControlFrame` 必须在 `decodeFrame` **之前**判
+ *
+ * 控制帧没有 `v`，decodeFrame 的判据是 `f.v !== PROTOCOL_VERSION` —— 顺序反过来，
+ * `host-link-down/up` 会在被认出来之前先以「版本不符」被当成坏帧静默丢掉。症状是
+ * 主机断线后来宾收不到「已离线」、恢复时收不到「已重连」（不变量 6 明令禁止的静默）。
+ * 与 decodeFrameLoose 同理：宽松路径要求 `v` 是整数，控制帧照样过不了。
+ *
+ * **不检查 `v` 字段**（存在与否都不看）：控制帧没有版本这回事。判据只有两个 ——
+ * `ctl === CONTROL_FRAME_SHAPE` 与 `t` 是那两个值之一；其余（app 帧、坏 JSON、
+ * 未知 t、ctl 不是 1）一律 null，不猜。
+ *
+ * 顺带钉一条过渡期的已知事实：**老中继**（仍发 `{"v":2,"t":"host-link-down",…}` 的
+ * 那一版）发来的两帧解不出来 —— 认形状不认版本是这次解耦的全部意义，不可能同时兼容
+ * 两种形状（兼容了就得猜「带 v 的那条是哪一版的」，而那正是要拆掉的东西）。表现：
+ * app 更新了但中继还没重新部署的窗口里，来宾收不到离线条，退化成轮询兜底那条路径；
+ * 中继一发新版即恢复。
+ */
+export function decodeControlFrame(text: string): ControlFrame | null {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(text);
+  } catch {
+    return null;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+  const f = parsed as Record<string, unknown>;
+  if (f.ctl !== CONTROL_FRAME_SHAPE) return null;
+  if (f.t !== FRAME.hostLinkDown && f.t !== FRAME.hostLinkUp) return null;
+  return { t: f.t };
+}
+
 /** 版本判据。两端共用同一个函数：「谁是新的」不该有两套算法。 */
 export type VersionCheck = { ok: true } | { ok: false; host: number; you: number };
 
@@ -306,7 +376,7 @@ export function versionCheck(peerVersion: number): VersionCheck {
   return { ok: false, host: PROTOCOL_VERSION, you: peerVersion };
 }
 
-/** hello（guest→host）。clientVersion 必带：host 靠它判要不要回 version.err。 */
+/** hello（guest→host）。clientVersion 必带：host 靠它判要不要 close(CLOSE_PROTOCOL_MISMATCH)。 */
 export function helloFrame(id: string): HelloFrame {
   return { v: PROTOCOL_VERSION, t: FRAME.hello, id, clientVersion: PROTOCOL_VERSION };
 }
@@ -317,17 +387,56 @@ export function helloFrame(id: string): HelloFrame {
  * **顺带记一笔，实现接线时别踩**：`version.err` 带的是当前版本号，而一个 v1 的 guest 用
  * 自己的 decodeFrame 严格解 v —— 它解不出这帧（会当坏帧丢掉），P1 的 guest 路由里本来也
  * 没有 version.err 这个 case。所以**对已发布的旧来宾，真正能传达到的信号是「断开连接」
- * 本身**（close code / reason），version.err 是给「握手也开始宽松解的下一代」准备的。
- * 接线时（Task 4/6）建议把版本不匹配也走一个专属 close code。
+ * 本身**（close code / reason）。接线时版本不匹配走 CLOSE_PROTOCOL_MISMATCH。
  */
 export function welcomeFrame(id: string): WelcomeFrame {
   return { v: PROTOCOL_VERSION, t: FRAME.welcome, id, hostVersion: PROTOCOL_VERSION };
 }
 
-/** version.err：host 给老来宾的最后一句话，带上两边的版本号好说人话。 */
+/**
+ * version.err：带 host/you 两个版本号的一帧。
+ *
+ * **当前 host 在版本不匹配时不再发它**（见 CLOSE_PROTOCOL_MISMATCH）。留着这个构造器与
+ * 帧型是因为协议面已经对外公布过它、测试也钉着它；将来若有「握手也开始宽松解」的
+ * 来宾，它仍是那份明说。**别因为它还在就以为 host 会发** —— 接线时那条路是关着的。
+ */
 export function versionErrFrame(id: string, you: number): VersionErrFrame {
   return { v: PROTOCOL_VERSION, t: FRAME.versionErr, id, host: PROTOCOL_VERSION, you };
 }
+
+/**
+ * 版本不匹配时的 close code（host → guest 方向，中继不合成这个码）。
+ *
+ * ## 为什么是「关连接」，而不是先发一句 version.err
+ *
+ * 「明说」这件事**只对能听懂的那一端成立**。一个已发布的老来宾（v1）用严格 decodeFrame
+ * 解码：它连 host 的 hello 回执都解不出来，一条 `version.err` 落到它手里只是被当坏帧
+ * 丢掉 —— 发了是**给空气发消息**。它唯一收得到的信号在连接层：socket 被关（close
+ * code / reason），或中继合成的 host-link-down。所以这一步只关连接，多发的那一帧字节
+ * 纯属浪费。
+ * ⚠️ 但**今天的真中继并不转发 host 的 close code**（它只广播 host-link-down，见
+ * live-relay 文件末那条记录），所以下面「两端各自的待遇」里老来宾那一半还差一跳：
+ * 这个码目前谁也收不到。先把这个码定下来，是为了让接线时那一跳有地方可接。
+ *
+ * ## 为什么不借用中继那三个致命码（4000 / 4001 / 4403）
+ *
+ * 它们的文案都是**具体事实**：「房间回收」「配对码不存在」「配对限流」。拿其中一个来
+ * 关一个版本不匹配的连接，等于给用户一条**假的解释**：他会去换配对链接、或让主机重开
+ * 共享（那些动作对版本不匹配一点用都没有），页面回到「重连中」后他只会再来一遍。
+ * 与其给一条指错方向的线索，不如给一个他看不懂但诚实的结果。
+ *
+ * ## 两端各自的待遇（明知的取舍）
+ *
+ * - **听得懂的那一端**（白名单里带 4400 的来宾页）：显示「版本不匹配，请刷新页面」，
+ *   不重连 —— 重连解决不了版本差，刷新才是修复动作。说这句话的 host 与那一页不是同一
+ *   个版本，方向通常是「这一页比主机旧」。
+ * - **老来宾**：它的致命码白名单是 [4000, 4001, 4403]（LiveGuest.tsx 的
+ *   FATAL_CLOSE_CODES），4400 不在里面 → 它按网络抖动退避重连，而它永远读不懂新协议的
+ *   帧，于是只会一直「连接失败 → 重连中」。这不是漏考虑，是没有第三个既能让老端停住、
+ *   又不撒谎的码；停住它的唯一办法是骗它。宁可让它退避重连到用户刷新页面，也不给它一个
+ *   假的失败原因。
+ */
+export const CLOSE_PROTOCOL_MISMATCH = 4400;
 
 /**
  * 打包一条二进制帧：12 字节头 + 载荷。

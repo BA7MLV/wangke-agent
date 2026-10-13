@@ -24,15 +24,16 @@
  *
  * 连接契约（与 src/livelink/ 的 host.ts / guest.ts 对齐，两侧已按此实现）：
  *   wss://<worker>?room=<配对码>&role=host|guest
- * 中继只合成两种帧（v 必须等于应用侧 protocol.ts 的 PROTOCOL_VERSION——两套部署
- * 不共享模块，只能靠约定；应用侧 bump 到 P2 的 v2 时**这里必须同步改并重新部署**，
- * 否则 guest 的 decodeFrame 会把这两帧当坏帧静默丢掉，「主机已离线 / 已恢复」这条
- * 提示会毫无征兆地失效）：
- *   {"v":2,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
- *   {"v":2,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
+ *
+ * 中继只合成两种帧，**都不带 v** —— 它们是控制帧，不是 app 协议帧（理由见下面常量
+ * 的注释）：
+ *   {"ctl":1,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
+ *   {"ctl":1,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
  *
  * close code 与 guest 页 FATAL_CLOSE_CODES（LiveGuest.tsx）一一对应，改前先看那：
  *   4000 房间回收 / 4001 配对码不存在 / 4403 配对限流
+ * 另有一个 4400（版本不匹配）由 **host** 侧 close，中继不合成它 —— 详见文件末的
+ * 「已知退化场景」与 protocol.ts 的 CLOSE_PROTOCOL_MISMATCH。
  */
 
 import { DurableObject } from 'cloudflare:workers';
@@ -66,9 +67,21 @@ const CLOSE_ROOM_EXPIRED = 4000;
 const CLOSE_BAD_CODE = 4001;
 const CLOSE_THROTTLED = 4403;
 
-/** 中继合成的链路状态帧。id 固定 'relay'：与业务帧的 id 命名空间分开，日志里一眼可辨。 */
-const HOST_LINK_DOWN = '{"v":2,"t":"host-link-down","id":"relay"}';
-const HOST_LINK_UP = '{"v":2,"t":"host-link-up","id":"relay"}';
+/**
+ * 中继合成的链路状态帧。
+ *
+ * **不带 `v`，也不跟着应用的 PROTOCOL_VERSION 走**：中继是**另一个部署物**，有自己的
+ * 发布节奏 —— app 提交 ≠ 中继上线。把控制帧塞进 app 的版本号里，等于给两个本该独立的
+ * 生命周期绑一根绳：每 bump 一次 app 协议都要重新部署一次中继，忘了部署的表现是
+ * 来宾收不到「已离线 / 已重连」（新来宾会把带旧 v 的两帧当坏帧静默丢掉）。
+ *
+ * 用 `ctl: 1` 标记形状即可 —— 应用侧走 decodeControlFrame（protocol.ts），认形状不认
+ * 版本。**这三行是本次解耦唯一要重新部署中继的理由，且只需部署这一次。**
+ *
+ * id 固定 'relay'：与业务帧的 id 命名空间分开，日志里一眼可辨。
+ */
+const HOST_LINK_DOWN = '{"ctl":1,"t":"host-link-down","id":"relay"}';
+const HOST_LINK_UP = '{"ctl":1,"t":"host-link-up","id":"relay"}';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -234,3 +247,11 @@ export class Room extends DurableObject {
 // 已按「最后一个 host」守卫，双 host 时一个离开不会惊动 guest；剩下没解的只有
 // 重复应答与 rid 撞车。）真要支持「一码多主」，该做的是 host 发现/选举，不是
 // 中继里加踢人逻辑。
+//
+// —— 版本不匹配的 4400：中继目前既不合成、也不转发 ——
+// host 在版本不匹配时 close(4400)（protocol.ts 的 CLOSE_PROTOCOL_MISMATCH），但
+// webSocketClose 只广播 host-link-down，不把 close code 传给 guest：guest 那条 socket
+// 还开着，它拿得到「主机已离线」（控制帧），拿不到 4400。因此「新来宾据 4400 显示
+// 版本不匹配」这条路在真实部署里**还差一跳**。补法很小（本方法 host 分支里，把
+// code === 4400 的 close 透传给全体 guest），但它改的是中继的关闭语义，留给接线时
+// 与协议层一起定；在此之前明确记着它没实现，免得有人以为那页文案已经通了。

@@ -32,16 +32,21 @@
  *   `byteLength === len`，不等立刻 reject（有分片被换成别的内容、或 relay 吞了半帧）。
  *   少了这道，裁剪过的载荷要等到解压 / JSON.parse 才以另一个难懂的面目报错。
  *
- * 另外两条链路行为：
+ * 另外三条链路行为：
  * - **hello id 每台 guest 唯一**（host 的 guests Map 按帧 id 去重，同 id 两台 guest
  *   会塌缩成一台）：`guest-` + 8 字节随机十六进制。
  * - **坏帧静默跳过**：decodeFrame 返 null 的帧直接丢，不杀链路（protocol.ts 约定）。
+ * - **中继控制帧（host-link-down/up）先判后解码**：它们由中继合成、没有 `v`，走
+ *   decodeControlFrame 而非 decodeFrame（见 handle() 里那条顺序注释）。这条是**协议层
+ *   的硬要求**，不是风格偏好：反过来就会静默丢掉主机上下线提示。
  */
 
 import {
   PROTOCOL_VERSION,
+  FRAME,
   encodeFrame,
   decodeFrame,
+  decodeControlFrame,
   decodeBinaryFrame,
   decodeUnitPayload,
   joinUnit,
@@ -320,6 +325,17 @@ export class LiveGuest {
 
   private handle(data: unknown): void {
     if (typeof data === 'string') {
+      // ⚠️ 顺序不能换：**中继控制帧必须在 decodeFrame 之前判**。控制帧没有 v，
+      // decodeFrame 的判据是 `f.v !== PROTOCOL_VERSION` —— 缺字段与错版本是同一条路，
+      // 顺序反过来的话 host-link-down/up 会在被认出来之前先被当坏帧丢掉，症状是
+      // 「主机断线后来宾收不到已离线、恢复时收不到已重连」。decodeFrameLoose 也一样
+      // 收不了它（它要求 v 是整数）。见 protocol.ts decodeControlFrame 的注释。
+      const ctl = decodeControlFrame(data);
+      if (ctl) {
+        if (ctl.t === FRAME.hostLinkDown) this.opts.onHostDown?.();
+        else this.opts.onHostUp?.();
+        return;
+      }
       const f = decodeFrame(data);
       if (!f) return; // 坏帧静默跳过（protocol.ts 约定）
       switch (f.t) {
@@ -328,12 +344,6 @@ export class LiveGuest {
           return;
         case 'unit.err':
           this.onUnitErr(f);
-          return;
-        case 'host-link-down':
-          this.opts.onHostDown?.();
-          return;
-        case 'host-link-up':
-          this.opts.onHostUp?.();
           return;
         default:
           break;

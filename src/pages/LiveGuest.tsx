@@ -21,6 +21,10 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Banner, EmptyState, PageShell, SectionCard } from '../ui';
 import { LiveGuest as LiveGuestClient, type IndexEntry } from '../livelink/guest';
+// 4400 引用常量而不写数字：它由 host 发（应用侧），不像 4000/4001/4403 那三个来自
+// 另一个部署的中继（那边只能手抄，本仓库已接受）。同一个数字在本文件出现两次的场合，
+// 一次用常量一次写字面量，那正是将来改协议会漏掉的一半。
+import { CLOSE_PROTOCOL_MISMATCH } from '../livelink/protocol';
 import { GuestMsePlayer, feedRange } from '../livelink/mse';
 import { videoUnit } from '../sync/units';
 import { formatSize } from '../utils/format';
@@ -73,10 +77,18 @@ interface Detail {
 const RECONNECT_MAX_MS = 8000;
 /** offline 时的判活间隔：轮询 loadIndex，主机回来就恢复（见 pollWhileOffline 注释）。 */
 const POLL_INTERVAL_MS = 3000;
-/** 中继明说「这门亲事不成」的 close code：房间回收 / 配对码不存在 / 错误配对限流。 */
-const FATAL_CLOSE_CODES = [4000, 4001, 4403];
 /**
- * 中继 close code → 中文文案。
+ * 「别重连了，说清楚为什么」的 close code：房间回收 / 配对码不存在 / 错误配对限流
+ * （这三个由中继发，见 live-relay 的文件头），加上 **4400 版本不匹配**（由 host 发，
+ * 见 protocol.ts 的 CLOSE_PROTOCOL_MISMATCH）。
+ *
+ * 不在表里的码按网络抖动处理：退避重连。4400 进表的理由是重连永远救不了它 —— 说这句
+ * 话的主机与本页不是同一个协议版本（多半是这一页比主机旧），刷新才是修复动作，重连只会
+ * 原样再来一遍。
+ */
+const FATAL_CLOSE_CODES = [4000, 4001, 4403, CLOSE_PROTOCOL_MISMATCH];
+/**
+ * close code → 中文文案。
  *
  * 中继的 close reason 是英文协议值（'room expired' / 'bad code' / 'too many attempts'，
  * 见 live-relay/src/index.ts），原样塞进中文界面等于没翻译。这里每种说清「是什么 +
@@ -87,6 +99,7 @@ const CLOSE_REASON_TEXT: Record<number, string> = {
   4000: '房间已过期：主机下线超过 60 秒（或房间被回收），让主机重新打开「实时链路」再试',
   4001: '配对码不存在：主机没在共享，或链接里的码已过期，向主机重新索取链接',
   4403: '配对尝试次数过多，这个房间已被临时锁定：等 5 分钟再用同一个链接',
+  [CLOSE_PROTOCOL_MISMATCH]: '中继与来宾版本不一致，请刷新页面',
 };
 
 export default function LiveGuest() {

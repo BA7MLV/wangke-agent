@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * 实时链路协议（protocol.ts）的单元测试：文本帧编解码、二进制帧编解码、单元分片、
- * P2 的 v2 帧型与版本握手、以及 uuid 收敛后的 id 生成。
+ * P2 的 v2 帧型与版本握手、中继控制帧（ctl 形状）、以及 uuid 收敛后的 id 生成。
  * Node ≥22.18 原生类型剥离子句直接跑 .ts，无需构建。
  * 运行：node scripts/test-livelink-protocol.mjs
  *
@@ -10,20 +10,23 @@
  * 那是 fflate 的契约，见下面的「坏 gzip 抛异常」——调用方自己 try/catch）。
  *
  * 作用域声明：这里只管**编解码与分片**的契约（线格式逐字节、坏帧策略、分片边界、
- * 版本握手的两条解码路径），socket 行为（binaryType / 重连 / 心跳）与拉流窗口规划是
- * 上层的事，归 Task 6 的测试。第 9 组顺带钉住 utils/uuid.ts：写面 op 的 opId 与
- * outbox 的 clientOpId 都由它生成，它的降级路径（非安全上下文）直接决定写面能不能用，
- * 与「坏帧不许静默」同属一类静默故障，所以放在这里而不是另开一个脚本。
+ * 版本握手的两条解码路径 + 中继控制帧的第三条解码路径），socket 行为（binaryType /
+ * 重连 / 心跳）与拉流窗口规划是上层的事，归 Task 6 的测试。第 9 组顺带钉住
+ * utils/uuid.ts：写面 op 的 opId 与 outbox 的 clientOpId 都由它生成，它的降级路径
+ * （非安全上下文）直接决定写面能不能用，与「坏帧不许静默」同属一类静默故障，所以放在
+ * 这里而不是另开一个脚本。
  */
 import assert from 'node:assert/strict';
 import {
   PROTOCOL_VERSION,
   PROTOCOL_VERSION_V1,
+  CLOSE_PROTOCOL_MISMATCH,
   FRAME,
   BINARY_HEADER_BYTES,
   encodeFrame,
   decodeFrame,
   decodeFrameLoose,
+  decodeControlFrame,
   versionCheck,
   helloFrame,
   welcomeFrame,
@@ -206,6 +209,9 @@ test('协议版本已 bump 到 2（P1 是 1）', () => {
 test('P1 的帧格式逐字节不变（黄金向量：encodeFrame 不加信封、不改字段名）', () => {
   // 回归护栏：encodeFrame 一旦开始「顺手」补字段、排序、改名，这组字节就会变。
   // 这里的向量是 P1 线上真实形状（v 写死 1，不跟着 PROTOCOL_VERSION 走）。
+  // 末位那条 host-link-down 是**P1 时的中继形状**（带 v），今天线上已是 ctl 形状
+  // （第 10 组）：它留在黄金向量里是因为宽松解码必须仍能读懂它（万一链路上真的还有
+  // 一份旧中继的输出在飞），不是断言它今天还在线上发。
   const golden = [
     '{"v":1,"t":"hello","id":"guest-0a1b2c3d4e5f6071"}',
     '{"v":1,"t":"welcome","id":"guest-0a1b2c3d4e5f6071"}',
@@ -372,6 +378,102 @@ test('uuid() 连着 2000 次不撞（它是 opId / 视频 id 的来源，撞了�
   const seen = new Set();
   for (let i = 0; i < 2000; i++) seen.add(uuid());
   assert.equal(seen.size, 2000);
+});
+
+// ---------- 10. 中继控制帧（ctl 形状，与 app 协议版本解耦）----------
+
+// 与 live-relay/src/index.ts 的 HOST_LINK_DOWN / HOST_LINK_UP 两个常量逐字节相同。
+// 那是另一个部署物、import 不到这里的常量，所以把它的**字面量**钉死在这：改了一侧
+// 忘了另一侧，两条测试各红一半且指向同一个形状差。
+const RELAY_HOST_LINK_DOWN = '{"ctl":1,"t":"host-link-down","id":"relay"}';
+const RELAY_HOST_LINK_UP = '{"ctl":1,"t":"host-link-up","id":"relay"}';
+
+test('decodeControlFrame 解出中继的两个控制帧（只认 t，不带 v）', () => {
+  assert.deepEqual(decodeControlFrame(RELAY_HOST_LINK_DOWN), { t: 'host-link-down' });
+  assert.deepEqual(decodeControlFrame(RELAY_HOST_LINK_UP), { t: 'host-link-up' });
+  // 多余字段照单全收地忽略：中继将来加字段不该让旧 app 的解码器把这帧变坏帧
+  assert.deepEqual(decodeControlFrame('{"ctl":1,"t":"host-link-up","id":"relay","why":"grace"}'), {
+    t: 'host-link-up',
+  });
+});
+
+test('控制帧**不因缺少 v 被拒**（解耦的核心断言：与 PROTOCOL_VERSION 无关）', () => {
+  // 这是本次改造的全部意义：中继发来的帧不带 v，而 decodeFrame 的判据是
+  // `f.v !== PROTOCOL_VERSION` —— 没有 v 就是过不去。
+  assert.ok(decodeControlFrame(RELAY_HOST_LINK_DOWN));
+  // 顺带把「带一个 v 也不认」钉住：判据是形状，不是版本。多一个 v 字段不该改变结果，
+  // 否则就等于把版本偷偷接了回来。
+  assert.deepEqual(decodeControlFrame('{"ctl":1,"t":"host-link-down","id":"relay","v":99}'), {
+    t: 'host-link-down',
+  });
+  assert.deepEqual(decodeControlFrame('{"ctl":1,"t":"host-link-up","id":"relay","v":1}'), {
+    t: 'host-link-up',
+  });
+});
+
+test('控制帧两条 app 协议解码路径都收不了（所以判定顺序不能反）', () => {
+  // 反面断言：把这条钉住，将来谁把 decodeControlFrame 挪到 decodeFrame 之后，
+  // 或者图省事改用 decodeFrame 收控制帧，这里立刻红。
+  assert.equal(decodeFrame(RELAY_HOST_LINK_DOWN), null); // 缺 v = 版本不符
+  assert.equal(decodeFrameLoose(RELAY_HOST_LINK_DOWN), null); // 宽松路径要求 v 是整数
+});
+
+test('decodeControlFrame 对 app 帧一律 null（不误判：ctl 才是入口标记）', () => {
+  const appFrames = [
+    encodeFrame(helloFrame('guest-1')),
+    encodeFrame(welcomeFrame('guest-1')),
+    encodeFrame({ v: PROTOCOL_VERSION, t: 'bye', id: 'guest-1' }),
+    encodeFrame({ v: PROTOCOL_VERSION, t: 'ack', id: 'g9-x', opId: 'o-1', ok: 1 }),
+    encodeFrame({ v: PROTOCOL_VERSION, t: 'chat.ev', id: 't1', to: '*', turnId: 'turn-1', kind: 'stop' }),
+    encodeFrame(versionErrFrame('guest-1', 1)),
+    // 带 ctl 但 t 是 app 帧型：ctl 只标形状，不代表「这帧随便什么 t 都收」
+    JSON.stringify({ ctl: 1, t: 'hello', id: 'relay' }),
+  ];
+  for (const line of appFrames) {
+    assert.equal(decodeControlFrame(line), null, `不该当控制帧收：${line}`);
+  }
+});
+
+test('decodeControlFrame：ctl 非 1 / 未知 t / 坏 JSON / 数组 / 空串 → null', () => {
+  assert.equal(decodeControlFrame('not json'), null);
+  assert.equal(decodeControlFrame(''), null);
+  assert.equal(decodeControlFrame('[1,2,3]'), null);
+  assert.equal(decodeControlFrame('null'), null);
+  assert.equal(decodeControlFrame('123'), null);
+  assert.equal(decodeControlFrame('"host-link-down"'), null);
+  // ctl 必须是数字 1：'1' / 2 / 1.5 / 缺失 全是别的形状
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: '1', t: 'host-link-down', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 2, t: 'host-link-down', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 1.5, t: 'host-link-down', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: true, t: 'host-link-down', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ t: 'host-link-down', id: 'relay' })), null);
+  // t 必须是那两个之一：空串、近似名、控制帧里塞业务名都拒
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 1, t: '', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 1, t: 'host-link-sideways', id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 1, t: 1, id: 'relay' })), null);
+  assert.equal(decodeControlFrame(JSON.stringify({ ctl: 1, id: 'relay' })), null);
+  // id 故意不校验：返回的形状里没有 id，中继换不换 id 命名空间都不影响来宾的路由。
+  assert.deepEqual(decodeControlFrame(JSON.stringify({ ctl: 1, t: 'host-link-up' })), {
+    t: 'host-link-up',
+  });
+});
+
+test('老中继（带 v 的 host-link-*)解不出来 —— 认形状不认版本的已知代价', () => {
+  // app 已更新、中继还没重新部署的过渡窗口：来宾会收不到「主机已离线」，
+  // 退化成 LiveGuest 页 3s 轮询那条兜底路径，中继一发新版即恢复。写成断言而不是
+  // 悄悄兼容：兼容两种形状就得猜「带 v 的那条是哪一版的协议」，而那正是要拆掉的东西。
+  for (const old of ['{"v":1,"t":"host-link-down","id":"relay"}', '{"v":2,"t":"host-link-up","id":"relay"}']) {
+    assert.equal(decodeControlFrame(old), null, `不该兼容老中继形状：${old}`);
+  }
+});
+
+test('版本不匹配走 4400，且不与中继那三个致命码撞号', () => {
+  // 撞号的后果是文案说谎：4000/4001/4403 都带具体事实（房间回收 / 配对码不存在 /
+  // 配对限流），拿来关一个版本不匹配的连接会让用户去修一个没坏的环节。
+  assert.equal(CLOSE_PROTOCOL_MISMATCH, 4400);
+  for (const relayCode of [4000, 4001, 4403]) {
+    assert.notEqual(CLOSE_PROTOCOL_MISMATCH, relayCode);
+  }
 });
 
 // ---------- 汇总 ----------
