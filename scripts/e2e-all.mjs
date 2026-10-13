@@ -179,6 +179,12 @@ const META = {
   // chat.req→ev→done 的帧序列、chat.stop 的 abort 生效、问答全局串行、控制帧无业务响应、
   // study.add 重放只累加一次。
   'test-livelink-host-wiring': { service: 'none', antd: false, timeout: 180 },
+  // P2 guest 侧接线：三条 op 路径（进度不入 outbox / 时长与审核入队）、补发**逐条**
+  // （第 2 条不许在第 1 条的 ack 之前发出去）、ack 只认 to=自己、internal 失败退避
+  // 不原地自旋、ack 看门狗原样重发、问答流组装与 to 隔离、稳定 guest id（刷新不新增设备）、
+  // 版本不匹配那句明说。协议细节对着无 socket 的 GuestCore 跑（假时钟精确到毫秒），
+  // 再加几条真桩中继 + 真 ws 的集成用例守 LiveGuest 的 socket 接线。
+  'test-livelink-guest-wiring': { service: 'none', antd: false, timeout: 180 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },
