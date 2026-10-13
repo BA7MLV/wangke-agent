@@ -1,6 +1,6 @@
 import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
 import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
-import { getSettings, targetOfSlot } from '../store/settings';
+import { getSettings, targetOfSlot, type ModelTarget } from '../store/settings';
 import {
   CallLedger,
   answerReserve,
@@ -81,6 +81,13 @@ export interface AgentCallbacks {
    */
   onStop?: (info: AgentStopInfo) => void;
   signal?: AbortSignal;
+  /**
+   * 覆盖默认槽位：不给就是 `targetOfSlot(settings, 'chat')`（老行为，逐字未变）。
+   *
+   * 只给「已经在别处解析好目标」的调用方用 —— 例如链路 host 按会话指定模型。
+   * 形状仍是一个端点 + 一个模型绑在一起的 `ModelTarget`，调用方无法把它们配错。
+   */
+  target?: ModelTarget;
 }
 
 export type ToolExecutor = (name: string, args: Record<string, unknown>) => Promise<string>;
@@ -93,7 +100,7 @@ export async function runAgentLoop(
   maxRounds = 6,
 ): Promise<ChatMessage[]> {
   const settings = getSettings();
-  const target = targetOfSlot(settings, 'chat');
+  const target = cb.target ?? targetOfSlot(settings, 'chat');
   const { catalogId, model } = target;
   const out = [...messages];
   const thinking = cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort) : {};

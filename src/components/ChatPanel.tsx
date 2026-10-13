@@ -3,22 +3,12 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
 import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';
-import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
-import { resolveMaxRounds } from '../harness/loopGuard';
-import {
-  QA_TOOLS,
-  MATERIAL_QA_TOOLS,
-  LIST_FRAMES_TOOL,
-  EDIT_MARKDOWN_TOOL,
-  mdEditorOpen,
-  createToolExecutor,
-} from '../harness/tools';
+import { runQa, qaToolHint } from '../harness/qaRunner';
 import { PROMPTS } from '../harness/prompts';
-import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
-import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
+import { estimateTokens, subtitleWindow } from '../harness/context';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
-import { chatOnce, textOf, type ChatMessage, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
+import { chatOnce, textOf, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
 import { fmtTime } from '../utils/vtt';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
 import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
@@ -637,6 +627,12 @@ export default function ChatPanel({
   /**
    * 发送一轮提问。
    *
+   * 这里只管 **UI**：气泡、消息 key、乐观插入用户行、截图的三级降级链（多模态直读 /
+   * 视觉模型描述 / 不支持则拦截），以及把流式增量贴回占位气泡。
+   * 「拼提示词 → 选工具 → 读历史 → 跑 agent 循环 → 落库」整段交给 `harness/qaRunner`：
+   * 链路 host 侧将来调的是**同一个**函数（设计 §3.3）。自己再抄一份必然漂移，
+   * 而漂移的表现是「本机答得对、来宾那边答得不对」这种查不出来的数据不一致。
+   *
    * `extraRefs` 用于「解释这段」：那一步在 effect 里触发，走 refsRef 传进来，
    * 免得依赖 state 的落地时序。普通输入框发送不传，用当前引用条。
    */
@@ -685,24 +681,13 @@ export default function ChatPanel({
     const userKey = nextKey();
     const aiKey = nextKey();
     const isFirstMsg = msgs.length === 0;
+    /**
+     * 本面板这边留一份正文与思考过程，**只服务于两件事**：流式上屏与失败时的错误文案。
+     * 落库、兜底文案、旁白/工具提示这些都在 `runQa` 里面了（旁白要留着给兜底用，
+     * 面板拿不到也不需要），所以这里不再重复维护 `lastNarration` / `stopped` 那几个计数器。
+     */
     let answer = '';
     let reasoning = '';
-    /**
-     * 最后一轮旁白 + 最后一次工具提示。
-     *
-     * `onRoundStart` 会把当轮正文清空（旁白不是答案），而轮次用尽时模型可能一个字都不说
-     * （不给 tools 时它仍会返回「空正文 + tool_calls」）。存一份是为了让兜底文案能说清
-     * 「它干了什么、你想做什么」，而不是只留一句「（未获得回答）」。见 harness/agent.ts。
-     */
-    let lastNarration = '';
-    let lastHint = '';
-    /** 实际跑过的轮数（`onRoundStart` 记的）：兜底文案只能印真实值，不能拿设置里的上限顶 */
-    let roundsRan = 0;
-    /**
-     * 护栏停下的情况。用数组而不是 `let`：赋值在回调里，TS 在读它的地方仍会当成
-     * `null`（`x?.granted` 会报「property does not exist on never」），数组下标不做这种收窄。
-     */
-    const stopped: AgentStopInfo[] = [];
     const abort = new AbortController();
     inflightAbort = abort;
     const patchAi = (patch: Partial<ChatMsg>) =>
@@ -737,15 +722,8 @@ export default function ChatPanel({
         { key: aiKey, role: 'ai', content: '', streaming: true },
       ]);
 
-      // 用户消息立即落库：tier 2 描述可能耗时数秒，避免期间关页丢失已上屏消息
-      await db.chats.add({
-        videoId,
-        sessionId,
-        role: 'user',
-        content: displayContent,
-        createdAt: Date.now(),
-        ...(userImages.length > 0 ? { images: userImages } : {}),
-      });
+      // 用户消息的落库交给 `runQa`（它读完历史要立刻跑循环，先落库才能被历史截断读到）。
+      // 这里仍然**先上屏**，所以库还没写时用户已经看到自己的提问了。
 
       // 首条提问自动作为会话标题（纯截图提问用时间戳标记兜底）
       if (isFirstMsg) {
@@ -846,106 +824,44 @@ export default function ChatPanel({
         }
       }
 
-      // 构造上下文：system + 按 token 预算截取的历史 + 当前问题
-      // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文。
-      // 走 loadSessionSkillMeta：会话限定了范围时，清单只列范围内的技能（未限定则等价于全量）。
-      // ⚠️ 这里与下方 executeTool 的 allowedSkillIds 必须传同一个 skillIds —— 清单收窄与
-      // 工具放行是同一件事的两面，只改一处会造成「看不到却能调通」或「看得到却被拒」的错配。
-      const skillMetas = await loadSessionSkillMeta(skillIds);
-      // 每次发送前刷新帧元数据（讲义可能在本面板挂载后生成）：有帧才注册 list_frames 工具并注入引用规则
-      // 材料没有画面可引用，直接跳过这次查询
-      const meta = isMaterial ? [] : await loadFramesMeta();
-      const hasFrames = meta.length > 0;
-      /**
-       * 这份材料此刻能不能被直接改：**格式是 md，且编辑面确实开着**。
-       *
-       * 第二个条件依赖「用户此刻点开了编辑」——注册一个当下不可用的工具只会诱发无效调用
-       * （模型会先调一次、拿到「没有打开编辑面」、再白烧一轮），与 list_frames 只在有抽帧时
-       * 注册是同一个思路：按课程**实际具备的能力**给工具。
-       * 代价是中途关掉编辑会退化：那一轮仍会调它、回执会引导用户重新点开「编辑」。
-       *
-       * 在 send 里算而不是在组件体里：编辑面是模块级注册表，用户点「编辑」不会让本组件重渲染，
-       * 挂在组件体里算出来的值会一直是旧的那次（false）。
-       *
-       * ⚠️ `&&` 短路不是可有可无的写法优化：mdEditorOpen 会动态 import md-editor/bridge，
-       * 那条链上挂着 CodeMirror。让它只在**确实可能是 md 材料**时才走，
-       * 视频课与 PDF / Word / HTML 材料就完全不会去碰那个 chunk（理由见 harness/tools.ts 里那段）。
-       */
-      const canEditMd = materialFormat === 'md' && (await mdEditorOpen(videoId));
-      const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
-      // ⚠️ 工具与提示词必须用**同一个** canEditMd：只注册工具不给提示词，模型多半想不到去用它；
-      // 只给提示词不给工具，它会写一段「我已修改」而其实什么都没发生 —— 比不给更糟。
-      const systemPrompt = isMaterial
-        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length, canEditMd)
-        : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length);
-      const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
-      // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
-      // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀
-      // ⚠️ 引用块要同时进两处：displayContent（上屏 + 落库，用户回看历史时能看到自己引了什么）
-      // 和 currentText（真正发给模型的那条）。漏掉后者的话，模型只能看到一个「这段」而不知道指什么。
+      // 真正发给模型的那条用户消息（与上面上屏/落库那条 displayContent 不同，理由见 runQa 的注释）：
+      // 引用块要同时进两处 —— 落库那条让用户回看时看得见自己引了什么，这条让模型知道「这段」指什么。
+      // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀。
       const currentText =
         (quoteBlock ? `${quoteBlock}\n\n` : '') +
         (shotLead ? `${shotLead}\n` : '') +
         q +
         (descBlock ? `\n${descBlock}` : '') +
-        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');      const budget =
-        settings.contextWindow -
-        estimateTokens(systemPrompt) -
-        estimateTokens(currentText) -
-        (imageParts ? curShots.length * 1200 : 0) - // 多模态图片每张约 1.2k tokens
-        4096; // 输出预留
-      const recent = fitHistoryToBudget(history.slice(0, -1), Math.max(2000, budget));
-      const messages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
-        ...recent.map((r) => ({ role: r.role, content: r.content }) as ChatMessage),
-      ];
-      if (imageParts) {
-        messages.push({
-          role: 'user',
-          content: [...imageParts, { type: 'text', text: currentText }],
-        });
-      } else {
-        messages.push({ role: 'user', content: currentText });
-      }
+        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');
 
-      // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
-      let quizState: QuizState | undefined;
-      // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
-      // 与「一段回答最多一张图」的出图规范一致。
-      let widgetState: WidgetPayload | undefined;
-      const executeTool = createToolExecutor(videoId, {
-        // 材料：kind 决定走 search_material；视频：undefined 走 search_transcript
-        kind: materialKind,
-        onQuiz: (data) => {
-          quizState = { data, picks: data.questions.map(() => -1) };
-          patchAi({ quiz: quizState });
-        },
-        onWidget: (w) => {
-          widgetState = w;
-          patchAi({ widget: w });
-        },
-      });
+      // 讲义抽帧元数据刷新（气泡里的 [图@mm:ss] 缩略图要用）。runQa 自己会再查一次
+      // frames 表来决定注册不注册 list_frames —— 那次只取长度，不回传，这里仍然刷 UI 那份。
+      void loadFramesMeta();
+
       /**
-       * 本轮工具集：只给**当下真的能用**的能力。
-       * 材料没有字幕、没有画面（工具集本身就少两样），md 且编辑面开着才多一个 edit_markdown。
+       * 跑这一轮：提示词 / 工具白名单 / 历史预算 / agent 循环 / 落库 / 兜底文案，全在 runQa 里。
+       *
+       * sink 只回传「界面要显示什么」：正文增量、思考增量、轮次切换（清正文）、工具提示、
+       * 题卡/图卡的即时上屏。**用户消息与助手消息的落库都在 runQa 侧**，
+       * 所以这里拿到的 res.rowId 就是库里的那一行，作答回写直接用它。
        */
-      const tools = isMaterial
-        ? canEditMd
-          ? [...MATERIAL_QA_TOOLS, EDIT_MARKDOWN_TOOL]
-          : MATERIAL_QA_TOOLS
-        : hasFrames
-          ? [...QA_TOOLS, LIST_FRAMES_TOOL]
-          : QA_TOOLS;
-      await runAgentLoop(
-        messages,
-        tools,
-        executeTool,
+      const res = await runQa(
         {
-          // 开着思考就把档位传下去：thinkingParams 按模型声明决定发哪个字段 ——
-          // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发
-          thinkingEffort:
-            thinking && supportsThinking(llmCatalog, llmModel.model) ? effort : undefined,
-          onReasoningDelta: (t) => {
+          videoId,
+          sessionId,
+          text: currentText,
+          displayText: displayContent,
+          ...(userImages.length > 0 ? { chatImages: userImages } : {}),
+          ...(imageParts ? { images: imageParts } : {}),
+          videoName,
+          materialKind,
+          materialFormat,
+          refsCount: curRefs.length,
+          shotCount: curShots.length,
+          skillIds,
+        },
+        {
+          onReasoning: (t) => {
             reasoning += t;
             patchAi({ reasoning });
           },
@@ -954,106 +870,43 @@ export default function ChatPanel({
             patchAi({ content: answer, hint: undefined });
           },
           onRoundStart: () => {
-            // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
-            if (answer.trim()) lastNarration = answer.trim();
+            // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答
+            // （旁白那份由 runQa 留给兜底文案用，面板不需要）
             answer = '';
-            roundsRan++;
             patchAi({ content: '', hint: undefined });
           },
-          onToolStart: (name, argsJson) => {
-            let hint = isMaterial ? '正在检索材料…' : '正在检索字幕…';
-            try {
-              const args = JSON.parse(argsJson || '{}') as { query?: string; name?: string };
-              if (name === 'search_transcript' && args.query) hint = `正在检索：${args.query}`;
-              if (name === 'search_material' && args.query) hint = `正在检索材料：${args.query}`;
-              if (name === 'get_transcript_range') hint = '正在查看字幕原文…';
-              if (name === 'get_material_range') hint = '正在查看材料原文…';
-              if (name === 'list_frames') hint = '正在查看课程画面…';
-              if (name === 'present_quiz') hint = '正在出题…';
-              if (name === 'show_widget') hint = '正在预检图形…';
-              if (name === 'edit_markdown') hint = '正在修改材料正文…';
-              if (name === 'use_skill') hint = `正在加载技能：${args.name ?? ''}`;
-              if (name === 'read_skill_reference') hint = '正在查阅参考文档…';
-            } catch {
-              /* ignore */
-            }
-            lastHint = hint;
-            patchAi({ hint });
-          },
-          onStop: (info) => {
-            stopped.push(info);
-          },
+          // 工具提示的中文化文案只有一份，在 harness/qaRunner（链路 host 复用同一套措辞）
+          onToolStart: (name, argsJson) => patchAi({ hint: qaToolHint(name, argsJson, isMaterial) }),
+          // 题卡 / 图卡是工具闭包的旁路：先即时上屏，落库那一份由 runQa 写
+          onCard: (card) => patchAi(card.kind === 'quiz' ? { quiz: card.quiz } : { widget: card.widget }),
           signal: abort.signal,
         },
-        // 检索轮次上限来自设置（默认 6，选「不限」则为 Infinity；另有循环检测与 token 预算兜着）
-        resolveMaxRounds(settings.agentRounds),
       );
-
-      const finalAnswer = answer.trim();
-      if (finalAnswer || quizState || widgetState) {
-        patchAi({ streaming: false, hint: undefined });
-        const rowId = (await db.chats.add({
-          videoId,
-          sessionId,
-          role: 'assistant',
-          content: finalAnswer,
-          createdAt: Date.now(),
-          reasoning: reasoning || undefined,
-          ...(quizState ? { quiz: quizState } : {}),
-          ...(widgetState ? { widget: widgetState } : {}),
-        })) as number;
-        patchAi({ rowId });
-      } else {
-        // 空回答兜底，避免留下永久空气泡。**要说清是哪道闸停下的**：只写「（未获得回答）」的话，
-        // 用户看到的就是「点了没反应」，既不知道它查了多少轮，也不知道自己该做什么。
-        const closeOut = stopped[stopped.length - 1];
-        patchAi({
-          streaming: false,
-          hint: undefined,
-          content: noAnswerNotice({
-            // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
-            // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
-            reason: closeOut?.reason ?? 'empty',
-            rounds: closeOut?.rounds ?? roundsRan,
-            ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
-            requestedTools: closeOut?.requestedTools ?? [],
-            narration: lastNarration,
-            hint: lastHint,
-          }),
-        });
-      }
+      // 收尾：正文（含「已停止生成」与空回答兜底文案）、题卡、图卡、以及落库后的 rowId 一次贴回
+      patchAi({
+        streaming: false,
+        hint: undefined,
+        content: res.content,
+        ...(res.rowId != null ? { rowId: res.rowId } : {}),
+        ...(res.quiz ? { quiz: res.quiz } : {}),
+        ...(res.widget ? { widget: res.widget } : {}),
+      });
       // tier 2 有截图描述失败时，回答完成后一次性提示
       if (descFailed) {
         toast.warning('部分截图描述失败，回答仅参考了时间戳与字幕');
       }
     } catch (e) {
-      // 用户按了停止：不是错误。保留已流出的内容，只补一句「已停止」，并且**落库**
-      // （否则刷新就没了，「停止」等于白生成一轮）
-      if (abort.signal.aborted) {
-        const partial = answer.trim() || lastNarration.trim();
-        const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
-        patchAi({ streaming: false, hint: undefined, content });
-        // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
-        setLoading(false);
-        const rowId = (await db.chats.add({
-          videoId,
-          sessionId,
-          role: 'assistant',
-          content,
-          createdAt: Date.now(),
-          reasoning: reasoning || undefined,
-        })) as number;
-        patchAi({ rowId });
-      } else {
-        const errMsg = e instanceof Error ? e.message : String(e);
-        patchAi({
-          streaming: false,
-          hint: undefined,
-          error: true,
-          // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
-          content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
-        });
-      }
+      // **用户按了停止不会走到这里**：runQa 自己 catch 住 AbortError，保留已流出的内容、
+      // 补一句「（已停止生成）」并照常落库，然后正常返回（正文已含那半截答案）。
+      // 留在 catch 里的只有真错误（网络 / 鉴权 / 模型 / 上下文超限）——渲染错误气泡，不落库。
+      const errMsg = e instanceof Error ? e.message : String(e);
+      patchAi({
+        streaming: false,
+        hint: undefined,
+        error: true,
+        // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
+        content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
+      });
     } finally {
       if (inflightAbort === abort) inflightAbort = null;
       setLoading(false);

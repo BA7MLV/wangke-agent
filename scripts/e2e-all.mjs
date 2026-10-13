@@ -140,6 +140,10 @@ const META = {
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
   // 全是零依赖纯函数，所以能进这一档 —— 拆出 skills/scope.ts 就是为了这个。
   'test-qa-skill-scope': { service: 'none', antd: false, timeout: 120 },
+  // 问答执行体（harness/qaRunner）的端到端不变量：假网关 + 真 agent 循环 + 真 Dexie。
+  // 守的是「一问一答落两行 / 工具往返不落库 / 中断也落库 / 技能白名单真拦得住 / 空回答不落库」
+  // 这些**静默**的数据形状 —— 单测拆不出来，只有把整条链跑完才看得见。
+  'test-qa-runner': { service: 'none', antd: false, timeout: 180 },
   // 云端同步的单元寻址：id 构造/解析往返、名字编码无歧义、分片边界、畸形 id 不抛、
   // 设置白名单与排除项无交集（含「apiKey / bilibiliCookie 永不可同步」）。零依赖纯函数。
   // ⚠️ 它**不**覆盖「新字段有没有被归类」—— 那条由编译期守门员负责
