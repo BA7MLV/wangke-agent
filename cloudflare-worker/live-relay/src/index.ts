@@ -181,9 +181,21 @@ export class Room extends DurableObject {
     }
   }
 
-  async webSocketClose(ws: WebSocket): Promise<void> {
+  async webSocketClose(ws: WebSocket, code?: number): Promise<void> {
     const role = this.roleOf(ws);
     if (role === 'host') {
+      // host 因**协议版本不匹配**被关（4400）时，把这个 code 原样透传给全体 guest：
+      // guest 那条 socket 还开着，它只能拿到控制帧（host-link-down），拿不到 host 的
+      // close code。不透传的话，「中继与来宾版本不一致，请刷新页面」这句提示在真实
+      // 部署里永远显示不出来——guest 只会看到笼统的「主机已离线」。
+      // 只透传 4400 这一个码：其余关闭原因（room expired / bad code / too many
+      // attempts）都是「对着 guest 说的」，让 guest 自己撞上才算数，转发反而不准。
+      if (code === 4400) {
+        for (const g of this.ctx.getWebSockets()) {
+          if (this.roleOf(g) === 'guest') g.close(4400, 'protocol mismatch');
+        }
+        return;
+      }
       // 只在「最后一个 host 离开」时广播 down 并起宽限 alarm：同码双开的退化场景里
       // 另一个 host 还活着，guest 不该被惊动（正常单 host 房间两者等价）。
       const hasOtherHost = this.ctx
@@ -250,8 +262,8 @@ export class Room extends DurableObject {
 //
 // —— 版本不匹配的 4400：中继目前既不合成、也不转发 ——
 // host 在版本不匹配时 close(4400)（protocol.ts 的 CLOSE_PROTOCOL_MISMATCH），但
-// webSocketClose 只广播 host-link-down，不把 close code 传给 guest：guest 那条 socket
-// 还开着，它拿得到「主机已离线」（控制帧），拿不到 4400。因此「新来宾据 4400 显示
-// 版本不匹配」这条路在真实部署里**还差一跳**。补法很小（本方法 host 分支里，把
-// code === 4400 的 close 透传给全体 guest），但它改的是中继的关闭语义，留给接线时
-// 与协议层一起定；在此之前明确记着它没实现，免得有人以为那页文案已经通了。
+// 已知退化场景：host-link-down 只在「最后一个 host 离开」时广播。同码双开（两个 host
+// 同时进同一房间，属退化场景）时先走的那个不广播——另一个 host 还活着，guest 照常能看。
+//
+// 关闭码的中继职责就到这里：只有 4400（协议版本不匹配）会从 host 透传给 guest，因为
+// 那是**来宾需要知道**的信息；其余码都是对着 guest 说的，让它自己撞上更准。
