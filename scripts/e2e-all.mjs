@@ -172,6 +172,13 @@ const META = {
   // P2 guest 侧 outbox：入队序、落盘恢复、失败分类（终态丢弃 / internal 退避重试）、
   // clientOpId 去重、坏落盘不许弄崩页面、position.set 禁止入队。零依赖纯逻辑。
   'test-livelink-outbox': { service: 'none', antd: false, timeout: 120 },
+  // P2 host 侧接线（握手/版本/op 定向回执/问答流）：跑的是**真 LiveHost** + 进程内桩中继
+  // + 真 WebSocket（用 ws 的客户端当浏览器那个全局），Dexie 靠 fake-indexeddb、模型走假
+  // 网关，不需要常驻服务。守的是「这一帧发给谁」那类只在浏览器里看不出来的事：v1 hello 要
+  // close(4400) 且不发 version.err、两台来宾同时连着时 A 的 ack 不能到 B、未知 from 拒收、
+  // chat.req→ev→done 的帧序列、chat.stop 的 abort 生效、问答全局串行、控制帧无业务响应、
+  // study.add 重放只累加一次。
+  'test-livelink-host-wiring': { service: 'none', antd: false, timeout: 180 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },

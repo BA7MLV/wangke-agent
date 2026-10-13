@@ -40,6 +40,41 @@
  *
  * `decodeControlFrame`（中继控制帧）不在例外之列：它照样对坏帧返 null，只是**不看
  * 版本** —— 版本与它无关。
+ *
+ * ## 谁在说话：入向帧的 `from` 与出向帧的 `to`
+ *
+ * 中继**只搬运**：它按 role 转发，不看内容、不解析载荷（live-relay 的文件头就是这么定的
+ * 取舍 1）。于是 host 收帧时看到的是「某个 guest 发来的一帧」，**看不到是哪一台**。P1 全是
+ * 读面、应答一律广播，回给谁都无所谓；P2 不行：op 的 ack 与一整轮问答都必须**定向**回给
+ * 发起的那台，否则两台设备同时连着时，iPad 的提问会渲染到 Mac 上（不变量 7）。
+ *
+ * 修法是**让来宾自己声明**（不是改中继）：
+ *
+ * - **入向帧带 `from`**：host 派生的每一种入向帧（`op` / `chat.req`）都带一个
+ *   `from: <hello 帧的 id>`。
+ * - **出向帧带 `to`**：host 回帧时把 `to` 填成刚才那个 `from`，来宾只认发给自己的。
+ *
+ * ## 为什么不让中继注入发送者（改中继的代价）
+ *
+ * 听起来更干净的做法是中继在转发前把「发这条帧的 socket 身份」贴上去（像 Supabase
+ * Realtime 的 topic / 或 DO 里存一份 socket→id 表）。没选它，两个理由：
+ *
+ * 1. **它破坏中继「只搬运」的设计原则**。中继要贴发送者，就得开始读文本帧的信封、区分
+ *    app 帧与控制帧、还要把发送者身份混进载荷 —— 于是它**解析了 app 协议**，而
+ *    PROTOCOL_VERSION 每 bump 一次都要重新部署一次中继（文件头「中继控制帧」一节记的正是
+ *    那个税）。更糟的是解析之后它就有义务处理解析失败（坏 JSON 转发不转发？），而
+ *    「坏帧原样转发」恰恰是中继现在最好的一条性质。
+ * 2. **来宾自己声明是零成本的**：它本来就握着那个 id（hello 时自己生成并记住，见
+ *    guest.ts 的 guestId），多写一个字段而已；host 侧再用「`from` 必须在席」兜住伪造
+ *    （host.ts 的 admitGuest）—— 也就是说，**校验放在业务侧就够了**，中继不需要为
+ *    「这个 id 可不可信」承担任何责任。
+ *
+ * 声明式 id 的代价是中继层完全无感，所以「哪台设备还在」这种信息 host 也拿不到（guest
+ * 掉线时中继不会通知 host）；那份缺口的处置见 host.ts 的 guests 表一节。
+ *
+ * ⚠️ `from` / `to` 是 **v2 内增补**的字段（P2 尚未发版，guest 侧一起对齐），所以版本号
+ * 不再 bump：判据是「同一个未发布的协议版本内补齐字段」，而 bump 会让已经按 v2 写好的
+ * guest 全部被判版本不符。
  */
 
 import { gzipSync, gunzipSync, strToU8, strFromU8 } from 'fflate';
@@ -150,6 +185,11 @@ export interface VersionErrFrame extends Frame {
  * op（guest→host）：来宾写面的唯一入口。`opId` 就是 outbox 的 clientOpId，ack 原样回它，
  * `study.add` 还拿它当去重键（ops.ts 的 DedupStore 是准入条件）。
  *
+ * `from` 是**发起这一帧的来宾 id**（= 它的 hello id）：ack 必须定向回给同一台，发给别人的
+ * 后果是「A 的操作确认到了 B」（B 的 outbox 删掉一条它从没发过的 op，A 那条永远重发）。
+ * host 侧**必须先查席**再处理（`from` 不在 guests 表 → 不 apply、不 ack）：身份是来宾自己
+ * 声明的，声明本身就不算证据。为什么不让中继注入发送者，见文件头「谁在说话」。
+ *
  * `args` **必须是对象且按 op 分形状**，host 侧 dispatch 一律当不可信数据消毒（String/Number）
  * 后再交给 apply。放在 `args` 里而不是摊平到信封上：摊平后新加一个字段就会与
  * `to` / `round` 这类公共字段撞名，而撞名的表现是「参数被隔壁字段覆盖」，不报错。
@@ -157,6 +197,8 @@ export interface VersionErrFrame extends Frame {
 export interface OpFrame extends Frame {
   t: typeof FRAME.op;
   opId: string;
+  /** 发起者来宾 id（hello id）。host 用它定向回 ack，见上 */
+  from: string;
   op: OpName;
   args: unknown;
 }
@@ -165,6 +207,9 @@ export interface OpFrame extends Frame {
  * ack（host→guest）：幂等回执。`id` 是 ack 自己的路由 id（与 opId 同值好对账，但**匹配
  * 一律用 opId**，重发时机序可能错位，id 未必一一对应）。
  *
+ * `to` 是**目标来宾**（发起那条 op 的 `from`）。ack 不能广播：广播出去等于把这台设备写了
+ * 什么、改没改成告诉别的设备，而每台来宾都要按 opId 去匹配自己的 outbox（不变量 7）。
+ *
  * `ok` 是 1|0 而不是 true/false：线上是数字，页面与 outbox 都按数字判（`ok === 1`）。
  * 落成 true/false 的代价是接收侧两处都得判，两处漏一处就是「失败被当成送达」——
  * 那正是 outbox 终态丢弃的前提（不变量 4）。
@@ -172,6 +217,8 @@ export interface OpFrame extends Frame {
 export interface AckFrame extends Frame {
   t: typeof FRAME.ack;
   opId: string;
+  /** 目标来宾 id（= 发起那条 op 的 from） */
+  to: string;
   ok: 1 | 0;
   reason?: string;
   rowId?: number | string;
@@ -187,6 +234,8 @@ export type ChatEvKind = 'reasoning' | 'delta' | 'round' | 'tool' | 'stop';
 /**
  * chat.ev（host→guest）：流事件。`to` 是目标来宾的 hello id 或 `'*'`（广播），
  * 来宾**只认发给自己的**（不变量 7：两台设备不能互相看见对方的问答流）。
+ * host 侧**只填具体来宾 id**（它没有「该广播给谁」的判断依据 —— 逐帧都有 from，广播等于
+ * 把一台设备的问答推到别的屏幕上）；`'*'` 留给将来 host 自己发起的那类全端消息。
  */
 export interface ChatEvFrame extends Frame {
   t: typeof FRAME.chatEv;
@@ -197,10 +246,16 @@ export interface ChatEvFrame extends Frame {
   round?: number;
 }
 
-/** chat.req（guest→host）：一次提问。`to` 是它要发给的主机（当前只有一台主机，恒为 '*'）。 */
+/**
+ * chat.req（guest→host）：一次提问。`to` 是它要发给的主机（当前只有一台主机，恒为 '*'），
+ * `from` 是**发起提问的来宾 id**（hello id）—— 一整轮问答的每一帧都要定向回它，两台设备
+ * 同时连着时不能互相看见对方的流（不变量 7）。理由同 op 的 `from`，见文件头「谁在说话」。
+ */
 export interface ChatReqFrame extends Frame {
   t: typeof FRAME.chatReq;
   to: string;
+  /** 发起者来宾 id（hello id）。host 回流时填进 `to` */
+  from: string;
   turnId: string;
   videoId: string;
   text: string;
