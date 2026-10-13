@@ -122,7 +122,15 @@ interface UnitCtx {
   settled: boolean;
 }
 
-/** 8 字节随机十六进制：hello id 与 reqId 的唯一性来源（host 按 hello id 去重 guest）。 */
+/**
+ * 8 字节随机十六进制：hello id 与 reqId 的唯一性来源（host 按 hello id 去重 guest）。
+ *
+ * **故意不并进 utils/uuid.ts**：这里要的不是 UUID，是「短 + 够散」。hello id 每个会话进
+ * 日志、进 host 的 guests Map 的键、还出现在 e2e 的帧日志里；reqId 每帧都要发一遍，
+ * 16 个字符比 36 个省一半。两者要的是不同的东西，凑成一份只会让两边各拿到不合适的一半。
+ * 随机源仍是 `crypto.getRandomValues`（不是 randomUUID）：这里要的只是随机数，而
+ * randomUUID 在局域网 http 这种非安全上下文里是 undefined（理由见 utils/uuid.ts 文件头）。
+ */
 function randomSuffix(): string {
   const bytes = new Uint8Array(8);
   crypto.getRandomValues(bytes);

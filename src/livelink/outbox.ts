@@ -46,6 +46,7 @@
  */
 
 import type { ApplyReason, OpName } from './ops.ts';
+import { uuid } from '../utils/uuid.ts';
 
 /** 落盘用的 localStorage key。设计 §3.4 定下的名字，换了就与旧队列失联（老队列读不出来）。 */
 export const OUTBOX_STORAGE_KEY = 'wangke-livelink-outbox';
@@ -85,18 +86,13 @@ const DEFAULT_MAX_ATTEMPTS = 5;
 const TERMINAL_REASONS: ReadonlySet<string> = new Set<ApplyReason>(['not-found', 'gone', 'bad-args', 'unknown-op']);
 
 /**
- * clientOpId 生成。`crypto.randomUUID` 只在安全上下文（HTTPS / localhost）可用，iPad 用
- * 局域网 http://IP 访问本应用时它是 undefined，直接调用会同步抛异常（降级写法沿用
- * Library.tsx 的 uuid()，同一套降级理由）。getRandomValues 在所有上下文都可用。
+ * clientOpId 生成。`o-` 前缀是为了在 host 的日志与去重表里一眼认出「这是链路上的 op」，
+ * 后面跟的就是标准 UUID —— 算法在 utils/uuid.ts，本仓库只有那一份（原来这里是第三份
+ * 拷贝，改一处忘另一处的后果是某处 id 变短或不再唯一，而症状是 host 去重表把两条不同的
+ * op 当成同一条：一条时长被静默合并掉）。
  */
 function newClientOpId(): string {
-  if (typeof crypto.randomUUID === 'function') return `o-${crypto.randomUUID()}`;
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
-  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `o-${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
+  return `o-${uuid()}`;
 }
 
 /** 记录副本：list()/next() 交出去的不能是内部对象，否则调用方改一下就绕过了去重与落盘。 */

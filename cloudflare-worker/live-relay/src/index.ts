@@ -25,9 +25,11 @@
  * 连接契约（与 src/livelink/ 的 host.ts / guest.ts 对齐，两侧已按此实现）：
  *   wss://<worker>?room=<配对码>&role=host|guest
  * 中继只合成两种帧（v 必须等于应用侧 protocol.ts 的 PROTOCOL_VERSION——两套部署
- * 不共享模块，只能靠约定）：
- *   {"v":1,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
- *   {"v":1,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
+ * 不共享模块，只能靠约定；应用侧 bump 到 P2 的 v2 时**这里必须同步改并重新部署**，
+ * 否则 guest 的 decodeFrame 会把这两帧当坏帧静默丢掉，「主机已离线 / 已恢复」这条
+ * 提示会毫无征兆地失效）：
+ *   {"v":2,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
+ *   {"v":2,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
  *
  * close code 与 guest 页 FATAL_CLOSE_CODES（LiveGuest.tsx）一一对应，改前先看那：
  *   4000 房间回收 / 4001 配对码不存在 / 4403 配对限流
@@ -65,8 +67,8 @@ const CLOSE_BAD_CODE = 4001;
 const CLOSE_THROTTLED = 4403;
 
 /** 中继合成的链路状态帧。id 固定 'relay'：与业务帧的 id 命名空间分开，日志里一眼可辨。 */
-const HOST_LINK_DOWN = '{"v":1,"t":"host-link-down","id":"relay"}';
-const HOST_LINK_UP = '{"v":1,"t":"host-link-up","id":"relay"}';
+const HOST_LINK_DOWN = '{"v":2,"t":"host-link-down","id":"relay"}';
+const HOST_LINK_UP = '{"v":2,"t":"host-link-up","id":"relay"}';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {

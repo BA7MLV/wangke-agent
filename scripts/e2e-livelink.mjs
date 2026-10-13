@@ -80,6 +80,9 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { WebSocketServer } from 'ws';
+// 桩中继合成的帧要带当前协议版本（见下面 host-link-down 处的注释），从应用侧直接取，
+// 别在测试里再抄一份数字 —— 抄的那份是 P2 bump 时最容易漏、且漏了不报错的地方。
+import { PROTOCOL_VERSION } from '../src/livelink/protocol.ts';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 /** 桩中继端口。避开 dev(5173)/preview(4173)，也避开本机常见的 8080/3000。 */
@@ -286,7 +289,9 @@ wss.on('connection', (ws, req) => {
       r.host = null;
       // host 断开：向全体 guest 广播 host-link-down（真 DO 的 webSocketClose）。
       // 帧内容与 live-relay/src/index.ts 的 HOST_LINK_DOWN 常量逐字节一致。
-      const payload = JSON.stringify({ v: 1, t: 'host-link-down', id: 'relay' });
+      // v 必须等于应用的 PROTOCOL_VERSION（P2 = 2）：写死 1 的话 guest 的 decodeFrame
+      // 会把这条广播当坏帧丢掉，「主机已离线」的提示静默失效，而帧字节断言还照样绿。
+      const payload = JSON.stringify({ v: PROTOCOL_VERSION, t: 'host-link-down', id: 'relay' });
       for (const g of r.guests) {
         if (g.readyState === ws.OPEN) {
           g.send(payload);
@@ -1013,7 +1018,10 @@ try {
   console.log(`   停机前共享条存在=${shareBarBefore > 0}，host-link-down 广播次数=${stats.hostLinkDown}`);
   await check('中继广播了 host-link-down（帧内容与真 DO 常量一致）', () => {
     assert.ok(stats.hostLinkDown > 0, '没广播 host-link-down');
-    assert.equal(stats.hostLinkDownPayloads[0], '{"v":1,"t":"host-link-down","id":"relay"}');
+    assert.equal(
+      stats.hostLinkDownPayloads[0],
+      `{"v":${PROTOCOL_VERSION},"t":"host-link-down","id":"relay"}`,
+    );
   });
 
   // 页面错误：真错误才红。React 的 StrictMode 双挂载在 dev 下会有无害噪音，

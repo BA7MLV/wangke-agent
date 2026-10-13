@@ -20,6 +20,8 @@ import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { progressRatio } from '../utils/videoProgress';
 import { useIsMobile } from '../utils/useMobile';
+// 课程/材料 id 的生成（降级实现与理由见 utils/uuid.ts 的文件头，仓库里只有那一份）
+import { uuid } from '../utils/uuid';
 import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget } from '../bilibili';
 import type { BiliSubtitleItem } from '../bilibili/dmview';
 import { formatTotalDuration, pageLabel, resolveSelectedPages, selectedDuration } from '../bilibili/pages';
@@ -69,21 +71,6 @@ function isVideoFile(file: File): boolean {
  */
 function isImportable(file: File): boolean {
   return isVideoFile(file) || isMaterialFile(file);
-}
-
-/**
- * crypto.randomUUID 仅在安全上下文（HTTPS / localhost）可用。
- * iPad 通过局域网 http://IP 访问时它是 undefined，直接调用会同步抛异常
- * （表现为选完文件毫无反应）。getRandomValues 在所有上下文都可用，用它降级。
- */
-function uuid(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
-  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 /** iOS/iPadOS 检测（含 iPadOS 13+ 伪装成 MacIntel 的情况） */
