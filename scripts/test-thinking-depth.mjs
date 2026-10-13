@@ -18,6 +18,8 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 // modelCaps 内部是 `import ... from './modelMeta'`（无扩展名，Vite 的写法），
 // Node 的类型擦除不认这种 specifier，所以先 esbuild 打成一个包再 import。
 const here = dirname(fileURLToPath(import.meta.url));
+// 草稿目录是 `scripts/.cache` 根（**不能**再往下挪一层）：入口文件里写的是
+// `'../../src/...'` 相对 import，深度一变就错位。本脚本只删自己的产物。
 const dir = join(here, '.cache');
 const entry = join(dir, 'thinking-depth-entry.ts');
 const outfile = join(dir, 'thinking-depth-bundle.mjs');

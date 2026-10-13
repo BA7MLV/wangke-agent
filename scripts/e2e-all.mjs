@@ -551,6 +551,9 @@ const reportJson = {
   unregisteredScripts: unregistered,
   results,
 };
+// 报告写在所有子脚本跑完之后，而子脚本可能在运行期删过这个目录（test-providers 曾整目录
+// rm 过一次，把收尾报告写炸成 ENOENT；现已各自用子目录，但编排器这边再加一道保险）。
+mkdirSync(CACHE_DIR, { recursive: true });
 writeFileSync(join(CACHE_DIR, 'e2e-report.json'), JSON.stringify(reportJson, null, 2), 'utf8');
 
 // 人读 markdown

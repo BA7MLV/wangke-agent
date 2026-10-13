@@ -18,6 +18,10 @@ import { fileURLToPath } from 'node:url';
 // settings.ts 依赖 zustand/middleware（persist 需要 localStorage），Node 里跑不了整包。
 // 这里只取纯函数的部分：把下面这些导出经 esbuild 打成一个不带 persist 的小包。
 const here = dirname(fileURLToPath(import.meta.url));
+// 草稿目录就是 `scripts/.cache` 根（**不能**再往下挪一层）：下面写的入口文件里
+// 相对 import 是 `'../../src/...'`，深度一变全部错位，esbuild 解析失败。
+// 共享目录因此只删自己的文件（见 exit 钩子），绝不整目录删除——那会连带删掉
+// e2e-all 的汇总报告目录（曾真实发生过：任何跑到本脚本的完整档，收尾必 ENOENT）。
 const dir = join(here, '.cache');
 const entry = join(dir, 'providers-entry.ts');
 const outfile = join(dir, 'providers-bundle.mjs');
@@ -60,7 +64,11 @@ globalThis.localStorage = {
     external: ['zustand', 'zustand/middleware'],
   });
 }
-process.on('exit', () => rmSync(dir, { recursive: true, force: true }));
+// 只删自己的两个文件：整目录删除会连带干掉共享目录里的别人的东西（e2e-all 的报告）
+process.on('exit', () => {
+  rmSync(entry, { force: true });
+  rmSync(outfile, { force: true });
+});
 
 const M = await import(outfile);
 
