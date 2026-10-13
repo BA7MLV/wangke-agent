@@ -1,0 +1,74 @@
+/**
+ * 来宾问答面板的**新增**样式（配 LiveChatPanel.tsx）。
+ *
+ * 气泡 / 思考块 / 时间戳链接 / 输入区那一整套**不在这里** —— 它们沿用
+ * `components/chat-panel.css` 的 `.chat-*`（本文件头解释了为什么：两套并存必然漂移）。
+ * 这里只补三样那个文件里没有、且只有来宾页才有的东西。
+ *
+ * 约定与页面其余样式一致（见 live-guest.css 顶部）：颜色全走 MD3 语义令牌
+ * （`rgb(var(--mdui-color-*))`），深浅两套色板自动成立，不写死色值。
+ */
+
+/* 面板外壳：列方向，气泡区可压缩、输入区固定高（与 ChatPanel 的面板骨架同一套伸缩语义）。 */
+.live-chat {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+/* 滚动区：镜像页里问答面板不是「面板骨架里的一块」，而是一张卡片里的一段，
+   高度只能由内容与上限共同决定 —— 所以这里给 max-height 而不是 height:100%
+   （后者在没有定高祖先时会把内容压成 0）。取 52vh：够看三四轮往返，
+   又不会把上方的播放器/字幕挤到屏幕外（移动端习惯，见 LiveGuest 的移动端布局）。 */
+.live-chat__list {
+  max-height: 52vh;
+  min-height: 120px;
+  overflow: auto;
+  /* 靠底：正在生成的那条永远在视野里，不用手动往下拖 */
+  overscroll-behavior: contain;
+}
+
+/* 一轮 = 用户气泡 + AI 气泡。chat-list-wrap 自己在 .chat-msg 之间给 gap，
+   这里把「同一轮的两个气泡」再归成一组，于是组内也要有 gap。 */
+.live-chat__turn {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+/* 空态引导：比 EmptyState 轻（问答面板是卡片里的一段，不是整页） */
+.live-chat__empty {
+  padding: 12px 2px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+/* 离线提示：与 chat-note 同一套色阶/形状（描边底 + tertiary 图标），
+   但前缀是 live-chat__ 而不是 chat-note —— 语义不同（这是「提问会失败」，
+   那是「索引不可用」），共用一个类名会让将来改其中一个连累另一个。 */
+.live-chat__note {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin-bottom: 6px;
+  padding: 8px 10px;
+  font-size: 12px;
+  line-height: 1.5;
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-surface-container-high));
+  color: rgb(var(--mdui-color-on-surface-variant));
+}
+
+.live-chat__note > mdui-sym-warning {
+  flex: none;
+  color: rgb(var(--mdui-color-tertiary));
+}
+
+/* 窄屏（iPad 竖屏 / 手机）：滚动区降一档，把屏幕让给播放器。
+   断点与 useMobile.ts 的 mobile 口径一致（768px），免得两套「窄」打架。 */
+@media (max-width: 768px) {
+  .live-chat__list {
+    max-height: 44vh;
+  }
+}

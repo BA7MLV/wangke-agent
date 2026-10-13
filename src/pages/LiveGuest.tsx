@@ -13,17 +13,39 @@
  *    offline 时若还开着课程详情，banner 会明说「这是离线前的内存镜像」。
  *
  * 页面形态刻意做轻：列表 → 详情（封面 + 字幕/对照轨点击跳转 + native controls
- * 播放器）。不复刻本地播放器的全部能力（跟读高亮、倍速面板、讲义联动……）——
+ * 播放器）+ 底部问答面板。不复刻本地播放器的全部能力（跟读高亮、倍速面板、讲义联动……）——
  * 那要把本地 store 抽象成 source 接口，是最大的工作量风险，YAGNI。
+ *
+ * ## P2 接线：三件事都在这一页落地
+ *
+ * 1. **问答面板**（`components/LiveChatPanel.tsx`）：问的是主机上的 agent loop
+ *    （凭据不过链路），流事件由 `LiveGuest` 的 `onTurn` 回调收成本页的 `turns` 状态。
+ *    为什么回调在页面而不在面板里挂：`onTurn` 是 client 的**构造期**选项，而 client 由本页
+ *    在 `connect()` 里建；要让面板自己订阅就得改 guest.ts 的公开方法集合，那是跨任务契约。
+ * 2. **播放进度自动写回**：`timeupdate` / `seeked` / `pause` / `ended` → `guest.setPosition`
+ *    （**5s 节流在 guest.ts 内部**，页面不要再自己节流一层 —— 两层节流会让最坏延迟翻倍，
+ *    而进度本来就是「最后写入胜出」语义，晚一条无所谓）。
+ * 3. **学习时长自动写回**：`livelink/guestStudy.ts` 的追踪器，口径与 `store/studyTime.ts`
+ *    逐条对齐，切出来的「某天 N 秒」经 `study.add` op 回主机；**来宾端一个字都不写
+ *    IndexedDB**（不变量 9）。为什么这件事值得做，见那个文件的头。
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { Banner, EmptyState, PageShell, SectionCard } from '../ui';
-import { LiveGuest as LiveGuestClient, type IndexEntry } from '../livelink/guest';
-// 4400 引用常量而不写数字：它由 host 发（应用侧），不像 4000/4001/4403 那三个来自
-// 另一个部署的中继（那边只能手抄，本仓库已接受）。同一个数字在本文件出现两次的场合，
-// 一次用常量一次写字面量，那正是将来改协议会漏掉的一半。
+import {
+  LiveGuest as LiveGuestClient,
+  VERSION_MISMATCH_TEXT,
+  type GuestTurn,
+  type IndexEntry,
+} from '../livelink/guest';
+import {
+  startGuestStudyTracking,
+  stopGuestStudyTracking,
+  setGuestStudyMediaPlaying,
+  markGuestStudyActive,
+} from '../livelink/guestStudy';
+import LiveChatPanel from '../components/LiveChatPanel';
 import { CLOSE_PROTOCOL_MISMATCH } from '../livelink/protocol';
 import { GuestMsePlayer, feedRange } from '../livelink/mse';
 import { videoUnit } from '../sync/units';
@@ -99,7 +121,11 @@ const CLOSE_REASON_TEXT: Record<number, string> = {
   4000: '房间已过期：主机下线超过 60 秒（或房间被回收），让主机重新打开「实时链路」再试',
   4001: '配对码不存在：主机没在共享，或链接里的码已过期，向主机重新索取链接',
   4403: '配对尝试次数过多，这个房间已被临时锁定：等 5 分钟再用同一个链接',
-  [CLOSE_PROTOCOL_MISMATCH]: '中继与来宾版本不一致，请刷新页面',
+  // ⚠️ 这里**引用** guest.ts 的 VERSION_MISMATCH_TEXT，不写第二份字符串：同一个故障在界面上
+  // 出现两种说法，用户分不出它们其实是同一件事，而两边那句话的分歧点只有一句「刷新页面」
+  // 这么关键的修复动作（guest.ts 的 VERSION_MISMATCH_TEXT 注释把这条钉成了跨任务契约）。
+  // 另一条通向这句话的路（welcome 的 hostVersion 对不上）走的是 onError，那边也已经引它。
+  [CLOSE_PROTOCOL_MISMATCH]: VERSION_MISMATCH_TEXT,
 };
 
 export default function LiveGuest() {
@@ -115,6 +141,17 @@ export default function LiveGuest() {
   const [closeReason, setCloseReason] = useState('');
   const [courses, setCourses] = useState<IndexEntry[]>([]);
   const [detail, setDetail] = useState<Detail | null>(null);
+  /**
+   * 当前链路客户端（只用来把它交给问答面板的 props —— ref 变更不触发重渲染，
+   * 而面板要在详情打开时立刻拿到**这一代**的 client）。
+   */
+  const [client, setClient] = useState<LiveGuestClient | null>(null);
+  /** 已发起的问答轮次快照（onTurn 收集，按发起顺序）。换课/换代时清空，见各处注释 */
+  const [turns, setTurns] = useState<GuestTurn[]>([]);
+  /** outbox 里待补发的 op 条数。**0 时不显示** —— 它是用户唯一能看出「数据卡住了」的信号 */
+  const [pendingOps, setPendingOps] = useState(0);
+  /** 版本不匹配那句（onError）。与 closeReason 分开：那一类是「连接没了」，这一类是「连接在、但对不上」 */
+  const [versionError, setVersionError] = useState('');
   /**
    * 「换过连接」计数器。**与下面 genRef 的「实例代际」是两件事，别混**：
    * genRef 让**旧实例的回调作废（防串台）**；connGen 让**播放器重建**。
@@ -143,11 +180,46 @@ export default function LiveGuest() {
 
   const connect = useCallback(() => {
     const gen = ++genRef.current;
+    // 换代即清空：旧 client 的 outbox / 轮次 / 待补发数都随它一起作废（genRef 让它的
+    // 回调全部打不开），留着显示只会让用户看见一个永远不动的「N 条待补发」。
+    setTurns([]);
+    setPendingOps(0);
+    setVersionError('');
     const g = new LiveGuestClient({
       relayUrl: relay,
       code: pair,
       // 二进制帧出口： rid 未命中单元现场的视频帧 → MSE 管道
       onBinaryFrame: feedRange,
+      // 待补发条数：0 时 UI 自己不显示（这一条在 guest.ts 的注释里就写明了）
+      onPendingOps: (n) => {
+        if (gen === genRef.current) setPendingOps(n);
+      },
+      /**
+       * 一轮问答的状态变化。**每次给一份新副本**（guest.ts 的纪律），所以这里可以直接
+       * 按 turnId 覆盖：首次见到就追加（保持发起顺序），之后再见到就地替换。
+       *
+       * 为什么代际判断放在最外层：断线重连后旧 client 还可能吐出最后几个回调，
+       * 那些 turn 的流事件已经没人接了（host 那边那一轮也随 bye 被 abort），
+       * 混进新列表就是一条永远停在「思考中…」的空气泡。
+       */
+      onTurn: (turn) => {
+        if (gen !== genRef.current) return;
+        setTurns((prev) => {
+          const i = prev.findIndex((t) => t.turnId === turn.turnId);
+          if (i < 0) return [...prev, turn];
+          const next = prev.slice();
+          next[i] = turn;
+          return next;
+        });
+      },
+      /**
+       * 显式错误（当前只有版本不匹配）。**不并进 closeReason**：那一句要单独占一条
+       * banner（refresh 才是修复动作，重连救不了），而 closeReason 是挂在离线 banner
+       * 描述里的。两条并成一处，用户会以为「主机不在了」而去查主机有没有开共享。
+       */
+      onError: (msg) => {
+        if (gen === genRef.current) setVersionError(msg);
+      },
       onHostDown: () => {
         if (gen === genRef.current) setPhase('offline');
       },
@@ -191,6 +263,7 @@ export default function LiveGuest() {
       },
     });
     guestRef.current = g;
+    setClient(g);
     setPhase('connecting');
     void g
       .connect()
@@ -234,6 +307,10 @@ export default function LiveGuest() {
     // React 的 cleanup 在「关标签页」时不一定跑得到（浏览器直接拆页面），而 host
     // 的已连接设备数靠 bye 才减得下来。所以再挂一个 pagehide 兜底 —— 它才是
     // 「页面真的要走了」的标准信号。
+    //
+    // ⚠️ 这条钩子**不发进度**：进度与学习时长的「尽力补发」在更里面一层
+    // （guest.ts 的 IO 壳与 guestStudy.ts 各自挂了 pagehide/visibilitychange）。
+    // 这里只负责 bye —— host 的在席表靠它减。
     const onPageHide = () => guestRef.current?.close();
     window.addEventListener('pagehide', onPageHide);
     return () => {
@@ -242,10 +319,30 @@ export default function LiveGuest() {
       window.removeEventListener('pagehide', onPageHide);
       guestRef.current?.close(); // 发 bye：host 的已连接设备数立刻减一
       guestRef.current = null;
+      setClient(null);
       playerRef.current?.dispose();
       playerRef.current = null;
+      stopGuestStudyTracking();
     };
   }, [connect, relay, pair]);
+
+  /**
+   * 学习时长追踪：与主机侧同一套判定口径，切出来的「某天 N 秒」逐条转成 `study.add` op
+   * （走 outbox，离线也只入队不丢）。**来宾端不写 IndexedDB**（不变量 9）。
+   *
+   * 挂在 `connGen` 上而不是挂一次：断线重连会换一个 client，新 client 的 outbox 才是
+   * 往哪儿发的地方；用旧 client 的引用发出去的话，那些秒数会在已关闭的连接上静默丢掉。
+   * cleanup 走 `stopGuestStudyTracking`（它内部会先补发最后一段再摘定时器）。
+   */
+  useEffect(() => {
+    const g = client;
+    if (!g) return;
+    return startGuestStudyTracking((slices) => {
+      for (const s of slices) g.addStudy(s.date, s.seconds);
+    });
+    // connGen：连接换代就把追踪器绑到新 client 上（理由见上）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [connGen, client]);
 
   /**
    * offline 时的自救轮询。
@@ -290,6 +387,9 @@ export default function LiveGuest() {
     const seq = ++openSeqRef.current;
     const guest = guestRef.current;
     if (!guest) return;
+    // 换课即换会话：问答轮次是按 course 发的（chat.req 带 videoId），留着上一门的
+    // 轮次会让用户在这门课里看到别的课的回答，而且「停止」会停一个不属于这门的轮次。
+    setTurns([]);
     // 先摆个空详情：封面位与视频区立刻出现，单元拉完再填内容
     setDetail({ entry, coverUrl: null, dominantColor: null, segments: [], tracks: [], playErr: '' });
     void (async () => {
@@ -334,6 +434,50 @@ export default function LiveGuest() {
     const id = videoCourseId;
     const setPlayErr = (msg: string) =>
       setDetail((d) => (d && d.entry.id === id ? { ...d, playErr: msg } : d));
+
+    /**
+     * 进度自动写回（`position.set` op）。
+     *
+     * **节流在 guest.ts 内部**（5s），页面这一层刻意不再节流：`setPosition` 每次调用只是
+     * 覆盖内存里那一格（最后写入胜出），真正的发送由 guest 的 tick 与 flush 把关。
+     * 页面再套一层节流的代价是「拖到 40 分钟然后关页面」那一刻的精确位置可能压根没进过
+     * 那一格 —— 而那恰恰是最常见的用法。
+     *
+     * `force`（跳过节流立即发）用在**用户从「在动」转为「不动」的那一下**：暂停 / 拖完 /
+     * 播完 / 换课 / 关页面。不 force 的只有 `timeupdate`（播放中，每秒好几次，靠节流压）。
+     *
+     * `finished` 口径与本机 Player.tsx 的 `setTime(time, ended)` **逐字一致**：
+     * `lastPosition` 永远写真实位置（播完停在结尾），「播完后再打开从头来」由 host 侧
+     * 的 finished 标记 + 读取时翻译。写成 `video.ended` 而不是「duration - 1」那种近似，
+     * 理由同上：近似值会让「看没看完」在片尾附近判错。
+     */
+    const pushPosition = (force: boolean) => {
+      if (disposed) return;
+      const t = video.currentTime;
+      // 时长没探到时 currentTime 是 NaN，别把垃圾写进主机（applyPosition 会回 bad-args，
+      // 但那时用户已经白等了一次往返）
+      if (!Number.isFinite(t) || t < 0) return;
+      guest.setPosition(id, t, video.ended);
+      if (force) guest.flushPosition();
+    };
+    const onTimeUpdate = () => pushPosition(false);
+    const onSeeked = () => pushPosition(true);
+    const onPause = () => {
+      pushPosition(true);
+      // 暂停后恢复普通空闲判定（播放中的「不判空闲」只对还在播的媒体成立）
+      setGuestStudyMediaPlaying(false);
+    };
+    const onPlay = () => setGuestStudyMediaPlaying(true);
+    const onEnded = () => {
+      pushPosition(true);
+      setGuestStudyMediaPlaying(false);
+    };
+    video.addEventListener('timeupdate', onTimeUpdate);
+    video.addEventListener('seeked', onSeeked);
+    video.addEventListener('pause', onPause);
+    video.addEventListener('play', onPlay);
+    video.addEventListener('ended', onEnded);
+
     const player = new GuestMsePlayer(
       video,
       {
@@ -350,6 +494,21 @@ export default function LiveGuest() {
     });
     return () => {
       disposed = true;
+      video.removeEventListener('timeupdate', onTimeUpdate);
+      video.removeEventListener('seeked', onSeeked);
+      video.removeEventListener('pause', onPause);
+      video.removeEventListener('play', onPlay);
+      video.removeEventListener('ended', onEnded);
+      /**
+       * 换课 / 换代 / 卸载：**先补发再 dispose**。
+       *
+       * guest.ts 的 `pendingPosition` 只有一格，而 `setPosition` 是「覆盖那一格」。
+       * 不在这里 flush 掉旧课那一条，紧接着新播放器/新课程的第一条 timeupdate 就会把它
+       * 顶掉 —— 表现是「刚看完第一节课，进第二节，进度条又回到第一节开头」，
+       * 而且全程没有任何报错。flush 不走 outbox，秒发一帧，代价可以忽略。
+       */
+      guest.flushPosition();
+      setGuestStudyMediaPlaying(false);
       player.dispose();
       playerRef.current = null;
     };
@@ -402,6 +561,13 @@ export default function LiveGuest() {
             (detail ? '已显示的是离线前的内存镜像，不会更新；重连后自动刷新。' : '检查主机是否开着应用、链接里的配对码是否最新。')
           }
         />
+      )}
+      {/* 版本不匹配**单独**一条，且优先级高于离线那条（它可能同时为真）：
+          「主机已离线」在这里是误导 —— 主机在线、配对码也对，只是两页版本不同，
+          用户会去查主机有没有开共享，而那个动作对版本差一点用都没有。修复动作只有一个：
+          刷新页面。 */}
+      {versionError && (
+        <Banner variant="error" testId="live-version-error" icon={<mdui-sym-error />} title={versionError} />
       )}
 
       {phase === 'ready' && courses.length === 0 && (
@@ -508,6 +674,40 @@ export default function LiveGuest() {
               </mdui-list>
             </div>
           ))}
+        </SectionCard>
+      )}
+
+      {/*
+        问答面板：放在详情卡片**之后**（而不是并排放侧栏），理由是这页的既定形态就是
+        单列堆叠（PageShell 一列、卡片一张张往下），镜像页的使用姿势又以竖屏 iPad 为主 ——
+        侧栏会把播放器压到不足一半宽。面板内部自己有滚动区与高度上限，所以它不会把上面的
+        字幕列表顶出屏幕。
+      */}
+      {detail && client && (
+        <SectionCard
+          title="提问"
+          subtitle="提问在主机上回答，答案与记录都留在主机的这门课里；来宾这边只看不写"
+          testId="card-live-chat"
+        >
+          {/* 待补发提示。**0 时不渲染**：它是「数据卡住了」的唯一信号，一直挂着一条
+              「0 条待补发」只会变成没人看的装饰（guest.ts 的 onPendingOps 注释同款口径）。 */}
+          {pendingOps > 0 && (
+            <div className="live-guest__pending" role="status" data-testid="live-pending-ops">
+              <mdui-sym-refresh />
+              <span>{pendingOps} 条操作待补发（主机回来后会自动重发）</span>
+            </div>
+          )}
+          <LiveChatPanel
+            guest={client}
+            turns={turns}
+            videoId={detail.entry.id}
+            videoName={detail.entry.name}
+            isMaterial={isMaterial}
+            materialKind={detail.entry.materialFormat === 'pdf' || !detail.entry.materialFormat ? 'page' : 'para'}
+            {...(isMaterial ? {} : { onSeek: seekTo })}
+            online={phase === 'ready'}
+            onAsk={markGuestStudyActive}
+          />
         </SectionCard>
       )}
     </PageShell>
