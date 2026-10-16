@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { db, type MaterialBlockRow } from '../store/db';
 import {
   MR_UNIT_ATTR,
@@ -10,8 +11,9 @@ import {
 import { cleanSelectionText, isUsableSelection } from '../materials/region';
 import { useSelectionAsk } from '../store/selectionAsk';
 import { useSettings } from '../store/settings';
-import { useMduiEvent } from '../ui/useMduiEvent';
-import { Shimmer } from './motion';
+import { Sym } from '../ui';
+import ReaderProgress from './ReaderProgress';
+import DocSkeleton from './DocSkeleton';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -145,11 +147,17 @@ export default function HtmlReader({
     setError(null);
     unitEls.current.clear();
     (async () => {
-      const src = await readHtmlText(blob);
-      // 高亮色只能取出来写死：iframe 是独立文档，CSS 自定义属性不跨文档继承
-      const markRgb = getComputedStyle(document.documentElement)
-        .getPropertyValue('--mdui-color-primary')
-        .trim();
+const src = await readHtmlText(blob);
+      // 高亮色只能取出来写死：iframe 是独立文档，CSS 自定义属性不跨文档继承。
+      // 而且 prepareHtmlDocument 要的是 "R G B" 三元组 —— HeroUI 的 --accent 是
+      // oklch，直接传会被 overlayCss 的正则判为不合法而静默退回灰色，
+      // 所以这里先挂一个临时元素求一次 computed color（浏览器会算成 rgb）。
+      const probe = document.createElement('span');
+      probe.style.color = 'var(--accent)';
+      document.body.appendChild(probe);
+      const accent = getComputedStyle(probe).color;
+      probe.remove();
+      const markRgb = /rgba?\(([^)]+)\)/.exec(accent)?.[1]?.replace(/[^\d.,\s]/g, '').trim() ?? '';
       const next = prepareHtmlDocument(src, { remote, markRgb });
       const rows: MaterialBlockRow[] = await db.materialBlocks
         .where('materialId')
@@ -435,52 +443,58 @@ export default function HtmlReader({
   const netHint =
     stats && (stats.remoteLoaded > 0 || stats.remoteBlocked > 0 || stats.unresolved > 0) ? (
       <div className="mr-hint" data-testid="html-remote-hint">
-        <mdui-sym-warning />
+        <Sym name="warning" />
         <span>
           {stats.remoteLoaded > 0 && <>这份文件引用了 {stats.remoteLoaded} 项外部资源（图片 / 样式），正在联网加载。</>}
           {stats.remoteBlocked > 0 && <>有 {stats.remoteBlocked} 项外部资源未加载（联网加载已关闭）。</>}
           {stats.unresolved > 0 && <>另有 {stats.unresolved} 项引用本地相对路径，单文件导入无法解析。</>}
         </span>
         {stats.remoteLoaded > 0 && (
-          <mdui-button variant="text" data-testid="html-offline-once" onClick={() => setOfflineOnce(true)}>
+          <Button variant="tertiary" data-testid="html-offline-once" onPress={() => setOfflineOnce(true)}>
             本次离线
-          </mdui-button>
+          </Button>
         )}
       </div>
     ) : null;
-
-  const viewGroupRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) => {
-    const next = el.value;
-    if (next === 'raw' || next === 'blocks') changeView(next);
-  });
 
   return (
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
+          {ready ? `第 ${current} / ${total} 段` : <span className="skel-bar reader-pos-skel" aria-hidden="true" />}
         </span>
         <div className="mr-bar__spacer" />
-        <mdui-segmented-button-group
-          ref={viewGroupRef}
-          selects="single"
-          value={view}
+        {/* 视图切换：选中项即当前 view。ToggleButtonGroup 单选时每一项都是 role="radio"，
+            方向键在组内自动漫游（mdui 的 segmented-button-group 没有这套键盘行为）。 */}
+        <ToggleButtonGroup
+          selectionMode="single"
+          selectedKeys={[view]}
+          onSelectionChange={(keys) => {
+            const next = [...keys][0];
+            if (next === 'raw' || next === 'blocks') changeView(next);
+          }}
           data-testid="html-view"
         >
-          <mdui-segmented-button value="raw">原样</mdui-segmented-button>
-          <mdui-segmented-button value="blocks">分段</mdui-segmented-button>
-        </mdui-segmented-button-group>
+          {/* 每项各带一个 testid：迁移前 e2e 靠 `[value="blocks"]` 这种属性选择器定位，
+              RAC 的 ToggleButton 没有 value 属性（它只用 id 参与选择），给出稳定的
+              data-testid 让选择器不再依赖内部属性。 */}
+          <ToggleButton id="raw" data-testid="html-view-raw">原样</ToggleButton>
+          <ToggleButton id="blocks" data-testid="html-view-blocks">分段</ToggleButton>
+        </ToggleButtonGroup>
+        {/* 两个视图共用一个 current / total，所以这条线在两种视图下都在报同一个数，
+            与上面那句「第 N / M 段」同源（换视图时不会有一条线突然跳回 0）。 */}
+        <ReaderProgress current={current} total={total} />
       </div>
 
       {error && (
         <div className="mr-hint" data-testid="reader-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           HTML 打开失败：{error}
         </div>
       )}
       {!error && frameBlocked && view === 'raw' && (
         <div className="mr-hint" data-testid="html-frame-blocked">
-          <mdui-sym-warning />
+          <Sym name="warning" />
           浏览器没有把这个沙箱文档交给页面读取，划词与段号跳转在本视图不可用（可切到「分段」视图）。
         </div>
       )}
@@ -501,10 +515,7 @@ export default function HtmlReader({
             />
           </div>
         ) : (
-          <div className="mr-docx__skel">
-            <mdui-circular-progress />
-            正在排版文档…
-          </div>
+          <DocSkeleton variant="page" />
         )
       ) : (
         <div className="mr-scroll" ref={scrollRef}>
@@ -527,12 +538,7 @@ export default function HtmlReader({
               </section>
             ))}
           </article>
-          {!ready && (
-            <div className="mr-docx__skel">
-              <mdui-circular-progress />
-              正在排版文档…
-            </div>
-          )}
+          {!ready && <DocSkeleton variant="column" />}
         </div>
       )}
     </div>

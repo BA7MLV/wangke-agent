@@ -1,5 +1,6 @@
 import { useRef, useState } from 'react';
-import { SectionCard, toast, useMduiEvent } from '../ui';
+import { Button, Checkbox, Modal, Spinner } from '@heroui/react';
+import { SectionCard, Sym, toast, MODAL_CONTAINER_CLASS } from '../ui';
 import dayjs from 'dayjs';
 import {
   exportMigrationZip,
@@ -16,12 +17,6 @@ export default function MigrationCard() {
   const [step, setStep] = useState('');
   const [pending, setPending] = useState<{ file: File; preview: MigrationPreview } | null>(null);
   const [restoreSettings, setRestoreSettings] = useState(true);
-
-  // mdui 的 dialog 自己处理 Esc / 点遮罩关闭时只会把 open 属性拿掉，React 的 state 并不知道，
-  // 不同步回来就会出现「关掉又自己弹回」。这里无条件同步（即使正在导入也允许关闭 ——
-  // 导入在后台继续跑，完成时照样 toast 报结果，比「关不掉的弹窗」体验好）。
-  const dlgRef = useMduiEvent('mdui-dialog', 'closed', () => setPending(null));
-  const restoreRef = useMduiEvent('mdui-checkbox', 'change', (_e, el) => setRestoreSettings(el.checked));
 
   const onExport = async () => {
     setExporting(true);
@@ -81,86 +76,107 @@ export default function MigrationCard() {
 
   return (
     <SectionCard title="数据迁移" testId="card-migration">
-      <div className="stack">
-        <div className="text-secondary" style={{ fontSize: 13 }}>
+      <div className="flex flex-col gap-3">
+        <div className="text-[13px] text-muted">
           把字幕、讲义（含帧）、问答、卡片、弹幕、技能与设置打包成迁移包，换设备一键还原。
           不含视频本体（迁移后视频显示「文件已删」，重新导入即可播放）；API Key 不随包导出。
         </div>
-        <div className="row">
-          <mdui-button
-            variant="tonal"
-            loading={exporting}
+        <div className="flex flex-wrap items-center gap-2">
+          <Button
+            variant="secondary"
+            isPending={exporting}
             data-testid="btn-export"
-            onClick={() => void onExport()}
+            onPress={() => void onExport()}
           >
-            <mdui-sym-download slot="icon" />
-            导出迁移包
-          </mdui-button>
-          <mdui-button
-            variant="tonal"
-            loading={importing}
+            {({ isPending }) => (
+              <>
+                {isPending ? <Spinner size="sm" color="current" /> : <Sym name="download" />}
+                导出迁移包
+              </>
+            )}
+          </Button>
+          <Button
+            variant="secondary"
+            isPending={importing}
             data-testid="btn-import"
-            onClick={() => fileRef.current?.click()}
+            onPress={() => fileRef.current?.click()}
           >
-            <mdui-sym-upload slot="icon" />
-            导入迁移包
-          </mdui-button>
+            {({ isPending }) => (
+              <>
+                {isPending ? <Spinner size="sm" color="current" /> : <Sym name="upload" />}
+                导入迁移包
+              </>
+            )}
+          </Button>
           <input ref={fileRef} type="file" accept=".zip" hidden onChange={(e) => void onPickFile(e)} />
         </div>
         {(exporting || importing) && step && (
-          <div className="text-secondary" data-testid="migration-step" style={{ fontSize: 12 }}>
+          <div className="text-xs text-muted" data-testid="migration-step">
             {step}
           </div>
         )}
       </div>
 
-      <mdui-dialog
-        ref={dlgRef}
-        open={!!pending}
-        headline="导入迁移包"
-        data-testid="import-dialog"
-        /* mdui 的 dialog 默认**不**响应 Esc 与点遮罩（close-on-esc / close-on-overlay-click 默认 false），
-           而 antd 的 Modal 默认两者都响应 —— 显式打开，保持迁移前后的行为一致。
-           这也让上面那个 closed 同步真正有用武之地。 */
-        close-on-esc
-        close-on-overlay-click
-      >
-        {pending && (
-          <div className="stack">
-            <div>
-              导出于 {dayjs(pending.preview.manifest.exportedAt).format('YYYY-MM-DD HH:mm')}，包含：
-            </div>
-            <div className="text-secondary" style={{ fontSize: 13 }}>
-              {c.videos ?? 0} 个视频 · {c.segments ?? 0} 条字幕 · {c.handouts ?? 0} 份讲义 ·{' '}
-              {c.frames ?? 0} 张帧 · {c.chatSessions ?? 0} 个会话 · {c.cards ?? 0} 张卡片
-              {c.studyDays ? ` · ${c.studyDays} 天学习记录` : ''}
-            </div>
-            {pending.preview.existingVideos > 0 && (
-              <div style={{ fontSize: 13, color: 'rgb(var(--mdui-color-error))' }}>
-                其中 {pending.preview.existingVideos} 个视频本机已存在，将跳过（保留本机数据）。
-              </div>
-            )}
-            <div className="text-secondary" style={{ fontSize: 12 }}>
-              迁入的视频标记为「文件已删」，字幕/讲义/问答/卡片可直接使用；重新导入视频本体后可播放。
-            </div>
-            <mdui-checkbox ref={restoreRef} checked={restoreSettings} data-testid="restore-settings">
-              同时恢复界面设置（模型、字号等；不含 API Key）
-            </mdui-checkbox>
-          </div>
-        )}
-        <mdui-button slot="action" variant="text" onClick={() => !importing && setPending(null)}>
-          取消
-        </mdui-button>
-        <mdui-button
-          slot="action"
-          variant="filled"
-          loading={importing}
-          data-testid="import-confirm"
-          onClick={() => void onConfirmImport()}
-        >
-          开始导入
-        </mdui-button>
-      </mdui-dialog>
+      {/* HeroUI Modal 默认响应 Esc 与点遮罩（onOpenChange 同步回 state，不会「关掉又弹回」）。
+          正在导入时也允许关闭 —— 导入在后台继续跑，完成时照样 toast 报结果。 */}
+      <Modal.Root isOpen={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="import-dialog">
+              <Modal.Header>
+                <Modal.Heading>导入迁移包</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                {pending && (
+                  <div className="flex flex-col gap-3">
+                    <div>
+                      导出于 {dayjs(pending.preview.manifest.exportedAt).format('YYYY-MM-DD HH:mm')}，包含：
+                    </div>
+                    <div className="text-[13px] text-muted">
+                      {c.videos ?? 0} 个视频 · {c.segments ?? 0} 条字幕 · {c.handouts ?? 0} 份讲义 ·{' '}
+                      {c.frames ?? 0} 张帧 · {c.chatSessions ?? 0} 个会话 · {c.cards ?? 0} 张卡片
+                      {c.studyDays ? ` · ${c.studyDays} 天学习记录` : ''}
+                    </div>
+                    {pending.preview.existingVideos > 0 && (
+                      <div className="text-[13px] text-danger">
+                        其中 {pending.preview.existingVideos} 个视频本机已存在，将跳过（保留本机数据）。
+                      </div>
+                    )}
+                    <div className="text-xs text-muted">
+                      迁入的视频标记为「文件已删」，字幕/讲义/问答/卡片可直接使用；重新导入视频本体后可播放。
+                    </div>
+                    <Checkbox
+                      isSelected={restoreSettings}
+                      onChange={setRestoreSettings}
+                      data-testid="restore-settings"
+                    >
+                      <Checkbox.Content>同时恢复界面设置（模型、字号等；不含 API Key）</Checkbox.Content>
+                    </Checkbox>
+                  </div>
+                )}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" onPress={() => !importing && setPending(null)}>
+                  取消
+                </Button>
+                <Button
+                  variant="primary"
+                  isPending={importing}
+                  data-testid="import-confirm"
+                  onPress={() => void onConfirmImport()}
+                >
+                  {({ isPending }) => (
+                    <>
+                      {isPending && <Spinner size="sm" color="current" />}
+                      开始导入
+                    </>
+                  )}
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </SectionCard>
   );
 }

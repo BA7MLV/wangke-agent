@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict';
 
-const { validateAskUser, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../src/harness/askUser.ts');
+const { validateAskUser, askUserToolResult, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../src/harness/askUser.ts');
 const { validateFolderPlan, MAX_PLAN_FOLDERS } = await import('../src/harness/folderPlan.ts');
 
 let passed = 0;
@@ -84,6 +84,14 @@ test('allowCustom 显式 false 才关掉（模型说「候选都很贴切」时�
 test('选项里的多余空白被压成单空格（卡片是等宽排版，多空格会被撑歪）', () => {
   const v = validateAskUser({ question: '选哪个？', options: ['  a   b  ', ' c'] });
   assert.deepEqual(v.ask.options, ['a b', 'c']);
+});
+
+test('作答回喂模型的那句话：选中原文进引号，空作答退化成「没回答」', () => {
+  assert.equal(askUserToolResult('按考试时间紧迫度'), '用户选择了：「按考试时间紧迫度」。');
+  // 首尾空白要剪掉：直接拼进去会让模型以为选项名带空格
+  assert.equal(askUserToolResult('  按基础  '), '用户选择了：「按基础」。');
+  // 空作答（用户没选就续跑，理论上不该发生）要显式告诉模型「没答」，不能编一个选择
+  assert.match(askUserToolResult('   '), /没有回答/);
 });
 
 // ── propose_folder_plan ─────────────────────────────────────────────────────

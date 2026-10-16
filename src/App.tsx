@@ -3,7 +3,6 @@ import { HashRouter, Route, Routes } from 'react-router-dom';
 import Library from './pages/Library';
 import CourseChat from './pages/CourseChat';
 import Player from './pages/Player';
-import Settings from './pages/Settings';
 import Study from './pages/Study';
 import { useMobileGlobals } from './utils/useMobile';
 import { isModelMetaStale, refreshModelMeta } from './api/modelMeta';
@@ -13,6 +12,9 @@ import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
 import LiveGuest from './pages/LiveGuest';
+import SettingsModal from './components/SettingsModal';
+import { FeedbackHost } from './ui';
+import { openSettingsFromHash } from './components/settingsDialogStore';
 
 export default function App() {
   useMobileGlobals();
@@ -50,6 +52,15 @@ export default function App() {
     void refreshModelMeta(catalogsKey.split('\0')).catch(() => {});
   }, [catalogsKey]);
 
+  // #/settings 与 #/settings/<module> 不是独立页面，而是「在当前页唤起设置弹窗」的入口。
+  // HashRouter 不会把 hash 变化当成路由导航，所以用原生事件监听。
+  useEffect(() => {
+    const onHash = () => openSettingsFromHash();
+    window.addEventListener('hashchange', onHash);
+    onHash(); // 处理直接打开 #/settings 的冷启动场景
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
   return (
     <HashRouter>
       {/* 实时共享指示条：常驻在任意页面上方（隐私不变量，见 LiveShareBar.tsx 文件头）。
@@ -58,13 +69,21 @@ export default function App() {
           完整理由见 components/live-share-bar.css 顶部注释。 */}
       <div className="live-share-host">
         <LiveShareBar />
+        <FeedbackHost />
+        {/* 设置是全局弹窗而不是路由：挂在 App 根部一次，任何页面都能唤起，
+            且唤起时不会把用户当前位置顶掉（见 components/SettingsModal.tsx）。 */}
+        <SettingsModal />
         <Routes>
-          <Route path="/" element={<Library />} />
+          {/* 对话页是默认首页：打开应用直接进入课程助手 */}
+          <Route path="/" element={<CourseChat />} />
           <Route path="/chat" element={<CourseChat />} />
+          <Route path="/library" element={<Library />} />
           <Route path="/player/:id" element={<Player />} />
           <Route path="/study" element={<Study />} />
-          <Route path="/settings" element={<Settings />} />
-          {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂底部/侧边导航 ——
+          {/* #/settings 不是独立页面，而是唤起设置弹窗的入口（见上面的 useEffect）。
+              这里仍渲染默认首页，让用户「改完设置就能接着用」。 */}
+          <Route path="/settings/*" element={<CourseChat />} />
+          {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂左侧导航 ——
               它读的是主机的内容，与本机导航的目的地不是一回事（见 LiveGuest.tsx 文件头）。 */}
           <Route path="/live" element={<LiveGuest />} />
         </Routes>

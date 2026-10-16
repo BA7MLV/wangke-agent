@@ -1,0 +1,163 @@
+/* 思考深度滑块：离散六档（第一档「不思考」），原生 range input + CSS 美化
+   --------------------------------------------------------------------------- */
+
+.reasoning-slider {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  height: 30px;
+  flex: 0 0 auto;
+  min-width: 0;
+}
+
+/* 铺满容器（下拉面板形态）：轨道跟着父级走，占满时手指落点与视觉位置才对得上。
+   但**必须有上限** —— 六档的滑块拉到 1300px，相邻两档隔着两百多像素，用户会以为
+   中间那段是连续的、拖了却没变化，控件看起来就像失灵了。 */
+.reasoning-slider--fluid {
+  flex: 1 1 auto;
+  min-width: 0;
+  max-width: 18rem;
+}
+
+.reasoning-slider--fluid .reasoning-slider__track,
+.reasoning-slider--fluid .reasoning-slider__input {
+  width: 100%;
+}
+
+/* 轨道容器：底色 = 未填充区，圆角药丸。
+   6px 而不是 10px：这条滑块跟「思考深度」标签同排，是一条**设置项**，
+   粗轨道会把它压成整块面板里最重的东西 —— 比上面那串模型列表还抢眼。
+
+   ⚠️ 两个坑都在这个容器上，改之前先看这两行：
+   1. **不能加 `overflow: hidden`**。range input 就挂在这个容器里，而 thumb（16px）
+      比轨道（6px）高 —— 一裁就变成一颗被切平的半圆。填充区的圆角是它自己
+      `border-radius` 画的，不需要靠父级裁。
+   2. **必须是 flex**。input 是行内级元素，塞在普通块容器里会落进行盒、被基线顶下去
+      （实测偏低 9px），thumb 于是整颗挂在轨道下方。flex 化之后它才是块级 flex 项，
+      老老实实待在容器顶部。 */
+.reasoning-slider__track {
+  position: relative;
+  display: flex;
+  width: 108px;
+  height: 6px;
+  border-radius: var(--radius-full);
+  background: color-mix(in oklch, var(--muted) 22%, transparent);
+}
+
+/* 已填充区：左端到 thumb 之间。0.7 的不透明度是给刻度圆点留的对比度 ——
+   拉满的话填充侧那几颗白点会被蓝底吃掉。 */
+.reasoning-slider__fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+  opacity: 0.7;
+  pointer-events: none;
+}
+
+/* 原生 range：透明轨道，只留 thumb */
+.reasoning-slider__input {
+  -webkit-appearance: none;
+  appearance: none;
+  position: relative;
+  z-index: 2;
+  width: 108px;
+  height: 6px;
+  margin: 0;
+  background: transparent;
+  outline: none;
+  cursor: pointer;
+}
+
+.reasoning-slider__input:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* WebKit thumb：白心 + 主色描边。
+   原来是「20px 白球 + 灰边 + 两层阴影」—— 在这张面板里它比任何东西都立体，
+   像从别处贴过来的。缩到 16px、换成主色环、只留一层浅影，跟选中对勾同一套语言。 */
+.reasoning-slider__input::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  margin-top: -5px; /* 中心对齐 6px 轨道：-(16-6)/2 */
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  transition: transform 120ms ease, box-shadow 120ms ease;
+}
+
+.reasoning-slider__input::-webkit-slider-thumb:hover {
+  transform: scale(1.12);
+  box-shadow: 0 1px 6px rgb(0 0 0 / 0.22);
+}
+
+.reasoning-slider__input::-webkit-slider-thumb:active {
+  transform: scale(0.96);
+}
+
+/* Firefox thumb */
+.reasoning-slider__input::-moz-range-thumb {
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  border: 2px solid var(--accent);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+  cursor: pointer;
+}
+
+.reasoning-slider__input::-moz-range-track {
+  background: transparent;
+  border: none;
+}
+
+/* 刻度圆点：叠在轨道正中，不拦截事件 */
+.reasoning-slider__ticks {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  z-index: 1;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 8px; /* 缩进 ≈ thumb 半径，让圆点对齐 thumb 中心 */
+  pointer-events: none;
+}
+
+.reasoning-slider__tick {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: color-mix(in oklch, var(--muted) 45%, transparent);
+  transition: background-color 120ms ease;
+}
+
+/* 填充侧的刻度：压在填充色上，同一个灰点在两种底色里必有一种看不见，所以换白点。
+   当前档位那颗不用管 —— 它正好被 thumb 盖住。 */
+.reasoning-slider__tick[data-filled='1'] {
+  background: color-mix(in oklch, #fff 70%, transparent);
+}
+
+/* 当前档位文字：thumb 右侧的微型标签 */
+.reasoning-slider__value {
+  /* 六档里最长的是「不思考」三个字（汉字一字一 em），锁不住宽度就会被折成两行，
+     把 30px 高的滑块整体撑高，工具行跟着抖一下 */
+  min-width: 3em;
+  white-space: nowrap;
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  /* 左对齐而不是居中：居中时「高」这种单字档会在两侧各留半个字宽的空白，
+     看起来跟轨道脱开了一截；左对齐则**字距轨道的间隙恒定**，长档位往右长。 */
+  text-align: left;
+  user-select: none;
+}

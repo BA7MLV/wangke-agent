@@ -176,7 +176,14 @@ const reset = async (seedVideos = true) => {
 };
 
 const typeAndSend = async (t) => {
-  const field = page.locator('.course-chat__input textarea, .course-chat__input input').first();
+  // ⚠️ 两种形态都要收：HeroUI 的 `TextArea` 把 `className` 落在 **textarea 元素本身**，
+  // 只写后代选择器 `.course-chat__input textarea` 一条都匹配不到，报成「输入框不可见」。
+  // 见 e2e-lazy-session.mjs / e2e-course-chat-cards.mjs 的同款注释。
+  const field = page
+    .locator(
+      '.course-chat__input textarea, .course-chat__input input, textarea.course-chat__input, input.course-chat__input',
+    )
+    .first();
   await field.waitFor({ timeout: 10000 });
   await field.click();
   await field.fill(t);
@@ -437,7 +444,11 @@ await check('点停止 → 立刻停，已流出的内容保留并标注', async
     timeout: 5000,
   });
   assert.ok(gone, '停止后按钮应消失（回到可发送状态）');
-  const input = page.locator('.course-chat__input textarea, .course-chat__input input').first();
+  const input = page
+    .locator(
+      '.course-chat__input textarea, .course-chat__input input, textarea.course-chat__input, input.course-chat__input',
+    )
+    .first();
   const editable = await waitFor(async () => (await input.isDisabled()) === false, { timeout: 5000 });
   assert.ok(editable, '停止后输入框应恢复可输入');
 });

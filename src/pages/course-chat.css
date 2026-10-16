@@ -1,18 +1,38 @@
+/* ============================================================================
+   对话页（HeroUI showcase 布局）
+   ----------------------------------------------------------------------------
+   版式取自 HeroUI showcase 的聊天页，四条约定：
+
+   ① 内容列宽 820px 居中，左右留白在超宽屏上继续增长 —— 超过 900px 的行宽
+      读起来要来回扫视，长回答尤其明显。
+
+   ② **用户消息右对齐浅灰药丸，助手消息左对齐纯文本**。助手侧不挂气泡也不挂头像：
+      showcase 里回答是直接铺在正文流里的，每条都套个壳会把长回答切碎成卡片。
+
+   ③ 输入框是**浮在浅灰画布上的白色大圆角卡片**，工具行收在框内右下角。
+      不是贴底的一条横杠 —— 那样它就是「浏览器输入框」，不是一个可展开的工作区。
+
+   ④ 顶栏无分割线。浅灰画布 + 白色面板已经把层次做出来了，再加线只会像表格。
+
+   ⑤ 助手消息下面是**两行附加信息**，都在正文之后、都靠左：一行操作（复制 / 更多，
+      悬浮才显形），一行「N 个来源」（折叠）。它们属于这条回答，所以跟正文同列同轴，
+      不缩进、不套卡片 —— 一缩进就成了「回答的子内容」，而它们其实是回答的**元信息**。
+   ========================================================================== */
+
 .page-course-chat {
   --course-chat-column: 820px;
+  /* 输入卡的内边距：文本区靠这个 padding 起手，工具行贴着它的下边缘 */
+  --chat-composer-pad: 14px;
 }
 
 .course-chat {
   box-sizing: border-box;
   width: 100%;
-  max-width: 1440px;
+  height: 100%;
   min-height: 0;
-  flex: 1 1 auto;
-  margin: 0 auto;
   display: flex;
   overflow: hidden;
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
-  background: rgb(var(--mdui-color-background));
+  background: transparent;
 }
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
@@ -22,66 +42,48 @@
   flex: 1 1 auto;
   display: flex;
   flex-direction: column;
-  background: rgb(var(--mdui-color-surface));
+  background: transparent;
 }
 
-.course-chat__toolbar {
-  box-sizing: border-box;
-  min-height: 58px;
-  padding: 8px 20px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 4px;
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
-  background: rgb(var(--mdui-color-surface));
-}
+/* ── 回答设置 ─────────────────────────────────────────────────────────────
+   技能 / 思考开关 / 思考深度 都收在输入卡的工具行里（见下方
+   `.course-chat__composer-tools`）。这里曾经有一条独立的「回答设置条」浮在消息区上方，
+   连同它的半透明白底与描边一起删掉了：它把设置和消息切成两段，而设置既不属于某条消息，
+   也不该占着消息区顶部最贵的一行。 */
 
-.course-chat__session-select {
-  flex: 1 1 200px;
-  min-width: 0;
-  max-width: 320px;
-}
+/* 思考深度已由 `ReasoningEffortSlider` 组件接管，样式在
+   `src/components/reasoning-effort-slider.css`。这里不再保留旧版
+   ToggleButtonGroup 的样式 —— 档位从三个按钮改成一条滑块（带刻度圆点），
+   交互走原生 `<input type="range">`，外观纯 CSS。 */
 
-.course-chat__toolbar-divider {
-  width: 1px;
-  height: 24px;
-  margin: 0 6px;
-  background: rgb(var(--mdui-color-outline-variant));
-}
-
-/* 思考深度：文字标签 + 档位，标签让「低/高/最大」有主语（否则那三个字不知在调什么） */
-.course-chat__effort-field {
-  flex: 0 0 auto;
+/* 上下文用量环的槽位：`margin-left: auto` 是「设置靠左、动作靠右」这条分界的
+   唯一实现 —— 它把用量环与发送键一起顶到工具行右端。挂在**工具行的直接子节点**上
+   才有效（JSX 里那层 span 就是为它存在的）。
+   2026-10-16 前这里装的是「删除当前会话」，那颗键已收进侧栏 Recent 的行尾菜单。 */
+.course-chat__context-usage-slot {
+  margin-left: auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-}
-
-.course-chat__effort-label {
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-label-medium-size);
-  white-space: nowrap;
-}
-
-.course-chat__effort {
-  flex: 0 0 auto;
 }
 
 /* ── 课程上下文：只展示助手本轮实际选中的事实范围 ───────────────────────── */
 .course-chat__context {
   box-sizing: border-box;
+  flex: 0 0 auto;
   min-width: 0;
-  min-height: 42px;
-  padding: 5px 20px;
+  min-height: 40px;
+  /* 顶栏浮起后让出它的高度（见上一条消息流的注释） */
+  margin: calc(var(--app-bar-h, 60px) + 8px) auto 0;
+  padding: 6px 12px;
+  width: min(100%, var(--course-chat-column));
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 7px;
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
-  background: rgb(var(--mdui-color-surface-container-low));
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-label-medium-size);
+  border-radius: var(--radius);
+  background: color-mix(in oklch, var(--accent) 7%, var(--background));
+  color: var(--muted);
+  font-size: 0.8125rem;
 }
 
 .course-chat__context-label {
@@ -89,12 +91,12 @@
   display: inline-flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--mdui-color-on-surface));
-  font-weight: var(--mdui-typescale-label-large-weight);
+  color: var(--foreground);
+  font-weight: 500;
 }
 
-.course-chat__context-label > mdui-sym-toc {
-  color: rgb(var(--mdui-color-primary));
+.course-chat__context-label > svg {
+  color: var(--accent);
   font-size: 18px;
 }
 
@@ -112,10 +114,10 @@
   max-width: min(240px, 100%);
   padding: 3px 9px;
   overflow: hidden;
-  border: 1px solid rgb(var(--mdui-color-outline-variant));
-  border-radius: var(--mdui-shape-corner-full);
-  background: rgb(var(--mdui-color-surface));
-  color: rgb(var(--mdui-color-on-surface));
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -125,191 +127,210 @@
   margin-left: auto;
 }
 
+/* ── 消息流 ───────────────────────────────────────────────────────────── */
 .course-chat__messages {
-  min-height: 0;
+  /* 滚动容器的上内边距在思考链里还要再当一次「吸顶偏移」（见 reasoning-chain.css
+     的 `--reasoning-sticky-gap`）：同一个数写两处必然漂移，所以在这里定义一次。
+
+     顶栏浮起后（见 ui/layout.tsx），再叠一个 `--app-bar-h`：消息首屏仍从栏下开始，
+     一滚动就穿到顶栏背后被渐进模糊。吸顶偏移不用跟着改 —— 它按内容盒顶边算，
+     内容盒已经随内边距一起下移了，正好钉在顶栏下沿。 */
+  --reasoning-sticky-gap: 28px;
   flex: 1 1 auto;
+  min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: 34px max(24px, calc((100% - var(--course-chat-column)) / 2));
+  padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) max(20px, calc((100% - var(--course-chat-column)) / 2)) 8px;
   scrollbar-gutter: stable;
 }
 
+/* 有「课程上下文」条时：它固定在消息区上方、自己让出顶栏高度，
+   消息区就退回常规内边距（否则顶栏高度叠加两次）。 */
+.course-chat__main:has(.course-chat__context) .course-chat__messages {
+  padding-top: var(--reasoning-sticky-gap);
+}
+
+/* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，
+   不放大图标 —— 图标在这里没有信息量，只是装饰。
+   整块**居中**而不是靠左：输入卡在内容列里居中，问句若贴左会与卡片左缘错开，
+   看上去像「正文还没排完」，而实际上这一屏根本没有正文。 */
 .course-chat__empty {
-  width: min(100%, 680px);
+  width: min(100%, 660px);
   min-height: 100%;
   box-sizing: border-box;
   margin: 0 auto;
-  padding: 48px 0 72px;
+  padding: 40px 0 32px;
   display: flex;
   flex-direction: column;
   justify-content: center;
-  align-items: flex-start;
-}
-
-.course-chat__empty-mark {
-  width: 52px;
-  height: 52px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--mdui-shape-corner-large);
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
-  font-size: 29px;
-}
-
-.course-chat__empty-mark > * {
-  font-size: inherit;
+  align-items: center;
+  text-align: center;
 }
 
 .course-chat__empty h2 {
-  margin: 22px 0 8px;
-  font-size: clamp(26px, 3vw, 36px);
-  line-height: 1.18;
-  font-weight: 500;
-  color: rgb(var(--mdui-color-on-surface));
+  margin: 0 0 10px;
+  font-size: clamp(24px, 2.6vw, 32px);
+  line-height: 1.25;
+  font-weight: 600;
+  color: var(--foreground);
   text-wrap: balance;
 }
 
 .course-chat__empty > p {
-  max-width: 620px;
+  max-width: 560px;
   margin: 0;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-large-size);
+  color: var(--muted);
+  font-size: 0.9375rem;
   line-height: 1.7;
   text-wrap: pretty;
 }
 
+/* 快捷提问：横向药丸行（不是 2×2 的方格 —— showcase 里它们是并列的一排小药丸）。
+   居中：与上方居中的问句、以及下方居中的输入卡对齐成一条竖轴。 */
 .course-chat__starters {
   width: 100%;
-  margin-top: 30px;
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
-  border-left: 1px solid rgb(var(--mdui-color-outline-variant));
+  margin-top: 26px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
 }
 
+/* HeroUI 的 secondary Button 本身就带浅底 + 边框，这里只调形状与排版。
+   之前把圆角、底色、hover 全手写一遍，结果和组件的 [data-hovered] 打架 ——
+   组件特异性更高，自绘那套静默失效，看着却像「hover 没反应」。 */
 .course-chat__starter {
-  box-sizing: border-box;
-  min-height: 68px;
-  padding: 12px 14px;
-  display: grid;
-  grid-template-columns: 24px minmax(0, 1fr) 20px;
-  align-items: center;
-  gap: 10px;
-  border: 0;
-  border-right: 1px solid rgb(var(--mdui-color-outline-variant));
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
-  background: transparent;
-  color: rgb(var(--mdui-color-on-surface));
-  font: inherit;
+  min-height: 40px;
+  height: auto;
+  padding: 0 14px;
+  gap: 8px;
+  border-radius: var(--radius-full);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 400;
   text-align: left;
-  cursor: pointer;
+  white-space: nowrap;
 }
 
-.course-chat__starter:hover {
-  background: rgb(var(--mdui-color-surface-container-low));
-}
-
-.course-chat__starter:focus-visible,
-.course-chat__import:focus-visible,
-.course-chat__reason-toggle:focus-visible {
-  outline: 2px solid rgb(var(--mdui-color-primary));
-  outline-offset: 2px;
-}
-
-.course-chat__starter:disabled {
-  cursor: default;
-  opacity: 0.45;
-}
-
-.course-chat__starter > span:first-child {
+.course-chat__starter-icon {
   display: grid;
   place-items: center;
-  color: rgb(var(--mdui-color-primary));
-  font-size: 21px;
+  color: var(--muted);
 }
 
-.course-chat__starter > mdui-sym-chevron-right {
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: 19px;
+.course-chat__starter > svg:last-child {
+  color: color-mix(in oklch, var(--muted) 70%, transparent);
 }
 
 .course-chat__import {
-  min-height: 48px;
-  margin-top: 28px;
-  padding: 0 18px;
-  display: inline-flex;
+  margin-top: 24px;
+}
+
+/* ── 数课程期间的骨架 ────────────────────────────────────────────────────
+   尺寸对着上面那三条真规则来（h2 的 clamp 字号 × 1.25 行高、p 的 0.9375rem、
+   药丸的 min-height 40px、starters 的 margin-top 26px），这样骨架换成真内容时
+   块与块之间不会错位。`.skel-bar` 负责底色与呼吸动画，这里只调几何。
+
+   ⚠️ 每条都要带 `.course-chat__empty-skel` 前缀（0,2,0）。只写 `.skel-bar` 同级
+   的单类选择器会和 `ui/skeleton.css` 的 `.skel-bar { height: 12px }` 打平（都是 0,1,0），
+   谁赢取决于两个样式表的打包顺序 —— 结果是「药丸有时候 40px、有时候 12px」这种
+   只在某些构建下复现的鬼影。 */
+.course-chat__empty-skel {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
   align-items: center;
+}
+
+.course-chat__empty-skel .course-chat__empty-skel__head {
+  width: min(72%, 300px);
+  height: 32px;
+  margin-bottom: 10px; /* 对齐 h2 的 margin-bottom */
+  border-radius: 8px;
+}
+
+.course-chat__empty-skel .course-chat__empty-skel__line {
+  width: min(100%, 520px);
+  height: 15px; /* 对齐 p 的 0.9375rem */
+  margin-top: 4px;
+}
+
+.course-chat__empty-skel .course-chat__empty-skel__line--short {
+  width: min(58%, 320px);
+}
+
+.course-chat__empty-skel .course-chat__empty-skel__starters {
+  width: 100%;
+  margin-top: 26px; /* 对齐 .course-chat__starters */
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
   gap: 8px;
-  border: 0;
-  border-radius: var(--mdui-shape-corner-full);
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
-  font: inherit;
-  font-weight: 500;
-  cursor: pointer;
 }
 
-.course-chat__empty-loading {
-  margin-top: 26px;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-medium-size);
+.course-chat__empty-skel .course-chat__empty-skel__pill {
+  width: 132px;
+  height: 40px; /* 对齐 .course-chat__starter 的 min-height */
+  border-radius: var(--radius-full);
 }
 
+/* ── 单条消息 ─────────────────────────────────────────────────────────── */
 .course-chat__message {
   width: min(100%, var(--course-chat-column));
   box-sizing: border-box;
-  margin: 0 auto 24px;
+  margin: 0 auto 26px;
   display: flex;
   align-items: flex-start;
-  gap: 11px;
 }
 
+/* 用户发言是**一列**：气泡一行，操作行另起一行挂在**框外**。
+   此前操作行塞在气泡里，悬停时那块气泡底色会多长出一条图标行 —— 气泡的 padding
+   跟着变、正文被挤上去一格，读起来像整条消息跳了一下。移到框外之后气泡里永远只有正文。
+   `align-items: flex-end` 同时管住两行：气泡与操作行都贴右缘，气泡不再被
+   `justify-content` 拉走宽度。 */
 .course-chat__message--user {
-  justify-content: flex-end;
-}
-
-.course-chat__avatar {
-  flex: 0 0 auto;
-  width: 32px;
-  height: 32px;
-  display: grid;
-  place-items: center;
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
-  font-size: 18px;
+  flex-direction: column;
+  align-items: flex-end;
 }
 
 .course-chat__bubble {
   min-width: 0;
   overflow-wrap: anywhere;
-  font-size: var(--mdui-typescale-body-medium-size);
-  line-height: 1.7;
+  font-size: 0.9375rem;
+  line-height: 1.75;
 }
 
+/* 助手回答：铺满内容列，**不挂气泡**。正文直接落在画布上，
+   所以吸顶标题要盖住的是画布底色（见 reasoning-chain.css 的同名变量）。 */
 .course-chat__bubble--ai {
   flex: 1 1 auto;
-  padding-top: 3px;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
+  --reasoning-sticky-bg: var(--background-secondary);
 }
 
+/* 用户发言：右对齐药丸。全圆角 —— showcase 的用户气泡两端同样圆，
+   只把右下角切小是 MD3 的做法，在这种极简版式里会显得是残留。
+
+   底色用 `--surface`（卡片层）而**不是** `--default`：浅色下 `--default`
+   与画布 `--background-secondary` 是同一个值（都是 0.94），气泡会**完全看不见** ——
+   实测两处都是 #ebebeb，一点对比都没有。`--surface` 浅色是纯白、深色是 0.21，
+   两种主题下都比画布亮一档，正好对应 showcase 里「气泡比画布亮」的那层关系。 */
 .course-chat__bubble--user {
-  max-width: min(78%, 620px);
-  padding: 10px 14px;
-  border-radius: var(--mdui-shape-corner-large);
-  border-bottom-right-radius: var(--mdui-shape-corner-extra-small);
-  background: rgb(var(--mdui-color-secondary-container));
-  color: rgb(var(--mdui-color-on-secondary-container));
+  max-width: min(76%, 560px);
+  padding: 10px 16px;
+  border-radius: var(--radius-2xl);
+  background: var(--surface);
+  color: var(--foreground);
   white-space: pre-wrap;
 }
 
+/* 错误态：唯一还给助手气泡的场景 —— 出错时需要把这一条从正文流里「拎出来」 */
 .course-chat__message[data-error='true'] .course-chat__bubble--ai {
-  padding: 10px 12px;
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-error-container));
-  color: rgb(var(--mdui-color-on-error-container));
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
+  background: var(--danger-soft);
+  color: var(--danger-soft-foreground);
 }
 
 .course-chat__bubble--ai > *:first-child,
@@ -323,7 +344,7 @@
 }
 
 .course-chat__bubble--ai a {
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
@@ -331,9 +352,9 @@
 .course-chat__bubble--ai pre {
   max-width: 100%;
   overflow: auto;
-  padding: 12px;
-  border-radius: var(--mdui-shape-corner-small);
-  background: rgb(var(--mdui-color-surface-container-high));
+  padding: 14px;
+  border-radius: var(--radius);
+  background: var(--background-secondary);
 }
 
 .course-chat__bubble--ai code {
@@ -342,171 +363,598 @@
 
 .course-chat__bubble--ai blockquote {
   margin-left: 0;
-  padding-left: 12px;
-  border-left: 3px solid rgb(var(--mdui-color-outline));
-  color: rgb(var(--mdui-color-on-surface-variant));
+  padding-left: 14px;
+  border-left: 3px solid color-mix(in oklch, var(--muted) 50%, transparent);
+  color: var(--muted);
 }
 
-.course-chat__reason {
-  margin-bottom: 8px;
-  font-size: var(--mdui-typescale-body-small-size);
+/* ── 助手消息的操作行与来源 ───────────────────────────────────────────────
+   两行都排在正文之后、靠左，与正文同轴（见文件头 ⑤）。
+
+   操作行默认 `opacity: 0`：长回答里每条下面都挂着两个图标会把正文流切碎。
+   鼠标移进**这一条消息**（不是移到图标上）才显形，键盘焦点进来也显形 ——
+   `opacity: 0` 的元素照样能被 Tab 到，`:focus-within` 补上这一步。
+   触屏没有 hover，`@media (hover: none)` 里常显：iPad 是主力平台，
+   靠悬浮才出现的按钮在那边等于不存在。 */
+.course-chat__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-top: 4px;
+  margin-left: -6px; /* 抵消图标自身的留白，让第一个图标的视觉左缘与正文对齐 */
+  opacity: 0;
+  transition: opacity var(--duration-quick) ease;
 }
 
-.course-chat__reason-toggle {
-  min-height: 40px;
-  padding: 0 8px;
-  margin-left: -8px;
+.course-chat__message:hover .course-chat__actions,
+.course-chat__actions:focus-within {
+  opacity: 1;
+}
+
+@media (hover: none) {
+  .course-chat__actions {
+    opacity: 1;
+  }
+}
+
+/* 复制键与「更多」菜单键长成同一个样子。
+   选择器写两层（`.course-chat__actions .course-chat__action`）是**有意的**：
+   复制键是 HeroUI 的 Button，自带 `.button` 的 h-10 / px-4 / rounded-3xl，
+   单层类名与它同特异性、胜负取决于样式表顺序 —— 哪天引入顺序一变就会静默走样。
+   「更多」那侧是 Dropdown.Trigger 渲染的裸 <button>，两层选择器对它同样成立。 */
+.course-chat__actions .course-chat__action {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+
+.course-chat__actions .course-chat__action:hover,
+.course-chat__actions .course-chat__action[data-hovered='true'],
+.course-chat__actions .course-chat__action[data-expanded='true'] {
+  background: var(--default);
+  color: var(--foreground);
+}
+
+/* 用户消息的操作行：它在气泡**外面**（气泡的兄弟节点，见 CourseChat 的渲染结构），
+   所以选择器按「消息」而不是「气泡」来挂。靠右与气泡右缘对齐 —— 与气泡自身的对齐一致。
+   助手侧没有气泡，操作行跟着正文左对齐，不需要额外规则。
+   `margin-left: 0` 是为了抵消基类的 -6px（那个负边距是让第一个图标与**左**缘对齐用的）。 */
+.course-chat__message--user .course-chat__actions {
+  justify-content: flex-end;
+  margin-left: 0;
+  margin-right: -6px;
+}
+
+/* 「更多」菜单里的条目：图标 + 文字。图标跟着文字走，别让它抢注意力 */
+.course-chat__menu-item {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  border: 0;
-  border-radius: var(--mdui-shape-corner-small);
-  background: transparent;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font: inherit;
-  cursor: pointer;
-}
-
-.course-chat__reason-toggle:hover {
-  background: rgba(var(--mdui-color-on-surface), 0.08);
-}
-
-.course-chat__reason-icon {
-  font-size: 16px;
-  /* 之前完全没有过渡，展开是硬跳；用 accordion 的 chevron 时长 / 缓动 */
-  transition: transform var(--acc-chevron, 250ms) var(--acc-ease, cubic-bezier(0.22, 1, 0.36, 1));
-}
-
-.course-chat__reason-icon--open {
-  transform: rotate(90deg);
-}
-
-/* accordion 内层：margin / padding / max-height 都落在这里，
-   0fr 轨道（.t-acc-panel）本身不带盒模型。 */
-.course-chat__reason-body {
-  max-height: 220px;
-  margin-top: 5px;
-  padding: 2px 0 2px 10px;
-  overflow: auto;
-  border-left: 2px solid rgb(var(--mdui-color-outline-variant));
-  color: rgb(var(--mdui-color-on-surface-variant));
-  white-space: pre-wrap;
-}
-
-/* ── 输入区：始终跟消息列对齐，不做悬浮玻璃效果 ─────────────────────────── */
-.course-chat__composer-wrap {
-  flex: 0 0 auto;
-  padding: 12px max(24px, calc((100% - var(--course-chat-column)) / 2)) max(12px, env(safe-area-inset-bottom));
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
-  background: rgb(var(--mdui-color-surface));
-}
-
-.course-chat__composer {
-  width: min(100%, var(--course-chat-column));
-  margin: 0 auto;
-  display: flex;
-  align-items: flex-end;
   gap: 8px;
 }
 
-.course-chat__input {
+.course-chat__menu-item > svg {
+  flex: none;
+  color: var(--muted);
+}
+
+/* ── 中断提示条 ────────────────────────────────────────────────────────────
+   「这条回答写到一半断了，还能接着写」。刻意**不用** danger 色：它不是
+   「出错了」（那由 `data-error` 那条管，一个字都没流出来的情况），而是「还没写完」。
+
+   做成一张小卡片（surface + 边框 + 左侧 accent 竖线）而不是一行纯文字：
+   它在正文流里，得让人一眼看出这是一个「可操作的提示」而不是模型说的某句话。 */
+.course-chat__interrupted {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--accent);
+  border-radius: var(--radius);
+  background: var(--surface);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.course-chat__interrupted > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.course-chat__interrupted-text {
   min-width: 0;
-  flex: 1 1 auto;
+  overflow-wrap: anywhere;
+}
+
+/* 「继续写」顶到最右：提示语可长可短，按钮位置固定才不用每次重新找 */
+.course-chat__interrupted-continue {
+  flex: none;
+  margin-left: auto;
+}
+
+.course-chat__sources {
+  margin-top: 6px;
+}
+
+/* 触发键：一行小字 + 箭头，没有底色 —— 它是「附注」不是按钮，
+   底色只在悬停时给一点反馈。左边距 -8px 是为了让**文字**左缘与正文对齐。 */
+.course-chat__sources .course-chat__sources-trigger {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 28px;
+  margin-left: -8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.8125rem;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+
+.course-chat__sources .course-chat__sources-trigger:hover,
+.course-chat__sources .course-chat__sources-trigger[data-hovered='true'],
+.course-chat__sources .course-chat__sources-trigger[data-expanded='true'] {
+  background: var(--default-soft);
+  color: var(--foreground);
+}
+
+.course-chat__sources .course-chat__sources-body {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+  padding: 8px 0 2px;
+}
+
+.course-chat__source {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  min-width: 0;
+  font-size: 0.8125rem;
+}
+
+.course-chat__source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: var(--foreground);
+  text-decoration: none;
+  border-bottom: 1px solid color-mix(in oklch, var(--muted) 45%, transparent);
+}
+
+.course-chat__source-link:hover {
+  color: var(--accent);
+  border-bottom-color: currentColor;
+}
+
+.course-chat__source-link > svg {
+  flex: none;
+  color: var(--accent);
+}
+
+.course-chat__source-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 位置（12:34 / 第 3 页）：等宽数字，一列下来不会左右跳 */
+.course-chat__source-refs {
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ── 悬浮输入卡 ───────────────────────────────────────────────────────────
+   一张卡浮在灰画布上：输入文字在上，工具行在下（左端模型 chip、右端发送键）。
+   卡片外观只用 HeroUI 的 Card 语义令牌（--background / --border），
+   浮起感由一道极淡的投影负责 —— 阴影重一档就会变成「浏览器上的浮层」，
+   而输入框不是浮层，它是页面的一部分。 */
+.course-chat__composer-wrap {
+  /* 「回到底部」按钮的定位锚点：它用 `bottom: calc(100% + …)` 停在整块输入区
+     正上方，所以锚点必须是一块**高度会跟着内容变**的容器 —— 锚在 main 上的话，
+     队列条一出来按钮就压进输入卡里了。 */
+  position: relative;
+  flex: 0 0 auto;
+  padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
+    max(12px, env(safe-area-inset-bottom));
+  background: transparent;
+}
+
+/* ── 回到底部 ─────────────────────────────────────────────────────────────
+   用户往上滚去读历史时，浮在整块输入区正上方的一颗圆形按钮。
+   只在**没有贴底**时出现：贴底时它没有意义，常驻只会白占一块最容易读到的位置。
+   外观走「卡片层」——与输入卡同一档底色 + 描边 + 淡投影，从灰画布上浮起来；
+   全圆是这类浮动动作键唯一的正确答案（同 `.course-chat__action` 的圆底）。
+   `left/right: 0 + margin: auto` 居中（而不是 transform）：把 transform 留给入场动效，
+   两者都要用 transform 会互相打架。 */
+.course-chat__scroll-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(100% + 10px);
+  margin: 0 auto;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 18px;
+  line-height: 1;
+  cursor: pointer;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.05),
+    0 6px 16px rgb(0 0 0 / 0.08);
+  /* 隐藏态：往下错开一点 + 淡出。`visibility` 负责收尾 —— 它同时把按钮移出
+     Tab 顺序、并让它点不到，比 `opacity: 0` 单独扛这两件事更干净。 */
+  opacity: 0;
+  visibility: hidden;
+  transform: translateY(8px);
+  transition:
+    opacity var(--duration-quick) ease,
+    transform var(--duration-quick) ease,
+    visibility var(--duration-quick) ease,
+    border-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+
+.course-chat__scroll-bottom[data-show='true'] {
+  opacity: 1;
+  visibility: visible;
+  transform: none;
+}
+
+/* 悬停反馈只给主色，不换底色：底色一浅就会与画布糊在一起，看着像按钮被抠掉了 */
+.course-chat__scroll-bottom:hover {
+  border-color: color-mix(in oklch, var(--accent) 45%, var(--border));
+  color: var(--accent);
+}
+
+/* 触屏没有 hover，也够不到 40px 的圆 —— 放大到 44px（Apple HIG 的最小可点尺寸） */
+@media (pointer: coarse) {
+  .course-chat__scroll-bottom {
+    width: 44px;
+    height: 44px;
+    font-size: 20px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .course-chat__scroll-bottom {
+    transition: none;
+  }
+}
+
+.course-chat__composer {
+  box-sizing: border-box;
+  width: min(100%, var(--course-chat-column));
+  margin: 0 auto;
+  padding: var(--chat-composer-pad) var(--chat-composer-pad) 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  border-radius: var(--radius-2xl);
+  background: var(--background);
+  border: 1px solid var(--border);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 8px 24px rgb(0 0 0 / 0.05);
+  transition:
+    border-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+/* 聚焦时整卡换主色细描边：焦点状态做在卡片上，
+   用户的注意力自然落在「正在写的那一块」，而不是去找某个小控件的焦点环。 */
+.course-chat__composer:focus-within {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 10px 30px rgb(0 0 0 / 0.07);
+}
+
+/* TextArea：外框与底色由卡片提供，这里把它彻底摊平 —— 一个自带边框的
+   输入框套在一张卡片里，会出现「框中框」，两层圆角也对不齐。 */
+.course-chat__input {
+  width: 100%;
+  min-height: 34px;
+  max-height: 180px;
+  padding: 6px 8px;
+  overflow-y: auto;
+  resize: none;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  outline: none;
+  box-shadow: none;
+}
+
+/* ⚠️ 上面那条 `outline: none` **压不住** theme.css 的全局
+   `:focus-visible { outline: 2px solid var(--focus) }` —— 文本框被鼠标点一下
+   也算 :focus-visible（规范如此），于是聚焦时里面冒出一圈 2px 主色描边，
+   外面卡片已经换过主色边框了（`.course-chat__composer:focus-within`），
+   两圈焦点环叠在一起像是套了框中框。
+
+   两者还都是单类 / 伪类特异度（0,1,0），只能靠源码顺序决胜负 ——
+   而 `course-chat.css` 是跟着 CourseChat 模块注入的，`App` 的模块图在
+   main.tsx 的 import 语句里排在那几行 CSS **之前**，所以 theme.css 永远压它。
+   靠顺序赌不稳，这里直接把特异度抬到 (0,3,0) 写死。
+
+   去掉焦点环**不丢可访问性**：卡片本身的 `:focus-within` 换主色边框，
+   键盘用户照样看得出焦点在哪 —— 这正是「焦点状态做在卡片上」那句的意图。 */
+.course-chat__composer .course-chat__input:focus-visible {
+  outline: none;
+}
+
+.course-chat__input::placeholder {
+  color: color-mix(in oklch, var(--muted) 85%, transparent);
+}
+
+.course-chat__input:disabled {
+  opacity: 0.6;
+}
+
+/* 工具行：左端是模型 chip + 回答设置，右端是上下文用量环与发送键。
+   HeroUI 的 Toolbar 自带 [data-focus-visible] 的方向键焦点环，不用另画。
+   `width: 100%` 必需：Toolbar 默认 flex: 0 1 auto，会收缩到内容宽度，
+   于是右端那两颗控件的 auto margin 没有可推的空间、全挤到左边。
+
+   推右端用的是 `.course-chat__context-usage-slot` 的 `margin-left: auto`，
+   **不是** `justify-content: space-between`：工具行会换行（见下），
+   而 space-between 在换行后会把每一行都拉满两端 —— 控件一多，第一行就成了
+   图标散开的三列，看着像版式坏了。
+
+   `flex-wrap: wrap` 必需：这一行从「1 个 chip + 发送键」变成 5 组控件之后，
+   360–390px 的手机上一定放不下。换行的代价是发送键有时落到第二行（仍在右下角），
+   比横向溢出、把输入卡撑出屏幕外好得多。 */
+.course-chat__composer-tools {
+  width: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 4px 6px;
 }
 
 .course-chat__send {
-  flex: 0 0 auto;
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  flex: none;
+}
+
+/* 停止键与发送键并存（2026-10-16）：尺寸与发送键一致，两颗并排在右下角。
+   外观走默认 tertiary（不是 danger 红）：停止是**常规**操作，不是破坏性动作 ——
+   已写出的内容会保留（见 store 的 `stop`），染成红色会让用户以为要丢东西。 */
+.course-chat__stop {
+  width: 34px;
+  height: 34px;
+  min-width: 34px;
+  flex: none;
+}
+
+/* ── 排队 / 插入切换 ─────────────────────────────────────────────────────
+   生成中才出现在工具行的设置组末尾（见 CourseChat.tsx 的 Toolbar）。
+   ToggleButtonGroup 自带分段控件外观，这里只保证它不参与 flex 伸缩：
+   工具行会换行（见 .course-chat__composer-tools），被压扁的分段控件
+   两颗字会挤成一团。 */
+.course-chat__send-mode {
+  flex: none;
+}
+
+/* ── 排队条 ─────────────────────────────────────────────────────────────
+   输入卡正上方的一张淡底卡：里面是「已经排上、还没交出去」的话。
+   底色只掺 4% 主色 —— 它是输入区的延伸，不是一条需要抢注意力的通知；
+   再浓一档就会跟消息区里的中断提示条抢戏（那条是 8% 起步）。 */
+.course-chat__queue {
+  box-sizing: border-box;
+  width: min(100%, var(--course-chat-column));
+  margin: 0 auto 6px;
+  padding: 6px 10px 8px;
+  border-radius: var(--radius-2xl);
+  border: 1px solid var(--border);
+  background: color-mix(in oklab, var(--accent) 4%, var(--background));
+}
+
+.course-chat__queue-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 2px 2px;
+}
+
+.course-chat__queue-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+
+.course-chat__queue-label > svg {
+  width: 14px;
+  height: 14px;
+}
+
+.course-chat__queue-clear {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  flex: none;
+}
+
+.course-chat__queue-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.course-chat__queue-item {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* 序号：回答「这话排第几」。tabular-nums 防止 1 → 10 时行内宽度跳动 */
+.course-chat__queue-index {
+  flex: none;
+  width: 16px;
+  text-align: center;
+  font-size: 0.6875rem;
+  color: color-mix(in oklab, var(--muted) 80%, transparent);
+  font-variant-numeric: tabular-nums;
+}
+
+/* 排队项的输入框：HeroUI Input 自带边框与底色（Tailwind utilities 层），
+   本文件是**无层**样式，按层叠规则压得过它，所以这里直接给最终外观。
+   28px 高比工具行的 34px 矮一档：队列是附属物，不该跟主输入框一样重。 */
+.course-chat__queue-input {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 28px;
+  padding: 0 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.8125rem;
+  line-height: 1.4;
+}
+
+.course-chat__queue-input::placeholder {
+  color: color-mix(in oklab, var(--muted) 85%, transparent);
+}
+
+.course-chat__queue-btn {
+  width: 28px;
+  height: 28px;
+  min-width: 28px;
+  flex: none;
+}
+
+/* ── 流式尾巴：黑色圆点 ─────────────────────────────────────────────────
+   替掉 XMarkdown 默认的 ▋（见 pages/CourseChat.tsx 的 StreamTailCircle）。
+   XMarkdown 把它插在最后一个文本 token 之后，圆点因此落在**下一个字符
+   将出现的位置**，跟着文字一起长。
+
+   尺寸跟着字号（0.5em）而不是定值：回答里字号随上下文变（标题、引用块），
+   定值圆点在 22px 的 h2 旁边会小到看不见。
+   `prefers-reduced-motion` 下停闪 —— 闪烁是唯一的动效，不闪也完全看得懂
+   （圆点本身就在），而前庭敏感用户值得这一个静态版本。 */
+.course-chat__stream-dot {
+  display: inline-block;
+  width: 0.5em;
+  height: 0.5em;
+  margin-left: 0.12em;
+  border-radius: 50%;
+  background: var(--foreground);
+  vertical-align: 0.08em;
+  animation: course-chat-dot-blink 1.1s ease-in-out infinite;
+}
+
+@keyframes course-chat-dot-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.2;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .course-chat__stream-dot {
+    animation: none;
+  }
 }
 
 .course-chat__composer-note {
   width: min(100%, var(--course-chat-column));
-  margin: 5px auto 0;
+  margin: 7px auto 0;
   text-align: center;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: 11px;
+  color: color-mix(in oklch, var(--muted) 80%, transparent);
+  font-size: 0.6875rem;
   line-height: 1.4;
 }
 
+/* 顶栏副标题的状态行 `.course-chat__status` 已随副标题整行去掉（2026-10-16）：
+   用户口径是「本次对话 N 条 · 结合课程库回答 / 通用问答」这行不要显示。
+   样式不留下当墓碑 —— git 里有历史，留着只会让下一个人以为还有东西在用这个类名。 */
+
+/* 这里原有 `.course-chat__new-session`（顶栏右上角那颗主色按钮，含窄屏只留图标的
+   media 覆盖），2026-10-15 随顶栏右侧三个控件一并删除。样式不留下当墓碑 ——
+   git 里有历史，留着只会让下一个人以为还有东西在用这个类名。 */
+
 @media (max-width: 760px) {
-  .course-chat__toolbar {
-    padding: 7px 10px;
-  }
-
-  /* 第一行管理会话，第二行设置回答；窄屏仍保留删除与思考强度。 */
-  .course-chat__session-select {
-    flex-basis: calc(100% - 104px);
-    max-width: none;
-  }
-
-  .course-chat__toolbar-divider {
-    display: none;
-  }
-
-  /* 窄屏：整组（标签 + 档位）推到行尾并吃掉剩余宽度，档位等分 */
-  .course-chat__effort-field {
-    flex: 1 1 auto;
-    max-width: 264px;
-    margin-left: auto;
-  }
-
-  .course-chat__effort {
-    flex: 1 1 auto;
-    min-width: 0;
-  }
-
-  .course-chat__effort > mdui-segmented-button {
-    min-width: 0;
-    flex: 1 1 0;
-  }
-
   .course-chat__context {
     padding-inline: 12px 8px;
+    border-radius: var(--radius);
   }
 
   .course-chat__messages {
-    padding: 22px 14px;
+    padding: 20px 14px 6px;
     scrollbar-gutter: auto;
   }
 
   .course-chat__empty {
-    padding: 28px 2px 54px;
+    padding: 24px 2px 28px;
   }
 
   .course-chat__empty h2 {
-    font-size: 28px;
+    font-size: 24px;
   }
 
   .course-chat__starters {
-    grid-template-columns: 1fr;
+    gap: 6px;
   }
 
   .course-chat__message {
-    margin-bottom: 20px;
+    margin-bottom: 22px;
   }
 
   .course-chat__bubble--user {
-    max-width: 88%;
+    max-width: 86%;
   }
 
   .course-chat__composer-wrap {
-    padding: 10px 10px max(10px, env(safe-area-inset-bottom));
-  }
-}
-
-@media (max-width: 430px) {
-  .course-chat__avatar {
-    width: 28px;
-    height: 28px;
-    font-size: 16px;
+    padding: 6px 10px max(10px, env(safe-area-inset-bottom));
   }
 
-  .course-chat__message {
-    gap: 8px;
-  }
-}
-
-@media (pointer: coarse) {
-  .course-chat__reason-toggle {
-    min-height: 48px;
+  .course-chat__composer {
+    border-radius: 22px;
   }
 }

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { Tabs } from '@heroui/react';
 import { MediaPlayer, MediaProvider, Track, type MediaPlayerInstance, type MediaStorage } from '@vidstack/react';
 import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default';
 import '@vidstack/react/player/styles/default/theme.css';
@@ -11,9 +12,9 @@ import { useSettings } from '../store/settings';
 import { setStudyMediaPlaying } from '../store/studyTime';
 import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
-import { useIsMobile, useIsPhoneLandscape } from '../utils/useMobile';
-import { PageShell, EmptyState, useDynamicColor, useMduiEvent, toast } from '../ui';
+import { PageShell, EmptyState, Sym, CueSkeleton, useDynamicColor, toast } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { SettingsButton } from '../components/SettingsModal';
 import type { MaterialReaderHandle } from '../materials/types';
 import SubtitlePanel from '../components/SubtitlePanel';
 import HandoutPanel from '../components/HandoutPanel';
@@ -69,7 +70,7 @@ const PANEL_KEYS: readonly PanelKey[] = ['subs', 'handout', 'chat', 'dm', 'cards
 const MATERIAL_PANEL_KEYS: readonly PanelKey[] = ['chat'];
 
 /**
- * 五个面板的切换项。桌面（`mdui-tabs`）用 label，窄屏（`mdui-navigation-bar`）用图标 + label。
+ * 五个面板的切换项。桌面（`Tabs`）用 label，窄屏（底部导航）用图标 + label。
  *
  * 两组图标刻意准备**描边 / 实心**两态（Material Symbols 的 fill 轴）：
  * MD3 的导航栏一律「未选中描边、选中实心」，这也是 Material Icons（MD2 那套，一个图标只有
@@ -79,11 +80,11 @@ const MATERIAL_PANEL_KEYS: readonly PanelKey[] = ['chat'];
  * （`.ant-tabs-tab` vs `.mobile-tabbar button`），e2e 只能分支处理；现在一个选择器通吃。
  */
 const PANEL_TABS: { key: PanelKey; label: string; icon: ReactNode; activeIcon: ReactNode }[] = [
-  { key: 'subs', label: '字幕', icon: <mdui-sym-subtitles />, activeIcon: <mdui-sym-subtitles filled /> },
-  { key: 'handout', label: '讲义', icon: <mdui-sym-article />, activeIcon: <mdui-sym-article filled /> },
-  { key: 'chat', label: '问答', icon: <mdui-sym-chat />, activeIcon: <mdui-sym-chat filled /> },
-  { key: 'dm', label: '弹幕', icon: <mdui-sym-comment />, activeIcon: <mdui-sym-comment filled /> },
-  { key: 'cards', label: '卡片', icon: <mdui-sym-style />, activeIcon: <mdui-sym-style filled /> },
+  { key: 'subs', label: '字幕', icon: <Sym name="subtitles" />, activeIcon: <Sym name="subtitles" filled /> },
+  { key: 'handout', label: '讲义', icon: <Sym name="article" />, activeIcon: <Sym name="article" filled /> },
+  { key: 'chat', label: '问答', icon: <Sym name="chat" />, activeIcon: <Sym name="chat" filled /> },
+  { key: 'dm', label: '弹幕', icon: <Sym name="comment" />, activeIcon: <Sym name="comment" filled /> },
+  { key: 'cards', label: '卡片', icon: <Sym name="style" />, activeIcon: <Sym name="style" filled /> },
 ];
 
 export default function Player() {
@@ -101,15 +102,9 @@ export default function Player() {
   const playerRef = useRef<MediaPlayerInstance>(null);
   const captionScale = useSettings((s) => s.captionScale);
   const dynamicColor = useSettings((s) => s.dynamicColor);
-  const isMobile = useIsMobile();
-  const isPhoneLandscape = useIsPhoneLandscape();
-  // 竖屏窄屏：面板区 + 底部导航；横屏矮屏与桌面共用「侧栏 + mdui-tabs」。
-  // 横屏不强制切面板 —— 用户停在哪一面板就保持哪一面板（自动跳问答会打断正在看讲义的人）。
-  const useBottomNav = isMobile && !isPhoneLandscape;
-  // 窄屏底部导航 / 桌面 Tabs 当前面板
+  /** 当前面板。宽屏与窄屏共用同一套 Tabs，横竖屏不再分叉。 */
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
   const [keyboardControls, setKeyboardControls] = useState(false);
-  const panelId = useId();
   // 桌面影院模式：只改变页面布局，右侧面板继续挂载以保留草稿、滚动位置与生成状态。
   const [theaterMode, setTheaterMode] = useState(false);
   const toggleTheaterMode = useCallback(() => setTheaterMode((active) => !active), []);
@@ -276,7 +271,20 @@ export default function Player() {
   // 增量字幕：一条常驻字幕轨 + 每完成一段就往轨里 addCue（不重建轨、不重拉整份 VTT）。
   // 详见 docs/plans/2026-09-10-live-subtitle-design.md「实测结论」。
   const [subsRunning, setSubsRunning] = useState(false);
+  /**
+   * 字幕是否已经读过一次（由 SubtitlePanel 通知）。
+   *
+   * ⚠️ 在它为 true 之前，`hasSubtitles` 必须是 `null`（未知）而不是 `false`（没有）：
+   * `segments` 来自 SubtitlePanel 的首个 liveQuery 回调，首帧必然是空的 ——
+   * 当成 false 会让兄弟面板先闪一下「请先生成字幕」（不变量 I10）。
+   */
+  const [subsLoaded, setSubsLoaded] = useState(false);
   const [trackReady, setTrackReady] = useState(false);
+
+  // 换视频：字幕状态回到「未知」，等 SubtitlePanel 重新读一遍
+  useEffect(() => {
+    setSubsLoaded(false);
+  }, [id]);
 
   // 有第一段完成字幕后才挂轨（与旧行为一致：没字幕时不在字幕菜单里留空条目），挂上后不再撤
   useEffect(() => {
@@ -284,6 +292,7 @@ export default function Player() {
   }, [segments.length, trackReady]);
 
   const onSegmentsChange = useCallback((segs: Cue[]) => setSegments(segs), []);
+  const onSubsLoadedChange = useCallback((isLoaded: boolean) => setSubsLoaded(isLoaded), []);
 
   const segmentsRef = useRef<Cue[]>([]);
   useEffect(() => {
@@ -355,7 +364,7 @@ export default function Player() {
   }, [trackReady, syncTrack]);
 
   // 讲义/弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
-  const hasSubtitles = segments.length > 0 && !subsRunning;
+  const hasSubtitles = subsLoaded ? segments.length > 0 && !subsRunning : null;
 
   // YouTube 式键盘映射（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。
   // 单例：里面的连按累加游标要跨按键保留，所以不能每次渲染重建。见 utils/playerKeys.ts。
@@ -392,22 +401,44 @@ export default function Player() {
     [theaterMode, toggleTheaterMode, videoUrl],
   );
 
-  // 桌面端 mdui-tabs 的选中变化：mdui 的 change 是 CustomEvent<void>，值要从元素上读
-  const tabsRef = useMduiEvent('mdui-tabs', 'change', (_e, el) => {
-    if (PANEL_KEYS.includes(el.value as PanelKey)) setActiveTab(el.value as PanelKey);
-  });
-
   if (loading) {
+    // 首载形状与真实布局**同形**：左视频区（16:9）+ 右侧面板栏（复用 .side-pane 的卡片）。
+    // 挂在 PageShell 上而不是一条裸 div：顶栏 / 侧栏 / 返回键立刻在位，不必等数据。
     return (
-      <div className="page page-mdui player-loading">
-        <mdui-circular-progress />
-      </div>
+      <PageShell
+        title=""
+        onBack={() => navigate('/')}
+        fill
+        rootRef={colorSchemeRef}
+        rootClassName="page-player"
+        rail={nav}
+        railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+        /* 顶栏右上角那颗设置图标撤掉（与 AI 助手页 / 课程库 / 学习页同一口径）：
+           设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
+           同一个入口在一条顶栏里露两次没有必要。 */
+      >
+        <div
+          className="player-layout player-layout--loading"
+          data-testid="player-skeleton"
+          aria-busy="true"
+        >
+          <div className="video-pane">
+            <div className="player-skel__stage skel-breathe" />
+          </div>
+          <div className="side-pane">
+            <div className="player-skel__panel">
+              <span className="skel-bar player-skel__tab" />
+              <CueSkeleton rows={7} />
+            </div>
+          </div>
+        </div>
+      </PageShell>
     );
   }
 
   if (!video || !id) {
     return (
-      <div className="page page-mdui player-fallback">
+      <div className="page player-fallback">
         <EmptyState testId="player-empty" title="视频不存在" description="这条记录可能已被删除" />
       </div>
     );
@@ -418,34 +449,13 @@ export default function Player() {
   const panelKeys = isMaterial ? MATERIAL_PANEL_KEYS : PANEL_KEYS;
   const panelTabs = isMaterial ? PANEL_TABS.filter((t) => t.key === 'chat') : PANEL_TABS;
   /**
-   * 实际生效的面板。不直接把 activeTab 塞进 mdui-tabs 的 value：
-   * 材料页的 activeTab 初值仍是 'subs'（面板里没有这一项），直接传会让 mdui-tabs 处于
-   * 「value 指向不存在的 tab」的状态；用派生值可以让首帧就落在问答上，不需要等一个 effect。
+   * 实际生效的面板。不直接把 activeTab 塞进 Tabs 的 selectedKey：
+   * 材料页的 activeTab 初值仍是 'subs'（面板里没有这一项），直接传会让 Tabs 处于
+   * 「selectedKey 指向不存在的 tab」的状态；用派生值可以让首帧就落在问答上，不需要等一个 effect。
    */
   const effTab: PanelKey = panelKeys.includes(activeTab) ? activeTab : panelKeys[0];
 
-  // mdui 2 的 Tab 只提供鼠标选中与焦点样式，不实现 ARIA tab 的方向键 / roving tab stop。
-  // 只监听 tab 宿主，面板内的输入、阅读和播放器快捷键不经过这条路径。
-  const handlePanelTabKeyDown = (event: KeyboardEvent<HTMLElement>, key: PanelKey) => {
-    if (event.altKey || event.ctrlKey || event.metaKey) return;
-    const index = panelKeys.indexOf(key);
-    let nextIndex: number;
-    switch (event.key) {
-      case 'ArrowRight': nextIndex = (index + 1) % panelKeys.length; break;
-      case 'ArrowLeft': nextIndex = (index - 1 + panelKeys.length) % panelKeys.length; break;
-      case 'Home': nextIndex = 0; break;
-      case 'End': nextIndex = panelKeys.length - 1; break;
-      case 'Enter':
-      case ' ': nextIndex = index; break;
-      default: return;
-    }
-    event.preventDefault();
-    const nextKey = panelKeys[nextIndex];
-    setActiveTab(nextKey);
-    tabsRef.current?.querySelector<HTMLElement>(`mdui-tab[value="${nextKey}"]`)?.focus();
-  };
-
-  // 五个面板只实例化一份：桌面挂进 mdui-tabs 的 tab-panel，窄屏挂进 panel-host（hidden 保活切换）。
+  // 五个面板只实例化一份：桌面挂进 Tabs.Panel，窄屏挂进 panel-host（hidden 保活切换）。
   // 材料只实例化问答：其余面板都以字幕为输入，挂上去只会给出「先生成字幕」的错误入口。
   const panels: Partial<Record<PanelKey, ReactNode>> = isMaterial
     ? {
@@ -470,6 +480,7 @@ export default function Player() {
             currentTime={currentTime}
             onSegmentsChange={onSegmentsChange}
             onRunningChange={setSubsRunning}
+            onLoadedChange={onSubsLoadedChange}
           />
         ),
         handout: <HandoutPanel videoId={id} hasSubtitles={hasSubtitles} />,
@@ -499,24 +510,11 @@ export default function Player() {
       fill
       rootRef={colorSchemeRef}
       rootClassName="page-player"
-      rail={nav.rail}
-      bottomNav={
-        useBottomNav
-          ? {
-              value: effTab,
-              mode: 'panels',
-              label: '学习面板',
-              items: panelTabs.map((t) => ({
-                value: t.key,
-                label: t.label,
-                icon: t.icon,
-                activeIcon: t.activeIcon,
-                onClick: () => setActiveTab(t.key),
-                testId: `panel-tab-${t.key}`,
-              })),
-            }
-          : undefined
-      }
+      rail={nav}
+      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      /* 顶栏右上角那颗设置图标撤掉（与 AI 助手页 / 课程库 / 学习页同一口径）：
+         设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
+         同一个入口在一条顶栏里露两次没有必要。 */
     >
       <div className={`player-layout${theaterMode ? ' player-layout--theater' : ''}`}>
         {/* 字幕字号变量设在普通容器上（不 media-player host：它 upgrade 时会重写内联样式），
@@ -531,7 +529,7 @@ export default function Player() {
             <div className="video-pane__missing">
               <EmptyState
                 testId="player-file-missing"
-                icon={<mdui-sym-error />}
+                icon={<Sym name="error" />}
                 title="视频文件已删除"
                 description="字幕 / 讲义 / 问答仍可使用"
               />
@@ -602,75 +600,54 @@ export default function Player() {
           )}
         </div>
 
-        {useBottomNav ? (
-          <div className="panel-host">
+        {/* 面板切换在所有尺寸下都用同一套 Tabs。
+            迁移期窄屏曾用底部导航切换面板，那条路已经随应用级底部 tab 栏一起移除 ——
+            面板切换属于**页内**动作，不该占用应用外壳的导航位；窄屏下 Tabs 横向排在
+            面板区顶部（见 layout.css 的 ≤900px 堆叠档），位置与横屏一致。 */}
+        <div className="side-pane">
+          {/* variant=secondary 是 MD3 里「切换一组相关内容」的用法（primary 留给顶层导航）；
+              align=start 对应标签靠左而不是居中。
+
+              选中变化走 onSelectionChange，方向键 / Home / End 的漫游与 roving tabindex
+              由 RAC 的 TabList 原生实现。 */}
+          <Tabs
+            className="panel-tabs"
+            variant="secondary"
+            align="start"
+            selectedKey={effTab}
+            onSelectionChange={(key) => {
+              if (PANEL_KEYS.includes(key as PanelKey)) setActiveTab(key as PanelKey);
+            }}
+            data-testid="panel-tabs"
+          >
+            {/* ListContainer 不是可选装饰：HeroUI 的 .tabs--secondary 规则全部挂在
+                `> .tabs__list-container` 下面，少了它 variant="secondary" 会静默失效。
+                它顺带把标签条包进 ScrollShadow，标签多时横向可滚。 */}
+            <Tabs.ListContainer>
+              <Tabs.List aria-label="学习面板">
+                {panelTabs.map((t) => (
+                  <Tabs.Tab key={t.key} id={t.key} data-testid={`panel-tab-${t.key}`}>
+                    {t.label}
+                  </Tabs.Tab>
+                ))}
+              </Tabs.List>
+            </Tabs.ListContainer>
+            {/* shouldForceMount + hidden：与迁移前 mdui-tab-panel 的 display:none 等价 ——
+                面板始终留在 DOM 里（草稿、滚动位置、生成状态不因切换而丢），
+                但未选中的那个既不可见（hidden）也不可交互（RAC 额外打上 inert）。 */}
             {panelKeys.map((key) => (
-              <div
+              <Tabs.Panel
                 key={key}
-                className="panel-slot"
-                // 面板容器统一带 role="tabpanel"：e2e-live-subs / e2e-danmaku / e2e-cards
-                // 都用 `[role="tabpanel"]:visible .sub-item` 定位「当前面板里的条目行」，
-                // 这样同一个选择器在桌面 mdui-tab-panel 与窄屏 .panel-slot 下都成立。
-                role="tabpanel"
-                id={`${panelId}-panel-${key}`}
-                aria-label={panelTabs.find((tab) => tab.key === key)?.label}
-                data-testid={`panel-slot-${key}`}
+                id={key}
+                shouldForceMount
                 hidden={effTab !== key}
+                data-testid={`panel-slot-${key}`}
               >
                 {panels[key]}
-              </div>
+              </Tabs.Panel>
             ))}
-          </div>
-        ) : (
-          <div className="side-pane">
-            {/* placement 显式给值：mdui 的 :host([placement^=top]) 规则靠属性选择器生效，
-                不传的话拿不到 `flex-direction: column`（标题行与内容会挤在一行）。
-                variant=secondary 是 MD3 里「切换一组相关内容」的用法（primary 留给顶层导航）。 */}
-            <mdui-tabs
-              ref={tabsRef}
-              className="panel-tabs"
-              placement="top-start"
-              variant="secondary"
-              value={effTab}
-              role="tablist"
-              aria-label="学习面板"
-              data-testid="panel-tabs"
-            >
-              {/* mdui 的 tabs 组件不带任何 ARIA 角色（实测 manifest 与实现里都没有），
-                  这里手动补齐 tablist / tab —— e2e 的 getByRole('tab') 也依赖它。 */}
-              {panelTabs.map((t) => (
-                <mdui-tab
-                  key={t.key}
-                  id={`${panelId}-tab-${t.key}`}
-                  value={t.key}
-                  role="tab"
-                  // mdui-tab reflects boolean JSX values as an empty presence
-                  // attribute. ARIA requires the literal true/false tokens.
-                  aria-selected={effTab === t.key ? 'true' : 'false'}
-                  aria-controls={`${panelId}-panel-${t.key}`}
-                  tabIndex={effTab === t.key ? 0 : -1}
-                  onKeyDown={(event) => handlePanelTabKeyDown(event, t.key)}
-                  data-testid={`panel-tab-${t.key}`}
-                >
-                  {t.label}
-                </mdui-tab>
-              ))}
-              {panelKeys.map((key) => (
-                <mdui-tab-panel
-                  key={key}
-                  slot="panel"
-                  value={key}
-                  role="tabpanel"
-                  id={`${panelId}-panel-${key}`}
-                  aria-labelledby={`${panelId}-tab-${key}`}
-                  data-testid={`panel-slot-${key}`}
-                >
-                  {panels[key]}
-                </mdui-tab-panel>
-              ))}
-            </mdui-tabs>
-          </div>
-        )}
+          </Tabs>
+        </div>
       </div>
 
       {/* 全局选区浮层：挂在播放页根上，跨越阅读器与面板两棵子树 */}

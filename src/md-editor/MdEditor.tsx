@@ -24,7 +24,8 @@ import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
-import { useMduiEvent } from '../ui';
+import { Button, ToggleButton, ToggleButtonGroup, Tooltip } from '@heroui/react';
+import { Sym } from '../ui';
 import { agentDiff } from './agentDiff';
 import { createMdEditorController, registerMdEditor, type MdEditorController } from './bridge';
 import { livePreview } from './livePreview';
@@ -207,11 +208,14 @@ export default function MdEditor({
        *
        * CodeMirror 默认用 `getRoot(parent)` 决定把主题样式挂到哪：它沿
        * `assignedSlot` 往上走，返回遇到的第一个 document 或 ShadowRoot。
-       * 而本应用的播放页整棵 DOM 是**被 slot 进 `<mdui-layout-main>` 的 shadow root** 的
+       * mdui 时代播放页整棵 DOM 是被 slot 进 `<mdui-layout-main>` 的 shadow root 的
        * （实测：`.page-inner` → `<slot>` → `<mdui-layout-main>` 的 shadowRoot），
        * 于是 CodeMirror 把 baseTheme + mdEditorTheme 全挂进了那个 shadow root 的
        * adoptedStyleSheets —— 而编辑器本身是**光 DOM**，压根不在那棵 shadow 树里，
        * 于是所有 `.cm-*` 规则一条都命不中。
+       *
+       * HeroUI 迁移后播放页已无 shadow root，但 `root: document` 保留：这是显式声明，
+       * 不依赖调用方的 DOM 位置，将来若再引入任何 ShadowRoot 也不会复发。
        *
        * 症状极具迷惑性（看起来像「主题没生效」，其实是一条 CSS 都没有）：
        *   - `.cm-editor` display 变回 block、`height:100%` 失效 → 编辑器不被容器约束，
@@ -388,14 +392,6 @@ export default function MdEditor({
     setUndoError(r.ok ? null : r.error);
   }, []);
 
-  const viewGroupRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) => {
-    // **只认这两个字面量**，不写 `setShowSource(el.value === 'source')`：
-    // 分段按钮组初始化时会带一次空 value 的 change，那会让「源码」视图
-    // 刚被点开就被悄悄切回「预览」，而界面上还亮着「源码」——很难查。
-    if (el.value === 'source') setShowSource(true);
-    else if (el.value === 'preview') setShowSource(false);
-  });
-
   return (
     <>
       <div className="mr-edit-bar">
@@ -418,39 +414,48 @@ export default function MdEditor({
         <div className="mr-bar__spacer" />
         {/* 灰着而不是藏起来：位置固定，用户才会认得「这里有个可以撤的东西」；
             而且 agent 改完之后按钮突然出现会把右边的分段开关顶走。 */}
-        <mdui-button
-          className="mr-edit-undo"
-          variant="text"
-          disabled={!hasAgentBatch}
-          onClick={onUndoAgentBatch}
-          data-testid="md-agent-undo"
-          title="撤销 agent 刚才对这份材料的改动"
-        >
-          <mdui-sym-undo slot="icon" />
-          撤销本次
-        </mdui-button>
-        <mdui-segmented-button-group
-          ref={viewGroupRef}
-          selects="single"
-          value={showSource ? 'source' : 'preview'}
+        <Tooltip>
+          <Tooltip.Trigger>
+            <Button
+              className="mr-edit-undo"
+              variant="tertiary"
+              isDisabled={!hasAgentBatch}
+              onPress={onUndoAgentBatch}
+              data-testid="md-agent-undo"
+            >
+              <Sym name="undo" />
+              撤销本次
+            </Button>
+          </Tooltip.Trigger>
+          <Tooltip.Content>撤销 agent 刚才对这份材料的改动</Tooltip.Content>
+        </Tooltip>
+        <ToggleButtonGroup
+          selectionMode="single"
+          disallowEmptySelection
+          selectedKeys={[showSource ? 'source' : 'preview']}
+          onSelectionChange={(keys) => {
+            const next = [...keys][0];
+            if (next === 'source') setShowSource(true);
+            else if (next === 'preview') setShowSource(false);
+          }}
           data-testid="md-source-view"
         >
-          <mdui-segmented-button value="preview">预览</mdui-segmented-button>
-          <mdui-segmented-button value="source">源码</mdui-segmented-button>
-        </mdui-segmented-button-group>
+          <ToggleButton id="preview">预览</ToggleButton>
+          <ToggleButton id="source">源码</ToggleButton>
+        </ToggleButtonGroup>
       </div>
       {/* 两条提示都不做「短文案 + 悬停看全文」：这两种失败都不会自己好起来，
           用户必须一眼读到「到哪一步没成、接下来该做什么」——
           save.ts 的 state.error 与 bridge 的 UndoResult.error 已经是写好的整句话。 */}
       {saveState.error && (
         <div className="mr-hint" data-testid="md-save-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           <span>{saveState.error}</span>
         </div>
       )}
       {undoError && (
         <div className="mr-hint" data-testid="md-undo-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           <span>{undoError}</span>
         </div>
       )}

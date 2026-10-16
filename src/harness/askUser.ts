@@ -54,3 +54,18 @@ export function validateAskUser(raw: unknown): AskUserValidation {
 
   return { ok: true, ask: { question, options, allowCustom: ask.allowCustom !== false } };
 }
+
+/**
+ * 用户作答后喂回模型的那句话。
+ *
+ * 放在这里（而不是 `libraryAssistant`）是因为它**是提问工具的语义**：工具返回什么，
+ * 模型就据此以为用户说了什么。执行器与「刷新后的断点续跑」共用这一份 —— 续跑时没有
+ * 内存 promise，由 store 自己按选择拼这句话；抽出来是为了两处说法不漂移。
+ *
+ * 纯函数、无运行时依赖，Node 下可直接单测。
+ */
+export function askUserToolResult(picked: string): string {
+  const value = picked.trim();
+  if (!value) return '用户没有回答这个问题。请依据已有信息回答，并说明你做的假设。';
+  return `用户选择了：「${value}」。`;
+}

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
-import { Banner, PageShell, SectionCard, useMduiEvent } from '../ui';
+import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
+import { Banner, PageShell, SectionCard, Sym, useSkeletonGate } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { SettingsButton } from '../components/SettingsModal';
 import { loadStudyDays, useStudyTime } from '../store/studyTime';
 import { useSettings } from '../store/settings';
 import {
@@ -35,6 +37,17 @@ const WEEKDAY_LABELS = ['', '一', '', '三', '', '五', ''];
 export default function Study() {
   const nav = useAppNav('study');
   const [days, setDays] = useState<StudyDay[]>([]);
+  /**
+   * 学习记录的加载状态。
+   *
+   * ⚠️ `days` 的初值 `[]` 和「确实一条记录都没有」长得一模一样 —— 拿它兼表「正在加载」
+   * 的话，有记录的用户在冷启动时会先看到一整块「0 分钟 / 连续 0 天」和
+   * 「还没有学习记录」的提示，等读库回来再跳成真数字。统计数字尤其不能这么办：
+   * 那不是在等，那是在**报一个错的数**。
+   *
+   * 与 Library / store/courseChat 同一套规矩：加载态独立成一个字段。
+   */
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [range, setRange] = useState<RangeKey>('1y');
   const [today, setToday] = useState(() => dateKey(Date.now()));
   const [tip, setTip] = useState<{ cell: HeatCell; x: number; y: number } | null>(null);
@@ -49,8 +62,17 @@ export default function Study() {
   const idleMinutes = useSettings((s) => s.studyIdleMinutes);
 
   const reload = useCallback(async () => {
-    setDays(await loadStudyDays());
+    try {
+      setDays(await loadStudyDays());
+      setLoadState('ready');
+    } catch {
+      // 读不出来就停在加载态、不显示「还没有学习记录」——「读不到」和「没有」
+      // 是两件事，把前者显示成后者等于让用户以为自己的一整年记录没了。
+      setLoadState('error');
+    }
   }, []);
+
+  const showSkeleton = useSkeletonGate(loadState === 'loading');
 
   // 落库后重读（flushCount 每次落库 +1；未落库的部分由 pending 叠加上去）
   useEffect(() => {
@@ -99,10 +121,6 @@ export default function Study() {
     el.scrollLeft = el.scrollWidth;
   }, [range]);
 
-  const rangeRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
-    setRange(el.value as RangeKey),
-  );
-
   // 提示气泡的进入动画：挂载帧 data-show=false，下一帧翻 true，
   // CSS 才有一条「从透明缩到实」的插值可走（直接渲染 true 等于没有起点）。
   useEffect(() => {
@@ -141,6 +159,9 @@ export default function Study() {
       y: cellRect.top - wrapRect.top + wrap.scrollTop - 6,
     });
   };
+
+  /** 数据到齐了才允许把数字写进界面 —— 没到齐时显示的每一个数字都可能是错的 */
+  const dataReady = loadState === 'ready';
 
   const tiles: { label: string; value: string; sub: ReactNode; testId: string }[] = [
     {
@@ -193,24 +214,57 @@ export default function Study() {
       title="学习"
       wide
       rootClassName="page-study"
-      rail={nav.rail}
-      bottomNav={nav.bottom}
+      rail={nav}
+      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      /* 顶栏右上角那颗设置图标撤掉（2026-10-15，与 AI 助手页同一口径）：
+         设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
+         同一个入口在一条顶栏里露两次没有必要。 */
     >
       <div className="study-stats" data-testid="study-stats">
         {tiles.map((t) => (
           <div className="study-tile" key={t.testId} data-testid={t.testId}>
             <div className="study-tile__label">{t.label}</div>
-            <div className="study-tile__value">{t.value}</div>
-            <div className="study-tile__sub">{t.sub}</div>
+            {/* 数字槽：读数没到齐时要么留空（等得短，用户看不见）、要么放一条灰
+                （等得久，说明在加载）。**不能**放 0 —— 那是在报一个错的数。 */}
+            <div className="study-tile__value">
+              {dataReady ? t.value : showSkeleton ? <span className="skel-bar" /> : null}
+            </div>
+            <div className="study-tile__sub">
+              {/* 「今日」那一格的副文案是计时器的实时状态（记录中 / 未在计时），
+                  不来自这次读库，所以不用等数据。 */}
+              {dataReady || t.testId === 'tile-today' ? t.sub : showSkeleton ? <span className="skel-bar skel-bar--sub" /> : null}
+            </div>
           </div>
         ))}
       </div>
 
-      {stats.totalSeconds === 0 && (
+      {loadState === 'error' && (
+        <Banner
+          variant="error"
+          testId="study-load-error"
+          icon={<Sym name="error" />}
+          title="学习记录读取失败"
+          description="本机存储暂时读不出来，热力图与统计先不显示 —— 这不代表记录丢了。"
+          action={
+            <Button
+              variant="secondary"
+              data-testid="btn-study-retry"
+              onPress={() => {
+                setLoadState('loading');
+                void reload();
+              }}
+            >
+              重试
+            </Button>
+          }
+        />
+      )}
+
+      {dataReady && stats.totalSeconds === 0 && (
         <Banner
           variant="info"
           testId="study-empty-hint"
-          icon={<mdui-sym-calendar-month />}
+          icon={<Sym name="calendar_month" />}
           title="还没有学习记录"
           description="打开课程或阅读材料就会自动开始计时（页面在前台、且没长时间离开时才算）。看完一门课回来，这里会长出你的一整年。"
         />
@@ -223,25 +277,35 @@ export default function Study() {
           stats.best ? `。单日最高：${formatStudyDuration(stats.best.seconds)}（${formatDayLabel(stats.best.date)}）` : ''
         }`}
         actions={
-          <mdui-segmented-button-group
-            ref={rangeRef}
+          <ToggleButtonGroup
             data-testid="study-range"
             aria-label="学习记录时间范围"
-            selects="single"
-            value={range}
+            selectionMode="single"
+            disallowEmptySelection
+            size="sm"
+            selectedKeys={[range]}
+            onSelectionChange={(keys) => {
+              const next = [...keys][0];
+              if (next) setRange(next as RangeKey);
+            }}
           >
             {RANGES.map((r) => (
-              <mdui-segmented-button key={r.key} value={r.key} data-testid={`study-range-${r.key}`}>
+              <ToggleButton key={r.key} id={r.key} data-testid={`study-range-${r.key}`}>
                 {r.label}
-              </mdui-segmented-button>
+              </ToggleButton>
             ))}
-          </mdui-segmented-button-group>
+          </ToggleButtonGroup>
         }
       >
         <div
           className="heat-scroll"
           ref={scrollRef}
           data-testid="heat-scroll"
+          /* 读数没到齐时把热力图内容藏起来（CSS 走 opacity，**不**用 display:none）：
+             一格没上色的热力图和「这一年确实没学过」长得完全一样，
+             让它在加载期间出现在屏幕上就是在给用户一个错结论。
+             保留盒子是为了不产生布局位移。 */
+          data-loading={dataReady ? undefined : 'true'}
           role="region"
           aria-label="学习热力图，可横向滚动查看较早的记录"
           tabIndex={0}

@@ -1,8 +1,9 @@
 import React from 'react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import MermaidBlock from './MermaidBlock';
+import JsonDiagramBlock from './JsonDiagramBlock';
 import SvgBlock from './SvgBlock';
-import { diagramKindOf } from './fence';
+import { diagramKindOf, fenceTitleOf } from './fence';
 
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
 
@@ -15,6 +16,8 @@ type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
  *
  * 围栏判定在 `./fence`（纯模块，不 import 任何 DOM 依赖）—— 那里是「提示词 ↔ 渲染层」
  * 的契约所在，抽出来是为了能在 Node 单测里守住它，见 scripts/test-chat-frames.mjs。
+ * 标题（```diagram title="…"）也由它解析，传下去当块头文字：**围栏首行一到就有标题**，
+ * 那时图还没画完，所以标题是流式期间最早可见的那点信息。
  */
 export function MarkdownCode({ block, lang, streamStatus, className, children }: ComponentProps) {
   const kind = diagramKindOf({ block, lang });
@@ -22,7 +25,10 @@ export function MarkdownCode({ block, lang, streamStatus, className, children }:
     const code = typeof children === 'string' ? children : String(children ?? '');
     // 未闭合（流式中）时只停在等待态，不解析半截内容 —— 见 MermaidBlock / SvgBlock 的说明
     const closed = streamStatus !== 'loading';
-    return kind === 'mermaid' ? <MermaidBlock code={code} closed={closed} /> : <SvgBlock code={code} closed={closed} />;
+    const title = fenceTitleOf(lang);
+    if (kind === 'mermaid') return <MermaidBlock code={code} closed={closed} title={title} />;
+    if (kind === 'diagram') return <JsonDiagramBlock code={code} closed={closed} title={title} />;
+    return <SvgBlock code={code} closed={closed} title={title} />;
   }
   return <code className={typeof className === 'string' ? className : undefined}>{children as React.ReactNode}</code>;
 }

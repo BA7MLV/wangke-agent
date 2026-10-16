@@ -3,11 +3,16 @@ import { peekSvgProgress, sanitizeSvg } from './svgRender';
 import DiagramBlock, { type DiagramPhase } from './DiagramBlock';
 
 /**
- * 原生 SVG 图表块：替代 ```svg 围栏的代码块渲染。
+ * 原生 SVG 图表块：```svg 围栏的代码块渲染。
  *
- * 为什么要有这条路（mermaid 已经覆盖 15+ 图种）：mermaid 表达不了**函数图像、几何图形、
- * 坐标轴**这类自由图形 —— 那恰恰是数学/物理课程的高频板书。模型写 mermaid 会失败，
- * 写裸 SVG 反而一次就对。
+ * ⚠️ 这条链路自 2026-10-13 起是**历史数据兼容**通道：新内容由提示词引导走
+ * ```diagram（JSON 中间层，见 JsonDiagramBlock / diagramRender.ts）。但 2026-10-13
+ * 之前存进 IndexedDB 的问答与题卡里可能有 ```svg 围栏，删掉这条链路它们会渲染成
+ * 一坨源码 —— 所以保留，且净化与流式行为一字未改（e2e-svg-fence / e2e-svg-stream 守着）。
+ *
+ * 为什么当初要有这条路（mermaid 已经覆盖 15+ 图种）：mermaid 表达不了**函数图像、
+ * 几何图形、坐标轴**这类自由图形 —— 那恰恰是数学/物理课程的高频板书。如今这些场景
+ * 由 ```diagram 的 plot 类型接管（渲染器采样，模型不再手算坐标）。
  *
  * 与 MermaidBlock 的三点差别：
  * 1. **同步**：没有懒加载与渲染队列，净化是纯函数，所以不会停在 `rendering` 态；
@@ -20,7 +25,7 @@ import DiagramBlock, { type DiagramPhase } from './DiagramBlock';
  * 净化放在 useMemo 而不是 effect 里：它是同步纯计算，放 effect 会先渲染一帧
  * `waiting`/空态再跳成 `ok`，出现没必要的闪烁。
  */
-export default function SvgBlock({ code, closed }: { code: string; closed: boolean }) {
+export default function SvgBlock({ code, closed, title }: { code: string; closed: boolean; title?: string | null }) {
   const trimmed = useMemo(() => code.replace(/\s+$/, ''), [code]);
 
   /**
@@ -56,9 +61,10 @@ export default function SvgBlock({ code, closed }: { code: string; closed: boole
     <DiagramBlock
       testId="svg"
       tag="SVG"
+      title={title}
       phase={phase}
       svg={svg}
-      stream={progress}
+      stream={progress ? { kind: 'svg', progress } : null}
       err={err}
       source={trimmed}
       copyLabel="复制 SVG 源码"

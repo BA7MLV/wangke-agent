@@ -1,5 +1,5 @@
 /* 阅读材料（PDF / Word / Markdown / HTML）阅读器样式。
-   层级全部走 mdui 的 MD3 令牌，与播放页/讲义页保持同一套视觉语言。 */
+   层级全部走 HeroUI 语义令牌，与播放页/讲义页保持同一套视觉语言。 */
 
 /* ── PDF 文本层（逐条摘录自 pdf.js web/pdf_viewer.css，Apache-2.0） ──────────────
    为什么要抄：`.textLayer` 是 pdf.js 文本层的**契约样式** —— span 绝对定位、文字透明，
@@ -37,7 +37,7 @@
   height: 0;
 }
 .mr-page .textLayer ::selection {
-  background: rgba(var(--mdui-color-primary), 0.28);
+  background: rgba(var(--accent), 0.28);
 }
 .mr-page .textLayer br::selection {
   background: transparent;
@@ -68,7 +68,7 @@
   flex-direction: column;
   min-height: 0;
   height: 100%;
-  background: rgb(var(--mdui-color-surface-container-lowest));
+  background: var(--background);
 }
 
 .mr-bar {
@@ -76,13 +76,37 @@
   align-items: center;
   gap: 8px;
   padding: 6px 10px;
-  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
+  border-bottom: 1px solid rgba(var(--border-secondary), 0.5);
   flex-wrap: wrap;
+  /* 进度线是绝对定位的子元素，锚在工具条底边（见 .mr-bar__progress） */
+  position: relative;
+}
+
+/* 阅读进度线：工具条底边一条 3px 填充线。
+   刻意不套首页那条 .video-row__progress（layout.css）—— 那条要压在**任意**缩略图上，
+   所以自带半透明黑「轨道」；这里底边已经有 border-bottom，再加轨道就成了两条线。
+   也不给它圆角：卡片那条的圆角是跟着缩略图的 12px 裁切来的，
+   而工具条是通栏方角，两边圆中间不圆反而像没对齐。
+   绝对定位让它不占 flex 槽位：.mr-bar 是 flex-wrap 的，占了槽位会在窄屏上多挤出一行。 */
+.mr-bar__progress {
+  position: absolute;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  height: 3px;
+  overflow: hidden;
+  pointer-events: none;
+}
+
+.mr-bar__progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--accent);
 }
 
 .mr-bar__pos {
   font-size: 13px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -110,9 +134,9 @@
   padding: 8px 12px;
   font-size: 13px;
   line-height: 1.5;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  background: rgb(var(--mdui-color-surface-container));
-  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
+  color: var(--muted);
+  background: var(--background-tertiary);
+  border-bottom: 1px solid rgba(var(--border-secondary), 0.5);
 }
 
 .mr-scroll {
@@ -143,7 +167,7 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  color: rgba(var(--mdui-color-on-surface-variant), 0.5);
+  color: rgba(var(--muted), 0.5);
   font-size: 12px;
 }
 
@@ -167,25 +191,25 @@
 
 .mr-area__rect {
   position: absolute;
-  border: 1.5px solid rgb(var(--mdui-color-primary));
-  background: rgba(var(--mdui-color-primary), 0.14);
+  border: 1.5px solid var(--accent);
+  background: rgba(var(--accent), 0.14);
   border-radius: 2px;
   pointer-events: none;
 }
 
 /* 框选态下整页描边提示，避免用户忘了自己在框选态、以为「选不了字了」 */
 .mr-page--area {
-  outline: 2px dashed rgba(var(--mdui-color-primary), 0.7);
+  outline: 2px dashed rgba(var(--accent), 0.7);
   outline-offset: 2px;
 }
 
 /* 引用跳转来的落点高亮（800ms 后由 JS 移除） */
 @keyframes mr-flash {
   from {
-    box-shadow: 0 0 0 3px rgba(var(--mdui-color-primary), 0.85);
+    box-shadow: 0 0 0 3px rgba(var(--accent), 0.85);
   }
   to {
-    box-shadow: 0 0 0 3px rgba(var(--mdui-color-primary), 0);
+    box-shadow: 0 0 0 3px rgba(var(--accent), 0);
   }
 }
 .mr-flash {
@@ -224,15 +248,77 @@
   justify-content: center;
   gap: 10px;
   padding: 40px 0;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   font-size: 13px;
+}
+
+/* ── 文档正文骨架（DocSkeleton） ──────────────────────────────────────────
+   几何与真内文外壳同值：
+   - page：复刻 `.mr-docx .docx-wrapper > section.docx` 的白页（宽 820 / padding 32×36 /
+     圆角 4 / 阴影）。那张纸恒为白（深浅色都一样），所以里面的灰条用**固定浅灰** ——
+     用 `--background-tertiary` 的话深色下会变成白纸上的黑杠（§五 那个坑的镜像）。
+   - column：复刻 `.mr-md` 的 760px 正文列（padding 28×32），灰条走语义令牌。
+   行高按 `.mr-md` 的 `15px × 1.7`，段距 14px。选择器一律带 `.doc-skel` 前缀（0,2,0），
+   不跟 `.skel-bar` 的默认 12px 打平（见 skeleton.css 的 ⚠️）。 */
+.doc-skel {
+  padding-bottom: 24px;
+}
+
+.doc-skel__body {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.doc-skel--page .doc-skel__body {
+  width: min(100%, 820px);
+  margin: 0 auto 12px;
+  padding: 32px 36px;
+  border-radius: 4px;
+  /* 与真 docx 页一样恒为白：深浅色都是白纸黑字 */
+  background: #fff;
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.18);
+}
+
+.doc-skel--column .doc-skel__body {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 28px 32px 48px;
+}
+
+.doc-skel .doc-skel__title {
+  width: 42%;
+  height: 26px;
+}
+
+.doc-skel .doc-skel__line {
+  width: 100%;
+  height: 18px;
+}
+
+.doc-skel .doc-skel__line--short {
+  width: 64%;
+}
+
+/* 白页上的灰条不能用语义令牌（深色下会翻成深灰） */
+.doc-skel--page .skel-bar {
+  background: oklch(91% 0.003 286);
+}
+
+/* 阅读器工具条里的页码槽：它是**数值槽**，等在加载时用一条骨架而不是 Shimmer 文案
+   （与学习页数字槽同一档）。宽度按 `xx / xxx` 给。 */
+.mr-bar .reader-pos-skel {
+  display: inline-block;
+  width: 58px;
+  height: 14px;
+  vertical-align: middle;
 }
 
 .mr-md {
   max-width: 760px;
   margin: 0 auto;
   padding: 28px 32px 48px;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
 }
 
 .mr-md__block {
@@ -240,8 +326,8 @@
 }
 
 .mr-md__block--mark {
-  background: rgba(var(--mdui-color-primary), 0.14);
-  box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
+  background: rgba(var(--accent), 0.14);
+  box-shadow: inset 3px 0 0 var(--accent);
   border-radius: 6px;
   padding: 2px 10px 6px;
   margin-left: -10px;
@@ -257,8 +343,8 @@
   margin-top: 6px;
   padding: 1px 8px;
   border-radius: 999px;
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
+  background: var(--accent);
+  color: var(--accent-foreground);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -295,8 +381,8 @@
   padding: 3px 10px;
   /* 面层色而不是底色：它属于「编辑器」而不是「文档」，
      阅读/编辑两种状态因此有一道明确的视觉分界，切过去时不会以为还在读。 */
-  background: rgb(var(--mdui-color-surface-container));
-  border-bottom: 1px solid rgba(var(--mdui-color-outline-variant), 0.5);
+  background: var(--background-tertiary);
+  border-bottom: 1px solid rgba(var(--border-secondary), 0.5);
 }
 
 /* 保存状态文案。等宽数字不必要（这里没有数字），但要 nowrap：
@@ -305,7 +391,7 @@
    （见上面 .mr-edit-bar 的注释），所以空间不够时必须牺牲文案而不是让控件溢出。 */
 .mr-edit-state {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   white-space: nowrap;
   min-width: 0;
   overflow: hidden;
@@ -316,7 +402,7 @@
    而主色在本项目里就是「注意/进行中」的口径（工具条按钮、focus 环都用它）。
    不用 error 色 —— 「未保存」不是故障，不该用警告色。 */
 .mr-edit-state--dirty {
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
   font-weight: 500;
 }
 
@@ -325,7 +411,7 @@
    底下还挂着一整条说明（原文没存下去，还是存下了但检索是旧的）——
    两种情况若都画成主色，用户会把「数据可能对不上」当成「还没存完」。 */
 .mr-edit-state--error {
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
   font-weight: 500;
 }
 
@@ -383,7 +469,7 @@
   max-width: 760px;
   margin: 0 auto;
   padding: 28px 32px 48px;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
   font-size: 15px;
   line-height: 1.7;
   overflow-wrap: anywhere;
@@ -394,8 +480,8 @@
 }
 
 .mr-html__block--mark {
-  background: rgba(var(--mdui-color-primary), 0.14);
-  box-shadow: inset 3px 0 0 rgb(var(--mdui-color-primary));
+  background: rgba(var(--accent), 0.14);
+  box-shadow: inset 3px 0 0 var(--accent);
   border-radius: 6px;
   padding: 2px 10px 6px;
   margin-left: -10px;
@@ -411,8 +497,8 @@
   margin-top: 6px;
   padding: 1px 8px;
   border-radius: 999px;
-  background: rgb(var(--mdui-color-primary));
-  color: rgb(var(--mdui-color-on-primary));
+  background: var(--accent);
+  color: var(--accent-foreground);
   font-size: 12px;
   line-height: 1.6;
 }
@@ -429,8 +515,8 @@
 .mr-html blockquote {
   margin-left: 0;
   padding-left: 1em;
-  border-left: 3px solid rgb(var(--mdui-color-outline-variant));
-  color: rgb(var(--mdui-color-on-surface-variant));
+  border-left: 3px solid var(--border-secondary);
+  color: var(--muted);
 }
 
 .mr-html :is(pre, code) {
@@ -441,21 +527,31 @@
   overflow: auto;
   padding: 12px;
   border-radius: 6px;
-  background: rgb(var(--mdui-color-surface-container));
+  background: var(--background-tertiary);
   white-space: pre-wrap;
 }
 
+/* 表格走三线表，口径与 markdown 内容表格一致（见 src/md-table.css）。
+   分段视图的片段是 DOMPurify 白名单过的（连 style / border 属性都被剥掉），
+   所以导入文档里表格长什么样，完全由这里决定——不必担心被原文的边框盖住。 */
 .mr-html table {
   width: 100%;
   border-collapse: collapse;
+  border-top: 2px solid var(--foreground);
+  border-bottom: 2px solid var(--foreground);
   overflow-x: auto;
 }
 
 .mr-html :is(th, td) {
   padding: 6px 8px;
-  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border: 0 none;
   text-align: start;
   vertical-align: top;
+}
+
+/* 栏目线（表头下沿）。与上一段**同权重**，靠顺序取胜，所以必须写在其后。 */
+.mr-html th {
+  border-bottom: 1px solid var(--foreground);
 }
 
 .mr-html img {
@@ -466,5 +562,5 @@
 }
 
 .mr-html a {
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
 }

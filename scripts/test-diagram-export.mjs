@@ -8,10 +8,15 @@
  * 只给 viewBox、根节点不写 width，此时全串替换会打到某个子元素上
  * （比如 `<rect width="100">` 直接被删掉），导出文件里的图形就变形了。
  *
+ * 2026-10-13 起 ```diagram 渲染器的产物也是同一种形状（根节点只有 viewBox），
+ * 所以末尾补了两个渲染器产物的用例 —— 那条链路同样要能干净导出。
+ *
  * 运行：node scripts/test-diagram-export.mjs
  */
 import assert from 'node:assert/strict';
 import { toStandaloneSvg, svgIntrinsicSize } from '../src/components/mermaid/mermaidRender.ts';
+import { renderDiagram } from '../src/components/mermaid/diagramRender.ts';
+import { validateDiagram } from '../src/components/mermaid/diagramSchema.ts';
 
 let passed = 0;
 const failures = [];
@@ -72,6 +77,51 @@ test('只动根标签：viewBox、子元素属性与文本原样保留', () => {
   assert.ok(out.includes('viewBox="0 0 60 40"'), 'viewBox 不该被动');
   assert.ok(out.includes('<path d="M0 0 L60 40" stroke-width="2"'), 'path 不该被动');
   assert.ok(out.includes('>顶点</text>'), '中文文本不该被动');
+});
+
+// —— 2026-10-13 新增：diagram 渲染器的产物也要能干净导出 ——
+// 渲染器的根标签只带 xmlns + viewBox、**不带 width/height**（与模型手写的原生 svg
+// 同一种形状），而图例底板是 `<rect width="…">` —— 正是全串替换会打歪的那种子元素。
+
+test('★ diagram 渲染器的产物（根节点只有 viewBox）导出时子元素几何不被误删', () => {
+  const doc = validateDiagram({
+    type: 'plot',
+    x: [-3, 3],
+    y: [-1, 5],
+    curves: [{ fn: 'x^2', label: 'y=x²' }],
+  });
+  const { svg } = renderDiagram(doc);
+  assert.ok(!/<svg[^>]*\swidth=/.test(svg), 'fixture 前提：根节点没有 width');
+  assert.match(svg, /<rect[^>]*\swidth=/, 'fixture 前提：子元素带着 width（图例底板）');
+  const out = toStandaloneSvg(svg);
+  // 从根开标签之后切到 </svg> 之前：xml 声明的 '>' 不能当分割点
+  const inner = (s) => {
+    const m = s.match(/<svg\b[^>]*>/i);
+    return m ? s.slice(m.index + m[0].length, s.lastIndexOf('</svg>')) : null;
+  };
+  assert.equal(inner(out), inner(svg), '根标签之外的内容一个字符都不能动');
+  assert.match(out, /<svg[^>]*width="\d+"[^>]*height="\d+"/, '根标签应补上 viewBox 尺寸');
+  assert.ok(out.includes('<?xml version="1.0" encoding="UTF-8"?>\n'), 'xml 声明仍在');
+});
+
+test('graph 渲染器的产物导出：defs 里的 marker 与节点几何都不被动', () => {
+  const doc = validateDiagram({
+    type: 'graph',
+    direction: 'LR',
+    nodes: [
+      { id: 'a', label: '客户端' },
+      { id: 'b', label: '服务端' },
+    ],
+    edges: [{ from: 'a', to: 'b', label: '请求' }],
+  });
+  const { svg } = renderDiagram(doc);
+  const out = toStandaloneSvg(svg);
+  const inner = (s) => {
+    const m = s.match(/<svg\b[^>]*>/i);
+    return m ? s.slice(m.index + m[0].length, s.lastIndexOf('</svg>')) : null;
+  };
+  assert.equal(inner(out), inner(svg), '根标签之外的内容一个字符都不能动');
+  assert.match(out, /<svg[^>]*width="\d+"[^>]*height="\d+"/, '根标签应补上 viewBox 尺寸');
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

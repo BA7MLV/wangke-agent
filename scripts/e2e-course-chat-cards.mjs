@@ -173,8 +173,20 @@ await page.reload({ waitUntil: 'networkidle' });
 await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
 
 /** mdui-text-field 内部可能是 textarea 也可能是 input，两个都试 */
+/**
+ * 输入框。
+ *
+ * ⚠️ 选择器必须同时收两种形态：`.course-chat__input` 本身**是** textarea/input（HeroUI 的
+ * `TextArea` 把 className 落在元素上），以及它是包着 textarea/input 的容器。
+ * 只写后代选择器 `.course-chat__input textarea` 的话一条都匹配不到 ——
+ * `waitFor` 超时，报成「输入框不可见」，看着像页面挂了。
+ */
 async function typeAndSend(text) {
-  const field = page.locator('.course-chat__input textarea, .course-chat__input input').first();
+  const field = page
+    .locator(
+      '.course-chat__input textarea, .course-chat__input input, textarea.course-chat__input, input.course-chat__input',
+    )
+    .first();
   await field.waitFor({ timeout: 10000 });
   await field.click();
   await field.fill(text);
@@ -222,10 +234,12 @@ await check('点一个方案 → 卡片锁定选中、回答接着出来', async
 await check('选择与那条用户消息都落库（历史回放自洽）', async () => {
   const chats = await waitFor(async () => {
     const rows = await readAll('chats');
-    const ai = rows.filter((r) => r.role === 'assistant' && r.ask);
-    return ai.length > 0 ? rows : null;
+    // ⚠️ 判据必须是「带着 picked 的那条」：卡片行在**挂起时**就已落库（picked 暂空），
+    // 只等「存在带 ask 的行」会在用户点选之前就满足，读到 picked 未写回的那一刻。
+    const withAsk = rows.find((r) => r.role === 'assistant' && r.ask && r.ask.picked);
+    return withAsk ? rows : null;
   });
-  assert.ok(chats, '助手消息应带着 ask 落库');
+  assert.ok(chats, '助手消息应带着 ask 与已作答的 picked 落库');
   const withAsk = chats.find((r) => r.ask);
   assert.equal(withAsk.ask.picked, '按考试时间紧迫度', 'ask.picked 应存被选中的原文');
   assert.equal(withAsk.ask.question, '你想让我优先按什么来推荐课程？');
@@ -426,6 +440,84 @@ await check('收尾轮与宽限轮都不吭声 → 说清「用完几轮 / 还�
   assert.match(notice, /继续/, '要给出下一步动作');
   assert.match(notice, /整理方案。/, '要把它最后说过的话留下来当进度');
   assert.doesNotMatch(notice, /未获得回答/, '不该再出现「（未获得回答）」');
+});
+
+console.log('—— 6. 提问卡：刷新后断点续跑 ——');
+await check('刷新后卡片仍可答，且提示「会话已恢复」', async () => {
+  await resetChats();
+  // 第 1 轮先查课程库（攒下一条工具结果），第 2 轮才提问 —— 这样续跑才有的可验证：
+  // 断点前的那条工具结果必须被保住，而不是重开一轮。
+  await pushSteps([
+    { chunks: [{ content: '先看课程库。' }, toolChunks('list_courses', { limit: 50 })[0]] },
+    { chunks: toolChunks('ask_user', { question: '先学哪一门？', options: ['高等数学（上）', '申论归纳概括'], allowCustom: true }) },
+  ]);
+  await typeAndSend('帮我排个学习顺序');
+  await page.locator('[data-testid="ask-card"]').waitFor({ timeout: 15000 });
+
+  // 刷新：杀掉正在等待用户作答的 agent 循环
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
+
+  const card = page.locator('[data-testid="ask-card"]');
+  await card.waitFor({ timeout: 15000 });
+  assert.equal(await card.getAttribute('data-restored'), 'true', '刷新后卡片应标为「已恢复」');
+  assert.equal(await card.getAttribute('data-answered'), 'false', '刷新后卡片应仍是待答');
+  assert.equal(await card.locator('[data-testid="ask-card-expired"]').count(), 0, '不该显示「本次会话已结束」');
+  assert.ok(await card.locator('[data-testid="ask-custom"]').isEnabled(), '卡内「我自己说」应可点');
+});
+
+await check('点选后从断点续跑：保住断点前的工具结果，不重开一轮', async () => {
+  await push(textChunks('那就先', '从高等数学', '开始。'));
+  await page.locator('.ask-option', { hasText: '高等数学（上）' }).click();
+  const answer = await waitFor(async () => {
+    const t = await page.locator('.course-chat__bubble--ai').last().innerText();
+    return t.includes('高等数学') && t.includes('开始') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(answer, '续跑后应给出最终回答');
+
+  // 续跑那一轮的请求里必须同时含：断点前 list_courses 的调用与结果、挂起的 ask_user 调用与它的结果。
+  // 若没有续跑（而是重开一轮），这些中间消息一个都不会出现。
+  const reqs = await page.evaluate(() => window.__LLM__.requests);
+  const last = reqs[reqs.length - 1];
+  const calls = last.messages.flatMap((m) => (m.tool_calls ?? []).map((c) => c.function.name));
+  assert.ok(calls.includes('list_courses'), `断点前的 list_courses 调用应被带到续跑请求里，实际：${calls.join(',')}`);
+  assert.ok(calls.includes('ask_user'), `挂起的 ask_user 调用应在续跑请求里，实际：${calls.join(',')}`);
+  assert.ok(
+    last.messages.some((m) => m.role === 'tool' && typeof m.content === 'string' && m.content.includes('高等数学（上）')),
+    'ask_user 的工具结果应是把用户的选择喂回模型',
+  );
+});
+
+console.log('—— 7. 目录整理方案卡：刷新后断点续跑 ——');
+await check('刷新后方案卡仍可确认，执行后从断点续跑', async () => {
+  await resetChats();
+  await pushSteps([
+    { chunks: toolChunks('propose_folder_plan', { summary: '按学科分两类。', folders: [{ name: '数学', courseIds: ['c-math'] }] }) },
+  ]);
+  await typeAndSend('帮我整理一下资料目录');
+  await page.locator('[data-testid="plan-card"]').waitFor({ timeout: 15000 });
+
+  await page.reload({ waitUntil: 'networkidle' });
+  await page.waitForSelector('[data-testid="course-chat-page"]', { timeout: 20000 });
+  const card = page.locator('[data-testid="plan-card"]');
+  await card.waitFor({ timeout: 15000 });
+  assert.equal(await card.locator('[data-testid="plan-restored"]').count(), 1, '刷新后方案卡应显示「会话已恢复」');
+  assert.equal(await card.locator('[data-testid="plan-card-expired"]').count(), 0, '刷新后方案卡不该是死卡');
+  assert.ok(await card.locator('[data-testid="plan-confirm"]').isEnabled(), '刷新后「确认执行」应可点');
+
+  await push(textChunks('已经按学科分好了。'));
+  await card.locator('[data-testid="plan-confirm"]').click();
+  const folders = await waitFor(async () => {
+    const rows = await readAll('folders');
+    return rows.length >= 1 ? rows : null;
+  });
+  assert.ok(folders, '确认后方案应真的落库');
+
+  const answer = await waitFor(async () => {
+    const t = await page.locator('.course-chat__bubble--ai').last().innerText();
+    return t.includes('学科分好') ? t : null;
+  }, { timeout: 15000 });
+  assert.ok(answer, '确认后应继续跑出最终回答');
 });
 
 await browser.close();

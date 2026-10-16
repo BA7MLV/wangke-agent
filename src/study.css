@@ -21,31 +21,24 @@
   --heat-label-w: 20px;
   --heat-label-gap: 4px;
   /* 空格子：跟主题走，别用 GitHub 那个偏冷的 #ebedf0 */
-  --heat-l0: rgb(var(--mdui-color-surface-container-highest));
+  --heat-l0: var(--default);
   --heat-l1: #9be9a8;
   --heat-l2: #40c463;
   --heat-l3: #30a14e;
   --heat-l4: #216e39;
   /* 提示条用反色面（MD3 的 inverse-surface），深浅主题下自动反相 */
-  --heat-tip-bg: rgb(var(--mdui-color-inverse-surface));
-  --heat-tip-fg: rgb(var(--mdui-color-inverse-on-surface));
+  --heat-tip-bg: var(--background-inverse);
+  --heat-tip-fg: var(--background-inverse);
 }
 
-/* 深色主题下换深色档：原来的浅绿在深底上会糊成一片白 */
-html.mdui-theme-dark .page-study {
+/* 深色主题下换深色档：原来的浅绿在深底上会糊成一片白。
+   深浅色统一由 <html> 上的 .dark 类表达（见 ui/theme.ts 的 applyTheme），
+   auto 模式也由 JS 解析系统偏好后落成同一个类，所以这里不需要媒体查询分支。 */
+html.dark .page-study {
   --heat-l1: #0e4429;
   --heat-l2: #006d32;
   --heat-l3: #26a641;
   --heat-l4: #39d353;
-}
-
-@media (prefers-color-scheme: dark) {
-  html.mdui-theme-auto .page-study {
-    --heat-l1: #0e4429;
-    --heat-l2: #006d32;
-    --heat-l3: #26a641;
-    --heat-l4: #39d353;
-  }
 }
 
 /* ── 统计概览 ───────────────────────────────────────────────────────────── */
@@ -59,13 +52,13 @@ html.mdui-theme-dark .page-study {
 
 .study-tile {
   padding: 12px 14px;
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-surface-container-low));
+  border-radius: var(--radius);
+  background: var(--background-secondary);
 }
 
 .study-tile__label {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .study-tile__value {
@@ -73,12 +66,29 @@ html.mdui-theme-dark .page-study {
   font-size: 22px;
   font-weight: 500;
   line-height: 1.2;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
+  /* 读数没到齐时这里可能是空的（等得短，不显示骨架）。给一行兜底高度，
+     免得「空 → 有数字」时整格跳一下。有数字时这条不起作用。 */
+  min-height: calc(22px * 1.2);
 }
 
 .study-tile__sub {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
+}
+
+/* 数字槽的骨架条。尺寸必须比 `.skel-bar`（12px 高）更具体（这里 0,2,0）
+   —— 只写单类会和 ui/skeleton.css 打平，谁赢取决于样式表打包顺序。 */
+.study-tile .skel-bar {
+  display: block;
+  width: 76px;
+  height: 20px;
+  border-radius: 6px;
+}
+
+.study-tile .skel-bar--sub {
+  width: 56px;
+  height: 12px;
 }
 
 /*
@@ -145,13 +155,20 @@ html.mdui-theme-dark .page-study {
 }
 
 .heat-scroll:focus-visible {
-  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
 }
 
 .heat-inner {
   width: max-content;
+}
+
+/* 读数没到齐：内容透明但**仍然占位**（用 opacity 而不是 display:none）。
+   一格没上色的热力图与「这一年确实没学过」在视觉上是同一张图，
+   加载期间把它显示出来等于给了用户一个错结论。 */
+.heat-scroll[data-loading] .heat-inner {
+  opacity: 0;
 }
 
 .heat-months {
@@ -165,7 +182,7 @@ html.mdui-theme-dark .page-study {
   top: 0;
   font-size: 11px;
   line-height: 16px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   white-space: nowrap;
 }
 
@@ -186,7 +203,7 @@ html.mdui-theme-dark .page-study {
   font-size: 10px;
   line-height: var(--heat-cell);
   text-align: right;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .heat-cells {
@@ -227,7 +244,7 @@ html.mdui-theme-dark .page-study {
 
 /* 今天：描一圈主色，一眼能找到「我在哪儿」 */
 .heat-cell--today {
-  box-shadow: 0 0 0 1px rgb(var(--mdui-color-primary));
+  box-shadow: 0 0 0 1px var(--accent);
 }
 
 /* tooltip open/close：出现带 80ms 延迟 + 淡入 + 微缩放，离开立即消失。
@@ -239,7 +256,7 @@ html.mdui-theme-dark .page-study {
   display: flex;
   flex-direction: column;
   padding: 5px 9px;
-  border-radius: var(--mdui-shape-corner-extra-small);
+  border-radius: var(--radius-xs);
   background: var(--heat-tip-bg);
   color: var(--heat-tip-fg);
   font-size: 11px;
@@ -290,7 +307,7 @@ html.mdui-theme-dark .page-study {
 }
 
 .study-recent__date {
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   white-space: nowrap;
 }
 
@@ -317,7 +334,7 @@ html.mdui-theme-dark .page-study {
 
 .study-recent__value {
   text-align: right;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
   white-space: nowrap;
 }
 

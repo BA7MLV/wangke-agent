@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { SectionCard } from '../ui';
+import { Button, Chip, ProgressBar, Spinner } from '@heroui/react';
+import { SectionCard, Sym } from '../ui';
 import { getStorageStats, type StorageStats } from '../store/storageStats';
 import { formatSize } from '../utils/format';
 
@@ -28,61 +29,68 @@ export default function StorageCard() {
       title="存储占用"
       testId="card-storage"
       actions={
-        <mdui-button
-          variant="tonal"
-          loading={loading}
+        <Button
+          variant="secondary"
+          isPending={loading}
           data-testid="storage-refresh"
-          onClick={() => void reload()}
+          onPress={() => void reload()}
         >
-          <mdui-sym-refresh slot="icon" />
-          刷新
-        </mdui-button>
+          {({ isPending }) => (
+            <>
+              {isPending ? <Spinner size="sm" color="current" /> : <Sym name="refresh" />}
+              刷新
+            </>
+          )}
+        </Button>
       }
     >
       {stats && (
         <>
-          <mdui-linear-progress
+          <ProgressBar
             value={percent}
-            max={100}
+            maxValue={100}
+            aria-label="存储占用比例"
             data-testid="storage-progress"
           />
-          <div className="storage-progress-text">
+          <div className="mt-1 text-xs text-muted" data-testid="storage-quota">
             {stats.quota > 0
               ? `已用 ${formatSize(stats.usage)} / 配额 ${formatSize(stats.quota)}`
               : `已用 ${formatSize(stats.usage)}`}
           </div>
-          <div style={{ margin: '4px 0 12px' }}>
+          <div className="mt-1 mb-3">
             {stats.persisted ? (
-              <mdui-chip variant="assist" data-testid="storage-persist-tag">
+              <Chip variant="soft" data-testid="storage-persist-tag">
                 已持久化，系统不会自动清理
-              </mdui-chip>
+              </Chip>
             ) : (
-              <mdui-chip
-                variant="assist"
+              <Chip
+                variant="soft"
+                color="danger"
                 data-testid="storage-persist-tag"
                 title="未持久化，系统空间紧张时可能清理数据"
-                style={{ color: 'rgb(var(--mdui-color-error))' }}
               >
                 未持久化，系统空间紧张时可能清理数据
-              </mdui-chip>
+              </Chip>
             )}
           </div>
-          {/* ⚠️ 分类名走的是 list-item 的**默认插槽**。
-              mdui 官方 JSX 注释写「也可以通过 slot="headline" 设置」，但实现里没有这个命名插槽
-              （renderInner 只有 description / end-icon 两个命名插槽，headline 只是 <slot> 的 part 名）——
-              写 slot="headline" 的内容会被静默丢弃、整列不渲染（实测踩到，已在 e2e 里加了回归断言）。 */}
-          <mdui-list>
+          {/* 分类明细用普通行列表：这里只是「名称 + 占比 + 大小」的静态展示，
+              用 ListBox 反而要处理选中语义，div + flex 足够。 */}
+          <div className="flex flex-col gap-1">
             {stats.categories.map((c) => (
-              <mdui-list-item key={c.label} data-testid="storage-row">
+              <div
+                key={c.label}
+                className="flex flex-nowrap items-start justify-between gap-3"
+                data-testid="storage-row"
+              >
                 <span>{c.label}</span>
-                <span slot="description">
-                  {stats.usage > 0 ? `${((c.bytes / stats.usage) * 100).toFixed(0)}%` : ''}
+                <span className="text-xs text-muted">
+                  {stats.usage > 0 ? `${((c.bytes / stats.usage) * 100).toFixed(0)}% · ` : ''}
+                  {formatSize(c.bytes)}
                 </span>
-                <span slot="end-icon">{formatSize(c.bytes)}</span>
-              </mdui-list-item>
+              </div>
             ))}
-          </mdui-list>
-          <div className="text-secondary" data-testid="storage-note" style={{ fontSize: 12 }}>
+          </div>
+          <div className="text-xs text-muted" data-testid="storage-note">
             视频文件存于浏览器 OPFS，字幕/讲义等存于 IndexedDB，仅保存在本机；清除站点数据会全部丢失。
           </div>
         </>

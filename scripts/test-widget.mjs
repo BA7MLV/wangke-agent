@@ -12,6 +12,7 @@
  */
 import assert from 'node:assert/strict';
 import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } from '../src/harness/widget.ts';
+import { fenceTitleOf, MAX_FENCE_TITLE } from '../src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];
@@ -27,13 +28,19 @@ function test(name, fn) {
 }
 
 const SVG = '<svg viewBox="0 0 240 120"><rect x="1" y="1" width="10" height="10"/></svg>';
+const PLOT_JSON = '{"type":"plot","x":[-3,3],"y":[-1,5],"curves":[{"fn":"x^2","label":"y=x²"}]}';
 
-test('接受 svg 与 mermaid 两种 format', () => {
-  for (const format of ['svg', 'mermaid']) {
-    const v = validateWidgetArgs({ format, code: SVG });
+test('接受 svg / mermaid / diagram 三种 format', () => {
+  const cases = [
+    ['svg', SVG],
+    ['mermaid', 'flowchart TD\n  A-->B'],
+    ['diagram', PLOT_JSON],
+  ];
+  for (const [format, code] of cases) {
+    const v = validateWidgetArgs({ format, code });
     assert.ok(v.ok, `${format} 应通过`);
     assert.equal(v.args.format, format);
-    assert.equal(v.args.code, SVG, 'code 应被 trim 后原样保留');
+    assert.equal(v.args.code, code, 'code 应被 trim 后原样保留');
   }
 });
 
@@ -122,10 +129,122 @@ test('通过回执：回一段围栏，并强调「还没上屏」与「放进�
   assert.ok(t.includes(SVG), '源码要原样带回来');
 });
 
-test('通过回执：mermaid 的围栏名跟着 format 走', () => {
+test('通过回执：mermaid 与 diagram 的围栏名跟着 format 走', () => {
   const t = widgetAcceptedText({ format: 'mermaid', code: 'flowchart TD\n  A-->B' });
   assert.ok(t.includes('```mermaid'));
   assert.ok(!t.includes('```svg'));
+  // diagram 回**原样 JSON**：围栏的内容就是 JSON 本身（tools.ts 的 diagram 分支）
+  const d = widgetAcceptedText({ format: 'diagram', code: PLOT_JSON });
+  assert.ok(d.includes('```diagram'));
+  assert.ok(d.includes(PLOT_JSON), '回执里必须带回那段 JSON（模型照抄进正文）');
+  assert.ok(!d.includes('```svg'));
+});
+
+// ── 标题：模型是照着回执「原样贴进正文」的，回执不带标题，标题就在这一趟里丢掉了 ──
+test('title：三种围栏都收，空标题按没写处理', () => {
+  for (const format of ['svg', 'mermaid', 'diagram']) {
+    const v = validateWidgetArgs({ format, code: SVG, title: '三次握手' });
+    assert.ok(v.ok, `${format} 应通过`);
+    assert.equal(v.args.title, '三次握手');
+  }
+  // 空 / 只有空白 / 没传 → 字段不存在，回执也就不写 title=
+  for (const title of [undefined, '', '   ']) {
+    const v = validateWidgetArgs({ format: 'svg', code: SVG, title });
+    assert.ok(v.ok);
+    assert.equal(v.args.title, undefined);
+    assert.ok(!widgetAcceptedText(v.args).includes('title='), '空标题不该写出 title=');
+  }
+});
+
+test('title：control 字符压成空格、首尾空白去掉', () => {
+  const v = validateWidgetArgs({ format: 'svg', code: SVG, title: '  三次\n握手  ' });
+  assert.ok(v.ok);
+  assert.equal(v.args.title, '三次 握手');
+});
+
+test('title：超长要拒并说清「标题不是正文句子」，而不是像渲染层那样截断', () => {
+  const long = '函'.repeat(MAX_FENCE_TITLE + 1);
+  const v = validateWidgetArgs({ format: 'diagram', code: PLOT_JSON, title: long });
+  assert.ok(!v.ok);
+  assert.match(v.error, /title 过长/);
+  assert.match(v.error, /不要把正文句子塞进来/, '要说清该怎么改，不能只说不行');
+  assert.ok(validateWidgetArgs({ format: 'diagram', code: PLOT_JSON, title: '函'.repeat(MAX_FENCE_TITLE) }).ok, '恰好在上限上应通过');
+});
+
+test('title：非字符串被拒；两种引号同时出现被拒（围栏参数按引号解析）', () => {
+  assert.ok(!validateWidgetArgs({ format: 'svg', code: SVG, title: 42 }).ok);
+  const v = validateWidgetArgs({ format: 'svg', code: SVG, title: '他说"就\'这样"' });
+  assert.ok(!v.ok);
+  assert.match(v.error, /引号/);
+  // 只有一种引号是安全的：换另一种引号包住即可
+  assert.ok(validateWidgetArgs({ format: 'svg', code: SVG, title: '他说"就这样"' }).ok);
+});
+
+test('title：html 形态没有标题栏，传了要拒（不静默丢掉）', () => {
+  const v = validateWidgetArgs({ format: 'html', code: '<div></div>', title: '原型' });
+  assert.ok(!v.ok);
+  assert.match(v.error, /title 只用于/, '要告诉模型该往哪儿写');
+  assert.ok(validateWidgetArgs({ format: 'html', code: '<div></div>' }).ok, '不传 title 不受影响');
+});
+
+test('通过回执：带 title 时围栏首行写成 ```diagram title="…"', () => {
+  const d = widgetAcceptedText({ format: 'diagram', code: PLOT_JSON, title: '抛物线开口方向' });
+  assert.ok(d.includes('```diagram title="抛物线开口方向"'), '围栏首行必须带标题');
+  assert.ok(d.includes(PLOT_JSON), '源码仍要原样带回来');
+  // 标题里有双引号时改用单引号包（fenceTitleOf 两支都认）
+  const q = widgetAcceptedText({ format: 'mermaid', code: 'flowchart TD\nA-->B', title: '他说"走"' });
+  assert.ok(q.includes("```mermaid title='他说\"走\"'"));
+});
+
+test('★ 闭环：预检回执的围栏首行能被 fence.ts 解析回同一个标题', () => {
+  // 两端各写各的解析就会出现「预检写了标题、渲染层读不出来」这种静默失败，
+  // 所以这里把回执文本真喂给渲染层的解析函数走一遍。
+  for (const format of ['svg', 'mermaid', 'diagram']) {
+    const code = format === 'diagram' ? PLOT_JSON : format === 'svg' ? SVG : 'flowchart TD\nA-->B';
+    const text = widgetAcceptedText({ format, code, title: '三次握手' });
+    const header = text.split('\n').find((l) => l.startsWith('```' + format));
+    assert.ok(header, `回执里应有 ${format} 围栏首行`);
+    assert.equal(fenceTitleOf(header.slice(3)), '三次握手');
+  }
+  // 不带标题时解析回 null —— 调用方据此退回图种标签
+  const plain = widgetAcceptedText({ format: 'svg', code: SVG });
+  const h = plain.split('\n').find((l) => l.startsWith('```svg'));
+  assert.equal(fenceTitleOf(h.slice(3)), null);
+});
+
+test('失败回执：diagram 的每类 schema / 表达式报错都要翻译成可执行的改法', () => {
+  // 措辞对齐 diagramSchema.ts / expr.ts 实际会抛的几种（含精确位置）
+  const cases = [
+    ['表达式第 7 字符附近出错：不认识的函数「sinn」（snippet）', /白名单函数/],
+    ['nodes[0]有不认识的字段「colour」。可用字段：id / label / shape（大小写敏感，不要自己发明字段名）', /schema 是锁死的/],
+    ['edges[0].to 引用了不存在的节点「z」。可用 id：a / b', /from\/to/],
+    ['type 必须是 "graph"（节点+连线的结构图）或 "plot"（函数图像/几何图形/坐标轴），实得 "diagram"。流程/时序/状态/层级这类标准结构图优先用 ```mermaid 围栏', /只能取/],
+    ['diagram 围栏里不是合法的 JSON：Unexpected token } in JSON。请检查多余的逗号', /JSON 对象/],
+    ['nodes 超过 10 个（实得 11 个）：拆成两张图，或改用列表', /数量上限/],
+    ['edges 超过 16 条（实得 17 条）：连线太多说明图该拆', /数量上限/],
+    ['edges[0] 是自环（from 与 to 都是「a」）：本渲染器不支持自环，去掉它或把说明写进节点文案', /自环/],
+    ['curves[0].domain [-3, 3] 超出了 x 范围 [-5, 5]：曲线只能画在坐标轴范围内', /domain/],
+    ['polygons[0].points 至少需要 3 个点（实得 2 个）', /至少 3 个点/],
+    ['circles[0].r 必须是正数（实得 -2）', /正数/],
+    ['nodes[0].color 只能是 #1677ff 这样的十六进制颜色或少数命名色（实得 "url(#x)"）', /十六进制/],
+    ['nodes[0].shape 只能是 box / round / ellipse / diamond（实得 "hexagon"）', /shape 只能是/],
+    ['labels[0].anchor 只能是 start / middle / end（实得 "center"）', /anchor 只能是/],
+    ['direction 只能是 "TB"（纵向）或 "LR"（横向），实得 "RL"', /direction 只能/],
+  ];
+  for (const [raw, expect] of cases) {
+    const t = widgetRejectedText(new Error(raw));
+    assert.match(t, expect, `原始报错「${raw}」的归因不对`);
+    assert.ok(t.includes(raw), '必须带上原始报错，否则模型无从定位');
+    assert.match(t, /图不会上屏/, '要说清后果');
+  }
+});
+
+test('失败回执：diagram 的 type 报错不被 mermaid 分支截胡（归因顺序）', () => {
+  // type 报错文案里含着「```mermaid」字样：diagram 分支必须整体排在 svg/mermaid 之前，
+  // 否则这条会被末尾的 mermaid 分支接走，给出「换 flowchart」这种文不对题的改法。
+  const t = widgetRejectedText(new Error('type 必须是 "graph" 或 "plot"，实得 "diagram"'));
+  assert.match(t, /type 只能取/);
+  assert.ok(!/mermaid 语法或图种不被支持/.test(t), '不该落到 mermaid 的改法上');
 });
 
 test('失败回执：每类净化报错都要翻译成可执行的改法', () => {

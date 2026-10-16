@@ -1,0 +1,1304 @@
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import {
+  Button,
+  Checkbox,
+  Chip,
+  Input,
+  ListBox,
+  Popover,
+  SearchField,
+  Select,
+  Slider,
+  ToggleButton,
+  ToggleButtonGroup,
+} from '@heroui/react';
+import { Header } from 'react-aria-components';
+import {
+  SLOT_LABEL,
+  catalogOf,
+  nextProviderId,
+  providersForSlot,
+  sameRef,
+  useSettings,
+  type ModelSlot,
+  type Provider,
+  type Settings,
+} from '../../store/settings';
+import { listModels } from '../../api/siliconflow';
+import {
+  dropModelList,
+  pruneModelLists,
+  readModelList,
+  writeModelList,
+} from '../../api/modelListCache';
+import {
+  guessContextWindow,
+  isVisionModel,
+  outputLimitOf,
+  supportsThinking,
+} from '../../api/modelCaps';
+import { UNLIMITED_ROUNDS } from '../../harness/loopGuard';
+import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../../api/modelMeta';
+import { ms } from '../motion';
+import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
+import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
+
+const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
+
+/**
+ * 各槽位的相关性启发式：相关模型在列表中置顶。**只影响排序**，不决定谁能进这个槽位。
+ *
+ * 带 catalogId 是因为能力判断必须按供应商查（同一模型 id 在别家可能不支持视觉/思考）。
+ */
+const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string) => boolean> = {
+  chat: (cat, id) => supportsThinking(cat, id) || isVisionModel(cat, id),
+  vision: (cat, id) => isVisionModel(cat, id),
+  // ASR 只能靠名字猜 —— models.dev 的 modalities.input 里有 'audio'，但那含 TTS，
+  // 而 /audio/transcriptions 只认 ASR 模型，两者在数据上区分不开。这里仍按名字排，
+  // 但真正的准入靠供应商的 serves 勾选（见 ProviderRow）。
+  asr: (_cat, id) => ASR_MODEL_RE.test(id),
+};
+
+/** 槽位 → 图标。三个槽位并排出现时，图标是唯一能一眼分开它们的东西 */
+const SLOT_ICON: Record<ModelSlot, ReactNode> = {
+  chat: <Sym name="neurology" />,
+  vision: <Sym name="visibility" />,
+  asr: <Sym name="mic" />,
+};
+
+/** 槽位 → 一句话说明它负责什么。放在槽位名下，替代原来分散在各处的长 hint */
+const SLOT_HINT: Record<ModelSlot, string> = {
+  chat: '讲义生成、课程问答与思考链都走这个模型',
+  vision: '读截图与课件页，缺失时会退回纯文本理解',
+  asr: '把视频音轨转成字幕，可以和文本模型不在同一家',
+};
+
+const SLOT_ORDER: readonly ModelSlot[] = ['chat', 'vision', 'asr'];
+
+/** 上下文窗口的紧凑写法：128000 → 128K，1048576 → 1M。列表里每行都要显示，太长会挤掉模型名 */
+function compactTokens(n: number): string {
+  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
+  if (n >= 1000) return `${Math.round(n / 1000)}K`;
+  return String(n);
+}
+
+/** 能力徽标：多模态 / 可思考。模型 id 长的行里这两枚最占地方，所以做成小圆角标签 */
+function CapBadges({ catalogId, model }: { catalogId: string; model: string }) {
+  const vision = isVisionModel(catalogId, model);
+  const think = supportsThinking(catalogId, model);
+  if (!vision && !think) return null;
+  return (
+    <>
+      {vision && (
+        <Chip size="sm" variant="soft" color="accent" className="h-4 px-1 text-[10px]">
+          多模态
+        </Chip>
+      )}
+      {think && (
+        <Chip size="sm" variant="soft" color="success" className="h-4 px-1 text-[10px]">
+          可思考
+        </Chip>
+      )}
+    </>
+  );
+}
+
+/**
+ * 供应商列表里的一行模型（Pi 的 /model 面板就是这个结构）。
+ *
+ * 一行 = 一个「供应商 + 模型」组合，所以**供应商名必须印出来**：`Qwen/Qwen3` 在两家
+ * 都可能存在，只显示模型 id 没法分辨自己收藏的是哪一家的。右侧再跟上下文窗口，
+ * 因为选模型时最关心的就是「它能记多少」。
+ */
+function ModelOptionRow({
+  providerId,
+  providerName,
+  model,
+  catalogId,
+  catalogKnown,
+  selected,
+  onSelect,
+  onToggleFavorite,
+  slot,
+  idPrefix,
+}: {
+  /** 供应商 id。写进行 id 而不是只写名字：`id` 是唯一键，两家重名会撞（见上面的说明） */
+  providerId: string;
+  providerName: string;
+  model: string;
+  catalogId: string;
+  /** false = 没填 models.dev key，上下文窗口只能按名字猜，得标出来 */
+  catalogKnown: boolean;
+  selected: boolean;
+  onSelect: () => void;
+  onToggleFavorite: () => void;
+  slot: ModelSlot;
+  /**
+   * id 前缀。收藏分组里的项和供应商分组里的项可能是同一个模型（收藏是置顶
+   * 而不是搬家），两处 id 撞了 React Aria 会抛 Duplicate key。
+   */
+  idPrefix?: string;
+}) {
+  const favTestId = `fav-${slot}-${providerName}-${model}`;
+  // 星标放在 ListBox.Item **内部**：Item 是 React Aria collection 的成员，
+  // 在外面另起一个 <div> 会让 collection 遍历到非collection 节点，行为不可预期。
+  return (
+    <ListBox.Item
+      // 用 '::' 而不是 '\0' 分隔：ListBox.Item 的 id 会被 React Aria 直接写进
+      // DOM 的 id 属性，而 NUL 是 XML/HTML 明确不允许出现在属性值里的字符 ——
+      // 列表一有内容，React 就会在 commit 阶段抛
+      // "getOwnerDocumentFromRootContainer(...).createTextNode is not a function"，
+      // 整棵树崩掉（空列表时因为没有 Item 所以看不出来）。
+      // 模型 id 里不会出现连续两个冒号，用它分隔足够安全。
+      //
+      // 左半段必须是**供应商 id**（不是名字）：名字允许重名，当唯一键会把两家同名的
+      // 候选挤成一条；而且供应商下拉认的是 id，认名字等于指向一家不存在的供应商。
+      id={`${idPrefix ?? ''}${providerId}::${model}`}
+      textValue={model}
+      data-testid={`model-option-${model}`}
+      className="relative flex flex-1 min-w-0 items-center gap-3.5 rounded-sm pr-[38px]"
+      onAction={onSelect}
+    >
+      <span className="flex flex-1 min-w-0 items-center gap-2">
+        <span className="truncate font-mono text-[13px]">{model}</span>
+        <CapBadges catalogId={catalogId} model={model} />
+      </span>
+      <span className="flex shrink-0 items-baseline gap-2.5 text-[11px] text-muted">
+        <span className="max-w-[120px] truncate text-right">{providerName}</span>
+        <span
+          className={`min-w-[42px] text-right tabular-nums ${catalogKnown ? '' : 'opacity-75 italic'}`}
+        >
+          {catalogKnown ? '' : '≈'}
+          {compactTokens(guessContextWindow(catalogId, model))}
+        </span>
+      </span>
+      <span
+        className={`absolute top-1/2 right-2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full border-0 bg-transparent text-base text-muted transition-opacity duration-200 cursor-pointer ${selected ? 'opacity-100 text-[#f5a623]' : 'opacity-0 hover:bg-foreground/8'} `}
+        data-fav={selected ? 'true' : 'false'}
+        data-testid={favTestId}
+        role="button"
+        tabIndex={-1}
+        aria-label={selected ? `取消收藏 ${model}` : `收藏 ${model}`}
+        onClick={(event) => {
+          // 星标在 Item 内部，靠阻止冒泡避免顺手把模型也选中
+          event.stopPropagation();
+          onToggleFavorite();
+        }}
+      >
+        <Sym name="star" filled={selected} />
+      </span>
+    </ListBox.Item>
+  );
+}
+
+/**
+ * 「按下就收起」：面板 / 触发按钮之外的任意一次 pointerdown 都要关掉面板。
+ *
+ * 为什么需要自己写：模型检索面板打了 `isNonModal`（理由见 SlotModelSelect 里的注释），
+ * 而 react-aria 的「点外面关闭」挂在 `isDismissable` 上，`usePopover` 把后者写死成
+ * `!isNonModal` —— 也就是说，非模态浮层在这一层上没有任何自动收起。
+ * Esc 仍然有效（走 `isKeyboardDismissDisabled`，与 isNonModal 无关）。
+ *
+ * 为什么用 pointerdown 而不是 click：click 要等 mouseup，按下时目标可能已经变了；
+ * 而且按下即关能给用户「点空了」的即时反馈，不用等一次完整的按下-抬起。
+ *
+ * 挂在冒泡阶段而不是捕获阶段：捕获阶段里把面板从 DOM 里摘掉，中途还在传播的这次
+ * 点击有可能落空（尤其当目标正好在被移除的子树里）。
+ */
+function DismissOnOutsidePress({
+  triggerRef,
+  onDismiss,
+}: {
+  triggerRef: React.RefObject<HTMLElement | null>;
+  onDismiss: () => void;
+}) {
+  useEffect(() => {
+    const handle = (event: PointerEvent) => {
+      const target = event.target;
+      if (!(target instanceof Node)) return;
+      // 面板本体（data-model-picker）与触发按钮之外的按下都算「点外面」
+      if (target instanceof Element && target.closest('[data-model-picker]')) return;
+      if (triggerRef.current?.contains(target)) return;
+      onDismiss();
+    };
+    document.addEventListener('pointerdown', handle);
+    return () => document.removeEventListener('pointerdown', handle);
+  }, [onDismiss, triggerRef]);
+  return null;
+}
+
+/**
+ * 一个槽位绑定的模型。
+ *
+ * 形态取自 Pi agent 的模型选择器：一张**整行可点**的大按钮直接显示
+ * 「模型名 + 能力 + 窗口」，点开才是检索面板。**为什么不给自由输入框**：
+ * 旧版是「输入框 + 选择按钮」两个控件，输入框在前、下拉在后 —— 用户会先看到那个
+ * 看起来能随便填的输入框，于是去手抄模型 id，而抄错一个字符要到运行时才报 404。
+ * 检索面板把「有哪些」摆在「选哪个」前面，手抄的路径仍然保留（面板底部的
+ * 「手动填写」），但不再是默认视线落点。
+ */
+function SlotModelSelect({
+  name,
+  slot,
+  settings,
+  options,
+}: {
+  name: ModelFieldName;
+  slot: ModelSlot;
+  settings: Settings;
+  /** 该槽位候选供应商各自拉到的在架模型（key = provider id） */
+  options: Record<string, string[]>;
+}) {
+  const ref = settings[name];
+  const update = useSettings((s) => s.update);
+  const provider = settings.providers.find((p) => p.id === ref.providerId);
+  const [kw, setKw] = useState('');
+  const [manual, setManual] = useState(false);
+  const [open, setOpen] = useState(false);
+  // 面板是 fixed 定位的，React Aria 要靠触发元素的 ref 才能算出「贴在按钮下方」。
+  // 之前按钮是 Popover.Trigger（自带 ref），换成自己的 <button> 后必须自己传，
+  // 否则面板会停在 (0,0) 且被 clip 掉 —— DOM 里有、屏幕上看不见。
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+  const favs = settings.favorites[slot];
+  const catalogId = catalogOf(settings, ref.providerId);
+
+  // 选了模型就顺手关面板：这是「选完即完成」的动作，留着面板挡住下面的运行参数
+  useEffect(() => {
+    if (open) setOpen(false);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ref.model, ref.providerId]);
+
+  /**
+   * 面板一打开就把光标放进检索框。
+   *
+   * 模态浮层时这件事是 react-aria 干的（非模态不干，见下面的 isNonModal 注释），
+   * 而面板里的 `Popover.Dialog` 是 RAC 的 Dialog —— 它打开时会把焦点接到自己身上
+   * （`tabIndex=-1` 的容器），所以光标停在面板边框而不是输入框里。
+   * 子组件的 effect 先跑、这个父级 effect 后跑，所以这里 focus 能压过它。
+   */
+  useEffect(() => {
+    if (!open) return;
+    panelRef.current?.querySelector('input')?.focus();
+  }, [open]);
+
+  /** 面板里要列的供应商：勾了该槽位的那些家；当前指的那家即便没勾也列出（否则改不回去） */
+  const candidates = useMemo(() => {
+    const list = providersForSlot(settings, slot);
+    if (!list.some((p) => p.id === ref.providerId) && provider) return [provider, ...list];
+    return list;
+  }, [settings, slot, ref.providerId, provider]);
+
+  const relevant = SLOT_RELEVANT[slot];
+  const needle = kw.trim().toLowerCase();
+  const isFav = (p: Provider, m: string) => favs.some((x) => x.providerId === p.id && x.model === m);
+
+  /**
+   * 选中一个模型：供应商与模型 id 一次性写进同一次 update。
+   *
+   * ⚠️ 这里**不能**再调一次「切供应商」的回调去做 providerId 的修正 ——
+   * 那个回调读的是本次渲染的 `settings` 快照（模型还是旧的），
+   * 于是它的 update 会把刚选中的模型又写回旧值：
+   * 用户点一条候选，面板关掉了、界面纹丝不动，看起来就是「点了没反应」。
+   * （反过来，先改供应商再选模型又是同一个坑的另一头。）
+   * 供应商与模型本来就该在一次写入里一起改，所以这里一次写完。
+   */
+  const setModel = (providerId: string, model: string) => {
+    if (!model) return;
+    const patch: Partial<Settings> = { [name]: { providerId, model } };
+    if (name === 'llmModel') {
+      patch.contextWindow = guessContextWindow(catalogOf(settings, providerId), model);
+    }
+    update(patch);
+  };
+
+  const toggleFavorite = (providerId: string, model: string) => {
+    const entry = { providerId, model };
+    const on = isFav({ id: providerId } as Provider, model);
+    update({
+      favorites: {
+        ...settings.favorites,
+        [slot]: on
+          ? favs.filter((x) => !sameRef(x, entry))
+          : [...favs.filter((x) => !sameRef(x, entry)), entry],
+      },
+    });
+  };
+
+  /** 分组：收藏优先置顶（Pi 的 /model 也是收藏先列），其余按供应商分组 */
+  const groups = candidates.map((p) => {
+    const ids = Array.from(
+      new Set(
+        (options[p.id] ?? []).filter(
+          (id) => !needle || id.toLowerCase().includes(needle),
+        ),
+      ),
+    ).sort((a, b) => Number(relevant(p.catalogId, b)) - Number(relevant(p.catalogId, a)));
+    return { provider: p, ids };
+  });
+  const favRows = candidates.flatMap((p) =>
+    favs
+      .filter((f) => f.providerId === p.id && (!needle || f.model.toLowerCase().includes(needle)))
+      .map((f) => ({ provider: p, id: f.model })),
+  );
+  // 收藏夹里指向已删供应商 / 已取消能力的项仍要列出来，否则勾过的东西凭空消失
+  const orphanFavs = favs.filter(
+    (f) => !candidates.some((p) => p.id === f.providerId) && (!needle || f.model.toLowerCase().includes(needle)),
+  );
+
+  const totalResults = favRows.length + orphanFavs.length + groups.reduce((n, g) => n + g.ids.length, 0);
+
+  return (
+    <div className="flex flex-col gap-2.5 rounded-xl bg-background-secondary p-3 px-3.5 transition-shadow hover:shadow-sm">
+      <div className="flex min-w-0 items-center gap-2.5">
+        <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-background text-[17px] text-muted" aria-hidden="true">
+          {SLOT_ICON[slot]}
+        </span>
+        <div className="flex-1 min-w-0">
+          <div className="text-[13px] font-semibold leading-tight text-foreground">{SLOT_LABEL[slot]}</div>
+          <div className="mt-px truncate text-xs text-muted">{SLOT_HINT[slot]}</div>
+        </div>
+        {/* 候选供应商只列勾了该能力的那些家 —— 这是「手动标能力」的实际用途 */}
+        <Select
+          className="w-[148px] shrink-0"
+          data-testid={`provider-${name}`}
+          aria-label={`${SLOT_LABEL[slot]}使用的供应商`}
+          selectedKey={ref.providerId}
+          onSelectionChange={(key) => {
+            if (key != null) setModel(String(key), ref.model);
+          }}
+        >
+          <Select.Trigger>
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          {/* isNonModal 必需，见下面模型检索面板的同一段注释：
+              模态浮层会给「它以外的一切」打 inert，连父弹窗一起打中，
+              于是展开下拉之后整个设置面板就点不动了。 */}
+          <Select.Popover isNonModal>
+            <ListBox>
+              {candidates.map((p) => (
+                <ListBox.Item key={p.id} id={p.id} textValue={p.name}>
+                  {p.name}
+                </ListBox.Item>
+              ))}
+            </ListBox>
+          </Select.Popover>
+        </Select>
+      </div>
+
+      {manual ? (
+        <div className="mt-2.5 flex items-center gap-2">
+          <Input
+            data-testid={`model-${name}`}
+            aria-label={`${SLOT_LABEL[slot]}模型 ID`}
+            value={ref.model}
+            placeholder="粘贴模型 ID，例如 Qwen/Qwen3-235B-A22B"
+            onChange={(e) => update({ [name]: { ...ref, model: e.target.value } })}
+            autoFocus
+          />
+          <Button variant="ghost" onPress={() => setManual(false)}>
+            返回列表
+          </Button>
+        </div>
+      ) : (
+        // 受控用法（isOpen + onOpenChange），不用 Popover.Trigger。
+        //
+        // 为什么绕开 Trigger：HeroUI v3 的 Popover.Trigger 渲染成
+        // <Pressable><div role="button" /></Pressable>，而 Pressable 自己调 usePress
+        // 把 press 事件合到 children 上；DialogTrigger 注入的 onPress 则走 props，
+        // 两者互相覆盖，结果 onPress 永远不触发 —— 点这个按钮面板弹不出来
+        // （控制台会刷 "A PressResponder was rendered without a pressable child"）。
+        // Select.Trigger 没这问题，因为它渲染的是真正的 <button>。
+        //
+        // 所以这里自己画一个原生 <button>，点击行为由 DOM 保证，稳。
+        //
+        // ⚠️ `isNonModal` 不是可选项：RAC 的浮层默认是**模态**的，展开时会给
+        // 「它之外的一切」打 `inert`（react-aria 的 ariaHideOutside，shouldUseInert）。
+        // 这个面板就开在设置弹窗里，于是被打中 inert 的正好是整块 `.react-aria-ModalOverlay`
+        // —— 表现是：面板弹出来了，但设置面板（含左侧模块列）整块点不动，
+        // 键盘也过不去，只能刷新页面。这正是「设置页面根本点不动」的成因。
+        //
+        // 打上 isNonModal 后走 react-aria 的 keepVisible 分支，一个 inert 都不加；
+        // Esc 仍然能关（isKeyboardDismissDisabled 与 isNonModal 无关）。
+        // 代价是「点外面自动收起」不再由 react-aria 代劳 —— 那是 isDismissable 管的，
+        // 而 usePopover 把 isDismissable 写死成 `!isNonModal`。
+        // 所以补一个 DismissOnOutsidePress 把这件事接回来，检索框也改为自己拿焦点
+        // （模态时是 react-aria 把焦点丢给面板首帧，非模态下它不再管这件事）。
+        <Popover isOpen={open} onOpenChange={setOpen}>
+          <button
+            ref={triggerRef}
+            type="button"
+            className="mt-2.5 box-border flex min-h-[42px] w-full cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-background px-3 py-2 text-left font-[inherit] text-foreground shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-accent/45 hover:shadow-md focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-2 aria-expanded:border-accent/55 aria-expanded:shadow-lg"
+            data-testid={`model-button-${name}`}
+            aria-label={`选择${SLOT_LABEL[slot]}模型，当前为 ${ref.model || '未设置'}`}
+            aria-expanded={open}
+            aria-haspopup="dialog"
+            onClick={() => setOpen((v) => !v)}
+          >
+            <span className="flex flex-1 min-w-0 items-center gap-2">
+              {ref.model ? (
+                <>
+                  <span className="truncate font-mono text-[13px] font-medium">{ref.model}</span>
+                  <CapBadges catalogId={catalogId} model={ref.model} />
+                </>
+              ) : (
+                <span className="truncate text-[13px] text-muted">未选择模型</span>
+              )}
+            </span>
+            <span className="flex shrink-0 items-center gap-2 text-[13px] text-muted">
+              <span className="text-xs tabular-nums text-muted">
+                {ref.model ? compactTokens(guessContextWindow(catalogId, ref.model)) : ''}
+              </span>
+              <Sym name="keyboard_arrow_down" />
+            </span>
+          </button>
+          {/* 非模态浮层不再自带「点外面收起」，这里接回来。
+              pointerdown 比 click 早：按下那一刻就知道该关，不用等 mouseup。 */}
+          {open && <DismissOnOutsidePress triggerRef={triggerRef} onDismiss={() => setOpen(false)} />}
+          <Popover.Content
+            className="p-0"
+            placement="bottom start"
+            triggerRef={triggerRef}
+            isNonModal
+            // DismissOnOutsidePress 靠这个属性认出「面板本体」，
+            // 比按 HeroUI 的 .popover 类名匹配稳（类名会随版本改）。
+            data-model-picker={name}
+            ref={panelRef}
+            style={{
+              width: 'min(34rem, calc(100vw - 3rem))',
+              minHeight: '20rem',
+            }}
+          >
+            {/**
+             * 高度上限挂在 **Dialog** 上，不挂在浮层上。
+             *
+             * RAC 的 `Popover` 会把「可用空间」算好、以**行内** `max-height` 写回浮层元素，
+             * 于是 `Popover.Content` 的 `style.maxHeight` 会被它静默覆盖（实测传给它的
+             * `min(28rem, calc(100dvh - 8rem))` 被换成了 589px）。行内样式压不过，
+             * 只能换个元素挂。
+             *
+             * `overflow-hidden` + `flex-col` + ListBox 的 `min-h-0` 三者缺一不可：
+             * 少了 `overflow-hidden` 面板就不会裁剪，列表会**整条溢出到浮层外面**
+             * （40 个模型时列表高 1467px、浮层只有 589px），那内容是滚不到的 ——
+             * 这正是「选择模型这里没有办法滚动」的成因。
+             */}
+            <Popover.Dialog
+              className="flex min-h-0 flex-col gap-0 overflow-hidden"
+              style={{ maxHeight: 'min(28rem, calc(100dvh - 8rem))' }}
+            >
+              <SearchField
+                aria-label={`筛选${SLOT_LABEL[slot]}模型`}
+                data-testid={`model-search-${name}`}
+                value={kw}
+                onChange={(v) => setKw(v)}
+              >
+                <SearchField.Group className="px-3 py-2.5 pb-1.5">
+                  <SearchField.SearchIcon />
+                  <SearchField.Input placeholder={`搜索 ${candidates.length} 家供应商的模型`} />
+                  <SearchField.ClearButton />
+                </SearchField.Group>
+              </SearchField>
+
+              <ListBox
+                className="min-h-0 overflow-y-auto overscroll-contain px-0 py-0"
+                aria-label={`${SLOT_LABEL[slot]}模型候选`}
+                selectionMode="none"
+                // 这里**刻意不挂** onAction：选中逻辑在每个 ModelOptionRow 上（它手里
+                // 已经有 provider 对象，直接就能拿到 id 与名字）。
+                // 从 key 反解是走不通的 —— 收藏分组的 id 带 `fav::` 前缀，
+                // 按第一个 `::` 切会把「fav」当成供应商 id；而两段都挂着时
+                // 反解那次会晚于行内那次执行，把刚选中的模型又覆盖回旧值。
+              >
+                {favRows.length > 0 && (
+                  <ListBox.Section>
+                    {/* 分组头必须是 react-aria-components 的 Header，不能用普通 div。
+                        ListBoxSection 靠遍历 children 建collection 树，遇到非 collection
+                        节点就走错分支，React 会在 commit 阶段抛
+                        "getOwnerDocumentFromRootContainer(...).createTextNode is not a function"，
+                        整棵树崩掉 —— 面板打不开、截图全白，只有列表为空时才看不出问题。 */}
+                    <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-muted" data-testid={`fav-group-${slot}`}>
+                      <Sym name="star" filled />
+                      收藏
+                    </Header>
+                    {favRows.map(({ provider, id }) => (
+                      <ModelOptionRow
+                        key={`fav::${provider.id}::${id}`}
+                        slot={slot}
+                        providerId={provider.id}
+                        providerName={provider.name}
+                        model={id}
+                        catalogId={provider.catalogId}
+                        catalogKnown={provider.catalogId.trim().length > 0}
+                        selected={sameRef({ providerId: provider.id, model: id }, ref)}
+                        onSelect={() => setModel(provider.id, id)}
+                        onToggleFavorite={() => toggleFavorite(provider.id, id)}
+                        idPrefix="fav::"
+                      />
+                    ))}
+                  </ListBox.Section>
+                )}
+
+                {orphanFavs.length > 0 && (
+                  <ListBox.Section>
+                    <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-danger" data-testid={`orphan-group-${slot}`}>
+                      <Sym name="warning" />
+                      收藏里指向已不可用的供应商
+                    </Header>
+                    {orphanFavs.map((f) => (
+                      <ModelOptionRow
+                        key={`orphan::${f.providerId}::${f.model}`}
+                        slot={slot}
+                        providerId={f.providerId}
+                        providerName={
+                          `（${settings.providers.find((p) => p.id === f.providerId)?.name ?? f.providerId}：已不可用）`
+                        }
+                        model={f.model}
+                        catalogId=""
+                        catalogKnown={false}
+                        selected={sameRef(f, ref)}
+                        onSelect={() => setModel(f.providerId, f.model)}
+                        onToggleFavorite={() => toggleFavorite(f.providerId, f.model)}
+                        idPrefix="orphan::"
+                      />
+                    ))}
+                  </ListBox.Section>
+                )}
+
+                {groups.map(({ provider, ids }) =>
+                  ids.length > 0 ? (
+                    <ListBox.Section key={provider.id}>
+                      <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-muted">
+                        {provider.name}
+                        <span className="font-normal tabular-nums opacity-75">{ids.length}</span>
+                      </Header>
+                      {ids.map((id) => (
+                        <ModelOptionRow
+                          key={`${provider.id}::${id}`}
+                          slot={slot}
+                          providerId={provider.id}
+                          providerName={provider.name}
+                          model={id}
+                          catalogId={provider.catalogId}
+                          catalogKnown={provider.catalogId.trim().length > 0}
+                          selected={sameRef({ providerId: provider.id, model: id }, ref)}
+                          onSelect={() => setModel(provider.id, id)}
+                          onToggleFavorite={() => toggleFavorite(provider.id, id)}
+                        />
+                      ))}
+                    </ListBox.Section>
+                  ) : null,
+                )}
+              </ListBox>
+
+              <div className="flex items-center justify-between gap-2 border-t border-border/70 px-3 py-2.5">
+                {totalResults === 0 ? (
+                  <span className="min-w-0 truncate text-xs text-muted">
+                    {Object.keys(options).length === 0
+                      ? '还没有拉取过模型列表，模型 ID 需要手动填写'
+                      : '没有匹配的模型'}
+                  </span>
+                ) : (
+                  <span className="min-w-0 truncate text-xs text-muted">{totalResults} 个模型</span>
+                )}
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  data-testid={`model-manual-${name}`}
+                  onPress={() => setManual(true)}
+                >
+                  <Sym name="key" />
+                  手动填写
+                </Button>
+              </div>
+            </Popover.Dialog>
+          </Popover.Content>
+        </Popover>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 一家供应商：折叠时一行摘要，展开才编辑凭据。
+ *
+ * 为什么默认折叠：这是「配一次就长期不动」的配置，四个输入框常驻会让模型选择器
+ * （真正需要反复操作的那部分）被推到屏幕外。摘要行已经把要紧的信息全给了 ——
+ * 名字、地址、实现了哪些端点、有没有 Key、能不能连通。
+ */
+function ProviderRow({
+  provider,
+  others,
+  note,
+  status,
+  modelCount,
+  open,
+  onToggle,
+  onChange,
+  onRemove,
+  removable,
+  shaking,
+}: {
+  provider: Provider;
+  others: readonly Provider[];
+  note?: string;
+  status: 'ready' | 'unconfigured' | 'failed' | 'unchecked';
+  modelCount: number | null;
+  open: boolean;
+  onToggle: () => void;
+  onChange: (patch: Partial<Provider>) => void;
+  onRemove: () => void;
+  removable: boolean;
+  shaking: boolean;
+}) {
+  const inputRef = useRef<HTMLDivElement>(null);
+  const [dupName, setDupName] = useState(false);
+  const [showKey, setShowKey] = useState(false);
+
+  // 与其他家重名时提示：模型选型都按供应商名显示，重名会让设置与面板都对不上是哪一家
+  useEffect(() => {
+    setDupName(others.some((p) => p.name.trim() === provider.name.trim()));
+  }, [provider.name, others]);
+
+  // key 缺失时的抖动。动画通过内联 style 驱动，不依赖 .t-input / .is-shaking 类名。
+  useEffect(() => {
+    if (!shaking) return;
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.animation = 'none';
+    void el.offsetWidth;
+    const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
+    el.style.animation = `t-input-shake ${shakeMs}ms linear`;
+    const t = window.setTimeout(() => {
+      if (el) el.style.animation = 'none';
+    }, shakeMs + 20);
+    return () => clearTimeout(t);
+  }, [shaking]);
+
+  const STATUS_HINT: Record<typeof status, string> = {
+    ready: `${modelCount ?? 0} 个模型在架`,
+    unchecked: '尚未检查连通性',
+    failed: note ?? '拉取失败',
+    unconfigured: '缺少 API Key 或地址',
+  };
+
+  const dotColor =
+    status === 'ready'
+      ? 'bg-success shadow-[0_0_0_3px_rgba(var(--success)/0.18)]'
+      : status === 'failed'
+        ? 'bg-danger shadow-[0_0_0_3px_rgba(var(--danger)/0.18)]'
+        : 'bg-muted/55 shadow-none';
+
+  const statusColor =
+    status === 'ready'
+      ? 'text-success'
+      : status === 'failed' || status === 'unconfigured'
+        ? 'text-danger'
+        : 'text-muted';
+
+  return (
+    <div
+      className={`overflow-hidden rounded-xl bg-background-secondary transition-shadow ${open ? 'bg-background shadow-sm' : ''}`}
+      data-testid={`provider-card-${provider.id}`}
+      data-open={open ? 'true' : undefined}
+    >
+      <button
+        type="button"
+        className="box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-3.5 py-2.5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[720px]:flex-wrap max-[720px]:gap-y-1.5"
+        data-testid={`provider-summary-${provider.id}`}
+        aria-expanded={open}
+        onClick={onToggle}
+      >
+        {/* 状态点：一眼看出哪家能用，不点开也不用读文字 */}
+        <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} aria-hidden="true" />
+        <span className="flex min-w-0 max-w-[20rem] shrink flex-col gap-0.5 max-[720px]:max-w-none max-[720px]:flex-1">
+          <span className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-foreground">
+            {provider.name.trim() || '未命名供应商'}
+            {dupName && (
+              <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">
+                重名
+              </Chip>
+            )}
+          </span>
+          <span className="truncate font-mono text-xs text-muted">
+            {provider.baseUrl.trim() || '未填写 API 地址'}
+          </span>
+        </span>
+        <span className="flex shrink-0 items-center gap-1 max-[720px]:order-3 max-[720px]:flex-1 max-[720px]:basis-full">
+          {ALL_SLOTS.map((slot) => (
+            <Chip
+              key={slot}
+              size="sm"
+              variant="soft"
+              color={provider.serves.includes(slot) ? 'accent' : 'default'}
+              className={`h-[19px] px-[7px] text-[11px] ${provider.serves.includes(slot) ? 'font-medium' : 'opacity-70'}`}
+            >
+              {SLOT_LABEL[slot]}
+            </Chip>
+          ))}
+        </span>
+        <span className={`min-w-0 flex-1 truncate text-right text-xs max-[720px]:order-4 max-[720px]:flex-1 max-[720px]:basis-full max-[720px]:text-left ${statusColor}`}>
+          {STATUS_HINT[status]}
+        </span>
+        <Sym
+          name="keyboard_arrow_down"
+          className={`shrink-0 text-lg text-muted transition-transform duration-200 max-[720px]:order-5 ${open ? 'rotate-180' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="flex flex-col gap-3 border-t border-border/70 px-3.5 pt-3.5 pb-4">
+          <div className="flex flex-nowrap items-center gap-2">
+            <Input
+              value={provider.name}
+              data-testid={`provider-name-${provider.id}`}
+              aria-label="供应商名称"
+              placeholder="供应商名称，如「硅基流动」"
+              aria-invalid={dupName || undefined}
+              onChange={(e) => onChange({ name: e.target.value })}
+              className="flex-1"
+            />
+            {removable && (
+              <Button
+                variant="ghost"
+                isIconOnly
+                size="sm"
+                data-testid={`provider-remove-${provider.id}`}
+                onPress={onRemove}
+                aria-label={`删除供应商 ${provider.name || provider.id}`}
+              >
+                <Sym name="delete" />
+              </Button>
+            )}
+          </div>
+          <Field label="API 地址" testId={`field-base-url-${provider.id}`}>
+            <Input
+              value={provider.baseUrl}
+              data-testid={`base-url-${provider.id}`}
+              aria-label="API 地址"
+              placeholder="https://api.example.com/v1"
+              onChange={(e) => onChange({ baseUrl: e.target.value.trim() })}
+            />
+          </Field>
+          <Field
+            label="API Key"
+            hint="仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它"
+            testId={`field-api-key-${provider.id}`}
+          >
+            <div>
+              <div
+                ref={inputRef}
+                className={`rounded-md border transition-colors duration-150 ${shaking ? 'border-danger' : 'border-border'}`}
+                style={{ willChange: 'transform' }}
+              >
+                <div className="flex flex-nowrap items-center gap-2">
+                  <Input
+                    data-testid={`api-key-${provider.id}`}
+                    aria-label={`${provider.name} 的 API Key`}
+                    aria-invalid={shaking || undefined}
+                    type={showKey ? 'text' : 'password'}
+                    placeholder="sk-..."
+                    value={provider.apiKey}
+                    onChange={(e) => onChange({ apiKey: e.target.value.trim() })}
+                    className="flex-1 border-0 shadow-none focus-visible:ring-0"
+                  />
+                  <Button
+                    isIconOnly
+                    variant="ghost"
+                    size="sm"
+                    aria-label={showKey ? `隐藏 ${provider.name} 的 API Key` : `显示 ${provider.name} 的 API Key`}
+                    onPress={() => setShowKey((v) => !v)}
+                  >
+                    <Sym name={showKey ? 'visibility_off' : 'visibility'} />
+                  </Button>
+                </div>
+              </div>
+              <p
+                className={`mt-1 text-xs text-danger transition-opacity duration-[280ms] ${shaking ? 'opacity-100 visible' : 'opacity-0 invisible'}`}
+                data-testid={`key-error-${provider.id}`}
+              >
+                请先填写这家供应商的 API Key
+              </p>
+            </div>
+          </Field>
+          <Field
+            label="能做的活"
+            hint="手动勾选它实现了哪些接口。槽位的候选供应商只列勾选了该能力的那些家 —— 靠模型名猜不出来"
+            layout="block"
+            testId={`field-serves-${provider.id}`}
+          >
+            <div className="flex flex-wrap items-center gap-2" data-testid={`serves-${provider.id}`}>
+              {ALL_SLOTS.map((slot) => (
+                <Checkbox
+                  key={slot}
+                  isSelected={provider.serves.includes(slot)}
+                  data-testid={`serves-${provider.id}-${slot}`}
+                  onChange={(on) => {
+                    const next = on
+                      ? [...new Set([...provider.serves, slot])]
+                      : provider.serves.filter((s) => s !== slot);
+                    onChange({ serves: next });
+                  }}
+                >
+                  <Checkbox.Content>
+                    <Checkbox.Control>
+                      <Checkbox.Indicator />
+                    </Checkbox.Control>
+                    <span>{SLOT_LABEL[slot]}</span>
+                  </Checkbox.Content>
+                </Checkbox>
+              ))}
+            </div>
+          </Field>
+          <Field
+            label="能力数据源"
+            hint="models.dev 上的供应商 key（如 siliconflow-cn）。填了才能查到这个模型的上下文窗口 / 视觉 / 思考能力；留空则按模型名猜，界面上会标「≈」"
+            testId={`field-catalog-${provider.id}`}
+          >
+            <Input
+              value={provider.catalogId}
+              data-testid={`catalog-${provider.id}`}
+              aria-label="models.dev 供应商 key"
+              placeholder="siliconflow-cn"
+              onChange={(e) => onChange({ catalogId: e.target.value.trim() })}
+            />
+          </Field>
+          {note && (
+            <div className="text-xs leading-relaxed text-muted" data-testid={`provider-note-${provider.id}`}>
+              {note}
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * 「模型」模块。
+ *
+ * 版式参考 Pi agent 的模型配置：**要反复操作的东西放最上面，要配一次的东西沉到下面**。
+ *   1. 三个槽位（文本 / 视觉 / ASR）各一行，点开才是检索面板 —— 日常只碰这里；
+ *   2. 运行参数（上下文窗口、检索轮次、ASR 并发）—— 调优时才动；
+ *   3. 供应商连接（默认折叠）—— 配一次就长期不动。
+ *
+ * 与旧版的差别不只是排版：旧版把「供应商」排在最上面，于是每次打开设置第一眼
+ * 看到的是四个输入框，真正要用的模型选择被挤到屏幕外还带一个容易被手抄错的
+ * 自由文本框。
+ */
+export default function ModelsModule() {
+  const settings = useSettings();
+  const [checking, setChecking] = useState(false);
+  /** 每家供应商各自拉到的在架模型（key = provider id）。分家存是因为各家列表互不相干。 */
+  const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
+  /** 逐家检查结论（成功/失败），让用户看得见是哪一家出的问题 */
+  const [providerNotes, setProviderNotes] = useState<Record<string, string>>({});
+  /** 哪一家的 key 缺失（provider id）。null = 都没问题 */
+  const [keyError, setKeyError] = useState<string | null>(null);
+  /** 展开编辑的供应商（provider id）。null = 全折叠 */
+  const [openProvider, setOpenProvider] = useState<string | null>(null);
+  const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
+  const [metaRefreshing, setMetaRefreshing] = useState(false);
+  const revertTimerRef = useRef<number | undefined>(undefined);
+
+  /**
+   * 要拉哪些供应商的能力数据：所有**填了 models.dev key** 的那几家。
+   *
+   * 只拉登记过的（`refreshModelMeta` 内部也只保留这几家）：models.dev 全库 226 家，
+   * 整份缓存下来对 localStorage 纯浪费，而配额满了会静默让整份缓存写不进去。
+   */
+  const catalogs = useMemo(
+    () => settings.providers.map((p) => p.catalogId).filter((c) => c.trim().length > 0),
+    [settings.providers],
+  );
+  const catalogsKey = catalogs.join('\0');
+
+  /**
+   * 供应商「身份」串：地址 / Key / 名字任一变化都值得重算候选列表。
+   *
+   * 用它而不是 `settings.providers` 本身当依赖：那个数组每次 `update` 都是新引用，
+   * 直接依赖会让这个 effect 在「改个上下文窗口」这种无关操作上白跑一遍。
+   */
+  const providersKey = settings.providers.map((p) => `${p.id}\0${p.baseUrl}\0${p.apiKey}`).join('\n');
+
+  /**
+   * 打开设置就把模型候选填上：**先用缓存**（同步，不等网络），再对「没缓存或已过期」
+   * 的家静默拉一次。
+   *
+   * 这一段的全部意义是「别再让用户每开一次设置就手动点一次拉取」。
+   * 所以顺序必须是「先缓存后网络」：缓存能立刻给出可点的候选，网络回来只是把它刷新。
+   * 反过来的话用户还是要盯着一个空列表等一轮往返 —— 那和没有缓存没区别。
+   *
+   * 静默拉取**失败不弹 toast**：用户没主动要求，弹一条只会制造焦虑；
+   * 连通性由供应商那一行的状态点表达（既有行为）。
+   */
+  useEffect(() => {
+    const providers = settings.providers;
+    // 顺手清掉已删供应商的缓存条目：localStorage 里的条目只增不减迟早堆满，
+    // 而配额满了会静默让整份缓存写不进去（表现是「缓存莫名其妙失效」）。
+    pruneModelLists(providers.map((p) => p.baseUrl));
+
+    const cachedIds: Record<string, string[]> = {};
+    const cachedNotes: Record<string, string> = {};
+    const needFetch: Provider[] = [];
+    for (const p of providers) {
+      // 没配好地址或 Key 就没什么可拉的，也不必在缓存里留一条空记录
+      if (!p.baseUrl.trim() || !p.apiKey.trim()) continue;
+      const hit = readModelList(p.baseUrl);
+      if (hit) {
+        cachedIds[p.id] = hit.ids;
+        // 有缓存说明上次拉过：状态点该是「就绪」而不是「尚未检查连通性」
+        cachedNotes[p.id] = `${hit.ids.length} 个模型在架 · 缓存`;
+      }
+      if (!hit || hit.stale) needFetch.push(p);
+    }
+    if (Object.keys(cachedIds).length > 0) {
+      // 只补「还没有值」的那些：手动刷新刚拉回来的结果比缓存新，不能被它顶掉
+      setModelOptions((prev) => {
+        const next = { ...prev };
+        for (const [id, ids] of Object.entries(cachedIds)) if (!next[id]) next[id] = ids;
+        return next;
+      });
+      setProviderNotes((prev) => {
+        const next = { ...prev };
+        for (const [id, note] of Object.entries(cachedNotes)) if (!next[id]) next[id] = note;
+        return next;
+      });
+    }
+    if (needFetch.length === 0) return;
+
+    let cancelled = false;
+    void (async () => {
+      for (const p of needFetch) {
+        try {
+          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim() });
+          if (cancelled) return;
+          writeModelList(p.baseUrl, ids);
+          setModelOptions((prev) => (prev[p.id]?.length ? prev : { ...prev, [p.id]: ids }));
+        } catch {
+          // 静默失败，理由见上
+        }
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [providersKey]);
+
+  // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
+  useEffect(() => {
+    if (catalogs.length === 0 || !isModelMetaStale()) return;
+    let cancelled = false;
+    refreshModelMeta(catalogs)
+      .then(() => {
+        if (!cancelled) setMetaInfo(modelMetaInfo());
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+    };
+  }, [catalogsKey]);
+
+  /** 手动刷新：更新缓存并把当前文本模型的上下文窗口回填为最新元数据（仍可手改） */
+  const handleRefreshMeta = async () => {
+    if (catalogs.length === 0) {
+      toast.warning('没有供应商填写 models.dev 供应商 key，无从拉取能力数据');
+      return;
+    }
+    setMetaRefreshing(true);
+    try {
+      const { count } = await refreshModelMeta(catalogs);
+      setMetaInfo(modelMetaInfo());
+      const meta = getModelMeta(
+        catalogOf(settings, settings.llmModel.providerId),
+        settings.llmModel.model,
+      );
+      if (meta) settings.update({ contextWindow: meta.context });
+      toast.success(`已更新 ${count} 个模型的能力数据`);
+    } catch (e) {
+      toast.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
+    } finally {
+      setMetaRefreshing(false);
+    }
+  };
+
+  /** error-state-shake：红边 + 消息由 keyError 驱动，hold 后自动回退 */
+  const triggerKeyError = (providerId: string) => {
+    setKeyError(providerId);
+    // 出错的那家必须露出来，否则抖动发生在折叠区里，用户看不到
+    setOpenProvider(providerId);
+    if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
+    const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
+    revertTimerRef.current = window.setTimeout(() => {
+      revertTimerRef.current = undefined;
+      setKeyError(null);
+    }, shakeMs + ms('--revert-hold', 3000));
+  };
+
+  useEffect(() => () => clearTimeout(revertTimerRef.current), []);
+
+  /**
+   * 「检查模型可用性」：**逐家**拉 `/models`。
+   *
+   * 为什么不能第一家失败就整轮放弃：多供应商之后，一家的 key 过期是常态（用户换了新 key
+   * 但没删旧供应商）。整体失败会让其余几家连候选列表都拉不出来 —— 于是用户为了修一家
+   * 的问题，必须先把另外几家也全部弄好。所以逐家独立记录结果，汇总成一句提示。
+   */
+  const handleCheck = async () => {
+    const providers = settings.providers;
+    const noKey = providers.filter((p) => !p.apiKey.trim() || !p.baseUrl.trim());
+    if (noKey.length === providers.length) {
+      triggerKeyError(noKey[0].id);
+      toast.warning('请先填写至少一家供应商的 API 地址与 Key');
+      return;
+    }
+    setChecking(true);
+    const opts: Record<string, string[]> = {};
+    const notes: Record<string, string> = {};
+    await Promise.all(
+      providers.map(async (p) => {
+        if (!p.apiKey.trim() || !p.baseUrl.trim()) {
+          notes[p.id] = '未填写 API 地址或 Key，已跳过';
+          return;
+        }
+        try {
+          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim() });
+          opts[p.id] = ids;
+          notes[p.id] = `${ids.length} 个模型在架`;
+          // 手动刷新是最权威的一次结果，写回缓存 —— 下次开设置就不必再等网络
+          writeModelList(p.baseUrl, ids);
+        } catch (e) {
+          notes[p.id] = `拉取失败：${e instanceof Error ? e.message : String(e)}`;
+        }
+      }),
+    );
+    setModelOptions(opts);
+    setProviderNotes(notes);
+
+    const failed = Object.entries(notes).filter(([, note]) => note.startsWith('拉取失败'));
+    const totalModels = Object.values(opts).reduce((n, ids) => n + ids.length, 0);
+    if (failed.length > 0) toast.warning(`${failed.length} 家拉取失败，详见供应商列表`);
+    else if (totalModels > 0) toast.success(`已拉取 ${totalModels} 个模型`);
+    setChecking(false);
+  };
+
+  /** 一家的连通状态：优先看上次检查的结论，其次看配置是否完整 */
+  const statusOf = (p: Provider): 'ready' | 'unconfigured' | 'failed' | 'unchecked' => {
+    if (!p.apiKey.trim() || !p.baseUrl.trim()) return 'unconfigured';
+    const note = providerNotes[p.id];
+    if (note?.startsWith('拉取失败')) return 'failed';
+    if (note) return 'ready';
+    return 'unchecked';
+  };
+
+  const addProvider = () => {
+    const id = nextProviderId(settings);
+    settings.update({
+      providers: [
+        ...settings.providers,
+        { id, name: '', baseUrl: '', apiKey: '', serves: ['chat'], catalogId: '' },
+      ],
+    });
+    // 新加的那家没有地址没有 Key，不摊开就是一行没用的空壳
+    setOpenProvider(id);
+  };
+
+  const removeProvider = (p: Provider) => {
+    // 删掉一家之后，指向它的槽位与收藏项必须一起处理，否则界面上留着
+    // 一个解析不出端点的引用，表现为「所有请求都报供应商已被删除」。
+    // 槽位改指第一家（id 必然存在：至少剩一家）；收藏项直接丢。
+    const rest = settings.providers.filter((x) => x.id !== p.id);
+    const fallback = rest[0].id;
+    const patch: Partial<Settings> = { providers: rest };
+    // 模型列表缓存按 baseUrl 索引，删除是**唯一**一处能确定它再也用不上的时机
+    dropModelList(p.baseUrl);
+    setModelOptions(({ [p.id]: _dropped, ...kept }) => kept);
+    setProviderNotes(({ [p.id]: _dropped, ...kept }) => kept);
+    for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
+      if (settings[name].providerId === p.id) {
+        patch[name] = { ...settings[name], providerId: fallback };
+      }
+    }
+    const favs = { ...settings.favorites };
+    for (const slot of ALL_SLOTS) {
+      const kept = favs[slot].filter((r) => r.providerId !== p.id);
+      if (kept.length !== favs[slot].length) favs[slot] = kept;
+    }
+    patch.favorites = favs;
+    settings.update(patch);
+    if (openProvider === p.id) setOpenProvider(null);
+    toast.info(`已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」`);
+  };
+
+  const currentLlm = settings.llmModel;
+  const currentLlmCatalog = catalogOf(settings, currentLlm.providerId);
+  const currentOut = currentLlm.model ? outputLimitOf(currentLlmCatalog, currentLlm.model) : 0;
+
+  return (
+    <>
+      <SectionCard
+        title="选择模型"
+        subtitle="三个槽位各挑一个模型。点任意一行展开检索面板，可按供应商筛选、收藏常用模型"
+        testId="card-models"
+        actions={
+          <LoadingButton
+            variant="secondary"
+            loading={checking}
+            data-testid="btn-check-models"
+            onPress={() => void handleCheck()}
+          >
+            <Sym name="refresh" />
+            拉取模型列表
+          </LoadingButton>
+        }
+      >
+        <div className="flex flex-col gap-2.5">
+          {SLOT_ORDER.map((slot) => {
+            const name = (
+              { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel' } as const
+            )[slot];
+            return (
+              <SlotModelSelect
+                key={slot}
+                name={name}
+                slot={slot}
+                settings={settings}
+                options={modelOptions}
+              />
+            );
+          })}
+        </div>
+      </SectionCard>
+
+      <SectionCard
+        title="运行参数"
+        subtitle="检索深度与并发。日常不需要动，换模型或觉得回答太慢时再调"
+        testId="card-tuning"
+      >
+        <Field
+          label="上下文窗口（tokens）"
+          hint={`当前文本模型 ${currentLlm.model || '未设置'} 在 ${settings.providers.find((p) => p.id === currentLlm.providerId)?.name ?? '未知供应商'} 标称 ${
+            currentLlm.model ? compactTokens(guessContextWindow(currentLlmCatalog, currentLlm.model)) : '—'
+          } 上下文 / ${currentOut ? compactTokens(currentOut) : '—'} 输出（来自 ${
+            currentLlmCatalog ? 'models.dev' : '启发式估算，填了 models.dev key 才准'
+          }）。这个值用来裁历史，填得偏小只是让历史留短些，不会浪费模型的输出额度`}
+          testId="field-context-window"
+        >
+          <Input
+            data-testid="context-window"
+            aria-label="上下文窗口，单位 tokens"
+            type="number"
+            min={8192}
+            step={1024}
+            value={String(settings.contextWindow)}
+            onChange={(e) => {
+              const n = Number(e.target.value);
+              settings.update({ contextWindow: n || 131072 });
+            }}
+          />
+        </Field>
+        <Field
+          label="问答检索轮次上限"
+          hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token。选「不限」也有几道护栏兜着 —— 同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、模型空回复会被拉回来重说一遍、界面上随时可以按停止生成"
+          testId="field-agent-rounds"
+        >
+          <ToggleButtonGroup
+            data-testid="agent-rounds"
+            aria-label="问答检索轮次上限"
+            selectionMode="single"
+            disallowEmptySelection
+            selectedKeys={[String(settings.agentRounds)]}
+            onSelectionChange={(keys) => {
+              // ⚠️ 不能写 `Number(next) || 12`：「不限」这一档的值是 0（UNLIMITED_ROUNDS 哨兵），
+              // `0 || 12` 会把它悄悄改回 12 —— 那个选项就永远存不下来
+              const n = Number([...keys][0]);
+              settings.update({ agentRounds: Number.isFinite(n) ? n : 12 });
+            }}
+          >
+            {[3, 6, 12, 20].map((n) => (
+              <ToggleButton key={n} id={String(n)}>
+                {n}
+              </ToggleButton>
+            ))}
+            {/* 0 = 不限（agent.ts 的 UNLIMITED_ROUNDS 哨兵）。用哨兵而不是再加一个布尔字段：
+                两个字段迟早会漂移，「轮数」和「有没有上限」必须是同一个量的两种取值 */}
+            <ToggleButton id={String(UNLIMITED_ROUNDS)}>不限</ToggleButton>
+          </ToggleButtonGroup>
+        </Field>
+        <Field
+          label={`字幕转写并发（当前 ${settings.asrConcurrency}）`}
+          hint="初始并发数（1-12）；转写中遇限流自动减半，稳定后缓慢提升"
+          layout="block"
+          testId="field-asr-concurrency"
+        >
+          <Slider
+            data-testid="asr-concurrency"
+            aria-label="字幕转写并发数"
+            minValue={1}
+            maxValue={12}
+            step={1}
+            value={settings.asrConcurrency}
+            onChange={(v) => settings.update({ asrConcurrency: typeof v === 'number' ? v : v[0] })}
+          >
+            <Slider.Track>
+              <Slider.Fill />
+              <Slider.Thumb />
+            </Slider.Track>
+          </Slider>
+        </Field>
+      </SectionCard>
+
+      <SectionCard
+        title="模型供应商"
+        subtitle="每家一个连接：地址 + Key + 它能做的活。槽位的供应商下拉只列勾选了该能力的那些家，ASR 可以和文本模型不在同一家"
+        testId="card-api"
+        actions={
+          <>
+            <LoadingButton
+              variant="tertiary"
+              loading={metaRefreshing}
+              data-testid="btn-refresh-meta"
+              onPress={() => void handleRefreshMeta()}
+            >
+              刷新能力数据
+            </LoadingButton>
+            <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}>
+              <Sym name="add" />
+              添加供应商
+            </Button>
+          </>
+        }
+      >
+        <div className="flex flex-col gap-2">
+          {settings.providers.map((p, i) => (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              others={settings.providers.filter((x) => x.id !== p.id)}
+              note={providerNotes[p.id]}
+              status={statusOf(p)}
+              modelCount={modelOptions[p.id]?.length ?? null}
+              open={openProvider === p.id}
+              shaking={keyError === p.id}
+              removable={settings.providers.length > 1 || i > 0}
+              onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
+              onChange={(patch) =>
+                settings.update({
+                  providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)),
+                })
+              }
+              onRemove={() => removeProvider(p)}
+            />
+          ))}
+        </div>
+        <div className="mt-3 text-xs leading-relaxed text-muted">
+          {metaInfo
+            ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）`
+            : '能力数据未拉取，模型列表里的窗口与能力标签暂用内置启发式估算'}
+          。上下文窗口标「≈」表示该供应商没填 models.dev key，数值是猜的。
+        </div>
+      </SectionCard>
+    </>
+  );
+}

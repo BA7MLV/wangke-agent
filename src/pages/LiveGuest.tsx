@@ -19,7 +19,8 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
-import { Banner, EmptyState, PageShell, SectionCard } from '../ui';
+import { ListBox } from '@heroui/react';
+import { Banner, EmptyState, PageShell, SectionCard, Sym } from '../ui';
 import { LiveGuest as LiveGuestClient, type IndexEntry } from '../livelink/guest';
 import { GuestMsePlayer, feedRange } from '../livelink/mse';
 import { videoUnit } from '../sync/units';
@@ -359,7 +360,7 @@ export default function LiveGuest() {
         <Banner
           variant="warning"
           testId="live-need-code"
-          icon={<mdui-sym-link />}
+          icon={<Sym name="link" />}
           title="链接不完整"
           description="向主机索取带配对码的链接：主机在「设置 → 实时链路」打开共享后，点「复制链接」发给你。"
         />
@@ -368,7 +369,7 @@ export default function LiveGuest() {
         <Banner
           variant="info"
           testId="live-connecting"
-          icon={<mdui-sym-refresh />}
+          icon={<Sym name="refresh" />}
           title={
             hostBack
               ? '主机已重连，正在重新读取…'
@@ -382,7 +383,7 @@ export default function LiveGuest() {
         <Banner
           variant="error"
           testId="live-offline"
-          icon={<mdui-sym-error />}
+          icon={<Sym name="error" />}
           title="主机已离线或配对码不对。主机重新打开「实时链路」后会自动恢复。"
           description={
             closeReason ||
@@ -393,7 +394,7 @@ export default function LiveGuest() {
 
       {phase === 'ready' && courses.length === 0 && (
         <EmptyState
-          icon={<mdui-sym-video-library />}
+          icon={<Sym name="video-library" />}
           title="主机还没有课程"
           description="连接时读取主机当前课程；主机新导入的课程，重连或主机重新开启共享后会出现（实时读取，不写入本机）。"
           testId="live-empty"
@@ -406,17 +407,26 @@ export default function LiveGuest() {
           subtitle="实时读取主机内容，只看不写；关掉页面即焚"
           testId="card-live-courses"
         >
-          <mdui-list>
+          <ListBox
+          aria-label="主机课程"
+          selectionMode="none"
+          onAction={(key) => {
+            const c = courses[Number(key)];
+            if (c) openCourse(c);
+          }}
+        >
             {courses.map((c) => (
-              <mdui-list-item
+              <ListBox.Item
                 key={c.id}
-                headline={c.name}
-                description={courseDesc(c)}
+                id={String(courses.indexOf(c))}
+                textValue={c.name}
                 data-testid="live-course-item"
-                onClick={() => openCourse(c)}
-              />
+              >
+                <span className="live-guest__row-title">{c.name}</span>
+                <span className="live-guest__row-desc">{courseDesc(c)}</span>
+              </ListBox.Item>
             ))}
-          </mdui-list>
+          </ListBox>
         </SectionCard>
       )}
 
@@ -448,7 +458,7 @@ export default function LiveGuest() {
               />
             ) : (
               <span className="live-guest__cover-empty" aria-hidden="true">
-                <mdui-sym-image />
+                <Sym name="image" />
               </span>
             )}
           </div>
@@ -465,34 +475,34 @@ export default function LiveGuest() {
           )}
 
           <div className="live-guest__subs-title">{isMaterial ? '内容' : '字幕'}</div>
-          <mdui-list className="live-guest__subs">
+          <ListBox
+            className="live-guest__subs"
+            aria-label={isMaterial ? '正文' : '字幕'}
+            selectionMode="none"
+            onAction={(key) => seekTo(detail.segments[Number(key)]?.start ?? 0)}
+          >
             {detail.segments.map((s, i) => (
-              // 文本走默认插槽（light DOM）：mdui-list-item 的 headline 属性渲染在
-              // shadow DOM 里，宿主元素的 textContent 读不到（Task 8 e2e 要读文本）
-              <mdui-list-item
-                key={i}
-                data-testid="live-subtitle-item"
-                onClick={() => seekTo(s.start)}
-              >
+              // 文本走 children（light DOM）：e2e 与 Task 8 要读宿主 textContent
+              <ListBox.Item key={i} id={String(i)} textValue={s.text} data-testid="live-subtitle-item">
                 <span className="live-guest__sub-text">{s.text}</span>
-              </mdui-list-item>
+              </ListBox.Item>
             ))}
-          </mdui-list>
+          </ListBox>
 
           {detail.tracks.map((t, ti) => (
             <div key={ti} className="live-guest__tracks">
               <div className="live-guest__subs-title">对照轨 · {t.lanDoc || t.lang}</div>
-              <mdui-list>
+              <ListBox
+                aria-label={`对照轨 ${t.lanDoc || t.lang}`}
+                selectionMode="none"
+                onAction={(key) => seekTo(t.cues[Number(key)]?.start ?? 0)}
+              >
                 {t.cues.map((c, ci) => (
-                  <mdui-list-item
-                    key={ci}
-                    data-testid="live-translation-item"
-                    onClick={() => seekTo(c.start)}
-                  >
+                  <ListBox.Item key={ci} id={String(ci)} textValue={c.text} data-testid="live-translation-item">
                     <span className="live-guest__sub-text live-guest__sub-text--alt">{c.text}</span>
-                  </mdui-list-item>
+                  </ListBox.Item>
                 ))}
-              </mdui-list>
+              </ListBox>
             </div>
           ))}
         </SectionCard>

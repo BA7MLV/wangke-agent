@@ -1,4 +1,4 @@
-import { chatStream, textOf, type ChatMessage, type ReasoningEffort, type ToolDef } from '../api/siliconflow';
+import { chatStream, textOf, type ChatMessage, type ThinkingLevel, type ToolDef } from '../api/siliconflow';
 import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
 import { getSettings, targetOfSlot } from '../store/settings';
 import {
@@ -64,13 +64,32 @@ export interface AgentCallbacks {
   onDelta?: (text: string) => void;
   /** 思考过程流式增量（reasoning_content） */
   onReasoningDelta?: (text: string) => void;
-  /** 思考深度档位；undefined = 不开启思考。内部经 thinkingParams() 映射为 API 参数 */
-  thinkingEffort?: ReasoningEffort;
+  /**
+   * 思考档位（含第一档 `'none'` = 不思考）；`undefined` = **这个模型压根不能思考**，
+   * 连参数都不发。内部经 thinkingParams() 映射成 API 参数。
+   *
+   * 注意 `'none'` 与 `undefined` 不是一回事：前者是「明确关掉」（会发
+   * `enable_thinking: false`），后者是「没得开」。混起来会让混合思考模型关不掉。
+   */
+  thinkingEffort?: ThinkingLevel;
   /** 新一轮 LLM 调用开始（round 从 0 起）；此前轮次流出的正文只是检索旁白，调用方可据此清空 */
   onRoundStart?: (round: number) => void;
   /** 工具调用开始/结束（用于 UI 状态提示） */
   onToolStart?: (name: string, argsJson: string) => void;
   onToolEnd?: (name: string, result: string) => void;
+  /**
+   * 每次 `executeTool` **之前**通报当前累积的消息（`out`）。
+   *
+   * 用途只有一个：**阻塞式工具（`ask_user` / `propose_folder_plan`）的挂起点落库**。
+   * 调用方拿到 `out` 后截出「本回合新增的部分」（去掉初始 messages）存进 store，
+   * 刷新后据此从断点续跑，已跑过的工具不必重跑（结果本来就在 `out` 里）。
+   *
+   * 放在 `executeTool` 之前而不是之后：那时 `out` 末尾正是「带 tool_calls 的 assistant
+   * 消息 + 还没有对应的 tool 结果」—— 那正是挂起的定义。
+   *
+   * 播放页（`ChatPanel`）不传它，行为零变化。
+   */
+  onCheckpoint?: (out: ChatMessage[]) => void;
   /**
    * 循环被护栏停下（轮次 / 循环 / token）。
    *
@@ -198,6 +217,8 @@ export async function runAgentLoop(
       cb.onToolStart?.(call.function.name, call.function.arguments);
       let result: string;
       try {
+        // 挂起点落库：在 `executeTool` 之前把当前 `out` 交出去（见 onCheckpoint 注释）
+        cb.onCheckpoint?.(out);
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
         result = await executeTool(call.function.name, args);
       } catch (e) {

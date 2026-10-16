@@ -1,0 +1,169 @@
+/**
+ * 工具链的样式（配 ToolTrace.tsx）。
+ *
+ * 与思考链同一套版式语言（触发键 40px 高、-8px 左移与正文左缘对齐、收起时不留残余高度），
+ * 因为它们在气泡里是**同一类东西**：一段可折叠的过程记录。两者唯一的视觉差异是图标
+ * （扳手 vs 箭头）与正文形态（这里是清单，不是一段文字）。
+ *
+ * 颜色一律走 HeroUI 语义令牌。⚠️ 混色用 `color-mix(in oklch, …)` 而不是
+ * `rgba(var(--x), α)`：后者是 mdui 时代的写法（那时 --x 存的是 `0 0 0` 这样的三元组），
+ * HeroUI 的令牌值是 `oklch(…)`，塞进 rgba() 是**非法声明**、会被整条丢弃 ——
+ * 症状是「hover 一点反应都没有」这种不报错的静默失效。
+ */
+
+.tool-trace {
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+}
+
+/* 撑满整列 + 负左边距：见 reasoning-chain.css 里那条注释（按钮默认是 fit-content 宽度，
+   不撑满则展开态的底色只盖住文字那一小块，正文会从旁边穿过去） */
+.tool-trace__toggle {
+  min-height: 40px;
+  padding: 0 8px;
+  margin-left: -8px;
+  width: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  text-align: left;
+  user-select: none;
+}
+
+.tool-trace__toggle:hover,
+.tool-trace__toggle[data-hovered='true'],
+/* 展开时也给底色：那时正文铺在下面，没有底色就分不清「标题」和「内容」的分界 */
+.tool-trace__toggle[data-expanded='true'] {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.tool-trace__icon {
+  flex: none;
+  font-size: 1rem;
+  color: var(--muted);
+}
+
+/* 跑动中：扳手转主色。它是「现在正在进行」的唯一静态线索（右侧的转圈在收起态看不见） */
+.tool-trace[data-running='true'] .tool-trace__icon {
+  color: var(--accent);
+}
+
+.tool-trace__title {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* HeroUI 自带的指示箭头（按 data-expanded 自己翻转），只把颜色收进令牌 */
+.tool-trace__caret {
+  color: var(--muted);
+}
+
+/* 清单本体。
+   留白只由这一层给：HeroUI 的 `Disclosure.Body` 外层自带 `p-2`，而 className 落在**内层**，
+   两层叠加会把整张清单推进去 10px（与思考链正文的左缘错开）。 */
+.tool-trace .disclosure__body {
+  padding: 0;
+}
+
+.tool-trace__body {
+  padding: 2px 2px 4px;
+}
+
+.tool-trace__list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+/* 两行网格：第一行「状态 | 动作 + 对象 | 耗时」，第二行结果摘要跨在动作下面。
+   用网格而不是嵌套 flex，是为了让结果摘要与动作文字**左缘对齐** —— 它属于那一行。 */
+.tool-trace__item {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) auto;
+  column-gap: 6px;
+  padding-left: 2px;
+  border-left: 2px solid var(--border-secondary);
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+.tool-trace__state {
+  grid-row: 1;
+  grid-column: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 1.5em;
+  color: var(--muted);
+}
+
+/* 转圈自己带尺寸（size="sm"），别让它被网格列宽拉变形 */
+.tool-trace__state .spinner {
+  font-size: 0.75rem;
+}
+
+.tool-trace__item[data-status='error'] .tool-trace__state {
+  color: var(--danger);
+}
+
+.tool-trace__action {
+  grid-row: 1;
+  grid-column: 2;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.tool-trace__label {
+  flex: none;
+  color: var(--foreground);
+}
+
+/* 这次在对谁做（检索词 / 技能名）。超长才省略 —— 它是这一行的重点信息，不该被压没 */
+.tool-trace__detail {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tool-trace__ms {
+  grid-row: 1;
+  grid-column: 3;
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+/* 结果摘要：一行截断（内容已在 summarizeToolResult 里压过一道，这里只防窄屏溢出） */
+.tool-trace__result {
+  grid-row: 2;
+  grid-column: 2 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.6875rem;
+}
+
+.tool-trace__item[data-status='error'] .tool-trace__result {
+  color: var(--danger);
+}
+
+@media (pointer: coarse) {
+  .tool-trace__toggle {
+    min-height: 48px;
+  }
+}

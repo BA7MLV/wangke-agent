@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Modal, ToggleButton, ToggleButtonGroup, Tooltip } from '@heroui/react';
 import { renderAsync } from 'docx-preview';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
 import { db, type HandoutRow } from '../store/db';
@@ -12,6 +13,7 @@ import PersistentError from './PersistentError';
 import { formatCaughtError } from '../utils/errorText';
 import './handout-panel.css';
 import {
+  LoadingButton,
   Panel,
   PanelBar,
   PanelProgress,
@@ -19,14 +21,15 @@ import {
   EmptyState,
   Banner,
   Field,
+  Sym,
   toast,
   alertDialog,
-  useMduiEvent,
+  MODAL_CONTAINER_CLASS,
 } from '../ui';
 
 interface Props {
   videoId: string;
-  hasSubtitles: boolean;
+  hasSubtitles: boolean | null;
 }
 
 type SkillMode = 'auto' | 'pin' | 'drop';
@@ -171,43 +174,46 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
   const running = progress !== null;
   const pct = progress && progress.total > 1 ? Math.round((progress.done / progress.total) * 100) : undefined;
 
-  // 生成参数对话框：Esc / 点遮罩关闭时同步回 React state，避免「关掉又自己弹回」
-  const settingsDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setSettingsOpen(false));
-
   return (
     <Panel testId="panel-handout">
       <PanelBar>
-        <mdui-tooltip content={!hasSubtitles ? '请先在「字幕」页生成字幕' : ''}>
-          <mdui-button
-            variant="filled"
-            data-testid="handout-generate"
-            loading={running}
-            disabled={!hasSubtitles}
-            onClick={start}
-          >
-            <mdui-sym-article slot="icon" />
-            {handout ? '重新生成讲义' : '生成讲义'}
-          </mdui-button>
-        </mdui-tooltip>
+        <Tooltip>
+          <Tooltip.Trigger>
+            <LoadingButton
+              loading={running}
+              variant="primary"
+              data-testid="handout-generate"
+              isDisabled={hasSubtitles !== true}
+              onPress={start}
+            >
+              <Sym name="article" />
+              {handout ? '重新生成讲义' : '生成讲义'}
+            </LoadingButton>
+          </Tooltip.Trigger>
+          <Tooltip.Content>
+            <p>{hasSubtitles === false ? '请先在「字幕」页生成字幕' : '抽取课程画面、提炼大纲并排版为 DOCX'}</p>
+          </Tooltip.Content>
+        </Tooltip>
         {handout && (
-          <mdui-button data-testid="handout-export" onClick={() => void downloadDocx()}>
-            <mdui-sym-download slot="icon" />
+          <Button data-testid="handout-export" variant="outline" onPress={() => void downloadDocx()}>
+            <Sym name="download" />
             下载 DOCX
-          </mdui-button>
+          </Button>
         )}
-        <mdui-button
+        <Button
           data-testid="handout-settings"
-          onClick={() => {
+          variant="outline"
+          onPress={() => {
             void loadSkillState();
             setSettingsOpen(true);
           }}
         >
-          <mdui-sym-tune slot="icon" />
+          <Sym name="tune" />
           参数设置
-        </mdui-button>
+        </Button>
       </PanelBar>
 
-      {!hasSubtitles && !running && (
+      {hasSubtitles === false && !running && (
         <PanelPlaceholder>讲义基于字幕内容生成，请先在「字幕」页生成字幕</PanelPlaceholder>
       )}
 
@@ -248,10 +254,10 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
           )
         ) : (
           !running &&
-          hasSubtitles && (
+          hasSubtitles === true && (
             <EmptyState
               testId="handout-empty"
-              icon={<mdui-sym-article />}
+              icon={<Sym name="article" />}
               title="还没有讲义"
               description="点击「生成讲义」，将自动抽取课程画面、提炼大纲并排版为公文格式 DOCX"
             />
@@ -261,52 +267,59 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
 
       {/* 生成参数（模型 + 技能覆盖）：原两个 antd Popover 合并为一个受控对话框。
           内容含模型下拉与每个技能的「自动/必用/排除」分段控件，不是「点一下就关」的单选项，
-          用对话框比 dropdown 菜单更合适（菜单项点击即关、放不下多组交互控件）。 */}
-      <mdui-dialog
-        ref={settingsDlgRef}
-        open={settingsOpen}
-        close-on-esc
-        close-on-overlay-click
-        headline="生成参数"
-        data-testid="handout-settings-dialog"
-      >
-        <div className="hp-settings">
-          <Field label="抽帧筛选 / 截图描述（视觉）">
-            <ModelPicker slot="vision" field="visionModel" />
-          </Field>
-          <Field label="讲义写作（文本）">
-            <ModelPicker slot="chat" field="llmModel" />
-          </Field>
-          <div className="hp-settings__hint">
-            「自动」由路由器按课程内容选用；「必用 / 排除」为本视频的手动覆盖。
-          </div>
-          {skills.length === 0 ? (
-            <div className="hp-settings__empty">暂无启用的技能，请到「设置 → 写作技能」添加</div>
-          ) : (
-            skills.map((s) => (
-              <SkillModeRow
-                key={s.id}
-                skill={s}
-                mode={skillModes[s.id] ?? 'auto'}
-                onMode={(v) => void setSkillMode(s.id, v)}
-              />
-            ))
-          )}
-          {handout?.usedSkills && handout.usedSkills.length > 0 && (
-            <div className="hp-settings__used">上次生成选用：{handout.usedSkills.join('、')}</div>
-          )}
-        </div>
-        <mdui-button slot="action" variant="text" onClick={() => setSettingsOpen(false)}>
-          关闭
-        </mdui-button>
-      </mdui-dialog>
+          用对话框比 dropdown 菜单更合适（菜单项点击即关、放不下多组交互控件）。
+          Esc / 点遮罩关闭由 Modal 的 onOpenChange 同步回 React state。 */}
+      <Modal.Root isOpen={settingsOpen} onOpenChange={setSettingsOpen}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="handout-settings-dialog">
+              <Modal.Header>
+                <Modal.Heading>生成参数</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <div className="hp-settings">
+                  <Field label="抽帧筛选 / 截图描述（视觉）">
+                    <ModelPicker slot="vision" field="visionModel" />
+                  </Field>
+                  <Field label="讲义写作（文本）">
+                    <ModelPicker slot="chat" field="llmModel" />
+                  </Field>
+                  <div className="hp-settings__hint">
+                    「自动」由路由器按课程内容选用；「必用 / 排除」为本视频的手动覆盖。
+                  </div>
+                  {skills.length === 0 ? (
+                    <div className="hp-settings__empty">暂无启用的技能，请到「设置 → 写作技能」添加</div>
+                  ) : (
+                    skills.map((s) => (
+                      <SkillModeRow
+                        key={s.id}
+                        skill={s}
+                        mode={skillModes[s.id] ?? 'auto'}
+                        onMode={(v) => void setSkillMode(s.id, v)}
+                      />
+                    ))
+                  )}
+                  {handout?.usedSkills && handout.usedSkills.length > 0 && (
+                    <div className="hp-settings__used">上次生成选用：{handout.usedSkills.join('、')}</div>
+                  )}
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" onPress={() => setSettingsOpen(false)}>
+                  关闭
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </Panel>
   );
 }
 
 /** 单个技能的「自动 / 必用 / 排除」分段控件行。
- *  不用 mdui-list-item（custom 插槽覆盖式，塞不下标题 + 控件两组内容）；
- *  分段控件值从元素上读，change 事件走 useMduiEvent（mdui 自定义事件 React 不自动绑定）。 */
+ *  不用列表项组件（custom 插槽覆盖式，塞不下标题 + 控件两组内容）；
+ *  分段控件走 ToggleButtonGroup 的受控 selectedKeys。 */
 function SkillModeRow({
   skill,
   mode,
@@ -316,19 +329,29 @@ function SkillModeRow({
   mode: SkillMode;
   onMode: (mode: SkillMode) => void;
 }) {
-  const ref = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
-    onMode(el.value as SkillMode),
-  );
   return (
     <div className="hp-skill-row">
-      <mdui-tooltip content={skill.description || '（无描述）'}>
-        <span className="hp-skill-row__name">{skill.name}</span>
-      </mdui-tooltip>
-      <mdui-segmented-button-group ref={ref} value={mode}>
-        <mdui-segmented-button value="auto">自动</mdui-segmented-button>
-        <mdui-segmented-button value="pin">必用</mdui-segmented-button>
-        <mdui-segmented-button value="drop">排除</mdui-segmented-button>
-      </mdui-segmented-button-group>
+      {/* 技能名是纯展示文本，不是可点元素：HeroUI 的 Tooltip.Trigger 会渲染一个
+          div[role=button] 并带上 tabIndex，把标签说成一个「按了没反应」的按钮。
+          这里改用原生 title —— 语义与 mdui-tooltip 在非交互元素上的效果一致。 */}
+      <span className="hp-skill-row__name" title={skill.description || '（无描述）'}>
+        {skill.name}
+      </span>
+      <ToggleButtonGroup
+        selectionMode="single"
+        disallowEmptySelection
+        size="sm"
+        aria-label={`${skill.name} 的技能使用方式`}
+        selectedKeys={[mode]}
+        onSelectionChange={(keys) => {
+          const next = [...keys][0];
+          if (next) onMode(next as SkillMode);
+        }}
+      >
+        <ToggleButton id="auto">自动</ToggleButton>
+        <ToggleButton id="pin">必用</ToggleButton>
+        <ToggleButton id="drop">排除</ToggleButton>
+      </ToggleButtonGroup>
     </div>
   );
 }

@@ -10,7 +10,7 @@
 import assert from 'node:assert/strict';
 import { linkifyFrames, linkifyTimestamps, formatFrameList } from '../src/utils/linkify.ts';
 import { PROMPTS } from '../src/harness/prompts.ts';
-import { diagramKindOf } from '../src/components/mermaid/fence.ts';
+import { diagramKindOf, fenceTitleOf, MAX_FENCE_TITLE } from '../src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];
@@ -136,12 +136,15 @@ test('qaSystem 截图规则与画面引用规则编号连续', () => {
 });
 
 // —— 2026-09-17 新增：讲不清就画图（问答正文与题卡解析共用同一句话术） ——
-// 前端只认 mermaid 与 svg 两个语言标记（components/mermaid/fence.ts 的 LANG_RULES），
+// 前端只认 mermaid / diagram / svg 三个语言标记（components/mermaid/fence.ts 的 LANG_RULES），
 // 提示词里写错围栏名，模型就会输出一坨源码；节点上限那句是防模型画出手机屏放不下的大图。
+// 2026-10-13 起：**新内容只教 mermaid 与 diagram 两种**（svg 围栏退场成历史数据兼容，
+// 见 fence.ts 头部），所以这里的断言也从「点明 svg」换成了「点明 diagram、不再教 svg」。
 
 test('qaSystem 注入出图规则（围栏名 + 节点上限 + 防滥画）', () => {
   const p = PROMPTS.qaSystem('测试课程');
   assert.match(p, /```mermaid 围栏/);
+  assert.match(p, /```diagram 围栏/);
   assert.match(p, /不超过 10 个节点/);
   assert.match(p, /一句话能说清的就别画/);
 });
@@ -152,22 +155,39 @@ test('qaSystemMaterial 同样注入出图规则，且不引入时间戳口径', 
   assert.ok(!p.includes('[mm:ss]'), '材料提示词不应出现时间戳口径');
 });
 
-// —— 2026-09-18 新增：原生 svg 围栏（mermaid 画不出的自由图形） ——
-// 两条链路共用一句话术，所以两处都要点到 svg，否则问答能画、题卡不能。
+// —— 2026-10-13 起：JSON 中间层上位，原生 svg 围栏退场（只剩渲染层兼容旧数据） ——
+// 两条链路共用同一句话术，所以两处都要点到 diagram，否则问答能画、题卡不能。
 
-test('出图规则点明 svg 围栏，并写死「mermaid 优先、svg 兜底」的分工', () => {
+test('出图规则点明 diagram 围栏，并写死「mermaid 优先、diagram 兜底」的分工', () => {
   for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
-    assert.match(p, /```svg 围栏/, '必须点明 svg 围栏名（前端只认这一个标记）');
-    // 分工不能省：不写「mermaid 画不出的才用 svg」，模型会放着现成图种不用去手搓 SVG
-    assert.match(p, /mermaid 画不出的[^。]*```svg/);
-    assert.match(p, /不写 script/);
+    assert.match(p, /```diagram 围栏/, '必须点明 diagram 围栏名（前端只认这一个 JSON 标记）');
+    // 分工不能省：不写「mermaid 画不出的才用 diagram」，模型会放着现成图种不用去手搓 JSON
+    assert.match(p, /mermaid 画不出的[^。]*```diagram/);
+    // JSON 中间层的全部意义：模型只描述结构，坐标/布局/采样由渲染器算
+    assert.match(p, /你不要手算坐标/);
+  }
+});
+
+test('出图规则点明标题写在围栏参数里（不是 JSON 字段）', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
+    // 不点明这个位置，模型只会把标题写成正文里的一句话，块头永远空着
+    assert.match(p, /```diagram title="/, '必须给出围栏参数的写法（前端只认 fence.ts 的 fenceTitleOf）');
+    assert.match(p, /```mermaid title="/, 'mermaid 是同一条口径，不能只教 diagram');
+    assert.match(p, /不要把它塞进 JSON/);
+  }
+});
+
+test('出图规则不再教 svg 围栏（历史数据兼容只留在渲染层，不进提示词）', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
+    assert.ok(!p.includes('```svg'), '提示词不该再教模型直出 SVG（围栏仍渲染，见 fence.ts）');
+    assert.ok(!/不写 script/.test(p), 'svg 安全约束不该再占提示词篇幅');
   }
 });
 
 test('出题规则点明解析支持 markdown 与两种图表围栏', () => {
   for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'para')]) {
     assert.match(p, /解析涉及流程[\s\S]*```mermaid 围栏/);
-    assert.match(p, /```svg 围栏/);
+    assert.match(p, /```diagram 围栏/);
   }
 });
 
@@ -180,21 +200,26 @@ test('技能路由排除出图类技能：讲义按 IR 渲染，不解析图表�
 });
 
 // —— 围栏判定：这是「提示词 ↔ 渲染层」的硬契约，写错一个字母模型就白画 ——
+// 2026-10-13 起有三种：mermaid / diagram（新内容只教这两种）/ svg（历史数据兼容）。
 
-test('diagramKindOf 只认 mermaid / svg 两种块级围栏', () => {
+test('diagramKindOf 只认 mermaid / diagram / svg 三种块级围栏', () => {
   assert.equal(diagramKindOf({ block: true, lang: 'mermaid' }), 'mermaid');
+  assert.equal(diagramKindOf({ block: true, lang: 'diagram' }), 'diagram');
   assert.equal(diagramKindOf({ block: true, lang: 'svg' }), 'svg');
 });
 
-test('diagramKindOf 容忍围栏参数与前导空白（```mermaid title=xx）', () => {
+test('diagramKindOf 容忍围栏参数与前导空白（```mermaid title=xx / ```Diagram）', () => {
   assert.equal(diagramKindOf({ block: true, lang: 'mermaid title=架构图' }), 'mermaid');
   assert.equal(diagramKindOf({ block: true, lang: '  SVG  ' }), 'svg');
   assert.equal(diagramKindOf({ block: true, lang: 'Mermaid' }), 'mermaid');
+  assert.equal(diagramKindOf({ block: true, lang: 'Diagram title=函数图像' }), 'diagram');
+  assert.equal(diagramKindOf({ block: true, lang: '  diagram  ' }), 'diagram');
 });
 
-test('diagramKindOf 不吃前缀相近的语言名（svgb / mermaids 都不是图表围栏）', () => {
+test('diagramKindOf 不吃前缀相近的语言名（svgb / mermaids / diagrams 都不是图表围栏）', () => {
   assert.equal(diagramKindOf({ block: true, lang: 'svgb' }), null);
   assert.equal(diagramKindOf({ block: true, lang: 'mermaids' }), null);
+  assert.equal(diagramKindOf({ block: true, lang: 'diagrams' }), null);
 });
 
 test('diagramKindOf 不认其他画图语言：写 dot / plantuml 会落回普通代码块', () => {
@@ -208,6 +233,61 @@ test('diagramKindOf 不认行内 code 与缺 lang 的围栏', () => {
   assert.equal(diagramKindOf({ block: true }), null, '无 lang 的围栏是普通代码块');
   assert.equal(diagramKindOf({ block: true, lang: '' }), null);
   assert.equal(diagramKindOf({ block: true, lang: undefined }), null);
+});
+
+// —— 围栏标题：```diagram title="抛物线开口方向" ——
+// 与 diagramKindOf 共用同一条 info string（XMarkdown 的 data-lang 是**完整** info string），
+// 所以两者必须能在同一串上并存；提示词与 show_widget 回执都按这里的口径写 title=。
+
+test('fenceTitleOf 认三种写法：双引号 / 单引号 / 裸值', () => {
+  assert.equal(fenceTitleOf('diagram title="三次握手"'), '三次握手');
+  assert.equal(fenceTitleOf('diagram title="抛物线 y=x² 的图像"'), '抛物线 y=x² 的图像', '引号里可以有空格');
+  assert.equal(fenceTitleOf('diagram title="a=b 的关系"'), 'a=b 的关系', '引号里的 = 不是分隔符');
+  assert.equal(fenceTitleOf("mermaid title='请求链路'"), '请求链路');
+  assert.equal(fenceTitleOf('mermaid title=架构图'), '架构图', '裸值到空白为止');
+  assert.equal(fenceTitleOf('svg title="自由图形"'), '自由图形');
+});
+
+test('fenceTitleOf 与 diagramKindOf 共用一条 info string', () => {
+  const lang = 'diagram title="抛物线开口方向"';
+  assert.equal(diagramKindOf({ block: true, lang }), 'diagram');
+  assert.equal(fenceTitleOf(lang), '抛物线开口方向');
+});
+
+test('fenceTitleOf 认不出来的写法一律返回 null（调用方退回图种标签）', () => {
+  assert.equal(fenceTitleOf('diagram'), null);
+  assert.equal(fenceTitleOf(''), null);
+  assert.equal(fenceTitleOf(undefined), null);
+  assert.equal(fenceTitleOf('diagram title='), null, 'title= 后面什么都没有');
+  assert.equal(fenceTitleOf('diagram title="   "'), null, '只有空白');
+  assert.equal(fenceTitleOf('diagram subtitle=小标题'), null, 'subtitle 不是 title');
+  assert.equal(fenceTitleOf('diagram mytitle=x'), null, '词中出现的 title 不算');
+});
+
+test('fenceTitleOf 大小写不敏感，且能跳过前面的其他参数', () => {
+  assert.equal(fenceTitleOf('Diagram TITLE="函数图像"'), '函数图像');
+  assert.equal(fenceTitleOf('mermaid  title = "三次握手" '), '三次握手');
+  assert.equal(fenceTitleOf('diagram theme=dark title="对比"'), '对比');
+});
+
+test('fenceTitleOf 未闭合的引号也取（流式期间首行是逐 token 到的）', () => {
+  // 宁可直接显示半截标题，也别让块头先空一下再蹦出来 —— 与 svg 围栏边生成边落画同一取向
+  assert.equal(fenceTitleOf('diagram title="二次函数'), '二次函数');
+  assert.equal(fenceTitleOf("diagram title='二次函数"), '二次函数');
+  assert.equal(fenceTitleOf('diagram title='), null);
+});
+
+test('fenceTitleOf 超长截断到上限并加省略号（别因为标题长就整块不显示）', () => {
+  const long = '函'.repeat(MAX_FENCE_TITLE + 5);
+  const out = fenceTitleOf(`diagram title="${long}"`);
+  assert.equal([...out].length, MAX_FENCE_TITLE + 1, '截断后长度 = 上限 + 省略号');
+  assert.ok(out.endsWith('…'));
+  const exact = '函'.repeat(MAX_FENCE_TITLE);
+  assert.equal(fenceTitleOf(`diagram title="${exact}"`), exact, '恰好在上限上不动它');
+});
+
+test('fenceTitleOf 清掉控制字符（换行会串进文件名与无障碍名）', () => {
+  assert.equal(fenceTitleOf('diagram title="三次\u0000握手"'), '三次握手');
 });
 
 test('shotDescribe 带上下文时声明「以画面为准」，不带上下文也可用', () => {

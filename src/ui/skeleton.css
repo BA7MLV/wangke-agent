@@ -1,0 +1,109 @@
+/* ── 骨架屏闸门 ─────────────────────────────────────────────────────────────
+   逻辑（延迟门控 / 最短停留）在 skeleton.tsx，这里只管「长什么样」。
+
+   配色走 HeroUI 的语义令牌，深浅色自适配，不写死灰值 —— 写死的话深色下会变成
+   一块发光的白斑。
+
+   ⚠️ 用 `--background-tertiary` 而不是 `--default-soft`：后者是
+   「oklch(94%) 再混 50% 透明」，落在接近纯白的底上只能读出一层几乎看不见的雾。
+   大块（缩略图）还好，**细条上直接立不住** —— 标题 23px、元信息 18px 那几条
+   在实际截图里根本分不出来，整屏糊成一片灰。`--background-tertiary` 是
+   不透明的三级面，浅色下约 oklch(91%)、深色下约 oklch(19%)，这个量级才对。
+   ──────────────────────────────────────────────────────────────────────────── */
+
+.skel-reveal {
+  display: grid;
+}
+
+/* 两层叠在同一格里：都在文档流里，容器高度 = 两层中较高者，不会塌陷。
+   注：内容层始终排在骨架层之后（DOM 顺序），所以内容天然压在骨架之上。 */
+.skel-reveal > * {
+  grid-area: 1 / 1;
+}
+
+/* ── 交叉淡入（骨架 → 内容） ──────────────────────────────────────────────
+   只在「骨架确实露过脸」时才加 .is-revealing，所以快速路径（加载 < delayMs）
+   拿到的是一个不带任何动画的普通容器 —— 不会被动画抖一下。 */
+.skel-reveal.is-revealing {
+  position: relative;
+  /* 骨架比内容高时裁掉溢出部分。只在这 400ms 里裁，不平移内容盒。 */
+  overflow: hidden;
+}
+
+.skel-reveal.is-revealing > .skel-reveal__skeleton {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  /* 绝对定位的层会盖在内容上，必须让它不吞事件 */
+  pointer-events: none;
+  animation: skel-reveal-out var(--reveal-dur, 400ms) var(--reveal-ease, ease-in-out) forwards;
+}
+
+.skel-reveal.is-revealing > .skel-reveal__content {
+  animation: skel-reveal-in var(--reveal-dur, 400ms) var(--reveal-ease, ease-in-out) forwards;
+}
+
+/* 刻意**不加** blur：transitions.css 的 .t-skel 是给一块 docx 预览用的，那里
+   blur 一层很便宜；这里是整个课程卡片列表，全列表重新栅格化在 iPad 上会掉帧。
+   透明度交叉已经足够把「换了一层」讲清楚。 */
+@keyframes skel-reveal-out {
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+@keyframes skel-reveal-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+/* ── 占位块 ──────────────────────────────────────────────────────────────
+   .skel-breathe 只上动画、不设背景 —— 它是要跟真内容的类一起用的
+   （如 <div className="video-row__thumb skel-breathe" />），几何与底色
+   全都由真类给，这样骨架和内容的盒子**逐像素**一致，出结果时不跳。 */
+.skel-breathe {
+  animation: skel-breathe var(--pulse-dur, 1000ms) var(--ease-linear, linear) infinite;
+}
+
+/* 谷底只到 0.72，不到 0.5。
+   0.5 那种幅度是配「深色块」用的；骨架本来就是低对比的浅灰，再砍掉一半不透明度，
+   呼吸的半个周期里它会淡到看不见 —— 于是「有东西在等」这个信号反而断断续续。 */
+@keyframes skel-breathe {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+/* 文字行占位：**没有真类可以复用**时才用它（高度照着真内容那一行的实测值给）。
+   能复真类的地方一律复真类 —— 手写一个「大概差不多」的高度，就是 §四 那张表里
+   卡片矮 49px 的成因。
+
+   刻意**不提供** `--title` / `--meta` 这类看起来有语义的修饰类：它们只会让人以为
+   「标题用 --title」是对的，从而绕开真类。各页需要的宽度都跟自己的真内容绑在一起，
+   所以各页自己带父级前缀去写（如 `.study-tile .skel-bar--sub`）。 */
+.skel-bar {
+  height: 12px;
+  border-radius: 6px;
+  background: var(--background-tertiary);
+  animation: skel-breathe var(--pulse-dur, 1000ms) var(--ease-linear, linear) infinite;
+}
+
+/* ── 无障碍 ──────────────────────────────────────────────────────────────
+   减弱动态效果时：不呼吸、不交叉淡入，但**骨架照常显示** ——
+   骨架表达的是「布局已经知道、内容还没来」，属于信息而不是动效。 */
+@media (prefers-reduced-motion: reduce) {
+  .skel-breathe,
+  .skel-bar {
+    animation: none !important;
+  }
+  .skel-reveal.is-revealing > .skel-reveal__skeleton {
+    animation: none !important;
+    opacity: 0;
+  }
+  .skel-reveal.is-revealing > .skel-reveal__content {
+    animation: none !important;
+    opacity: 1;
+  }
+}

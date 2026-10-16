@@ -1,5 +1,5 @@
 /**
- * 模型直出 SVG 的净化器（```svg 围栏用）。
+ * 模型直出 SVG 的净化器（```svg 围栏用；```diagram 链路的渲染器产出物也过同一道白名单）。
  *
  * ⚠️ 与 mermaidRender.ts 的安全结论**方向相反**，别把两者合并：
  * - mermaid 产出的 SVG：**不做二次 DOMPurify**。它的 `securityLevel:'strict'` 已经清过一遍，
@@ -169,7 +169,7 @@ export function peekSvgProgress(raw: string): SvgProgress | null {
   // 没有几何信息就没法先把「纸」铺出来 —— 这种半截 SVG 老实退回等待态
   if (!/(^|\s)viewBox\s*=/.test(rootAttrs) && !/(^|\s)width\s*=/.test(rootAttrs)) return null;
 
-  return { rootAttrs, elements: closedTopLevel(source, rootEnd + 1).map(sanitizePiece) };
+  return { rootAttrs, elements: closedTopLevel(source, rootEnd + 1).map(sanitizeSvgFragment) };
 }
 
 /**
@@ -302,10 +302,15 @@ function sanitizeRoot(rawTag: string): string {
  * 属性会被打成小写、再被白名单（按 SVG 正确大小写写的）剔掉 —— 图就悄悄少了一截。
  * 套一层根标签等于把命名空间交给解析器，跟 `sanitizeSvg` 走同一条路。
  *
+ * 两个消费方共用它：```svg 链路的流式增量（`peekSvgProgress` 的元素列表），
+ * 以及 ```diagram 链路的渲染器产出物（diagramRender 的形状片段）。后者是
+ * 「我们自己生成的 SVG」—— 过同一道白名单是纵深防御：渲染器哪天多吐一个
+ * 白名单外的东西，在这里现形，而不是直接进 DOM。
+ *
  * 结果按元素原文缓存：流式每一拍都会重新扫到**全部**已完成的元素，
  * 而每个元素的净化结果恒定，缓存之后整条流只净化「真正新到的那几个」。
  */
-function sanitizePiece(piece: string): string {
+export function sanitizeSvgFragment(piece: string): string {
   const hit = pieceCache.get(piece);
   if (hit !== undefined) return hit;
 

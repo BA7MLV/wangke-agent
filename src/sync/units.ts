@@ -178,6 +178,8 @@ export const VIDEO_META_FIELDS = [
   'lastPosition',
   'finished',
   'lastUnit',
+  // 置顶是「用户怎么排这些资料」的偏好，与 finished / lastUnit 同类：跨设备有意义
+  'pinned',
 ] as const;
 
 /**

@@ -2,10 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
-import { toast } from '../ui';
+import { Sym, toast, useSkeletonGate } from '../ui';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import PdfReader from './PdfReader';
 import DocxReader from './DocxReader';
+import DocSkeleton from './DocSkeleton';
 import MdReader from './MdReader';
 import HtmlReader from './HtmlReader';
 import '../materials/material-reader.css';
@@ -30,6 +31,12 @@ export default function MaterialReader({ material, handleRef }: Props) {
 
   const format = material.materialFormat ?? 'pdf';
   const materialId = material.id;
+  /**
+   * 材料打开的等待是**真等待**（OPFS 取字节），所以骨架走延迟门控：
+   * 本机快路径（小文件）一个灰块都不出，慢文件（大 PDF / 首次冷启动）才露脸。
+   * 与面板不同 —— 面板读的是亚毫秒级的 IndexedDB，骨架几乎只为慢设备准备。
+   */
+  const showSkeleton = useSkeletonGate(loading);
 
   useEffect(() => {
     let url = '';
@@ -81,10 +88,11 @@ export default function MaterialReader({ material, handleRef }: Props) {
   if (loading) {
     return (
       <div className="mr-shell">
-        <div className="mr-root">
-          <div className="mr-docx__skel">
-            <mdui-circular-progress />
-            正在打开材料…
+        <div className="mr-root" data-testid="material-loading">
+          <div className="mr-scroll">
+            {showSkeleton && (
+              <DocSkeleton variant={format === 'md' || format === 'html' ? 'column' : 'page'} />
+            )}
           </div>
         </div>
       </div>
@@ -96,7 +104,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
       <div className="mr-shell">
         <div className="mr-root">
           <div className="mr-hint" data-testid="reader-file-missing">
-            <mdui-sym-error />
+            <Sym name="error" />
             材料文件已删除，问答记录仍然保留。
           </div>
         </div>
@@ -113,7 +121,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
       */}
       {material.scanned === 1 && (
         <div className="mr-hint" data-testid="material-scan-hint">
-          <mdui-sym-warning />
+          <Sym name="warning" />
           <span>
             这份材料<strong>没有文本层</strong>（扫描件），无法参与问答检索；
             但仍可在页面上划词或框选区域提问。
@@ -122,7 +130,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
       )}
       {material.empty === 1 && (
         <div className="mr-hint" data-testid="material-empty-hint">
-          <mdui-sym-warning />
+          <Sym name="warning" />
           <span>
             这份材料<strong>没有正文</strong>，没有可供检索或提问的内容。
           </span>

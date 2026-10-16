@@ -1,4 +1,5 @@
-import { Banner, toast } from '../ui';
+import { Button } from '@heroui/react';
+import { Banner, Sym, toast } from '../ui';
 import './subtitle-danmaku.css';
 
 interface Props {
@@ -20,18 +21,32 @@ export default function PersistentError({ title, text, onClose }: Props) {
   return (
     <Banner
       variant="error"
-      icon={<mdui-sym-error />}
+      icon={<Sym name="error" />}
       title={title}
       testId="persistent-error"
       description={<div className="persistent-error__desc">{text}</div>}
       action={
         <>
-          <mdui-button-icon data-testid="persistent-error-copy" onClick={copy}>
-            <mdui-sym-content-copy />
-          </mdui-button-icon>
-          <mdui-button-icon data-testid="persistent-error-close" onClick={onClose}>
-            <mdui-sym-close />
-          </mdui-button-icon>
+          <Button
+            isIconOnly
+            variant="tertiary"
+            size="sm"
+            aria-label="复制报错详情"
+            data-testid="persistent-error-copy"
+            onPress={copy}
+          >
+            <Sym name="content_copy" />
+          </Button>
+          <Button
+            isIconOnly
+            variant="tertiary"
+            size="sm"
+            aria-label="关闭报错详情"
+            data-testid="persistent-error-close"
+            onPress={onClose}
+          >
+            <Sym name="close" />
+          </Button>
         </>
       }
     />

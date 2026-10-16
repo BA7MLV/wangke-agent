@@ -11,10 +11,10 @@
   gap: 10px;
   max-width: min(560px, calc(100vw - 24px));
   padding: 8px 10px;
-  border-radius: var(--mdui-shape-corner-large);
-  background: rgb(var(--mdui-color-surface-container-high));
+  border-radius: var(--radius-lg);
+  background: var(--default-soft);
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.22);
-  border: 1px solid rgba(var(--mdui-color-outline-variant), 0.6);
+  border: 1px solid rgba(var(--border-secondary), 0.6);
 }
 
 /* 移动端：不跟随选区，改成贴底固定条。
@@ -38,15 +38,15 @@
   gap: 6px;
   font-size: 12px;
   line-height: 1.4;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .ask-float__where {
   flex: none;
   padding: 1px 6px;
   border-radius: 999px;
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }

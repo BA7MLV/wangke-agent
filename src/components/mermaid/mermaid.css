@@ -1,12 +1,12 @@
 /* Mermaid 图表块：替代 ```mermaid 围栏的代码块外观，跟随 MD3 令牌（深色自动成立）。
-   mdui 令牌值是 R,G,B 三元组，必须用 rgb(var(--mdui-color-*)) 包裹。
+   这里直接用 HeroUI 的语义令牌（--foreground / --muted / --accent）。
    注：mermaid 渲染出的 SVG 图谱本体自带颜色，这里一律不动。 */
 
 .xmd-mermaid {
   margin: 8px 0;
-  border: 1px solid rgb(var(--mdui-color-outline-variant));
+  border: 1px solid var(--border-secondary);
   border-radius: 8px;
-  background: rgb(var(--mdui-color-surface-container-low));
+  background: var(--background-secondary);
   overflow: hidden;
 }
 
@@ -15,14 +15,29 @@
   align-items: center;
   gap: 6px;
   padding: 2px 6px 2px 10px;
-  background: rgb(var(--mdui-color-surface-container));
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  background: var(--background-tertiary);
+  border-bottom: 1px solid var(--border-secondary);
 }
 
 .xmd-mermaid-tag {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   letter-spacing: 0.02em;
+  user-select: none;
+}
+
+/* 围栏参数里的标题（```diagram title="…"）：图种标签之后的正文色文字，比标签重一档。
+   `min-width: 0` + 溢出省略不可省 —— flex 子项默认不肯缩到内容宽度以下，
+   少了这两条，超长标题会把工具条挤出容器而不是自己变省略号。
+   （唯一的截断发生在 fence.ts，这里只是兜底；截断时靠 title 属性悬停看全。） */
+.xmd-mermaid-title {
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--foreground);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   user-select: none;
 }
 
@@ -37,14 +52,14 @@
   gap: 8px;
   padding: 14px 12px;
   font-size: 13px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .xmd-mermaid-dots {
   width: 8px;
   height: 8px;
   border-radius: 50%;
-  background: rgb(var(--mdui-color-primary));
+  background: var(--accent);
   animation: xmd-mermaid-pulse 1s ease-in-out infinite;
 }
 
@@ -130,7 +145,7 @@
   gap: 6px;
   padding: 0 12px 10px;
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .xmd-mermaid-live .xmd-mermaid-dots {
@@ -147,8 +162,8 @@
 /* —— 渲染失败 —— */
 .xmd-mermaid-error {
   padding: 10px 12px;
-  background: rgb(var(--mdui-color-error-container));
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  background: var(--danger-soft);
+  border-bottom: 1px solid var(--border-secondary);
 }
 
 .xmd-mermaid-error-title {
@@ -156,13 +171,13 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
   margin-bottom: 4px;
 }
 
 .xmd-mermaid-error-msg {
   font-size: 12px;
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 120px;
@@ -175,13 +190,13 @@
 .xmd-mermaid-source {
   margin: 0 !important;
   padding: 10px 12px !important;
-  background: rgb(var(--mdui-color-surface-container)) !important;
+  background: var(--background-tertiary) !important;
   border: none !important;
-  border-top: 1px dashed rgb(var(--mdui-color-outline-variant)) !important;
+  border-top: 1px dashed var(--border-secondary) !important;
   border-radius: 0 !important;
   font-size: 12px;
   line-height: 1.6;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
   max-height: 260px;
   overflow: auto;
   white-space: pre;
@@ -196,7 +211,7 @@
 
 .xmd-mermaid-zoom-bar {
   padding: 8px 12px;
-  border-bottom: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-bottom: 1px solid var(--border-secondary);
 }
 
 .xmd-mermaid-zoom-label {
@@ -204,7 +219,7 @@
   min-width: 44px;
   text-align: center;
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
   font-variant-numeric: tabular-nums;
 }
 
@@ -212,7 +227,7 @@
   flex: 1;
   overflow: auto;
   padding: 16px;
-  background: rgb(var(--mdui-color-surface-container-low));
+  background: var(--background-secondary);
   /* 触摸设备上允许双指缩放查看 */
   touch-action: pinch-zoom;
 }
@@ -234,14 +249,14 @@
   gap: 2px;
 }
 
-/* 「源码已展开」的激活态：文档树规则覆盖 mdui-button-icon 的 :host 颜色，
+/* 「源码已展开」的激活态：文档树规则覆盖按钮图标的颜色，
    图标 fill:currentColor 跟随文字色 */
 .xmd-mermaid-tools .is-on {
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
 }
 
 /* —— 大图弹窗 ——
-   mdui-dialog 的可视面板在 shadow DOM 里（.panel{max-width:35rem}），改不到；
+   旧版对话框的可视面板在 shadow DOM 里（.panel{max-width:35rem}），改不到；
    但它暴露了 part="panel"，用 ::part() 正当改写 —— 保持原 antd Modal 的 92vw / 上限 1400px 观感。 */
 .mermaid-zoom-dialog::part(panel) {
   width: 92vw;
@@ -249,7 +264,7 @@
   height: 86vh;
 }
 
-/* 弹窗正文不再需要 mdui 自带的最大宽度约束（::part 已接管整块面板） */
+/* 弹窗正文不再需要额外的最大宽度约束（HeroUI 的 modal__dialog 已接管整块面板） */
 .mermaid-zoom-dialog .xmd-mermaid-zoom {
   max-height: none;
   height: 100%;

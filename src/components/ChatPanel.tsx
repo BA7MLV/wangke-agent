@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
-import { db, type ChatImage, type ChatSessionRow, type QuizState, type SegmentRow } from '../store/db';
+import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
 import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
@@ -18,9 +19,11 @@ import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/c
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
-import { chatOnce, textOf, type ChatMessage, type ContentPart, type ReasoningEffort } from '../api/siliconflow';
+import { chatOnce, textOf, type ChatMessage, type ContentPart, type ThinkingLevel } from '../api/siliconflow';
+import ReasoningEffortSlider from './ReasoningEffortSlider';
 import { fmtTime } from '../utils/vtt';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
+import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
 import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
 import type { MaterialReaderHandle } from '../materials/types';
 import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citation } from '../store/selectionAsk';
@@ -28,9 +31,21 @@ import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
 import { useModelMetaRevision } from '../utils/useModelMeta';
-import { Panel, PanelBar, PanelSpacer, PanelBody, PanelPlaceholder, toast, confirmDialog, useMduiEvent } from '../ui';
-import { ThinkLine, StreamParagraph, Collapse } from './motion';
+import {
+  Panel,
+  PanelBar,
+  PanelSpacer,
+  PanelBody,
+  PanelPlaceholder,
+  Sym,
+  toast,
+  confirmDialog,
+} from '../ui';
+import { ThinkLine, StreamParagraph } from './motion';
+import ReasoningChain from './ReasoningChain';
+import ToolTrace from './ToolTrace';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
+import { MarkdownTable } from './MdTable';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
@@ -73,8 +88,22 @@ interface ChatMsg {
   images?: ChatImage[];
   /** 思考过程（推理模型 reasoning_content 的回调累计值） */
   reasoning?: string;
+  /** 思考耗时（毫秒）：首个思考 token → 末个。落库，历史消息也显示 */
+  reasoningMs?: number;
+  /**
+   * 首个思考 token 的时刻（毫秒时间戳）。
+   *
+   * **不落库**：它只服务「思考中」那几秒的实时计时（`ReasoningChain` 的 `since`），
+   * 历史消息用的是终值 `reasoningMs`。存进库里只会多一个没人读、还会过期的字段。
+   */
+  reasoningStartedAt?: number;
   /** 工具调用期间的提示（如"正在检索…"） */
   hint?: string;
+  /**
+   * 这一轮调过的工具（含正在跑的那次）。落库，历史消息也回放 ——
+   * 见 `components/ToolTrace.tsx` 顶部那段「为什么要有这一块」。
+   */
+  tools?: ChatToolCall[];
   /** 答题卡（present_quiz 工具产出） */
   quiz?: QuizState;
   /** 沙箱图形卡（show_widget 的 html 形态产出） */
@@ -168,36 +197,6 @@ function FrameThumb({
 }
 
 /**
- * AI 气泡上方的可折叠思考过程块。
- * active（流式中且正文未出）时默认展开呈"思考中"；active 消失后自动收起，
- * 之后/历史消息默认收起，点击摘要行展开。样式保持低调：12px、半透、左竖线。
- */
-function ReasoningBlock({ reasoning, active }: { reasoning: string; active: boolean }) {
-  const [open, setOpen] = useState(active);
-  const bodyId = useId();
-  useEffect(() => {
-    if (!active) setOpen(false);
-  }, [active]);
-  return (
-    <div className="chat-reason">
-      <button
-        type="button"
-        className="chat-reason__toggle"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((v) => !v)}
-      >
-        <mdui-sym-chevron-right className={open ? 'chat-reason__chevron chat-reason__chevron--open' : 'chat-reason__chevron'} />
-        {active ? '思考中…' : '思考过程'}
-      </button>
-      <Collapse open={open} id={bodyId} innerClassName="chat-reason__body">
-        {reasoning}
-      </Collapse>
-    </div>
-  );
-}
-
-/**
  * 用户气泡内容：把开头的**引用块**（`> ` 前缀的连续行）单独渲染成引用样式。
  *
  * 为什么要拆：引用块落库时存的是 Markdown blockquote 原文，而用户气泡是**纯文本渲染**
@@ -283,10 +282,10 @@ export default function ChatPanel({
   useEffect(() => {
     refsRef.current = refs;
   }, [refs]);
-  // 输入框 ref：mdui-text-field 的 input 事件没有 payload，值要从元素上读。
-  // 声明放在这里（而不是靠近 JSX）是因为「选区提问」的 effect 要用它来聚焦输入框 ——
+  // 输入框 ref：TextArea 的受控值从 onChange 拿，但「选区提问」那个 effect 要聚焦它。
+  // 声明放在这里（而不是靠近 JSX）是因为那个 effect 在组件体上方就要用到 ——
   // 常量声明在使用之后会被 TS 判为 use-before-declaration。
-  const composerInput = useMduiEvent('mdui-text-field', 'input', (_e, el) => setInput(el.value));
+  const composerInput = useRef<HTMLTextAreaElement>(null);
   // 讲义抽帧元数据：决定 list_frames 工具/提示词注入，也供 AI 气泡里的画面引用渲染
   const [framesMeta, setFramesMeta] = useState<FrameMeta[]>([]);
   const llmModel = useSettings((s) => s.llmModel);
@@ -296,6 +295,21 @@ export default function ChatPanel({
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
   const updateSettings = useSettings((s) => s.update);
+  /**
+   * 思考能力分两层，工具行上给什么控件就看这两层：
+   *
+   * - 能思考 + 声明了深度档位 → 一条 6 档滑块（第一档「不思考」就是关，不再单摆灯泡）
+   * - 能思考但只有开关（Qwen3.5 系、部分 DeepSeek）→ 一枚灯泡
+   * - 不会思考 → 什么都没有
+   */
+  const canThink = supportsThinking(llmCatalog, llmModel.model);
+  const canDepth = canThink && hasThinkingDepth(llmCatalog, llmModel.model);
+  /** 滑块当前值：关着思考就是第一档（档位本身留着，下次打开还是它） */
+  const thinkingLevel: ThinkingLevel = thinking ? effort : 'none';
+  const setThinkingLevel = (level: ThinkingLevel) =>
+    updateSettings(
+      level === 'none' ? { thinkingEnabled: false } : { thinkingEnabled: true, thinkingEffort: level },
+    );
   // 沙箱 widget 是独立文档，拿不到 mdui 的 CSS 令牌，所以明暗得由宿主算完显式传进去。
   // （`useResolvedDark` 原先只服务 antd，这里是第二个消费者 —— 理由同为「明暗是 JS 算的」。）
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
@@ -507,7 +521,7 @@ export default function ChatPanel({
       void send(EXPLAIN_PROMPT, next);
     } else {
       // compose：引用已进引用条，焦点交给输入框，用户直接补问题。
-      // 复用 composerInput（useMduiEvent 返回的就是元素 ref），不额外造一个 ref。
+      // 复用 composerInput（TextArea 的 ref），不额外造一个 ref。
       composerInput.current?.focus();
     }
     // send 每轮渲染都是新引用，放进依赖会无限触发；这里只在 pendingAsk 变化时消费一次
@@ -540,6 +554,8 @@ export default function ChatPanel({
           content: r.content,
           images: r.images,
           reasoning: r.reasoning,
+          reasoningMs: r.reasoningMs,
+          tools: r.tools,
           quiz: r.quiz,
           widget: r.widget,
           rowId: r.id,
@@ -688,6 +704,15 @@ export default function ChatPanel({
     let answer = '';
     let reasoning = '';
     /**
+     * 思考用时的首末时刻（毫秒时间戳，0 = 还没开始/还没记上）。
+     *
+     * 取**首个 → 末个**思考 token 而不是「请求发出 → 请求结束」：agent 循环里思维会
+     * 中断去调工具（检索字幕、出题…），那几秒不是思考，拿整个请求时长当思考用时
+     * 会把工具调用也算进去 —— 「已思考用时 24 秒」里可能有 20 秒在等接口。
+     */
+    let reasoningFrom = 0;
+    let reasoningTo = 0;
+    /**
      * 最后一轮旁白 + 最后一次工具提示。
      *
      * `onRoundStart` 会把当轮正文清空（旁白不是答案），而轮次用尽时模型可能一个字都不说
@@ -696,6 +721,17 @@ export default function ChatPanel({
      */
     let lastNarration = '';
     let lastHint = '';
+    /**
+     * 这一轮的工具链。与 `lastHint` 的分工：hint 是**当前那一步**（会被下一个 delta 清掉），
+     * 工具链是**流水账**（谁调了、拿到了什么、花了多久），落库后还能回看。
+     */
+    const toolCalls: ChatToolCall[] = [];
+    /**
+     * 正在跑的那个工具的开始时刻。工具在 agent 循环里是**顺序**执行的
+     * （`harness/agent.ts` 里 `for (const call of msg.tool_calls)` + `await`），
+     * 所以一个变量够用，不需要按调用 id 建表。
+     */
+    let toolStartedAt = 0;
     /** 实际跑过的轮数（`onRoundStart` 记的）：兜底文案只能印真实值，不能拿设置里的上限顶 */
     let roundsRan = 0;
     /**
@@ -941,13 +977,20 @@ export default function ChatPanel({
         tools,
         executeTool,
         {
-          // 开着思考就把档位传下去：thinkingParams 按模型声明决定发哪个字段 ——
-          // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发
-          thinkingEffort:
-            thinking && supportsThinking(llmCatalog, llmModel.model) ? effort : undefined,
+          // 档位一律传下去（关着就是 'none'）：thinkingParams 按模型声明决定发哪个字段 ——
+          // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发。
+          // 「关着」也传 'none' 而不是不传：不传等于连 `enable_thinking: false` 都不发，
+          // 混合思考模型（默认开着的那种）就压根没被关掉。
+          thinkingEffort: canThink ? thinkingLevel : undefined,
           onReasoningDelta: (t) => {
             reasoning += t;
-            patchAi({ reasoning });
+            const now = Date.now();
+            const first = !reasoningFrom;
+            if (first) reasoningFrom = now;
+            reasoningTo = now;
+            // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算，
+            // 落库用不到（历史用终值 reasoningMs），所以不写进 ChatRow
+            patchAi(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
           },
           onDelta: (text) => {
             answer += text;
@@ -961,24 +1004,33 @@ export default function ChatPanel({
             patchAi({ content: '', hint: undefined });
           },
           onToolStart: (name, argsJson) => {
-            let hint = isMaterial ? '正在检索材料…' : '正在检索字幕…';
-            try {
-              const args = JSON.parse(argsJson || '{}') as { query?: string; name?: string };
-              if (name === 'search_transcript' && args.query) hint = `正在检索：${args.query}`;
-              if (name === 'search_material' && args.query) hint = `正在检索材料：${args.query}`;
-              if (name === 'get_transcript_range') hint = '正在查看字幕原文…';
-              if (name === 'get_material_range') hint = '正在查看材料原文…';
-              if (name === 'list_frames') hint = '正在查看课程画面…';
-              if (name === 'present_quiz') hint = '正在出题…';
-              if (name === 'show_widget') hint = '正在预检图形…';
-              if (name === 'edit_markdown') hint = '正在修改材料正文…';
-              if (name === 'use_skill') hint = `正在加载技能：${args.name ?? ''}`;
-              if (name === 'read_skill_reference') hint = '正在查阅参考文档…';
-            } catch {
-              /* ignore */
-            }
+            /**
+             * 状态行与工具链**同时**更新，但两者不是一回事：
+             * 状态行（hint）是那个一闪而过的「正在检索：傅里叶」，工具链是留得住的流水账。
+             *
+             * 这段原先是一串 `if (name === 'search_transcript') …`，与课程助手那边的
+             * `toolHint()` 各写一份、还各漏了几个工具 —— 现在两边共用 `utils/toolTrace.ts`。
+             */
+            const hint = toolHint(name, argsJson);
             lastHint = hint;
-            patchAi({ hint });
+            toolStartedAt = Date.now();
+            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
+            patchAi({ hint, tools: [...toolCalls] });
+          },
+          onToolEnd: (name, result) => {
+            // 顺序执行 ⇒ 正在跑的那条就是末尾那条。不按名字反查：同一个工具可能被连调多次
+            const current = toolCalls[toolCalls.length - 1];
+            if (current && current.name === name && current.status === 'running') {
+              const ms = toolStartedAt ? Date.now() - toolStartedAt : undefined;
+              toolCalls[toolCalls.length - 1] = {
+                ...current,
+                status: isToolFailure(result) ? 'error' : 'done',
+                result: summarizeToolResult(result),
+                ...(ms != null ? { ms } : {}),
+              };
+              patchAi({ tools: [...toolCalls] });
+            }
+            toolStartedAt = 0;
           },
           onStop: (info) => {
             stopped.push(info);
@@ -990,8 +1042,10 @@ export default function ChatPanel({
       );
 
       const finalAnswer = answer.trim();
+      /** 思考耗时：一帧都没来过就别记 0（那会让「已思考用时 0.0 秒」看着像 bug） */
+      const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
       if (finalAnswer || quizState || widgetState) {
-        patchAi({ streaming: false, hint: undefined });
+        patchAi({ streaming: false, hint: undefined, reasoningMs });
         const rowId = (await db.chats.add({
           videoId,
           sessionId,
@@ -999,6 +1053,8 @@ export default function ChatPanel({
           content: finalAnswer,
           createdAt: Date.now(),
           reasoning: reasoning || undefined,
+          reasoningMs,
+          ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
           ...(quizState ? { quiz: quizState } : {}),
           ...(widgetState ? { widget: widgetState } : {}),
         })) as number;
@@ -1010,6 +1066,7 @@ export default function ChatPanel({
         patchAi({
           streaming: false,
           hint: undefined,
+          reasoningMs,
           content: noAnswerNotice({
             // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
             // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
@@ -1032,7 +1089,9 @@ export default function ChatPanel({
       if (abort.signal.aborted) {
         const partial = answer.trim() || lastNarration.trim();
         const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
-        patchAi({ streaming: false, hint: undefined, content });
+        // 停在思考中途也要计时：那正是用户最想知道的「它已经想了多久」
+        const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
+        patchAi({ streaming: false, hint: undefined, content, reasoningMs });
         // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
         setLoading(false);
         const rowId = (await db.chats.add({
@@ -1042,6 +1101,8 @@ export default function ChatPanel({
           content,
           createdAt: Date.now(),
           reasoning: reasoning || undefined,
+          reasoningMs,
+          ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
         })) as number;
         patchAi({ rowId });
       } else {
@@ -1050,6 +1111,7 @@ export default function ChatPanel({
           streaming: false,
           hint: undefined,
           error: true,
+          reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
           // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
           content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
         });
@@ -1065,17 +1127,13 @@ export default function ChatPanel({
     inflightAbort?.abort();
   };
 
-  // 会话下拉：mdui-select 的值是字符串，会话 id 是数字 —— 两端都要转换
-  const sessionSelectRef = useMduiEvent('mdui-select', 'change', (_e, el) => {
-    const n = Number(el.value);
+  // 会话下拉：selectedKey 是字符串（HeroUI 的 Key），会话 id 是数字 —— 回传时转回数字。
+  // 取消选择（key 为 null）时不动当前会话，保留原来「只处理有效值」的行为。
+  const selectSession = (key: React.Key | null) => {
+    if (key == null) return;
+    const n = Number(key);
     if (Number.isFinite(n)) setActiveId(n);
-  });
-  // 输入框：mdui-text-field 的 input 事件没有 payload，值要从元素上读（composerInput 声明在组件上方）
-  // 思考深度：低 / 高 / 最大（仅模型声明了档位时才渲染，见 hasThinkingDepth）
-  const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
-    updateSettings({ thinkingEffort: el.value as ReasoningEffort }),
-  );
-
+  };
   // 新消息滚动到底部。
   // 必须延后一帧：markdown 流式渲染的 DOM 高度在本帧还没算完，首帧滚动会停在半路。
   // 历史注：原来 Bubble.List 的滚动容器是「回调 ref → useState」注册的，首帧调 scrollTo
@@ -1095,6 +1153,9 @@ export default function ChatPanel({
     lastMsg?.content.length ?? 0,
     lastMsg?.reasoning?.length ?? 0,
     lastMsg?.hint ?? '',
+    // 工具链每多一次调用也要跟到底：那一行是**新长出来的高度**，
+    // 不跟的话它会顶到可视区外，用户只看到「字数没变但内容跳了一下」
+    lastMsg?.tools?.length ?? 0,
     lastMsg?.quiz ? 1 : 0,
     lastMsg?.widget ? 1 : 0,
   ].join('|');
@@ -1137,76 +1198,97 @@ export default function ChatPanel({
     icon: React.ReactNode,
     onClick: () => void,
     disabled?: boolean,
+    variant?: 'primary' | 'tertiary',
   ) => (
-    <mdui-tooltip content={label}>
-      <mdui-button-icon data-testid={testId} aria-label={label} disabled={disabled} onClick={onClick}>
-        {icon}
-      </mdui-button-icon>
-    </mdui-tooltip>
+    <Tooltip>
+      <Tooltip.Trigger>
+        <Button
+          isIconOnly
+          variant={variant ?? 'tertiary'}
+          size="sm"
+          data-testid={testId}
+          aria-label={label}
+          isDisabled={disabled}
+          onPress={onClick}
+        >
+          {icon}
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Content>
+        <p>{label}</p>
+      </Tooltip.Content>
+    </Tooltip>
   );
 
   return (
     <Panel testId="panel-chat">
       <PanelBar wrap={false} testId="chat-toolbar">
-        <mdui-select
-          ref={sessionSelectRef}
+        <Select
           className="chat-session-select"
-          value={activeId != null ? String(activeId) : undefined}
-          disabled={loading}
+          selectedKey={activeId != null ? String(activeId) : null}
+          onSelectionChange={selectSession}
+          isDisabled={loading}
           data-testid="chat-session"
+          aria-label="切换会话"
         >
-          {sessions.map((s) => (
-            <mdui-menu-item key={s.id} value={String(s.id)}>
-              {s.title}
-            </mdui-menu-item>
-          ))}
-        </mdui-select>
-        {iconBtn('chat-new-session', '新开会话', <mdui-sym-add />, createSession, loading)}
-        {iconBtn('copy-session-btn', '复制整个会话（Markdown）', <mdui-sym-content-copy />, copySession, loading || msgs.length === 0)}
-        {iconBtn('export-session-btn', '导出 .md 文件', <mdui-sym-download />, downloadSession, loading || msgs.length === 0)}
-        {iconBtn('chat-delete-session', '删除当前会话', <mdui-sym-delete />, confirmDeleteSession, loading)}
-        {isMobile && supportsThinking(llmCatalog, llmModel.model) && (
-          <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
-            <mdui-button-icon
-              data-testid="chat-thinking-toggle"
-              aria-label={thinking ? '关闭思考' : '开启思考'}
-              variant={thinking ? 'filled' : 'standard'}
-              onClick={() => updateSettings({ thinkingEnabled: !thinking })}
-            >
-              <mdui-sym-lightbulb />
-            </mdui-button-icon>
-          </mdui-tooltip>
-        )}
+          <Select.Trigger>
+            <Select.Value />
+            <Select.Indicator />
+          </Select.Trigger>
+          <Select.Popover>
+            <ListBox>
+              {sessions.map((s) => (
+                <ListBox.Item key={s.id} id={String(s.id)} textValue={s.title}>
+                  {s.title}
+                </ListBox.Item>
+              ))}
+            </ListBox>
+          </Select.Popover>
+        </Select>
+        {iconBtn('chat-new-session', '新开会话', <Sym name="add" />, createSession, loading)}
+        {iconBtn('copy-session-btn', '复制整个会话（Markdown）', <Sym name="content_copy" />, copySession, loading || msgs.length === 0)}
+        {iconBtn('export-session-btn', '导出 .md 文件', <Sym name="download" />, downloadSession, loading || msgs.length === 0)}
+        {iconBtn('chat-delete-session', '删除当前会话', <Sym name="delete" />, confirmDeleteSession, loading)}
+        {/* 灯泡只在**没有深度档位**的模型上出现：有档位的模型「关」已经并进滑块的
+            第一档（见 chat-model-bar 那条滑块），再摆一颗灯泡就是同一件事两个入口 */}
+        {isMobile &&
+          canThink &&
+          !canDepth &&
+          iconBtn(
+            'chat-thinking-toggle',
+            thinking ? '关闭思考' : '开启思考',
+            <Sym name="lightbulb" filled={thinking} />,
+            () => updateSettings({ thinkingEnabled: !thinking }),
+            undefined,
+            thinking ? 'primary' : 'tertiary',
+          )}
       </PanelBar>
 
       <PanelBar wrap={false} testId="chat-model-bar">
         <ModelPicker slot="chat" field="llmModel" />
         <SkillPicker value={skillIds} onChange={updateSkillIds} />
         <PanelSpacer />
-        {supportsThinking(llmCatalog, llmModel.model) && !isMobile && (
-          <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
-            <mdui-button-icon
-              data-testid="chat-thinking-toggle"
-              aria-label={thinking ? '关闭思考' : '开启思考'}
-              variant={thinking ? 'filled' : 'standard'}
-              onClick={() => updateSettings({ thinkingEnabled: !thinking })}
-            >
-              <mdui-sym-lightbulb />
-            </mdui-button-icon>
-          </mdui-tooltip>
-        )}
-        {/* 深度控件只在模型声明了 effort 档位或 budget 区间时出现；窄屏省掉文字标签，
-            那三档字在只有图标的行里已经挤不下主语了 */}
-        {supportsThinking(llmCatalog, llmModel.model) &&
-          thinking &&
-          hasThinkingDepth(llmCatalog, llmModel.model) && (
+        {canThink &&
+          !canDepth &&
+          !isMobile &&
+          iconBtn(
+            'chat-thinking-toggle',
+            thinking ? '关闭思考' : '开启思考',
+            <Sym name="lightbulb" filled={thinking} />,
+            () => updateSettings({ thinkingEnabled: !thinking }),
+            undefined,
+            thinking ? 'primary' : 'tertiary',
+          )}
+        {/* 深度控件只在模型声明了 effort 档位或 budget 区间时出现。
+            **不跟着 `thinking` 隐藏**：第一档就是「不思考」，藏起来用户就没法把思考关回去。
+            窄屏省掉「思考深度」四个字，滑块自己带当前档位文案（不思考 / 低 / 高…），
+            在只有图标的行里那句主语已经挤不下 */}
+        {canDepth && (
           <span className="chat-effort-field">
             {!isMobile && <span className="chat-effort-label">思考深度</span>}
-            <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} data-testid="chat-effort" aria-label="思考深度">
-              <mdui-segmented-button value="low">低</mdui-segmented-button>
-              <mdui-segmented-button value="high">高</mdui-segmented-button>
-              <mdui-segmented-button value="max">最大</mdui-segmented-button>
-            </mdui-segmented-button-group>
+            {/* 不传 `disabled`：这一格原先的按钮组在生成中也是可点的（同排的灯泡
+                反而被 `iconBtn` 的 loading 禁用），本次只换控件、不动这条既有行为 */}
+            <ReasoningEffortSlider value={thinkingLevel} onChange={setThinkingLevel} />
           </span>
         )}
       </PanelBar>
@@ -1259,13 +1341,23 @@ export default function ChatPanel({
                 </>
               ) : (
                 <div className="chat-bubble chat-bubble--ai">
+                  {/* 思考链与工具链都**独立于正文**渲染：它们是这一轮的过程记录。
+                      此前这里的条件是「有 hint 就只显示那一行状态字」，于是模型一调工具
+                      （hint 被设上）整条思考链就消失、工具跑完又冒出来 —— 一块内容闪两次。
+                      现在状态行只负责「当前正在做什么」，过程记录留在它上面。 */}
+                  {m.reasoning && (
+                    <ReasoningChain
+                      reasoning={m.reasoning}
+                      active={!!m.streaming && !m.content}
+                      since={m.reasoningStartedAt}
+                      elapsedMs={m.reasoningMs}
+                    />
+                  )}
+                  {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
                   {m.hint && !m.content ? (
                     <ThinkLine text={m.hint} />
                   ) : (
                     <>
-                      {m.reasoning && (
-                        <ReasoningBlock reasoning={m.reasoning} active={!!m.streaming && !m.content} />
-                      )}
                       <XMarkdown
                         // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
                         // 材料没有播放器，留着会生成点了没反应的死链；
@@ -1275,7 +1367,7 @@ export default function ChatPanel({
                             ? linkifyUnits(m.content, materialKind)
                             : linkifyTimestamps(linkifyFrames(m.content))
                         }
-                        components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre }}
+                        components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
                         streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
                       />
                       {m.quiz && (
@@ -1307,7 +1399,7 @@ export default function ChatPanel({
       {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}
       {indexNote && (
         <div className="chat-note" data-testid="chat-index-note">
-          <mdui-sym-warning />
+          <Sym name="warning" className="chat-note__icon" />
           <span>{indexNote}</span>
         </div>
       )}
@@ -1335,18 +1427,21 @@ export default function ChatPanel({
                     {c.text}
                   </span>
                 </span>
-                <mdui-button-icon
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
                   className="chat-ref__remove"
                   aria-label="移除引用"
                   data-testid="ref-chip-remove"
-                  onClick={() => {
+                  onPress={() => {
                     const next = refs.filter((_, j) => j !== i);
                     refsRef.current = next;
                     setRefs(next);
                   }}
                 >
-                  <mdui-sym-close />
-                </mdui-button-icon>
+                  <Sym name="close" />
+                </Button>
               </span>
             ))}
           </div>
@@ -1359,13 +1454,16 @@ export default function ChatPanel({
                 <span className="chat-ts-chip">
                   {isMaterial ? fmtUnitRef(materialKind!, s.ts) : fmtTime(s.ts)}
                 </span>
-                <mdui-button-icon
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
                   className="chat-shot__remove"
                   aria-label="移除截图"
-                  onClick={() => setShots((prev) => prev.filter((_, j) => j !== i))}
+                  onPress={() => setShots((prev) => prev.filter((_, j) => j !== i))}
                 >
-                  <mdui-sym-close />
-                </mdui-button-icon>
+                  <Sym name="close" />
+                </Button>
               </span>
             ))}
           </div>
@@ -1373,70 +1471,104 @@ export default function ChatPanel({
         <div className="chat-composer__row">
           {/* 截图按钮只在有播放器时出现：材料没有正在播放的画面可截，框选走阅读器的「框选」按钮 */}
           {!isMaterial && (
-            <mdui-tooltip content="截取当前画面（最多 4 张）">
-              <mdui-button-icon
-                data-testid="shot-btn"
-                aria-label="截取当前画面"
-                disabled={!indexReady || shots.length >= 4 || loading}
-                onClick={addShot}
-              >
-                <mdui-sym-photo-camera />
-              </mdui-button-icon>
-            </mdui-tooltip>
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
+                  data-testid="shot-btn"
+                  aria-label="截取当前画面"
+                  isDisabled={!indexReady || shots.length >= 4 || loading}
+                  onPress={addShot}
+                >
+                  <Sym name="photo_camera" />
+                </Button>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>截取当前画面（最多 4 张）</p>
+              </Tooltip.Content>
+            </Tooltip>
           )}
-          <mdui-tooltip content="出题考我">
-            <mdui-button-icon
-              data-testid="quiz-btn"
-              aria-label="出题考我"
-              disabled={!indexReady || loading}
-              onClick={() => send('根据课程内容出 3 道单选题考考我，选项要有干扰性')}
-            >
-              <mdui-sym-quiz />
-            </mdui-button-icon>
-          </mdui-tooltip>
-          <mdui-text-field
-            className="chat-input"
-            data-testid="chat-input"
-            variant="outlined"
-            rows={2}
-            placeholder={indexReady ? '输入问题，回车发送' : '等待索引就绪…'}
-            disabled={!indexReady}
-            value={input}
-            ref={composerInput}
-            onKeyDown={(e) => {
-              if (e.key !== 'Enter' || e.shiftKey) return;
-              if (e.nativeEvent.isComposing) return;
-              e.preventDefault();
-              void send(input);
-            }}
-          />
+          <Tooltip>
+            <Tooltip.Trigger>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                size="sm"
+                data-testid="quiz-btn"
+                aria-label="出题考我"
+                isDisabled={!indexReady || loading}
+                onPress={() => send('根据课程内容出 3 道单选题考考我，选项要有干扰性')}
+              >
+                <Sym name="quiz" />
+              </Button>
+            </Tooltip.Trigger>
+            <Tooltip.Content>
+              <p>出题考我</p>
+            </Tooltip.Content>
+          </Tooltip>
+          {/* testid 挂在外层容器上：e2e 的选择器是 `[data-testid="chat-input"] textarea`，
+              需要「容器 → textarea」的层级（mdui 时代是自定义元素 + shadow 里的 textarea，
+              HeroUI 是单元素，用一层 div 补回同样的结构）。 */}
+          <div className="chat-input" data-testid="chat-input">
+            <TextArea
+              fullWidth
+              rows={2}
+              placeholder={indexReady ? '输入问题，回车发送' : '等待索引就绪…'}
+              disabled={!indexReady}
+              value={input}
+              ref={composerInput}
+              onChange={(e) => setInput(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key !== 'Enter' || e.shiftKey) return;
+                if (e.nativeEvent.isComposing) return;
+                e.preventDefault();
+                void send(input);
+              }}
+            />
+          </div>
           {/* 生成中：发送键**变成**停止键。单课程问答没有课程上下文要等用户，
               所以不用给「提问卡悬着」开口子（那边是例外）。 */}
           {loading ? (
-            <mdui-tooltip content="停止生成">
-              <mdui-button-icon
-                className="chat-send"
-                data-testid="chat-stop"
-                aria-label="停止生成"
-                variant="tonal"
-                onClick={stopGenerating}
-              >
-                <mdui-sym-stop />
-              </mdui-button-icon>
-            </mdui-tooltip>
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Button
+                  isIconOnly
+                  variant="secondary"
+                  size="sm"
+                  className="chat-send"
+                  data-testid="chat-stop"
+                  aria-label="停止生成"
+                  onPress={stopGenerating}
+                >
+                  <Sym name="stop" />
+                </Button>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>停止生成</p>
+              </Tooltip.Content>
+            </Tooltip>
           ) : (
-            <mdui-tooltip content="发送">
-              <mdui-button-icon
-                className="chat-send"
-                data-testid="chat-send"
-                aria-label="发送"
-                variant="filled"
-                disabled={!indexReady}
-                onClick={() => send(input)}
-              >
-                <mdui-sym-send />
-              </mdui-button-icon>
-            </mdui-tooltip>
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Button
+                  isIconOnly
+                  variant="primary"
+                  size="sm"
+                  className="chat-send"
+                  data-testid="chat-send"
+                  aria-label="发送"
+                  isDisabled={!indexReady}
+                  onPress={() => send(input)}
+                >
+                  <Sym name="send" />
+                </Button>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>发送</p>
+              </Tooltip.Content>
+            </Tooltip>
           )}
         </div>
         <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">

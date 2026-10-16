@@ -1,4 +1,5 @@
 import type { ModelTarget } from '../store/settings';
+import { createDsmlRecoverer, recoverDsmlText, type DsmlPart } from './dsml';
 import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
 
 /**
@@ -202,7 +203,21 @@ export function textOf(msg: ChatMessage | null | undefined): string {
   return msg.content.filter((p) => p.type === 'text').map((p) => (p as { text: string }).text).join('');
 }
 
-export type ReasoningEffort = 'low' | 'high' | 'max';
+/**
+ * 思考深度档位。**刻度对齐 OpenAI 的 `reasoning_effort`**：minimal / low / medium / high / xhigh。
+ *
+ * 少一个 `none` —— 那是滑块第一档「不思考」，由 `enable_thinking: false` 表达，见 `ThinkingLevel`。
+ * 为什么不让 `none` 混进来：硅基流动文档里 `reasoning_effort` 的 enum 只有 `high` / `max`
+ * （见 modelCaps 的 DOC_EFFORT_MODELS），发 `'none'` 会被拒或被静默忽略；关掉思考走的是
+ * **另一个字段** `enable_thinking`。两个字段不能混成一张枚举，否则「关掉」会变成一个发不出去的档位。
+ *
+ * 旧的 `'max'` 并入了 `'xhigh'`（`max` 是 Kimi / GLM 那边的叫法，语义同为「最高」）：
+ * 落库的旧值由 settings 的归一化映射过来，**请求侧仍按模型自己声明的名字发**（见 toEffortValue）。
+ */
+export type ReasoningEffort = 'minimal' | 'low' | 'medium' | 'high' | 'xhigh';
+
+/** 滑块上的 6 档 = 5 档深度 + 第一档「不思考」 */
+export type ThinkingLevel = 'none' | ReasoningEffort;
 
 /**
  * 剥掉只属于「这一轮」的两个字段，得到**能发出去**的消息：
@@ -259,7 +274,39 @@ export async function chatOnce(t: ModelTarget, opts: ChatOptions): Promise<ChatM
     }),
   }, messages);
   const data = await res.json();
-  return data.choices[0].message as ChatMessage;
+  const msg = data.choices[0].message as ChatMessage;
+  // 只有声明了工具才需要 DSML 兜底：没给工具时模型没有理由吐 DSML 标记，
+  // 那时的尖括号更可能是正文（讲义片段、HTML），吞掉就是毁内容。
+  if (!opts.tools?.length || typeof msg.content !== 'string') return msg;
+  return applyRecoveredDsml(msg, msg.content as string);
+}
+
+/**
+ * 把一次性还原的结果并回 assistant 消息（非流式路径）。
+ *
+ * 有一条不能省的兜底：**还原后正文与调用都空了，就原样返回**。
+ * 否则会得到「正文空 + 无 tool_calls」—— 那正是 `messageHygiene` 要拦的非法消息，
+ * 下一轮请求直接 400；显示几行脏字符比整个会话卡死好得多。
+ */
+function applyRecoveredDsml(msg: ChatMessage, raw: string): ChatMessage {
+  const { text, calls } = recoverDsmlText(raw);
+  if (calls.length === 0 && !text.trim()) return msg;
+  return {
+    ...msg,
+    content: text || null,
+    ...(calls.length
+      ? {
+          tool_calls: [
+            ...(msg.tool_calls ?? []),
+            ...calls.map((c, i) => ({
+              id: `dsml_${i}`,
+              type: 'function' as const,
+              function: { name: c.name, arguments: c.arguments },
+            })),
+          ],
+        }
+      : {}),
+  };
 }
 
 /** 流式对话：onDelta 回调正文增量，onReasoning 回调思考增量，返回完整 assistant 消息（含 tool_calls） */
@@ -293,6 +340,34 @@ export async function chatStream(
   let reasoning = '';
   let finish: FinishReason | undefined;
   const toolCalls: Record<number, ToolCall> = {};
+  /**
+   * DSML 兜底还原器，**只在真的声明了工具时装**。
+   *
+   * 没给工具时模型没有理由吐 DSML 标记，那时的尖括号更可能是正文（讲义片段、
+   * HTML），还原器会把它们吞掉 —— 那就是拿一个 bug 换另一个 bug。
+   */
+  const dsml = opts.tools?.length ? createDsmlRecoverer() : null;
+  /** 从 DSML 还原出来的调用单独放最后合并：网关给的 index 是连续的，直接往
+   *  `toolCalls` 里塞会撞号（网关跳过某个 index 时就会覆盖前一个）。 */
+  const recovered: ToolCall[] = [];
+
+  /** 还原器的产出：只有 text 能给界面，toolCall 进 recovered */
+  const absorb = (parts: DsmlPart[]) => {
+    let text = '';
+    for (const p of parts) {
+      if (p.kind === 'text') text += p.text;
+      else
+        recovered.push({
+          id: `dsml_${recovered.length}`,
+          type: 'function',
+          function: { name: p.name, arguments: p.arguments },
+        });
+    }
+    if (text) {
+      content += text;
+      onDelta?.(text);
+    }
+  };
 
   for (;;) {
     const { done, value } = await reader.read();
@@ -313,8 +388,13 @@ export async function chatStream(
           const delta = choice?.delta;
           if (!delta) continue;
           if (delta.content) {
-            content += delta.content;
-            onDelta?.(delta.content);
+            // ⚠️ 这里过去是「原样显示」，正是 DSML 泄漏被看见的地方：
+            // 标记进界面、tool_calls 却是空的，于是 agent 以为模型答完了。
+            if (dsml) absorb(dsml.push(delta.content));
+            else {
+              content += delta.content;
+              onDelta?.(delta.content);
+            }
           }
           if (delta.reasoning_content) {
             reasoning += delta.reasoning_content as string;
@@ -339,11 +419,12 @@ export async function chatStream(
     if (done) break;
   }
 
+  if (dsml) absorb(dsml.flush());
   const msg: ChatMessage = { role: 'assistant', content: content || null };
   if (reasoning) msg.reasoning_content = reasoning;
   // 缺省按「完整」处理：网关没给 finish_reason 时不该把正常回复误判成残缺轮次
   if (finish) msg.finish_reason = finish;
-  const calls = Object.values(toolCalls);
+  const calls = [...Object.values(toolCalls), ...recovered];
   if (calls.length > 0) msg.tool_calls = calls;
   return msg;
 }

@@ -1,5 +1,11 @@
-/* 播放器增强：控制栏 hover 显隐 / 倍速快捷按钮 / 字幕字号按钮 / 双击 ±10s 涟漪反馈
-   （叠加在 Vidstack 默认布局之上，:where() 零特异性，普通类选择器即可覆盖） */
+/* 播放器增强：控制栏 hover 显隐 / 倍速档位（HeroUI ToggleButtonGroup）/ 弹幕开关 /
+   字幕字号 / 影院模式 / 双击 ±10s 涟漪反馈。
+   ----------------------------------------------------------------------------
+   控制栏的**行为**（显隐、键盘、手势、无障碍）来自 Vidstack 默认布局；**外观向
+   HeroUI 对齐**：自研按钮改用 HeroUI 的 Button / ToggleButton / Tooltip，配色只覆盖
+   它们自身的 --button-* / --toggle-button-* 契约（见下方「控制栏里的 HeroUI 组件」一节），
+   形状 / 尺寸 / 按下反馈 / 焦点环 / 缓动由 HeroUI 提供。
+   Vidstack 默认布局的规则都包在 :where() 里（0 特异性），普通类选择器即可覆盖。 */
 
 /* ── 播放器直角（用户要求） ──────────────────────────────────────────
    vds 的默认视频布局会**在宿主元素上**圆角 + 描边：
@@ -34,8 +40,10 @@
 .vds-video-layout {
   /* 出现 0.15s 淡入（默认 0.2s 偏拖沓）；消失由 out 过渡控制，
      visibility 比 opacity 晚 0.1s 落地，这才有「淡出」而不是闪没 */
-  --media-controls-in-transition: opacity 0.15s ease-out;
-  --media-controls-out-transition: opacity 0.1s ease-out, visibility 0s linear 0.1s;
+  --media-controls-in-transition: opacity var(--duration-quick, 150ms) var(--ease-out);
+  --media-controls-out-transition:
+    opacity 0.1s var(--ease-out),
+    visibility 0s linear 0.1s;
 }
 
 @media (hover: hover) and (pointer: fine) {
@@ -97,7 +105,7 @@
   --media-slider-focused-track-height: 6px;
   --media-slider-thumb-size: 13px;
   --media-slider-track-bg: rgb(255 255 255 / 0.25);
-  --media-slider-track-fill-bg: rgb(var(--mdui-color-primary));
+  --media-slider-track-fill-bg: var(--accent);
   --media-slider-track-border-radius: 9999px;
 
   /* 按钮：38px → 40px；图标占比 70% → 60%（YouTube 的图标小而精致）；
@@ -145,19 +153,25 @@
 }
 
 /* ── 影院模式按钮 ────────────────────────────────────────────────
-   放在全屏按钮左侧。选中态只加一层低调底色，避免与「真正全屏」争夺视觉权重。 */
-.vds-video-layout .theater-mode-btn[data-active] {
-  background: rgb(255 255 255 / 0.2);
+   放在全屏按钮左侧。选中态只用一层主色软底（--accent-soft），比弹幕开关的实心
+   主色低一档，避免与「真正全屏」争夺视觉权重。 */
+[data-media-player] .theater-mode-btn[data-active] {
+  --button-bg: var(--accent-soft);
+  --button-bg-hover: var(--accent-soft-hover);
+  --button-bg-pressed: var(--accent-soft-hover);
+  --button-fg: var(--accent-soft-foreground);
 }
 
-.vds-video-layout .theater-mode-btn .vds-icon {
+[data-media-player] .theater-mode-btn svg {
   fill: currentColor;
 }
 
-/* 页内影院模式只对桌面有意义；平板堆叠和手机继续使用现有面板布局。 */
+/* 页内影院模式只对桌面有意义；平板堆叠和手机继续使用现有面板布局。
+   连 Tooltip 的包装层一起藏 —— 只藏按钮会留下一个空的 inline-block。 */
 @media (max-width: 900px),
   (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
-  .vds-video-layout .theater-mode-btn {
+  .vds-video-layout .theater-mode-btn,
+  .vds-video-layout .tooltip__trigger:has(.theater-mode-btn) {
     display: none;
   }
 }
@@ -172,14 +186,15 @@
 .vds-video-layout .vds-time-slider .vds-slider-preview {
   /* 卡片外观全交给 .player-preview-frame，外层不再画背景 */
   --media-slider-preview-bg: transparent;
-  --media-slider-preview-border-radius: 10px;
+  /* 预览卡圆角跟随 HeroUI 的卡片档（--radius = 8px → --radius-lg） */
+  --media-slider-preview-border-radius: var(--radius-lg, 10px);
   gap: 0;
 }
 
 .player-preview-frame {
   position: relative;
   overflow: hidden;
-  border-radius: 10px;
+  border-radius: var(--radius-lg, 10px);
   background: #000;
   box-shadow: 0 2px 10px rgb(0 0 0 / 0.55);
 }
@@ -207,7 +222,7 @@
   margin: 0;
   padding: 3px 7px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-sm, 6px);
   background: rgb(0 0 0 / 0.85);
   color: #fff;
   font-size: 12px;
@@ -220,51 +235,45 @@
 }
 
 /* ── 中央大播放按钮（YouTube 首帧） ─────────────────────────────── */
-/* 只在「本次打开还没播过」时出现（PlayerBigPlayButton），所以不必考虑和播放中的画面争视线。
+/* 组件是 HeroUI 的**圆形 isIconOnly Button**（PlayerBigPlayButton）：药丸/圆、按下
+   scale、焦点环、缓动都来自 HeroUI。这里只补三件 HeroUI 不管的事 —— 绝对居中、
+   体量、半透明黑底（压在首帧上）；颜色同样走 --button-* 契约。
+   只在「本次打开还没播过」时出现，所以不必考虑和播放中的画面争视线。
    层级压在字幕(10)之上、弹幕(15)之下：它是静态元素，弹幕经过时应该在它上面。 */
-.player-big-play {
+[data-media-player] .player-big-play {
   position: absolute;
   top: 50%;
   left: 50%;
   z-index: 14;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 68px;
-  height: 68px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: rgb(0 0 0 / 0.55);
-  color: #fff;
-  cursor: pointer;
+  /* HeroUI 默认 lg 是 44px；中央大播放键按 YouTube 的体量给到 56px，
+     圆形与交互仍由 HeroUI 提供 */
+  width: 56px;
+  height: 56px;
+  --button-bg: rgb(0 0 0 / 0.55);
+  --button-bg-hover: rgb(0 0 0 / 0.72);
+  --button-bg-pressed: rgb(0 0 0 / 0.72);
+  --button-fg: #fff;
   transform: translate(-50%, -50%);
-  transition:
-    background-color var(--duration-quick, 150ms) var(--ease-out),
-    transform var(--duration-quick, 150ms) var(--ease-smooth-out);
   animation: big-play-in var(--duration-medium, 350ms) var(--ease-smooth-out);
 }
 
-.player-big-play:hover {
-  background: rgb(0 0 0 / 0.72);
-  transform: translate(-50%, -50%) scale(1.06);
+@media (hover: hover) {
+  [data-media-player] .player-big-play:hover {
+    transform: translate(-50%, -50%) scale(1.06);
+  }
 }
 
-.player-big-play:active {
+[data-media-player] .player-big-play:active {
   transform: translate(-50%, -50%) scale(0.96);
 }
 
-.player-big-play:focus-visible {
-  outline: 2px solid #fff;
-  outline-offset: 3px;
-}
-
-.player-big-play__icon {
-  width: 30px;
-  height: 30px;
+/* HeroUI 的 .button svg 会给图标 size-5（20px）+ 负外边距；大按钮按 24px 给，
+   并清掉那对负边距，只保留「三角形视觉居中」的右移。 */
+[data-media-player] .player-big-play__icon {
+  width: 24px;
+  height: 24px;
   fill: currentColor;
-  /* 三角形的几何中心比视觉重心偏右，右移一点才是「看起来居中」 */
-  margin-left: 3px;
+  margin: 0 0 0 3px;
 }
 
 @keyframes big-play-in {
@@ -284,82 +293,104 @@
   }
 }
 
-/* ── 倍速快捷按钮 ───────────────────────────────────────────── */
-/* 档位多于一屏时横向滚动（隐藏滚动条），不撑破顶栏 */
-.rate-buttons {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  min-width: 0;
-  overflow-x: auto;
-  scrollbar-width: none;
+/* ── 控制栏里的 HeroUI 组件：颜色契约 ────────────────────────────
+   HeroUI 的 Button / ToggleButton 把配色全部收敛到自身的自定义属性：
+     .button        →  --button-bg / -hover / -pressed / -fg
+     .toggle-button →  再加 --toggle-button-bg-selected / -selected-hover /
+                        -selected-pressed / -fg-selected
+   形状（rounded-3xl 药丸）、尺寸、按下 scale(0.97)、焦点环、缓动都来自 HeroUI。
+   这里只把「应用表面色」覆盖成「压在视频上的半透明白」，于是组件保持 HeroUI 的
+   外观与交互，又在任何画面上读得清。选中 / 开启态用动态主色 --accent 填充，
+   与 HeroUI primary 一致（--accent 在本项目随课程封面动态取色）。 */
+[data-media-player] .player-ctl {
+  --button-bg: rgb(255 255 255 / 0.1);
+  --button-bg-hover: rgb(255 255 255 / 0.2);
+  --button-bg-pressed: rgb(255 255 255 / 0.26);
+  --button-fg: #fff;
 }
 
-.rate-buttons::-webkit-scrollbar {
+[data-media-player] .player-ctl[data-active] {
+  --button-bg: var(--accent);
+  --button-bg-hover: var(--accent-hover);
+  --button-bg-pressed: var(--accent-hover);
+  --button-fg: var(--accent-foreground);
+}
+
+[data-media-player] .player-rate-group .toggle-button {
+  --toggle-button-bg: rgb(255 255 255 / 0.1);
+  --toggle-button-bg-hover: rgb(255 255 255 / 0.2);
+  --toggle-button-bg-pressed: rgb(255 255 255 / 0.26);
+  --toggle-button-fg: #fff;
+  --toggle-button-bg-selected: var(--accent);
+  --toggle-button-bg-selected-hover: var(--accent-hover);
+  --toggle-button-bg-selected-pressed: var(--accent-hover);
+  --toggle-button-fg-selected: var(--accent-foreground);
+}
+
+/* 键盘焦点环：主色内环 + 半透明白外描边。
+   HeroUI 默认只用 --focus 单环（outline: none + box-shadow），压在浅色画面上
+   可能不够显眼，白描边兜底对比度。特异性高于 HeroUI 的 .button:focus-visible
+   与 .toggle-button-group .toggle-button:focus-visible。 */
+[data-media-player] :is(.player-ctl, .player-rate-group .toggle-button, .player-big-play):focus-visible {
+  outline: 2px solid var(--focus, var(--accent));
+  outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgb(255 255 255 / 0.55);
+}
+
+/* ── 倍速档位（ToggleButtonGroup） ───────────────────────────── */
+/* 档位多于一屏时横向滚动（隐藏滚动条），不撑破顶栏 */
+.player-rate-group {
+  flex: 0 0 auto;
+  max-width: 100%;
+  overflow-x: auto;
+  scrollbar-width: none;
+  /* 焦点环（outline + 白色外描边）画在药丸之外，而 overflow-x:auto 会让另一轴也按
+     auto 计算并把它裁掉（滚动容器只在自己 padding 盒内绘制）。用「内边距 + 等量负
+     外边距」给环留出空间，视觉与布局都不变。 */
+  padding: 6px;
+  margin: -6px;
+}
+
+.player-rate-group::-webkit-scrollbar {
   display: none;
 }
 
-/* 文本按钮：覆盖 .vds-button 的固定 38px 方形；不换行、不收缩，交给外层滚动 */
-.vds-video-layout .rate-btn {
-  width: auto;
-  min-width: 34px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 13px;
-  font-weight: 500;
-  white-space: nowrap;
-  flex: 0 0 auto;
-  transition: background-color var(--duration-quick, 150ms) var(--ease-out);
-}
-
-.vds-video-layout .rate-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.vds-video-layout .rate-btn[data-active] {
-  background: rgba(255, 255, 255, 0.22);
-  font-weight: 700;
+/* 档位药丸的尺寸交给 HeroUI 的 size="sm"（桌面 32px，与顶栏的弹幕/字号按钮一致）；
+   这里只把数字对齐成等宽，切换档位时宽度不跳。 */
+[data-media-player] .player-rate-group .toggle-button {
+  font-variant-numeric: tabular-nums;
 }
 
 /* 窄屏（小布局）折叠为单个循环按钮，避免挤占顶栏 */
-.vds-video-layout .rate-btn-cycle {
+[data-media-player] .player-rate-cycle {
   display: none;
 }
-.vds-video-layout[data-sm] .rate-btn-full {
+
+/* 桌面端：循环按钮整块（连 Tooltip 包装层）一起隐藏。
+   HeroUI 的 Tooltip 包装层固定是 role=button + tabindex=0，只藏里面的按钮会留下
+   一个看不见的 Tab 停靠点。 */
+.vds-video-layout:not([data-sm]) .tooltip__trigger:has(.player-rate-cycle) {
   display: none;
 }
-.vds-video-layout[data-sm] .rate-btn-cycle {
+
+.vds-video-layout[data-sm] .player-rate-group {
+  display: none;
+}
+
+.vds-video-layout[data-sm] .player-rate-cycle {
   display: inline-flex;
 }
 
 /* ── 字幕字号按钮 ───────────────────────────────────────────── */
-/* Material Symbols 图标是 1em 见方、继承 font-size，所以这条同时定住了图标尺寸
-   （原来是 antd 的 FontSizeOutlined，同理跟随 font-size） */
-.vds-video-layout .caption-size-btn {
-  font-size: 19px;
+/* Material Symbols 图标是 1em 见方、跟随 font-size；HeroUI 的 sm 图标键在桌面是
+   32px，这里把图标定到 18px 才不显得空。 */
+[data-media-player] .player-caption-size {
+  font-size: 18px;
 }
 
 /* ── 思考题弹幕：开关按钮 ───────────────────────────────────── */
-/* 与倍速按钮同款文本按钮（「弹」字，B 站风格） */
-.vds-video-layout .dm-toggle-btn {
-  width: auto;
-  min-width: 34px;
-  padding: 0 8px;
-  border-radius: 6px;
-  font-size: 14px;
-  font-weight: 600;
-  transition: background-color var(--duration-quick, 150ms) var(--ease-out);
-}
-
-.vds-video-layout .dm-toggle-btn:hover {
-  background: rgba(255, 255, 255, 0.12);
-}
-
-.vds-video-layout .dm-toggle-btn[data-active] {
-  background: rgba(255, 255, 255, 0.22);
-}
-
-.vds-video-layout .dm-toggle-btn:not([data-active]) {
+/* 「弹」字按钮（B 站风格）：尺寸与药丸形状交给 HeroUI 的 size="sm" */
+[data-media-player] .player-dm-toggle:not([data-active]) {
   opacity: 0.55;
 }
 

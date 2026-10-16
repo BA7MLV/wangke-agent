@@ -13,7 +13,7 @@ import DiagramBlock, { type DiagramPhase } from './DiagramBlock';
  * - ok：渲染成功 → 展示 SVG + 工具条。
  * - error：语法不合法 → 错误摘要 + 源码 + 重试，用户至少能拿走源码。
  */
-export default function MermaidBlock({ code, closed }: { code: string; closed: boolean }) {
+export default function MermaidBlock({ code, closed, title }: { code: string; closed: boolean; title?: string | null }) {
   const trimmed = useMemo(() => code.replace(/\s+$/, ''), [code]);
   // 命中缓存则直接进 ok，避免重挂/流式重渲染时的闪烁
   const cached = peekMermaid(trimmed);
@@ -62,6 +62,7 @@ export default function MermaidBlock({ code, closed }: { code: string; closed: b
     <DiagramBlock
       testId="mermaid"
       tag="Mermaid"
+      title={title}
       phase={phase}
       svg={svg}
       err={err}

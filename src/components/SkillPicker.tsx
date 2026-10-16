@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
+import { Button, Checkbox, Modal, Tooltip } from '@heroui/react';
+import { Sym, MODAL_CONTAINER_CLASS } from '../ui';
 import { loadEnabledSkillMeta, type SkillMeta } from '../skills/store';
-import { useMduiEvent } from '../ui';
 import './skill-picker.css';
 
 interface Props {
@@ -84,109 +85,104 @@ export default function SkillPicker({ value, onChange }: Props) {
 
   return (
     <>
-      <mdui-tooltip content={tooltip}>
-        <mdui-button-icon
-          data-testid="skill-picker"
-          aria-label="技能范围"
-          // variant 只是视觉；data-limited 是给 e2e 的稳定状态信号 ——
-          // mdui 的 variant 走 property，是否反射成 attribute 取决于组件实现，不能当断言依据
-          data-limited={limited ? '1' : undefined}
-          variant={limited ? 'filled' : 'standard'}
-          onClick={() => setOpen(true)}
-        >
-          <mdui-sym-extension />
-        </mdui-button-icon>
-      </mdui-tooltip>
+      <Tooltip>
+        <Tooltip.Trigger>
+          <Button
+            isIconOnly
+            variant={limited ? 'primary' : 'tertiary'}
+            size="sm"
+            aria-label="技能范围"
+            data-testid="skill-picker"
+            // data-limited 是给 e2e 的稳定状态信号（variant 只是视觉）
+            data-limited={limited ? '1' : undefined}
+            onPress={() => setOpen(true)}
+          >
+            <Sym name="extension" />
+          </Button>
+        </Tooltip.Trigger>
+        <Tooltip.Content>
+          <p>{tooltip}</p>
+        </Tooltip.Content>
+      </Tooltip>
 
-      <mdui-dialog
-        open={open}
-        close-on-esc
-        close-on-overlay-click
-        headline="技能范围"
-        data-testid="skill-picker-dialog"
-      >
-        <div className="skill-picker">
-          <div className="skill-picker__hint">
-            仅勾选的技能可供本次会话使用；全部勾选即「不限定」，之后新启用的技能会自动加入。
-          </div>
-          {skills.length === 0 ? (
-            <div className="skill-picker__empty">暂无启用的技能，请到「设置 → 写作技能」添加</div>
-          ) : (
-            skills.map((s) => (
-              <SkillCheckRow
-                key={s.id}
-                skill={s}
-                checked={isChecked(s.id)}
-                onToggle={(on) => toggle(s.id, on)}
-              />
-            ))
-          )}
-          {skills.length > 0 && checkedCount === 0 && (
-            <div className="skill-picker__warn">
-              一个技能都没勾选：本次会话不会向模型提供任何技能，回答将只依据课程内容。
-            </div>
-          )}
-        </div>
-        {skills.length > 0 && (
-          <>
-            <mdui-button
-              slot="action"
-              variant="text"
-              data-testid="skill-picker-all"
-              onClick={() => commit(new Set(skills.map((s) => s.id)))}
-            >
-              全选
-            </mdui-button>
-            <mdui-button
-              slot="action"
-              variant="text"
-              data-testid="skill-picker-none"
-              onClick={() => commit(new Set())}
-            >
-              清空
-            </mdui-button>
-          </>
-        )}
-        <mdui-button
-          slot="action"
-          variant="text"
-          data-testid="skill-picker-done"
-          onClick={() => setOpen(false)}
-        >
-          完成
-        </mdui-button>
-      </mdui-dialog>
+      <Modal.Root isOpen={open} onOpenChange={setOpen}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="skill-picker-dialog">
+              <Modal.Header>
+                <Modal.Heading>技能范围</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <div className="skill-picker">
+                  <div className="skill-picker__hint">
+                    仅勾选的技能可供本次会话使用；全部勾选即「不限定」，之后新启用的技能会自动加入。
+                  </div>
+                  {skills.length === 0 ? (
+                    <div className="skill-picker__empty">暂无启用的技能，请到「设置 → 写作技能」添加</div>
+                  ) : (
+                    skills.map((s) => (
+                      <Checkbox
+                        key={s.id}
+                        className="skill-picker__item"
+                        isSelected={isChecked(s.id)}
+                        onChange={(on) => toggle(s.id, on)}
+                        data-testid="skill-scope-item"
+                        data-skill-name={s.name}
+                      >
+                        {/* ⚠️ `Control` + `Indicator` 必须显式写：HeroUI v3 的 Checkbox
+                            是复合组件，Root **不会**替你补出勾选框 —— 漏掉这两个子节点的
+                            后果是「只剩文字、没有框」，看着像一行普通文本，用户根本不知道
+                            该点哪（2026-10-15 实测：对话框里 8 个技能一个框都看不见）。
+                            这个坑状态断言也照不出来，回归覆盖补在
+                            `scripts/e2e-chat-skill-scope.mjs` 的「每个技能都渲染出勾选框」。
+                            （`settings/ModelsModule.tsx` 的写法是对的，可对照。） */}
+                        <Checkbox.Content className="skill-picker__content">
+                          <Checkbox.Control>
+                            {/* data-testid 只给 e2e 当锚点：勾选框「画出来了没有」是纯视觉
+                                事实，aria / 状态属性都照不到，只能靠这个元素在不在。 */}
+                            <Checkbox.Indicator data-testid="skill-scope-check" />
+                          </Checkbox.Control>
+                          {/* 名称与描述同放 label 内：整行（含描述）都是可点区域。
+                              描述原本是 Checkbox 的兄弟节点，点它不切换 —— 而它占了这一行
+                              大半面积，手指/鼠标落在那里毫无反应，正是「选不了」的来源。 */}
+                          <span className="skill-picker__text">
+                            <span className="skill-picker__name">{s.name}</span>
+                            <span className="skill-picker__desc">{s.description || '（无描述）'}</span>
+                          </span>
+                        </Checkbox.Content>
+                      </Checkbox>
+                    ))
+                  )}
+                  {skills.length > 0 && checkedCount === 0 && (
+                    <div className="skill-picker__warn">
+                      一个技能都没勾选：本次会话不会向模型提供任何技能，回答将只依据课程内容。
+                    </div>
+                  )}
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                {skills.length > 0 && (
+                  <>
+                    <Button
+                      variant="tertiary"
+                      data-testid="skill-picker-all"
+                      onPress={() => commit(new Set(skills.map((s) => s.id)))}
+                    >
+                      全选
+                    </Button>
+                    <Button variant="tertiary" data-testid="skill-picker-none" onPress={() => commit(new Set())}>
+                      清空
+                    </Button>
+                  </>
+                )}
+                <Button variant="primary" data-testid="skill-picker-done" onPress={() => setOpen(false)}>
+                  完成
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </>
-  );
-}
-
-/**
- * 单个技能行：复选框 + 描述。
- *
- * 拆成子组件是为了能在每行里合法地调 `useMduiEvent`（Hook 不能写在循环里）——
- * `mdui-checkbox` 的 `change` 是自定义事件，React 不自动绑定，值要从元素上读。
- */
-function SkillCheckRow({
-  skill,
-  checked,
-  onToggle,
-}: {
-  skill: SkillMeta;
-  checked: boolean;
-  onToggle: (on: boolean) => void;
-}) {
-  const ref = useMduiEvent('mdui-checkbox', 'change', (_e, el) => onToggle(el.checked));
-  return (
-    <div className="skill-picker__row">
-      <mdui-checkbox
-        ref={ref}
-        checked={checked}
-        data-testid="skill-scope-item"
-        data-skill-name={skill.name}
-      >
-        <span className="skill-picker__name">{skill.name}</span>
-      </mdui-checkbox>
-      <span className="skill-picker__desc">{skill.description || '（无描述）'}</span>
-    </div>
   );
 }

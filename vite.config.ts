@@ -1,5 +1,6 @@
 import { defineConfig, type Plugin } from 'vite';
 import react from '@vitejs/plugin-react';
+import tailwindcss from '@tailwindcss/vite';
 import { VitePWA } from 'vite-plugin-pwa';
 import fs from 'node:fs';
 import path from 'node:path';
@@ -160,6 +161,9 @@ export default defineConfig({
     serveUserscript(),
     pdfjsAssets(),
     react(),
+    // Tailwind v4（HeroUI v3 的样式基底）：扫描 src 生成工具类，
+    // 同时处理 @heroui/styles 里的 @import "tailwindcss"
+    tailwindcss(),
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {

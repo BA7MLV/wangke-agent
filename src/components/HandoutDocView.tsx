@@ -3,10 +3,11 @@
  * 每个文字块支持：触摸端左滑 / 桌面端 hover → 「AI 改写」（预设+自由输入，预览后接受）或「手动编辑」；
  * 修改经 persistHandoutEdit 重建 DOCX 写回同一行，下载的 DOCX 与预览始终一致。
  *
- * 阶段 3 迁移：antd Button/Input/Modal 换为 mdui-button/mdui-text-field/mdui-dialog；
+ * 阶段 3 迁移：antd Button/Input/Modal 换为 HeroUI 的 Button / TextArea / Input / Modal；
  * 手动编辑从块内联改为受控对话框（handout-edit-dialog），逻辑与 .hd-* 结构逐行保留。
  */
 import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Button, Input, Modal, TextArea } from '@heroui/react';
 import { db, type HandoutRow } from '../store/db';
 import type { Block } from '../handout/ir';
 import type { HandoutSection } from '../handout/docx';
@@ -14,7 +15,7 @@ import { h1Num, h2Num } from '../handout/styles';
 import { ensureHandoutPreviewFonts } from '../handout/previewFonts';
 import { useHandoutReadingPos } from '../handout/useReadingPos';
 import { blockToText, persistHandoutEdit, rewriteBlockWithLLM } from '../pipelines/handoutEdit';
-import { toast, useMduiEvent } from '../ui';
+import { LoadingButton, Sym, toast, MODAL_CONTAINER_CLASS } from '../ui';
 
 /** 编辑目标：课程概述段 / 章节标题 / 节内某个内容块 */
 type Target = { kind: 'summary' } | { kind: 'heading'; sec: number } | { kind: 'block'; sec: number; idx: number };
@@ -39,9 +40,6 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
   /** 滚动容器（位置记忆的坐标系）与文档内容（观察高度变化用） */
   const scrollRef = useRef<HTMLDivElement>(null);
   const docRef = useRef<HTMLDivElement>(null);
-
-  // 编辑对话框：Esc / 点遮罩关闭时同步回 React state，避免「关掉又自己弹回」
-  const editDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setEditTarget(null));
 
   useEffect(() => ensureHandoutPreviewFonts(), []);
 
@@ -167,7 +165,7 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
   if (!doc) {
     return (
       <div className="hd-scroll" data-testid="handout-doc">
-        <div style={{ color: 'rgb(var(--mdui-color-on-surface-variant))', padding: 16, textAlign: 'center' }}>
+        <div style={{ color: 'var(--muted)', padding: 16, textAlign: 'center' }}>
           讲义内容解析失败，请重新生成讲义
         </div>
       </div>
@@ -235,25 +233,25 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
         </div>
         {draft ? (
           <div className="hd-ai-bar">
-            <mdui-button
-              variant="text"
-              onClick={() => {
+            <Button
+              variant="tertiary"
+              onPress={() => {
                 setAiDraft(null);
                 setAiTarget(null);
               }}
             >
               放弃
-            </mdui-button>
-            <mdui-button
-              variant="filled"
-              onClick={() => {
+            </Button>
+            <Button
+              variant="primary"
+              onPress={() => {
                 applyEdit(t, draft);
                 setAiDraft(null);
                 setAiTarget(null);
               }}
             >
               接受
-            </mdui-button>
+            </Button>
           </div>
         ) : (
           aiTarget &&
@@ -313,25 +311,30 @@ export default function HandoutDocView({ handout }: { handout: HandoutRow }) {
         <div className="hd-tip">左滑文字块可 AI 改写或手动修改；最终以导出的 DOCX 版式为准</div>
       </div>
 
-      {/* 手动编辑对话框：原块内联编辑器抽成受控 mdui-dialog，块在下方正常显示，编辑在弹层进行 */}
+      {/* 手动编辑对话框：原块内联编辑器抽成受控 Modal，块在下方正常显示，编辑在弹层进行。
+          Esc / 点遮罩关闭由 Modal 的 onOpenChange 同步回 React state。 */}
       {editTarget && (
-        <mdui-dialog
-          ref={editDlgRef}
-          open
-          close-on-esc
-          close-on-overlay-click
-          headline={editHeadline(editTarget, getBlock(editTarget))}
-          data-testid="handout-edit-dialog"
-        >
-          <EditForm
-            block={getBlock(editTarget)}
-            onSave={(b) => {
-              applyEdit(editTarget, b);
-              setEditTarget(null);
-            }}
-            onCancel={() => setEditTarget(null)}
-          />
-        </mdui-dialog>
+        <Modal.Root isOpen onOpenChange={(open) => !open && setEditTarget(null)}>
+          <Modal.Backdrop>
+            <Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
+              <Modal.Dialog data-testid="handout-edit-dialog">
+                <Modal.Header>
+                  <Modal.Heading>{editHeadline(editTarget, getBlock(editTarget))}</Modal.Heading>
+                </Modal.Header>
+                <Modal.Body>
+                  <EditForm
+                    block={getBlock(editTarget)}
+                    onSave={(b) => {
+                      applyEdit(editTarget, b);
+                      setEditTarget(null);
+                    }}
+                    onCancel={() => setEditTarget(null)}
+                  />
+                </Modal.Body>
+              </Modal.Dialog>
+            </Modal.Container>
+          </Modal.Backdrop>
+        </Modal.Root>
       )}
     </div>
   );
@@ -593,26 +596,26 @@ function AiPanel({
         ))}
       </div>
       <div className="hd-ai-input">
-        <mdui-text-field
+        <TextArea
           value={text}
           rows={3}
           disabled={busy}
           placeholder="描述想要的改法，如：补一个例子"
-          onInput={(e) => setText(e.currentTarget.value)}
+          onChange={(e) => setText(e.target.value)}
         />
-        <mdui-button variant="filled" loading={busy} disabled={!text.trim()} onClick={() => submit(text)}>
+        <LoadingButton loading={busy} variant="primary" isDisabled={!text.trim()} onPress={() => submit(text)}>
           生成
-        </mdui-button>
-        <mdui-button variant="text" disabled={busy} onClick={onClose}>
+        </LoadingButton>
+        <Button variant="tertiary" isDisabled={busy} onPress={onClose}>
           收起
-        </mdui-button>
+        </Button>
       </div>
     </div>
   );
 }
 
 /** 手动编辑器：按块类型分发到文本 / 列表 / 表格表单。
- *  每个表单自带「取消 / 保存」按钮（slot="action" 落入对话框底部），保存时做与原来一致的空值校验。 */
+ *  每个表单自带「取消 / 保存」按钮（落在 .hd-editor-bar 里，mdui 时代用 slot="action" 浮到对话框底部）。 */
 function EditForm({
   block,
   onSave,
@@ -653,20 +656,25 @@ function TextForm({
   };
   return (
     <>
-      <mdui-text-field
-        value={text}
-        rows={block.type === 'figure' ? 2 : 6}
-        data-testid="handout-edit-input"
-        onInput={(e) => setText(e.currentTarget.value)}
-        placeholder={block.type === 'figure' ? '图注' : ''}
-      />
+      {/* testid 挂在外层容器上（不是 TextArea 自己）：e2e 的选择器是
+          `[data-testid="handout-edit-input"] textarea`，需要一个「容器 → textarea」的
+          层级。mdui 时代是自定义元素 + shadow 里的 textarea，HeroUI 是单元素，
+          用一层 div 补回同样的结构，选择器与样式挂点都不变。 */}
+      <div data-testid="handout-edit-input">
+        <TextArea
+          value={text}
+          rows={block.type === 'figure' ? 2 : 6}
+          onChange={(e) => setText(e.target.value)}
+          placeholder={block.type === 'figure' ? '图注' : ''}
+        />
+      </div>
       <div className="hd-editor-bar">
-        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
+        <Button variant="tertiary" data-testid="handout-edit-cancel" onPress={onCancel}>
           取消
-        </mdui-button>
-        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
+        </Button>
+        <Button variant="primary" data-testid="handout-edit-save" onPress={save}>
           保存
-        </mdui-button>
+        </Button>
       </div>
     </>
   );
@@ -694,33 +702,33 @@ function ListForm({
     <div className="hd-editor">
       {items.map((it, i) => (
         <div key={i} className="hd-list-row">
-          <mdui-text-field
-            rows={1}
+          <Input
             value={it}
-            onInput={(e) =>
-              setItems(items.map((x, j) => (j === i ? e.currentTarget.value : x)))
-            }
+            onChange={(e) => setItems(items.map((x, j) => (j === i ? e.target.value : x)))}
           />
-          <mdui-button-icon
+          <Button
+            isIconOnly
+            variant="tertiary"
+            size="sm"
             aria-label="删除条目"
-            disabled={items.length <= 1}
-            onClick={() => setItems(items.filter((_, j) => j !== i))}
+            isDisabled={items.length <= 1}
+            onPress={() => setItems(items.filter((_, j) => j !== i))}
           >
-            <mdui-sym-delete />
-          </mdui-button-icon>
+            <Sym name="delete" />
+          </Button>
         </div>
       ))}
-      <mdui-button variant="outlined" onClick={() => setItems([...items, ''])}>
-        <mdui-sym-add slot="icon" />
+      <Button variant="outline" onPress={() => setItems([...items, ''])}>
+        <Sym name="add" />
         添加条目
-      </mdui-button>
+      </Button>
       <div className="hd-editor-bar">
-        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
+        <Button variant="tertiary" data-testid="handout-edit-cancel" onPress={onCancel}>
           取消
-        </mdui-button>
-        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
+        </Button>
+        <Button variant="primary" data-testid="handout-edit-save" onPress={save}>
           保存
-        </mdui-button>
+        </Button>
       </div>
     </div>
   );
@@ -754,20 +762,19 @@ function TableForm({
   return (
     <div className="hd-editor">
       <div className="hd-field-label">表名</div>
-      <mdui-text-field
+      <Input
         value={caption}
         placeholder="表名（可留空）"
-        onInput={(e) => setCaption(e.currentTarget.value)}
+        onChange={(e) => setCaption(e.target.value)}
       />
       <table className="hd-table hd-table-edit">
         <thead>
           <tr>
             {header.map((h, i) => (
               <th key={i}>
-                <mdui-text-field
-                  rows={1}
+                <Input
                   value={h}
-                  onInput={(e) => setHeader(header.map((x, j) => (j === i ? e.currentTarget.value : x)))}
+                  onChange={(e) => setHeader(header.map((x, j) => (j === i ? e.target.value : x)))}
                 />
               </th>
             ))}
@@ -778,12 +785,11 @@ function TableForm({
             <tr key={i}>
               {r.map((c, j) => (
                 <td key={j}>
-                  <mdui-text-field
-                    rows={1}
+                  <Input
                     value={c}
-                    onInput={(e) =>
+                    onChange={(e) =>
                       setRows(
-                        rows.map((row, ri) => (ri === i ? row.map((x, cj) => (cj === j ? e.currentTarget.value : x)) : row)),
+                        rows.map((row, ri) => (ri === i ? row.map((x, cj) => (cj === j ? e.target.value : x)) : row)),
                       )
                     }
                   />
@@ -794,12 +800,12 @@ function TableForm({
         </tbody>
       </table>
       <div className="hd-editor-bar">
-        <mdui-button slot="action" variant="text" data-testid="handout-edit-cancel" onClick={onCancel}>
+        <Button variant="tertiary" data-testid="handout-edit-cancel" onPress={onCancel}>
           取消
-        </mdui-button>
-        <mdui-button slot="action" variant="filled" data-testid="handout-edit-save" onClick={save}>
+        </Button>
+        <Button variant="primary" data-testid="handout-edit-save" onPress={save}>
           保存
-        </mdui-button>
+        </Button>
       </div>
     </div>
   );

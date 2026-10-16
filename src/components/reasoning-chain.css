@@ -1,0 +1,184 @@
+/**
+ * 思考链的样式（配 ReasoningChain.tsx）。
+ *
+ * 形态由根节点的 `data-mode` 驱动（live / expanded / closed），三种形态对正文的要求
+ * 是互相冲突的，所以样式按 mode 分流而不是靠 JS 换 class：
+ *
+ * - `live`     正文限高 + 内部滚动 + 上下渐隐，随流式续写自动滚到底
+ * - `expanded` 正文**不限高**，整块随页面滚；标题吸顶，滚过长链条时仍看得见耗时
+ * - `closed`   正文收起（0fr 轨道，见 Collapse）
+ *
+ * 颜色一律走 HeroUI 语义令牌（--foreground / --muted / --accent），深浅两套自动成立。
+ */
+
+.reasoning-chain {
+  margin-bottom: 6px;
+  font-size: 0.75rem;
+}
+
+/* 展开态：链条很长时它就是正文的一部分，别再压出 6px 的缝 */
+.reasoning-chain[data-mode='expanded'] {
+  margin-bottom: 2px;
+}
+
+.reasoning-chain__toggle {
+  min-height: 40px;
+  padding: 0 8px;
+  margin-left: -8px;
+  /*
+   * 撑满整列，别让按钮按内容收缩。
+   *
+   * button 即使写了 `display: flex` 也仍是 fit-content 宽度的表单控件，于是展开态下
+   * 吸顶标题的不透明底色只盖住文字那一小块，正文会从它**旁边**穿过去 —— 看着像渲染错位。
+   * 宽度补上 -8px 的负边距，抵消左移，底色才能严丝合缝盖住整列。
+   */
+  width: calc(100% + 8px);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  user-select: none;
+  color: var(--muted);
+}
+
+/**
+ * 展开态的吸顶标题。
+ *
+ * 背景色**不能**写死在组件里：思考链既住在有底色的 AI 气泡里（问答面板），
+ * 也住在透明气泡上（课程助手页），两边要盖住的底色不一样。
+ * 所以由宿主在气泡上声明 `--reasoning-sticky-bg`，缺省才是 transparent。
+ *
+ * `top` 为什么是负的：黏性定位的参照线是滚动容器的**内容盒**顶边，而滚动容器的
+ * 上 `padding` 属于内容区 —— 于是标题钉在 `top: 0` 时，它头顶那一截（正好等于容器的
+ * 上内边距）会露出正在滚过去的上一行字。实测课程助手页能露出整整一行（内边距 28px），
+ * 看着压根不像「挂顶」，倒像是没钉住。把偏移取负 = 钉到容器**可见顶端**，
+ * 内边距那一条被标题自己的不透明底色盖住。
+ *
+ * 数值由宿主给（`--reasoning-sticky-gap` = 它自己滚动容器的上内边距），
+ * 与 `--reasoning-sticky-bg` 同一个套路：组件不知道宿主的内边距是多少。
+ */
+.reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
+  position: sticky;
+  top: calc(-1 * var(--reasoning-sticky-gap, 0px));
+  z-index: 1;
+  background: var(--reasoning-sticky-bg, transparent);
+}
+
+.reasoning-chain__toggle:hover {
+  /* ⚠️ 不能用 `rgba(var(--foreground), .08)`：HeroUI 的令牌值是 `oklch(…)`，
+     塞进 rgba() 是非法声明、会被整条丢弃 —— 症状是 hover 一点反应都没有。
+     混色一律走 color-mix（见 tool-trace.css 顶部同一条注释）。 */
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+/* 吸顶时的 hover 需要盖住下层正文，否则高亮是半透明的、看着像没生效 */
+.reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle:hover {
+  background: color-mix(in srgb, var(--reasoning-sticky-bg, transparent) 90%, var(--foreground));
+}
+
+.reasoning-chain__toggle:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.reasoning-chain__icon {
+  flex: none;
+  font-size: 1rem;
+}
+
+/* 耗时跳动时宽度别来回抖：等宽数字，标题条的布局保持稳定 */
+.reasoning-chain__title {
+  font-variant-numeric: tabular-nums;
+}
+
+/**
+ * 思考中的实时用时（「已用时 3.2 秒」）。
+ *
+ * 比标题再暗一档：它是「顺带告诉你的数」，不该和「正在思考」抢第一眼。
+ * 也因为是等宽数字 + 绝对位置不参与换行，250ms 一次的刷新不会把右边的箭头挤来挤去。
+ */
+.reasoning-chain__elapsed {
+  flex: none;
+  opacity: 0.75;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* 正文现在是 accordion 的内层（.t-acc-panel-inner）：
+   margin / padding / max-height 全部落在内层，0fr 轨道本身不带任何盒模型，
+   否则收起时会剩一条收不掉的残余高度。 */
+.reasoning-chain__body {
+  margin-top: 4px;
+  padding-left: 8px;
+  border-left: 2px solid var(--border-secondary);
+  white-space: pre-wrap;
+  color: var(--muted);
+}
+
+/**
+ * 思考中：固定区域 + 上下渐隐 + 自动滚动（粘底由 JS 写在 data-fade-* 上）。
+ *
+ * 展开态**故意不给** max-height / overflow：那时思考链已经想完了，
+ * 它就是一段普通正文，该有多长就多长，和页面一起滚即可 ——
+ * 留个内部滚动框只会让「读完了却还有东西在框里」变得不明显。
+ *
+ * ⚠️ 选择器**必须**带 `.reasoning-chain` 这个祖先（0,2,0），不能只写
+ * `.reasoning-chain__body--live`（0,1,0）：正文身上还挂着 `motion.tsx` 的
+ * `.t-acc-panel-inner { overflow: hidden }`，两者同特异度，胜负全看**样式注入顺序** ——
+ * 实测这条输了，于是固定区域变成了一个裁切框：能自动跳到底，但用户**滚不动**
+ * （「自动滚动」只对了一半），渐隐的两端也就永远不会同时出现。
+ *
+ * 这类「靠注入顺序决胜负」的写法不能留：把 CSS import 挪个位置就会变成「有时能滚有时不能」。
+ * 加一层祖先类让特异性自己说话，顺序无关（同 course-chat.css 里焦点环那条的教训）。
+ */
+.reasoning-chain .reasoning-chain__body--live {
+  --reasoning-fade: 20px;
+  max-height: 240px;
+  overflow: auto;
+  /* 滚到底时别把外层消息列表也带着滚（触摸板/触屏上尤其明显） */
+  overscroll-behavior: contain;
+}
+
+/**
+ * 上下渐隐各自独立开关（data-fade-top / data-fade-bottom 由 ReasoningChain 写）。
+ *
+ * 不用「溢出就上下一起淡」：贴底时下面本来就没有内容，底部那截渐隐只是在
+ * 把最后一行抹灰，读者会以为字没显示全。
+ */
+.reasoning-chain__body--live[data-fade-top='true'] {
+  -webkit-mask-image: linear-gradient(to bottom, transparent 0, #000 var(--reasoning-fade));
+  mask-image: linear-gradient(to bottom, transparent 0, #000 var(--reasoning-fade));
+}
+
+.reasoning-chain__body--live[data-fade-bottom='true'] {
+  -webkit-mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 calc(100% - var(--reasoning-fade)), transparent 100%);
+}
+
+.reasoning-chain__body--live[data-fade-top='true'][data-fade-bottom='true'] {
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--reasoning-fade),
+    #000 calc(100% - var(--reasoning-fade)),
+    transparent 100%
+  );
+  mask-image: linear-gradient(
+    to bottom,
+    transparent 0,
+    #000 var(--reasoning-fade),
+    #000 calc(100% - var(--reasoning-fade)),
+    transparent 100%
+  );
+}
+
+@media (pointer: coarse) {
+  .reasoning-chain__toggle {
+    min-height: 48px;
+  }
+}

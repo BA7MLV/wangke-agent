@@ -3,7 +3,9 @@ import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import type { QuizData } from '../harness/quiz';
 import { linkifyTimestamps, parseTs } from '../utils/linkify';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
+import { MarkdownTable } from './MdTable';
 import { NumberPop } from './motion';
+import { Sym } from '../ui';
 
 const LETTERS = ['A', 'B', 'C', 'D'];
 
@@ -12,7 +14,7 @@ const LETTERS = ['A', 'B', 'C', 'D'];
  * 普通代码块照旧。不在题卡里另造一套围栏解析 —— 「围栏判定 + `<pre>` 外壳剥离 + 未闭合挂起 +
  * 失败回退源码」这一串坑问答正文已经踩平了（见 components/mermaid/）。
  */
-const MD_BLOCK_COMPONENTS = { code: MarkdownCode, pre: MarkdownPre };
+const MD_BLOCK_COMPONENTS = { code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable };
 
 interface Props {
   quiz: QuizData;
@@ -31,8 +33,8 @@ interface Props {
 /**
  * 单选题答题卡：点选即判（本地判分），答后展开解析，全答完显示得分。
  *
- * 选项刻意保留**原生 `<button>`** 而不是换 `mdui-button`：
- * MD3 里这种「一行一个的可选项」在语义上更接近列表项，而 mdui-button 的形状（full 圆角胶囊）
+ * 选项刻意保留**原生 `<button>`** 而不是换 `Button`：
+ * MD3 里这种「一行一个的可选项」在语义上更接近列表项，而按钮组件的形状（full 圆角胶囊）
  * 会让四个选项显得像四个并排的按钮、反而看不出是一组单选。保持原生标签 + MD3 令牌上色，
  * 既拿到设计语言的观感（surface 面层 / outline-variant 描边 / 令牌化的答对答错色），
  * 又不改变既有交互与 a11y。
@@ -120,9 +122,9 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = tru
                         否则行内宽度/行高会同时变化，被点的选项连同下面的选项一起跳一下。
                         详见 cards.css 的 .quiz-option__mark 注释。 */}
                     <span className="quiz-option__mark">
-                      {isDone && isAnswer && <mdui-sym-check className="quiz-option__mark--ok" />}
+                      {isDone && isAnswer && <Sym name="check" className="quiz-option__mark--ok" />}
                       {isDone && !isAnswer && isPick && (
-                        <mdui-sym-close className="quiz-option__mark--bad" />
+                        <Sym name="close" className="quiz-option__mark--bad" />
                       )}
                     </span>
                   </button>

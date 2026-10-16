@@ -25,6 +25,8 @@ import type { MdEditorController } from '../md-editor/bridge';
 // 两处净化逻辑一旦分叉，工具就成了摆设。
 import { sanitizeSvg } from '../components/mermaid/svgRender';
 import { renderMermaid } from '../components/mermaid/mermaidRender';
+import { renderDiagram } from '../components/mermaid/diagramRender';
+import { validateDiagram } from '../components/mermaid/diagramSchema';
 import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText, MAX_WIDGET_DOC } from './widget';
 import { buildWidgetDocument, type WidgetPayload } from './widgetRuntime';
 
@@ -166,7 +168,7 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
               explanation: {
                 type: 'string',
                 description:
-                  '解析：正确项为什么对、干扰项为什么错；引用内容时带 [mm:ss] 时间戳（视频课程）或 [第N页]/[第N段]（阅读材料）。支持 Markdown（粗体、列表）与 ```mermaid、```svg 两种图表围栏——流程、结构、对比、关系用 mermaid；函数图像、几何图形这类 mermaid 画不出的用 svg。前端会把围栏渲染成图而不是源码',
+                  '解析：正确项为什么对、干扰项为什么错；引用内容时带 [mm:ss] 时间戳（视频课程）或 [第N页]/[第N段]（阅读材料）。支持 Markdown（粗体、列表）与 ```mermaid、```diagram 两种图表围栏——流程、结构、对比、关系用 mermaid；函数图像、几何图形这类 mermaid 画不出的用 ```diagram 写一段 JSON（只描述结构与函数，坐标布局由渲染器算）。前端会把围栏渲染成图而不是源码',
               },
               time: {
                 type: 'string',
@@ -196,32 +198,41 @@ const SHOW_WIDGET_TOOL: ToolDef = {
   function: {
     name: 'show_widget',
     description:
-      '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 SVG 或 mermaid 源码，' +
-      '通过后会把一段可直接放进回答正文的 ```svg / ```mermaid 围栏原样返回给你；不通过会告诉你具体哪里不合规，' +
-      '改完再试。**它不直接出图**：必须把返回的围栏放进正文，图才会显示，且要放在它解释的那句话旁边、前后各配一句说明。',
+      '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 mermaid 源码、diagram JSON 或 SVG 源码，' +
+      '通过后会把一段可直接放进回答正文的 ```mermaid / ```diagram / ```svg 围栏原样返回给你（带了 title 就会写成 ```diagram title="…"）；' +
+      '不通过会告诉你具体哪里不合规，改完再试。**它不直接出图**：必须把返回的围栏放进正文，图才会显示，且要放在它解释的那句话旁边、前后各配一句说明。',
     parameters: {
       type: 'object',
       properties: {
         format: {
           type: 'string',
-          enum: ['mermaid', 'svg', 'html'],
+          enum: ['mermaid', 'diagram', 'svg', 'html'],
           description:
-            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形这类 mermaid 表达不了的用 svg；' +
-            '界面原型（mockup）、带控件的交互图（滑块、筛选、stepper）、以及数据图表（柱/折/饼）用 html',
+            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形、坐标轴这类 mermaid 表达不了的用 diagram（JSON 中间层，坐标与布局由渲染器算）；' +
+            '界面原型（mockup）、带控件的交互图（滑块、筛选、stepper）、以及数据图表（柱/折/饼）用 html。svg 只在极少数白名单图元不够用时兜底',
         },
         code: {
           type: 'string',
           description:
-            '完整源码，不要包围栏、不要加解释文字。svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
+            '完整源码，不要包围栏、不要加解释文字。diagram 需是一个 JSON 对象：{"type":"plot","x":[-10,10],"y":[-3,3],"curves":[{"fn":"sin(x)"}]}（函数图像/几何/坐标轴）' +
+            '或 {"type":"graph","nodes":[{"id":"a","label":"客户端"}],"edges":[{"from":"a","to":"b"}]}（结构图）——只描述有什么、怎么连、函数与范围，不要手算坐标，完整 schema 见「讲解配图」技能；' +
+            'mermaid 需以图种声明开头（flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie）；' +
+            'svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
             'html 只给**片段**（不要 <html>/<head>/<body>），可以带内联 <script>，' +
             '但不能引外部脚本或外链资源（网络已禁用）',
+        },
+        title: {
+          type: 'string',
+          description:
+            '这张图的标题，2~12 个字，点明它讲的是什么（如「三次请求链路」「抛物线开口方向」）。会显示在图块左上角，也是下载时的文件名；' +
+            '不要写成正文句子、不要以句号结尾。mermaid / diagram / svg 三种围栏都该带；html 没有标题栏，不要传',
         },
         libs: {
           type: 'array',
           items: { type: 'string', enum: ['chart.js'] },
           description:
             '仅 html：需要宿主内联的库。画图表时填 ["chart.js"]，之后直接用全局 Chart，不要自己引 CDN。' +
-            'svg / mermaid 不需要这个参数',
+            'mermaid / diagram / svg 不需要这个参数',
         },
       },
       required: ['format', 'code'],
@@ -479,7 +490,8 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const v = validateWidgetArgs(args);
       if (!v.ok) return `预检参数不合法：${v.error}。请修正后重新调用 show_widget。`;
       try {
-        // 两条分支都调**渲染层自己的函数**：svg 走净化，mermaid 走 parse。
+        // 三条分支都调**渲染层自己的函数**：svg 走净化，mermaid 走 parse，diagram 走
+        // schema 校验 + 试渲染。
         // mermaid 那次 render 的结果有缓存（renderMermaid 内），正文里真正渲染时不会再跑一遍。
         if (v.args.format === 'svg') {
           // 回**净化后的**源码，不是原样回传。净化器是「剔除」而不是「全否」：
@@ -492,6 +504,22 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
           // mermaid 只能回源码：renderMermaid 的产物是 SVG 字符串，不是可回填的 mermaid 文本。
           // parse 失败会抛，成功即语法有效，所以这里「回原样」是安全的。
           await renderMermaid(v.args.code);
+          return widgetAcceptedText(v.args);
+        }
+        if (v.args.format === 'diagram') {
+          // diagram 回**原样 JSON**：围栏的内容就是 JSON 本身（不像 svg 那样要回净化产物）。
+          // 校验 = JSON.parse + schema 锁字段 + 试渲染（布局/表达式错误在这里暴露）。
+          // 试渲染是必须的：schema 合法但 fn 是 "sinn(x)" 的图，只有渲染器会喊。
+          let doc: unknown;
+          try {
+            doc = JSON.parse(v.args.code);
+          } catch (e) {
+            const hint = /^\s*</.test(v.args.code)
+              ? '内容以 < 开头，看起来是 SVG 而不是 JSON —— diagram 围栏里只放 JSON 对象'
+              : '请检查多余的逗号、缺引号、或把说明文字写进了围栏';
+            throw new Error(`diagram 围栏里不是合法的 JSON：${e instanceof Error ? e.message : String(e)}。${hint}`);
+          }
+          renderDiagram(validateDiagram(doc));
           return widgetAcceptedText(v.args);
         }
         // html：**先确认文档能拼出来**（内联库缺失、源码过大等在这里就暴露），

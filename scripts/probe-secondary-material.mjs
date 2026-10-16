@@ -42,23 +42,48 @@ try {
       assert.equal(geometry.horizontalOverflow, false, `${theme}/${width}: 没有页面横向溢出`);
 
       await page.evaluate(async () => {
+        const readSessions = async (database) =>
+          new Promise((resolve, reject) => {
+            const request = database.transaction('chatSessions').objectStore('chatSessions').getAll();
+            request.onsuccess = () => resolve(request.result);
+            request.onerror = () => reject(request.error);
+          });
+
         const database = await new Promise((resolve, reject) => {
           const request = indexedDB.open('wangke');
           request.onsuccess = () => resolve(request.result);
           request.onerror = () => reject(request.error);
         });
-        const sessions = await new Promise((resolve, reject) => {
-          const request = database.transaction('chatSessions').objectStore('chatSessions').getAll();
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
-        });
-        const session = sessions
-          .filter((entry) => entry.videoId === '__library_assistant__')
-          .sort((a, b) => (b.createdAt ?? 0) - (a.createdAt ?? 0))[0];
+
+        /**
+         * 首个会话行是 store 的 `bootstrap()` **异步**建的（没有就现建一个）。
+         * 这里必须轮询等它落库 —— 抢在它前面读会拿到空数组，
+         * 于是这轮探针静默地什么也没种进去，后面查思考链必然扑空（随机失败，排查起来最费时间）。
+         */
+        let targets = [];
+        for (let attempt = 0; attempt < 100 && targets.length === 0; attempt += 1) {
+          targets = (await readSessions(database))
+            .filter((entry) => entry.videoId === '__library_assistant__');
+          if (targets.length === 0) await new Promise((resolve) => setTimeout(resolve, 100));
+        }
+        if (targets.length === 0) throw new Error('等不到课程助手的会话行，bootstrap() 没跑？');
+
+        /**
+         * 种进**每一个**课程助手会话，而不是「最新的那个」。
+         *
+         * dev 下 StrictMode 会把 effect 跑两遍，`bootstrap()` 里 `ready` 的置位发生在
+         * await 之后，两次调用都认为「还没 ready」，于是**建了两个会话**，页面随后展示的是
+         * 后建的那个。只往单个会话里种，就有一半概率种了个页面上根本不会打开的会话 ——
+         * 表现是随机失败，跟这轮探针要验的东西毫无关系。
+         */
         const transaction = database.transaction('chats', 'readwrite');
         const store = transaction.objectStore('chats');
-        store.add({ videoId: session.videoId, sessionId: session.id, role: 'user', content: '请概括我的课程学习情况。', createdAt: 1 });
-        store.add({ videoId: session.videoId, sessionId: session.id, role: 'assistant', content: '可以先完成已经开始的课程，再安排新主题。', reasoning: '先查看学习进度，再给出建议。', createdAt: 2 });
+        const now = Date.now();
+        for (const target of targets) {
+          // 用真实时间戳：消息按 createdAt 排序，1/2 这种常量会让它们排到会话最前面
+          store.add({ videoId: target.videoId, sessionId: target.id, role: 'user', content: '请概括我的课程学习情况。', createdAt: now });
+          store.add({ videoId: target.videoId, sessionId: target.id, role: 'assistant', content: '可以先完成已经开始的课程，再安排新主题。', reasoning: '先查看学习进度，再给出建议。', reasoningMs: 7340, createdAt: now + 1 });
+        }
         await new Promise((resolve, reject) => {
           transaction.oncomplete = resolve;
           transaction.onerror = () => reject(transaction.error);
@@ -66,11 +91,16 @@ try {
         database.close();
       });
       await page.reload({ waitUntil: 'networkidle' });
-      const reasoning = page.locator('button.course-chat__reason-toggle');
+      // 会话是异步从 IndexedDB 灌进 store 的，reload 后不会同步就绪。
+      // 不等它就去查思考链，会随机扑空（消息压根还没挂上 DOM）。
+      await page.locator('.course-chat__message').first().waitFor({ state: 'attached', timeout: 15000 });
+      const reasoning = page.locator('button.reasoning-chain__toggle');
       await reasoning.focus();
       await page.keyboard.press('Enter');
       assert.equal(await reasoning.getAttribute('aria-expanded'), 'true');
-      assert.ok(await page.locator('.course-chat__reason-body').isVisible());
+      // 正文是 0fr → 1fr 的 grid 轨道，展开有几百毫秒的过渡。
+      // isVisible() 只查当下的盒子，紧跟着按回车去查，高度还停在动画起点（=0）→ 误报。
+      await page.locator('.reasoning-chain__body').waitFor({ state: 'visible', timeout: 3000 });
       const bubbleColor = await page.locator('.course-chat__bubble--user').evaluate((element) => {
         const style = getComputedStyle(element);
         const sample = document.createElement('span');

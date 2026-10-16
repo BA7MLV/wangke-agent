@@ -300,7 +300,14 @@ await check('槽位真的把请求发到不同供应商的地址（这是整个�
   await page.evaluate(() => {
     window.__LLM__.requests.length = 0;
   });
-  const field = page.locator('.course-chat__input textarea, .course-chat__input input').first();
+  // ⚠️ 两种形态都要收：HeroUI 的 `TextArea` 把 `className` 落在 **textarea 元素本身**，
+  // 只写后代选择器 `.course-chat__input textarea` 一条都匹配不到，报成「输入框不可见」。
+  // 见 e2e-lazy-session.mjs / e2e-course-chat-cards.mjs 的同款注释。
+  const field = page
+    .locator(
+      '.course-chat__input textarea, .course-chat__input input, textarea.course-chat__input, input.course-chat__input',
+    )
+    .first();
   await field.click();
   await field.fill('一句回答');
   await field.press('Enter');

@@ -13,7 +13,7 @@
 // 退出码：有 failed 则非 0。
 
 import { spawn, spawnSync } from 'node:child_process';
-import { mkdtempSync, readdirSync, existsSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, readdirSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
@@ -57,6 +57,11 @@ const META = {
   'test-builtin-skills': { service: 'none', antd: false, timeout: 120 },
   'test-chat-export': { service: 'none', antd: false, timeout: 120 },
   'test-chat-frames': { service: 'none', antd: false, timeout: 120 },
+  // 助手回答里「N 个来源」的解析：段落归属（A 段的时间戳不许挂到 B 段的课上）、
+  // 去重保序、URI 编码的 courseId 还原。纯逻辑，不碰 DOM。
+  // ⚠️ 它跟着对话页改版一起进仓库，却**漏登记了一轮**：文件在、18 例全过，
+  //    一键跑分从来没执行过它（同 test-material-html 那次）。已补。
+  'test-chat-sources': { service: 'none', antd: false, timeout: 120 },
   // 课程助手两张卡片的参数校验（ask_user / propose_folder_plan）：条数上下限、去重、
   // 同名分类合并、错误文案是否点名到第几个。纯逻辑，不碰 DOM 与 IndexedDB。
   'test-course-chat-tools': { service: 'none', antd: false, timeout: 120 },
@@ -77,6 +82,21 @@ const META = {
   'test-db-schema': { service: 'none', antd: false, timeout: 120 },
   // 图表导出：只改根标签，不碰子元素几何（原生 svg 围栏的根节点常常不带 width）
   'test-diagram-export': { service: 'none', antd: false, timeout: 120 },
+  // JSON 中间层（```diagram）纯逻辑：schema 锁字段与可执行报错、表达式求值（19 例）与报错位置、
+  // 渲染确定性（同一 JSON 两次逐字节一致）、graph 自动布局（分层/环/横向）、plot 采样与断渐近线、
+  // 以及流式收敛不变量（半截 JSON 的 key 单调、最后一拍 === 完整渲染）。
+  'test-json-diagram': { service: 'none', antd: false, timeout: 120 },
+  // 懒创建会话（草稿态）的**数据层**不变量：真 store + 真 Dexie（fake-indexeddb）+ 假模型流。
+  // 守的是「库里只存写过消息的会话」这一条 —— 全新库不产生空壳、连点新建仍是 0 行、
+  // 首条消息才落库、删/归档到一条不剩回草稿态、落库失败不留半截消息。
+  // 页面链路（草稿态能用、刷新不产生空壳）由 e2e-lazy-session 覆盖，两者不重叠。
+  'test-lazy-session': { service: 'none', antd: false, timeout: 180 },
+  // 流式期间的输入（排队 / 插入）**数据层**不变量：真 store + 真 Dexie + 假模型流
+  // （假流带 hold：把流挂住，做出可操作的「生成中」窗口；abort 语义靠假流接 signal）。
+  // 守 store 文件头那三条不变量：消息不静默丢失（含连点两下插入的降级竞态）、
+  // pendingAsk 优先于两种模式、队列只活在内存里；外加插入的中断原因与半截保留、
+  // 生成中切会话被挡下。页面层由 e2e-chat-followup 覆盖，两者不重叠。
+  'test-chat-followup': { service: 'none', antd: false, timeout: 180 },
   'test-error-text': { service: 'none', antd: false, timeout: 120 },
   'test-handout-ir': { service: 'none', antd: false, timeout: 120 },
   'test-handout-prompts': { service: 'none', antd: false, timeout: 120 },
@@ -109,6 +129,10 @@ const META = {
   // 纯逻辑：@codemirror/state 无 DOM 依赖。
   'test-md-edit-tool': { service: 'none', antd: false, timeout: 120 },
   'test-migration': { service: 'none', antd: false, timeout: 120 },
+  // 模型列表缓存（`api/modelListCache.ts`）的纯逻辑：键是归一化后的 baseUrl、
+  // 版本不符整体作废、过期只标 stale 不清空、缓存里不许出现 apiKey。
+  // 自建 localStorage 桩，不碰服务也不碰 API。
+  'test-model-list-cache': { service: 'none', antd: false, timeout: 120 },
   // 在 Node 里用 pdf.js 抽 fixture 的中文文本（确认「fixture 可解析」，e2e 失败时好分清
   // 是 fixture 的问题还是阅读器的问题）。纯 Node，不起服务。
   // ⚠️ 暂 skip：它 `await import('pdfjs-dist/legacy/build/pdf.mjs')`，而这个文件和
@@ -129,6 +153,9 @@ const META = {
   // 思考参数必须跟着模型声明走：effort 型发 reasoning_effort、budget 型按声明区间
   // 折算、只有开关/没声明就一个深度参数都不发。纯逻辑（灌一份 models.dev 形状的夹具）。
   'test-thinking-depth': { service: 'none', antd: false, timeout: 120 },
+  // 工具调用「人话层」：工具名 → 动作短语 / 单个参数取谁 / 秒转 mm:ss / 结果压成一行。
+  // 流式状态行、会话里的工具链、历史回放读的是同一张表，这里守的就是三处说同一句话。
+  'test-tool-trace': { service: 'none', antd: false, timeout: 120 },
   // 主页进度条纯逻辑：材料的 null / 非法时长的 null / finished 优先于比例 / 1% 阈值两侧
   'test-video-progress': { service: 'none', antd: false, timeout: 120 },
   // show_widget 的纯逻辑：入参校验 + 两条回执文案。守住「拒绝时必须给出可执行的改法」——
@@ -181,6 +208,45 @@ const META = {
   // 课程助手的两张生成式卡片（提问选方案 / 目录整理方案）+ 跨页继续。
   // 模型流是页内假的（addInitScript 换掉 window.fetch），所以既不依赖 SF_KEY 也不花时间。
   'e2e-course-chat-cards': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 思考链的四个形态（中间态 / 思考中收起 / 展开 / 历史回放）+ 会话里的工具链。
+  // 模型流是页内假的（脚本化 SSE，逐块 enqueue），所以「思考中」这个**时间上**的中间态
+  // 也走得到；一次都不花 API。断言比截图多：固定区域 240px、自动滚到底、渐隐、
+  // 上下双箭头、**思考中手动收起后不挂那个跳动的实时用时**、跑完自动收起、吸顶、
+  // 刷新后工具链还在。
+  'e2e-chat-trace': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 来源折叠 / 消息操作行 / 会话选中。
+  // 直接往 IndexedDB 种写好的回答，不依赖模型流，也不花 API。
+  // （原有「顶栏新建对话」一条 2026-10-15 随按钮删除；入口二轮落在侧栏首项「新会话」，
+  //  那条用例的等价物在 e2e-lazy-session §6。详见脚本尾部 §4 的说明。）
+  'e2e-chat-sources': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 「回到底部」按钮：贴底隐藏 / 上滚浮出 / 点回底部 / 减少动态效果下仍到位，
+  // 外加最重要的一条 —— 用户滚上去后流式新内容**不再把人拽回底部**。
+  // 前四条往 IndexedDB 种一条长回答（不碰模型流）；第五条用页内假模型流触发一次真实的
+  // 内容增长。两种都不依赖 SF_KEY。
+  'e2e-chat-scroll-bottom': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 侧栏 Recent 的行尾菜单：右键 + 点「更多」两个入口、五个动作、归档与恢复。
+  // 全在渲染与交互层，对话页挂载即有一条会话，不依赖模型流也不花 API。
+  'e2e-recent-menu': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 流式失败之后的**断点续传** + 消息 hover 的重试 / 分支 + Recent 分支与标题滚动。
+  // 模型流是页内假的（`addInitScript` 换掉 window.fetch，让假流吐完指定内容后主动 error），
+  // 所以「网关中途断流」这条路径可复现、可回归，也不依赖 SF_KEY。
+  'e2e-chat-resume-fork': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 懒创建会话（草稿态）的**页面链路**：全新库进去是草稿态（Recent 整组不渲染、库里 0 行、
+  // 顶栏标题「新会话」、输入框可用）→ 发首条消息才落库 → 刷新仍只 1 行 →
+  // 删掉唯一会话回草稿态 → 草稿态还能再发 → 点侧栏首项「新会话」回草稿态（且不落库）、
+  // 该项本身永不高亮（它是动作不是目的地）。
+  // 数据层的不变量由 test-lazy-session 直接驱动 store 守（那边能断言库里的行数），
+  // 这里只补它做不到的三件事：草稿态的页面真能用、**刷新**不产生空壳、点「新会话」真的回草稿态。
+  // 模型流是页内假的（addInitScript 换 window.fetch），不依赖 SF_KEY 也不花 API。
+  'e2e-lazy-session': { service: 'preview', antd: false, base: true, timeout: 300 },
+  // 流式期间的输入：排队 / 插入 / 模式切换 / 排队条四操作 / 黑圆点尾巴 / 停止键。
+  // 2026-10-16 之前生成中输入框是禁用的、发送键被停止键顶掉（想补一句话只能先按停止，
+  // 而停止会作废已写出的半截）—— 这一版对齐 Codex CLI 的 steer/queue 与 Claude Code 的
+  // 排队语义，三条不变量（消息不静默丢失 / pendingAsk 优先 / 队列不落库）由
+  // test-chat-followup 直接驱动 store 守，这里补页面层：输入常开、Enter 与 Ctrl+Enter
+  // 各走哪条路、排队条真能改/删/清/插、圆点尾巴写完即消失、停止后队列照样续发。
+  // 模型流是页内假的（addInitScript 换 window.fetch），不依赖 SF_KEY 也不花 API。
+  'e2e-chat-followup': { service: 'preview', antd: false, base: true, timeout: 300 },
   // 多供应商：迁移（只有浏览器里才有真实条件，persist 依赖 window）、
   // 设置页的供应商注册表、以及**运行时**请求真的打到了各家的地址与凭据。
   // 模型流与 /models 都是页内假的，不需要 key。
@@ -192,14 +258,23 @@ const META = {
   // 展开时播放器让出高度 → 收起，外加移动端可达性。
   // 自播种评论（不调真实 API）；需要真实视频是因为「点时间戳」那条断言要读 media-player.currentTime。
   'e2e-comments': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
-  // 题卡解析的出图链路：mermaid 与 svg 两种围栏各一个脚本（自播种题卡，不调真实 API）
+  // 题卡解析的出图链路：mermaid / diagram / 历史 svg 三种围栏各一个脚本（自播种题卡，不调真实 API）
   'e2e-quiz-mermaid': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   'e2e-svg-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
+  // ```diagram（JSON 中间层）围栏在题卡解析里的渲染链路：合法 JSON 出图 + 工具条、
+  // 坏 JSON / 坏 schema 报错回退源码、三种围栏共存各建各的块、围栏内时间戳不被 linkify。
+  'e2e-diagram-fence': { service: 'preview', antd: false, testFile: true, base: true, timeout: 300 },
   // ```svg 围栏的**流式落画**：waiting → drawing → ok 三相位、画布元素数单调增长、
   // 描边 dashoffset 真在走、终态落回 sanitizeSvg 的完整产物。
   // 必须 dev 档 —— 取样要在应用自己那份模块与 React 树上做，而整段流只有 1.5s，
   // 跨进程往返会漏掉大半中间态（脚本改成页面内自跑 rAF 循环）。
   'e2e-svg-stream': { service: 'dev', antd: false, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-svg-stream-test.mp4' },
+  // ```diagram（JSON 中间层）的**流式落画**：waiting → drawing → ok 三相位、画布 key 数
+  // （逻辑图元，不是字符）单调增长、新图元带落画 class 且 dashoffset 真在走、
+  // 终态落回 sanitizeSvg(renderDiagram(validateDiagram(src))) 的权威产物。
+  // 必须 dev 档 —— 取样要在应用自己那份模块与 React 树上做，而整段流只有 ~2s，
+  // 跨进程往返会漏掉大半中间态（脚本改成页面内自跑 rAF 循环）。
+  'e2e-diagram-stream': { service: 'dev', antd: false, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-diagram-stream-test.mp4' },
   // 阅读材料（PDF / Word）+ 选区提问：走**真实导入路径**（setInputFiles），不播种 OPFS，
   // 所以整条 isImportable → 写盘 → 解析 → 建索引 都被覆盖。不需要 key。
   // 在 preview 档跑还顺带验「构建产物里的 pdf.js worker 与 /pdfjs/cmaps/ 是否齐」——
@@ -301,13 +376,45 @@ const META = {
   // 下面两个侧栏探针的地址走 `process.argv[2]`、默认 5174 / 4174（vite 抢不到 5173 时的备用端口），
   // **不读 BASE_URL** —— 编排器注入不了地址，跑起来必然连不上。只能手动跑，故显式跳过并写明原因。
   'probe-rail': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '地址走 argv、默认 5174，不读 BASE_URL，编排器注入不了' },
-  'probe-rail-pages': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '地址走 argv、默认 4174，不读 BASE_URL，编排器注入不了' },
+  'probe-rail-pages': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+  // 数据加载耗时 + 骨架屏闸门。量 IDB 直读、空态窗口、长任务；G 组跑
+  // 「快路径一个骨架都不出 / CPU 10× 降速下一定出且待够最短时长」这对双向断言。
+  // 需要测试视频造数据，所以 testFile: true。
+  'probe-loading-latency': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+// 骨架屏的视觉核验。跑起来要有真浏览器 + 测试视频，产出 4 张图给人眼过。
+// 它同时会断言「截到的确实是骨架那一刻」，截错就非 0 退出 —— 所以登记在这里有意义，
+// 不只是个出图的工具（它踩过这个坑：静默写出一张「内容已就位」的图，文件名却叫骨架）。
+'probe-skeleton-visual': { service: 'preview', antd: false, testFile: true, base: true, diagnostic: true, timeout: 300 },
+  // 外壳（PageShell）结构与适配：宽屏侧栏常驻 / 窄屏抽屉承载同一份导航 /
+  // 四路由 × 三视口 × 明暗不溢出。侧栏版式并进 Tailwind 之后没有自写类名可选，
+  // 全靠 data-testid 定位，所以它对类名重构免疫。
+  'probe-app-shell-material': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
+  // 设置面 6 条不变量（一次只渲染一个模块 / 分区标题是原生 h2 / 无自写版式类名残留 /
+  // 深链可达 / 关闭后 hash 还原）。设计文档 §5 声称这个探针已新增，实际 git 历史里查无此文件，
+  // 等于那轮迁移一次自动化验证都没跑过 —— 现在补上，文档的说法才站得住。
+  'probe-settings-heroUI': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
+  // 图标尺寸契约：SVG 缺 width/height 会退化成替换元素固有尺寸（300×150 量级），
+  // 在纵向 flex 里还能被拉成整屏。库页投放区就是这么炸的（实测 1094×1094）。
+  // 图标字体时代用 font-size 给 SVG 定尺寸已经完全失效，但那些类名还散在各处。
+  'probe-icons': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
+  // 侧栏 Recent 的删除：点行尾按钮不该顺手切会话、删非当前会话不动当前会话、
+  // 删当前会话才自动切换、**删到不剩落草稿态**（懒创建之后不再现开一条空会话）、
+  // 键盘 Delete 删焦点所在行。
+  'e2e-recent-delete': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
+  // 窄屏抽屉关掉之后页面必须还能点。HeroUI/RAC 的退场靠 Web Animations API 判定，
+  // 不兑现时 `data-exiting` 永久挂着，留下一块挡住整页的透明遮罩 —— 症状是「点什么都没反应」，
+  // 比任何断言都更像用户报的「应用卡了」。reduced-motion 开与关都复现。
+  'probe-drawer-overlay': { service: 'preview', antd: false, base: true, diagnostic: true, timeout: 300 },
   'probe-mermaid': { service: 'dev', antd: false, diagnostic: true, timeout: 120, skip: '缺失 public/probe-mermaid.html，页面 404，无法加载' },
   // 模型直出 SVG 的净化契约（白名单 / 外部引用 / viewBox 大小写）—— 必须真解析器，dev 档
   'probe-svg-sanitize': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
   // peekSvgProgress 的增量契约（半截源码切分）。守的是完整源码那条碰不到的失效方式：
   // 把半条路径提前画出去、把闭合标签算错、某一拍漏元素 / 多元素 —— 只在流式下才成立。
   'probe-svg-stream': { service: 'dev', antd: false, diagnostic: true, timeout: 120 },
+  // ```diagram（JSON 中间层）的真浏览器契约：渲染器产物过**同一道**白名单（纵深防御）、
+  // 产物被做脏时闸门真的会动作、流式每个 shape 过 fragment 净化且末拍收敛到完整渲染、
+  // show_widget 预检与渲染层同源、恶意标签插进 DOM 按纯文本显示不执行。
+  'probe-json-diagram': { service: 'dev', antd: false, diagnostic: true, timeout: 180 },
   // 沙箱 widget 的隔离边界：Node 里没有同源策略 / sandbox / CSP，
   // 「widget 里的脚本到底能碰到什么」这个问题只有真浏览器能作证。
   // 证明的是**碰不到什么**：不透明源读不到父页面、CSP 断掉一切外发、桥接只有两个能力。
@@ -392,12 +499,49 @@ function resolveVideo(preferred) {
   return made;
 }
 
+/**
+ * 复用旧 preview 服务时的静默陷阱 —— 构建后没重启服务就复用端口的话，测的是**上一版产物**。
+ *
+ * `vite preview` 在**启动时**就把 dist 的目录清单读进了内存（sirv 的非 dev 模式），
+ * 之后 `npm run build` 它完全看不见：端口一样、状态码一样 200，返回的却是旧 bundle。
+ * 于是「改代码 → 重新构建 → 复用 4173 跑 preview 档」会安静地测旧代码 ——
+ * 全绿不能说明新代码对，报红也不能说明新代码错，两种都是纯噪音。
+ *
+ * 实测过一次：磁盘 dist 的入口是 `assets/index-CbqqN5qb.js`，4173 返回的却是
+ * `assets/index-DcyGD59_.js`（更早一版，既没有 240px 固定区域也没有工具链），
+ * 一路红得很有说服力、其实一句都没测到新代码。
+ *
+ * 所以这里只做一件事：发现不一致就**大声说**。不 fail —— 复用一个陈旧服务是使用者在
+ * 端口上做的决定（也可能他就是要跑旧产物做对照），但「正在测哪一版」不该靠猜。
+ */
+async function warnIfPreviewStale(port) {
+  const html = join(ROOT, 'dist', 'index.html');
+  if (!existsSync(html)) return;
+  const entryOf = (s) => (s.match(/assets\/index-[A-Za-z0-9_-]+\.js/g) || []).sort().join(',');
+  let served;
+  try {
+    const res = await fetch(`http://localhost:${port}/index.html`);
+    if (!res.ok) return;
+    served = entryOf(await res.text());
+  } catch {
+    return; // 取不到就算了，不干扰跑分
+  }
+  const onDisk = entryOf(readFileSync(html, 'utf8'));
+  if (!served || !onDisk || served === onDisk) return;
+  console.warn(`  [svc] ⚠️  复用的 preview 服务与磁盘 dist 不是同一版：`);
+  console.warn(`  [svc]     服务在发 ${served}，dist 上是 ${onDisk}。`);
+  console.warn(`  [svc]     vite preview 启动后就只看内存里的目录清单了 —— 本档测的是旧产物。`);
+  console.warn(`  [svc]     要测新代码请先停掉它（lsof -ti:4173 | xargs kill）再重跑本脚本。\n`);
+}
+
 // 启动服务；若端口已占用则复用，否则启动并返回子进程（需本脚本负责关闭）
 async function ensureService(service) {
   if (service === 'none') return null;
   const port = service === 'preview' ? 4173 : 5173;
   if (!(await portFree(port))) {
     console.log(`  [svc] 端口 ${port} 已占用，复用现有 ${service} 服务`);
+    // dev(5173) 是从源码实时编译的，不存在这个问题，只有 preview 会发陈旧产物
+    if (service === 'preview') await warnIfPreviewStale(port);
     return { port, child: null, reused: true };
   }
   console.log(`  [svc] 启动 ${service} 服务（端口 ${port}）…`);

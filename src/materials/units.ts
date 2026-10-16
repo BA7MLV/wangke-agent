@@ -61,3 +61,21 @@ export function clampUnit(n: number, max?: number): number {
   const v = Math.max(1, Math.floor(n));
   return max && max > 0 ? Math.min(v, max) : v;
 }
+
+/**
+ * 阅读进度比例（0–1），供阅读器工具条上那条进度线用。
+ *
+ * 与断点续读同一个口径：分子就是写回 `videos.lastUnit` 的那个单元号，
+ * 不另算「滚动百分比」—— 那会是第二套数，两条线迟早对不上。
+ *
+ * 必须夹到 [1, total] 再除：四个阅读器的 `current` 都只由 IntersectionObserver 改
+ * （见 MdReader / DocxReader 的位置跟踪），**换材料时它不会立刻复位**。
+ * 上一篇的第 37 段撞上新材料总共 5 段，直接除就是 7.4，线会冲出屏幕。
+ *
+ * `total <= 0`（正文还没排版完）返回 0：此时工具条本来就写着「载入中…」，
+ * 画一条 0% 的线是诚实的 —— 让「没读」和「还没读」在视觉上可区分。
+ */
+export function readRatio(current: number, total: number): number {
+  if (!(total > 0)) return 0;
+  return clampUnit(current, total) / total;
+}

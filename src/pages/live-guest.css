@@ -1,10 +1,11 @@
 /* ── guest 镜像页（/live） ──────────────────────────────────────────────────
  *
  * 三条约定与 Library / Settings 保持一致：
- *   1. 颜色全部走 MD3 语义令牌（--mdui-color-*），深浅两套色板自动成立，不写死色值；
+ *   1. 颜色全部走 HeroUI 语义令牌（--foreground / --muted / --accent），深浅两套自动成立，不写死色值；
  *      唯一的例外是封面的 dominantColor —— 那是**数据**（封面主色），不是样式，
  *      以行内 style 进来（与 Library 的 video-row__thumb-empty 同一处理）。
- *   2. 列表行用 mdui-list-item，只补排版需要的类和间距，不动组件本身。
+ *   2. 列表行自建（不用 ListBox.Item：它的 collection 构建要求 children 必须是
+ *      它自己的成员，混进普通 span 会在 commit 阶段抛错），只补排版需要的类和间距。
  *   3. 镜像页自成一页：它没有本地导航（库里是 guest 自己设备的内容，与镜像无关），
  *      所以不挂 useAppNav，也不做返回按钮 —— 浏览器自己的返回就是离开。
  */
@@ -19,10 +20,10 @@
   aspect-ratio: 16 / 9;
   width: 100%;
   overflow: hidden;
-  border-radius: var(--mdui-shape-corner-medium, 12px);
+  border-radius: var(--radius-xl);
   /* 没有主色时落到表面色：微微深于卡片，看得出「这里是块底色」而不是空白 */
-  background: rgb(var(--mdui-color-surface-container-highest));
-  color: rgb(var(--mdui-color-on-surface-variant));
+  background: var(--default);
+  color: var(--muted);
 }
 
 .live-guest__cover-img {
@@ -38,7 +39,7 @@
   justify-content: center;
 }
 
-.live-guest__cover-empty mdui-sym-image {
+.live-guest__cover-empty svg {
   font-size: 40px;
 }
 
@@ -52,14 +53,14 @@
   display: block;
   width: 100%;
   max-height: 60vh;
-  border-radius: var(--mdui-shape-corner-medium, 12px);
+  border-radius: var(--radius-xl);
   background: #000;
 }
 
 .live-guest__error {
   margin-top: 8px;
   font-size: 13px;
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
 }
 
 /* 字幕 / 正文小标题：不用 mdui-list-subheader（它自带粘性与分割线，
@@ -68,11 +69,25 @@
   margin: 16px 0 4px;
   font-size: 12px;
   font-weight: 500;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
-/* 字幕行文本：长句要换行（普通话课一句话可以很长），mdui-list-item 的
-   默认插槽内容不继承换行约束，这里补上。 */
+/* 列表行（ListBox.Item）的内容排版：两行式——标题 + 说明。
+   Item 自身负责内边距与圆角，这里只管内部的文字层级。 */
+.live-guest__row-title {
+  display: block;
+  font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+
+.live-guest__row-desc {
+  display: block;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+/* 字幕行文本：长句要换行（普通话课一句话可以很长）。 */
 .live-guest__sub-text {
   display: block;
   white-space: normal;
@@ -84,11 +99,11 @@
 /* 对照轨降一档存在感：它是参考译文，不该和主字幕抢注意力。 */
 .live-guest__sub-text--alt {
   font-size: 13px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .live-guest__tracks {
   margin-top: 8px;
   padding-top: 4px;
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
+  border-top: 1px solid var(--border-secondary);
 }

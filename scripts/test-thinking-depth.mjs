@@ -93,16 +93,58 @@ async function test(name, fn) {
 // 走真实链路：拉元数据 → 解析 reasoning_options → 生成请求参数
 const main = await load('main');
 await main.refreshModelMeta([SF]);
-const { hasThinkingDepth, thinkingControlOf, thinkingParams } = main;
+const { hasThinkingDepth, thinkingControlOf, thinkingParams, THINKING_LEVELS, normalizeThinkingEffort } = main;
 // 每个查询都要带供应商：同一个模型 id 在不同供应商下能力可以不同，
 // 所以下面的调用一律写成 thinkingParams(供应商, 模型, 档位)
 const p = (model, effort) => thinkingParams(SF, model, effort);
 const depth = (model) => hasThinkingDepth(SF, model);
 const control = (model) => thinkingControlOf(SF, model);
 
+// ── 6 档刻度本身 ─────────────────────────────────────────────────────────────
+// 这 6 档是「思考深度」的功能契约：档位数、次序、第一档的含义。钉在这里，
+// 谁把它改回 3 档、或把第一档从「不思考」挪走，都会在这里红。
+
+await test('刻度是 6 档，对齐 OpenAI 的 reasoning_effort，第一档是不思考', () => {
+  assert.deepEqual(
+    THINKING_LEVELS.map((l) => l.value),
+    ['none', 'minimal', 'low', 'medium', 'high', 'xhigh'],
+  );
+  assert.equal(THINKING_LEVELS[0].label, '不思考');
+  // 每一档都要有文案：滑块右侧那格直接渲染 label，空字符串会变成一块空白
+  assert.equal(THINKING_LEVELS.every((l) => l.label.length > 0), true);
+});
+
+await test('不思考档：明确发 enable_thinking:false，不发任何深度参数', () => {
+  // 对**所有**形状的模型都一样 —— 它排在看声明之前，因为「关掉」不该依赖模型是否
+  // 声明了档位。混合思考模型（Qwen3 系）默认可能是开着的，什么都不发等于没关掉。
+  for (const model of [
+    'zai-org/GLM-5.2', // effort 型
+    'deepseek-ai/DeepSeek-V4-Flash-0731', // budget 型
+    'Qwen/Qwen3.5-27B', // 只有开关
+    'deepseek-ai/DeepSeek-V4-Pro', // 声明为空
+    'some/unknown-model', // 元数据没收录
+  ]) {
+    assert.deepEqual(p(model, 'none'), { enable_thinking: false }, model);
+  }
+  // catalogId 为空（供应商没填能力数据源）时同样要发得出去
+  assert.deepEqual(thinkingParams('', 'zai-org/GLM-5.2', 'none'), { enable_thinking: false });
+});
+
+await test('旧档位名归一化：max → xhigh，不认识的丢掉，none 不属于这个字段', () => {
+  // 落库/迁移包里可能带着上个版本的档位名。不收敛的话预算折算会算出 NaN，
+  // 序列化成 null 发出去，网关只回一句跟界面毫无关系的 400。
+  assert.equal(normalizeThinkingEffort('max'), 'xhigh');
+  assert.equal(normalizeThinkingEffort('low'), 'low');
+  assert.equal(normalizeThinkingEffort('xhigh'), 'xhigh');
+  assert.equal(normalizeThinkingEffort('none'), null, '「不思考」由 thinkingEnabled 表达，不该出现在档位字段里');
+  assert.equal(normalizeThinkingEffort('ultra'), null);
+  assert.equal(normalizeThinkingEffort(undefined), null);
+  assert.equal(normalizeThinkingEffort(3), null);
+});
+
 await test('effort 型：只发 reasoning_effort，取模型声明的档位名', () => {
   assert.deepEqual(p('zai-org/GLM-5.3', 'high'), { enable_thinking: true, reasoning_effort: 'high' });
-  assert.equal(p('zai-org/GLM-5.3', 'max').reasoning_effort, 'max');
+  assert.equal(p('zai-org/GLM-5.3', 'xhigh').reasoning_effort, 'max');
   assert.equal('thinking_budget' in p('zai-org/GLM-5.3', 'low'), false);
 });
 
@@ -110,15 +152,24 @@ await test('声明里没有我们这一档时，向下取不超出的最强档',
   // GLM-5.2 只声明 high/max：选 low 只能退到 high（它最弱的就是 high）
   assert.equal(p('zai-org/GLM-5.2', 'low').reasoning_effort, 'high');
   assert.equal(p('zai-org/GLM-5.2', 'high').reasoning_effort, 'high');
-  assert.equal(p('zai-org/GLM-5.2', 'max').reasoning_effort, 'max');
+  // 中间几档塌到同一档是**必然**的（模型真只有 2 档），映射必须单调不减
+  assert.equal(p('zai-org/GLM-5.2', 'minimal').reasoning_effort, 'high');
+  assert.equal(p('zai-org/GLM-5.2', 'medium').reasoning_effort, 'high');
+  // 但最高档必须够得着 max：xhigh 与 max 在次序上并列最高（两家对「最高」的叫法不同），
+  // 否则用户把滑块拉到最右却只拿到 high
+  assert.equal(p('zai-org/GLM-5.2', 'xhigh').reasoning_effort, 'max');
 });
 
 await test('budget 型：按声明区间的上限比例算，不越界', () => {
-  const low = p('deepseek-ai/DeepSeek-V4-Flash-0731', 'low');
-  assert.deepEqual(low, { enable_thinking: true, thinking_budget: 8192 });
+  // 逐级对半的阶梯（1/16 … 1）：预算的代价对数量级敏感，均匀切分会让「极简」和「低」
+  // 看不出差别，而「高」和「极高」差得太远
+  const minimal = p('deepseek-ai/DeepSeek-V4-Flash-0731', 'minimal');
+  assert.deepEqual(minimal, { enable_thinking: true, thinking_budget: 2048 });
+  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash-0731', 'low').thinking_budget, 4096);
+  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash-0731', 'medium').thinking_budget, 8192);
   assert.equal(p('deepseek-ai/DeepSeek-V4-Flash-0731', 'high').thinking_budget, 16384);
-  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash-0731', 'max').thinking_budget, 32768);
-  assert.equal('reasoning_effort' in low, false);
+  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash-0731', 'xhigh').thinking_budget, 32768);
+  assert.equal('reasoning_effort' in minimal, false);
 });
 
 await test('厂商文档点名的模型走 reasoning_effort，盖过 models.dev 的 budget 记录', () => {
@@ -130,7 +181,8 @@ await test('厂商文档点名的模型走 reasoning_effort，盖过 models.dev 
   });
   // 该字段的 enum 只有 high/max：选 low 映射成 high（文档原文：low 会映射为 high）
   assert.equal(p('deepseek-ai/DeepSeek-V4-Flash', 'low').reasoning_effort, 'high');
-  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash', 'max').reasoning_effort, 'max');
+  // 文档原文另一句：xhigh 映射为 max —— 与我们「xhigh 与 max 并列最高」的次序一致
+  assert.equal(p('deepseek-ai/DeepSeek-V4-Flash', 'xhigh').reasoning_effort, 'max');
   // 没被文档点名的近亲（V4-Flash-0731）仍走元数据声明的 budget
   assert.ok('thinking_budget' in p('deepseek-ai/DeepSeek-V4-Flash-0731', 'high'));
 });
@@ -156,7 +208,7 @@ await test('厂商文档只对点名的那家生效：换个供应商就不认�
 });
 
 await test('只有开关的模型：只发 enable_thinking，UI 也不给深度旋钮', () => {
-  assert.deepEqual(p('Qwen/Qwen3.5-27B', 'max'), { enable_thinking: true });
+  assert.deepEqual(p('Qwen/Qwen3.5-27B', 'xhigh'), { enable_thinking: true });
   assert.equal(depth('Qwen/Qwen3.5-27B'), false);
   assert.equal(depth('deepseek-ai/DeepSeek-V3.2'), false);
 });
@@ -173,7 +225,7 @@ await test('不会思考的模型：没有思考控制信息', () => {
 });
 
 await test('元数据没收录的模型：一律不发深度参数（宁可没有，不瞎猜）', () => {
-  assert.deepEqual(p('some/unknown-model', 'max'), { enable_thinking: true });
+  assert.deepEqual(p('some/unknown-model', 'xhigh'), { enable_thinking: true });
   assert.equal(depth('some/unknown-model'), false);
 });
 

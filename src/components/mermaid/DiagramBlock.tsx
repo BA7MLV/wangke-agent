@@ -1,34 +1,57 @@
 import { useCallback, useState } from 'react';
-import { toast, useMduiEvent } from '../../ui';
+import { Button, Modal, Tooltip } from '@heroui/react';
+import { Sym, toast, MODAL_CONTAINER_CLASS } from '../../ui';
 import { copyText } from '../../utils/clipboard';
 import { toStandaloneSvg } from './mermaidRender';
 import type { SvgProgress } from './svgRender';
+import type { DiagramShape } from './diagramSchema';
 import LiveSvg from './LiveSvg';
+import DiagramCanvas from './DiagramCanvas';
 import './mermaid.css';
 
 /** 播放器快捷键（vidstack 的 keyTarget 默认是 document）——弹层里按这些键要拦下来，否则会误触播放/快进 */
 const PLAYER_KEY_RE = /^(?: |Spacebar|k|j|l|m|f|c|i|arrowleft|arrowright|arrowup|arrowdown|home|end|\d)$/i;
 
 /**
- * 图表块的状态机。两条链路（mermaid / 原生 svg）共用同一组状态，语义也一致：
+ * 图表块的状态机。三条链路（mermaid / diagram / svg）共用同一组状态，语义也一致：
  * - waiting：围栏还没闭合、且暂时落不了画 → 只提示并给源码预览，不解析、不抖。
- * - drawing：**只有 svg 链路会停在这个态**：半截 SVG 已经能画出个大概了，边生成边往画布上追加，
- *   下面那句「生成中」退成一行小提示（见 LiveSvg）。
- * - rendering：内容齐了、正在出图（只有 mermaid 会停在这个态，svg 是同步净化）。
+ * - drawing：**只有 svg 与 diagram 链路会停在这个态**：半截内容已经能画出个大概了，
+ *   边生成边往画布上追加，下面那句「生成中」退成一行小提示（见 LiveSvg / DiagramCanvas）。
+ * - rendering：内容齐了、正在出图（只有 mermaid 会停在这个态，另两条是同步计算）。
  * - ok：出图成功 → SVG + 工具条（复制源码 / 下载 / 大图 / 源码折叠）。
  * - error：语法或安全校验没过 → 错误摘要 + 源码 + 重试，用户至少能拿走源码。
  */
 export type DiagramPhase = 'waiting' | 'drawing' | 'rendering' | 'ok' | 'error';
 
+/**
+ * 流式落画快照（`phase === 'drawing'` 时才有）。两条链路各自的媒介不同：
+ * - `svg`：半截 SVG 源码切出的根属性 + 已完整元素（LiveSvg 消费）；
+ * - `diagram`：渲染器算出的画布尺寸 + 带 key 的逻辑图元（DiagramCanvas 消费）。
+ */
+export type DiagramStream =
+  | { kind: 'svg'; progress: SvgProgress }
+  | { kind: 'diagram'; viewBox: string; shapes: DiagramShape[] };
+
 export interface DiagramBlockProps {
-  /** data-testid 前缀：`mermaid` / `svg`，决定 `-block` / `-canvas` / `-copy` … 这一整组测试钩子 */
+  /** data-testid 前缀：`mermaid` / `diagram` / `svg`，决定 `-block` / `-canvas` / `-copy` … 这一整组测试钩子 */
   testId: string;
   /** 左上角标签文字 */
   tag: string;
+  /**
+   * 模型在围栏参数里给的标题（```diagram title="抛物线开口方向"），已由 fence.ts 规范化。
+   *
+   * 为什么不塞进 JSON schema / 不要求模型自己画一行标题文字：
+   * - 三条链路（mermaid / diagram / svg）共用这一个位置，模型只记一种写法；
+   * - 它是「这张图叫什么」的元信息，不是图里的内容，混进 nodes / curves 会让 schema 多一个层级；
+   * - **围栏首行一到就有**，流式期间图还没画完，标题已经在块头上了。
+   *
+   * 没写则只显示图种标签 —— 老内容（2026-10-16 之前存进 IndexedDB 的问答与题卡）不会变样。
+   */
+  title?: string | null;
   phase: DiagramPhase;
   svg?: string | null;
-  /** 流式落画快照（`phase === 'drawing'` 时才有）：根属性 + 已写完整的元素。mermaid 链路不传。 */
-  stream?: SvgProgress | null;
+  /** 流式落画快照（`phase === 'drawing'` 时才有）。mermaid 链路不传。 */
+  stream?: DiagramStream | null;
   err?: string;
   /** 围栏里的原始源码（已去掉尾部空白） */
   source: string;
@@ -58,6 +81,7 @@ export interface DiagramBlockProps {
 export default function DiagramBlock({
   testId,
   tag,
+  title,
   phase,
   svg,
   stream,
@@ -85,48 +109,56 @@ export default function DiagramBlock({
     const url = URL.createObjectURL(new Blob([doc], { type: 'image/svg+xml;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
-    a.download = `${downloadPrefix}-${Date.now()}.svg`;
+    a.download = `${fileStem(title, downloadPrefix)}-${Date.now()}.svg`;
     a.click();
     URL.revokeObjectURL(url);
-  }, [svg, downloadPrefix]);
+  }, [svg, downloadPrefix, title]);
 
-  // 受控 dialog 必须接 closed 把 state 同步回 false：mdui 自己处理 Esc / 点遮罩时
-  // 只把 open 拿掉，React 不知道 —— 不接的话关掉后再点「查看大图」就再也弹不出来。
-  const zoomRef = useMduiEvent('mdui-dialog', 'closed', () => setZoomOpen(false));
-
-  /** 图标按钮 + 提示：mdui-tooltip 的默认插槽就是触发元素（trigger 属性是触发**方式**，不是选择器） */
+  // 受控弹窗：Esc / 点遮罩关闭由 Modal 自己走 onOpenChange 回写，
+  // 不需要像 mdui 那样额外监听 'closed' 事件同步 state。
+  /** 图标按钮 + 提示：Tooltip.Trigger 必须包住唯一可接收 ref 的元素 */
   const iconBtn = (suffix: string, label: string, icon: React.ReactNode, onClick: () => void, active?: boolean) => (
-    <mdui-tooltip content={label}>
-      {/* 「源码开着」的激活态：文档树规则能覆盖 mdui-button-icon 的 :host 颜色，
-          图标走 fill:currentColor 跟随，所以一条 color 就够 */}
-      <mdui-button-icon
-        data-testid={`${testId}-${suffix}`}
-        aria-label={label}
-        className={active ? 'is-on' : undefined}
-        onClick={onClick}
-      >
-        {icon}
-      </mdui-button-icon>
-    </mdui-tooltip>
+    <Tooltip>
+      <Tooltip.Trigger>
+        <Button
+          isIconOnly
+          variant="tertiary"
+          data-testid={`${testId}-${suffix}`}
+          aria-label={label}
+          className={active ? 'is-on' : undefined}
+          onPress={onClick}
+        >
+          {icon}
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Content>{label}</Tooltip.Content>
+    </Tooltip>
   );
 
   return (
     <div className="xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase}>
       <div className="xmd-mermaid-head">
         <span className="xmd-mermaid-tag">{tag}</span>
+        {/* 标题：围栏参数里的那张图的名字。超长会被 fence.ts 截断，所以再挂一个 title 属性 ——
+            与原生 SVG/HTML 的 title 一样，悬停看全。 */}
+        {title ? (
+          <span className="xmd-mermaid-title" title={title} data-testid={`${testId}-title`}>
+            {title}
+          </span>
+        ) : null}
         <span className="xmd-mermaid-spacer" />
         <div className="xmd-mermaid-tools">
-          {iconBtn('copy', copyLabel, <mdui-sym-content-copy />, copySource)}
+          {iconBtn('copy', copyLabel, <Sym name="content-copy" />, copySource)}
           {svg && (
             <>
-              {iconBtn('zoom', '查看大图', <mdui-sym-open-in-full />, () => setZoomOpen(true))}
-              {iconBtn('download', '下载 SVG', <mdui-sym-download />, download)}
+              {iconBtn('zoom', '查看大图', <Sym name="open-in-full" />, () => setZoomOpen(true))}
+              {iconBtn('download', '下载 SVG', <Sym name="download" />, download)}
             </>
           )}
           {iconBtn(
             'source-toggle',
             showSource ? '隐藏源码' : '查看源码',
-            <mdui-sym-code />,
+            <Sym name="code" />,
             () => setShowSource((v) => !v),
             showSource,
           )}
@@ -141,9 +173,13 @@ export default function DiagramBlock({
       ) : phase === 'drawing' && stream ? (
         <>
           {/* 画布先出，提示退成一行小字：空图也有正确的宽高比（viewBox 一到手就定了），
-              所以整块不会随着内容增长来回跳。追加过程见 LiveSvg。 */}
+              所以整块不会随着内容增长来回跳。追加过程见 LiveSvg / DiagramCanvas。 */}
           <div className="xmd-mermaid-canvas" data-testid={`${testId}-canvas`}>
-            <LiveSvg rootAttrs={stream.rootAttrs} elements={stream.elements} />
+            {stream.kind === 'svg' ? (
+              <LiveSvg rootAttrs={stream.progress.rootAttrs} elements={stream.progress.elements} />
+            ) : (
+              <DiagramCanvas viewBox={stream.viewBox} shapes={stream.shapes} />
+            )}
           </div>
           <div className="xmd-mermaid-live" data-testid={`${testId}-live`}>
             <span className="xmd-mermaid-dots" />
@@ -152,17 +188,17 @@ export default function DiagramBlock({
         </>
       ) : phase === 'error' ? (
         <div className="xmd-mermaid-error" data-testid={`${testId}-error`}>
-          <div className="xmd-mermaid-error-title">
-            <mdui-sym-warning />
-            <span>{errorTitle}</span>
-          </div>
-          <div className="xmd-mermaid-error-msg">{err}</div>
-          {onRetry && (
-            <mdui-button data-testid={`${testId}-retry`} onClick={onRetry}>
-              <mdui-sym-refresh slot="icon" />
-              重试
-            </mdui-button>
-          )}
+<div className="xmd-mermaid-error-title">
+          <Sym name="warning" />
+          <span>{errorTitle}</span>
+        </div>
+        <div className="xmd-mermaid-error-msg">{err}</div>
+        {onRetry && (
+          <Button variant="secondary" data-testid={`${testId}-retry`} onPress={onRetry}>
+            <Sym name="refresh" />
+            重试
+          </Button>
+        )}
         </div>
       ) : (
         svg && (
@@ -182,24 +218,40 @@ export default function DiagramBlock({
         </pre>
       )}
 
-      {/* 「查看大图」保持原来 92vw / 上限 1400px 的观感：mdui-dialog 的面板尺寸在 shadow 里
-          （.panel{max-width:35rem}），但它暴露了 part="panel"，从文档树用 ::part() 正当改写。 */}
-      <mdui-dialog
-        ref={zoomRef}
-        className="mermaid-zoom-dialog"
-        open={zoomOpen}
-        headline="查看大图"
-        close-on-esc
-        close-on-overlay-click
-        data-testid={`${testId}-zoom-dialog`}
-      >
-        <ZoomPane testId={testId} svg={svg ?? ''} onDownload={download} />
-        <mdui-button slot="action" variant="text" onClick={() => setZoomOpen(false)}>
-          关闭
-        </mdui-button>
-      </mdui-dialog>
+      {/* 「查看大图」：面板尺寸写在 .mermaid-zoom-dialog 的 Modal.Dialog 上 */}
+      <Modal.Root isOpen={zoomOpen} onOpenChange={setZoomOpen}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog className="mermaid-zoom-dialog" data-testid={`${testId}-zoom-dialog`}>
+              <Modal.Header>
+                <Modal.Heading>{title ? `${title} · 查看大图` : '查看大图'}</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <ZoomPane testId={testId} svg={svg ?? ''} onDownload={download} />
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" onPress={() => setZoomOpen(false)}>
+                  关闭
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </div>
   );
+}
+
+/**
+ * 下载文件名的前缀：有标题就用标题，否则用调用方给的图种前缀。
+ *
+ * 标题是**模型写的**，可能带 `/`、`:`、`?` 这类路径与系统保留字符（"二次函数 y=x²/开口" 就能写出来），
+ * 直接当文件名会拼出意外路径或被系统拒绝，所以统一换成 `_`；再按 30 个字以内收住，
+ * 免得一个长标题把文件名顶到系统上限。
+ */
+function fileStem(title: string | null | undefined, fallback: string): string {
+  const s = (title ?? '').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
+  return s ? [...s].slice(0, 30).join('') : fallback;
 }
 
 /** 大图查看：整宽自适应 + 缩放档位；键盘事件就地拦下，避免冒泡到 vidstack 的 document 监听触发播放器快捷键 */
@@ -215,36 +267,56 @@ function ZoomPane({ testId, svg, onDownload }: { testId: string; svg: string; on
     >
       <div className="xmd-mermaid-zoom-bar">
         <div className="xmd-mermaid-zoom-tools">
-          <mdui-tooltip content="缩小">
-            <mdui-button-icon
-              data-testid={`${testId}-zoom-out`}
-              aria-label="缩小"
-              disabled={zoom <= 0.5}
-              onClick={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
-            >
-              <mdui-sym-zoom-out />
-            </mdui-button-icon>
-          </mdui-tooltip>
+          <Tooltip>
+            <Tooltip.Trigger>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                data-testid={`${testId}-zoom-out`}
+                aria-label="缩小"
+                isDisabled={zoom <= 0.5}
+                onPress={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
+              >
+                <Sym name="zoom-out" />
+              </Button>
+            </Tooltip.Trigger>
+            <Tooltip.Content>缩小</Tooltip.Content>
+          </Tooltip>
           <span className="xmd-mermaid-zoom-label" data-testid={`${testId}-zoom-label`}>
             {Math.round(zoom * 100)}%
           </span>
-          <mdui-tooltip content="放大">
-            <mdui-button-icon
-              data-testid={`${testId}-zoom-in`}
-              aria-label="放大"
-              disabled={zoom >= 4}
-              onClick={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
-            >
-              <mdui-sym-zoom-in />
-            </mdui-button-icon>
-          </mdui-tooltip>
-          <mdui-button data-testid={`${testId}-zoom-reset`} aria-label="复位" onClick={() => setZoom(1)}>
+          <Tooltip>
+            <Tooltip.Trigger>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                data-testid={`${testId}-zoom-in`}
+                aria-label="放大"
+                isDisabled={zoom >= 4}
+                onPress={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
+              >
+                <Sym name="zoom-in" />
+              </Button>
+            </Tooltip.Trigger>
+            <Tooltip.Content>放大</Tooltip.Content>
+          </Tooltip>
+          <Button
+            variant="tertiary"
+            data-testid={`${testId}-zoom-reset`}
+            aria-label="复位"
+            onPress={() => setZoom(1)}
+          >
             复位
-          </mdui-button>
-          <mdui-button data-testid={`${testId}-zoom-download`} aria-label="下载 SVG" onClick={onDownload}>
-            <mdui-sym-download slot="icon" />
+          </Button>
+          <Button
+            variant="tertiary"
+            data-testid={`${testId}-zoom-download`}
+            aria-label="下载 SVG"
+            onPress={onDownload}
+          >
+            <Sym name="download" />
             下载 SVG
-          </mdui-button>
+          </Button>
         </div>
       </div>
       <div className="xmd-mermaid-zoom-scroll">

@@ -12,6 +12,7 @@ import {
   unitRefRe,
   unitNoun,
   clampUnit,
+  readRatio,
 } from '../src/materials/units.ts';
 import { linkifyUnits, linkifyTimestamps, UNIT_LINK_PREFIX } from '../src/utils/linkify.ts';
 
@@ -87,6 +88,33 @@ test('夹取范围', () => {
   assert.equal(clampUnit(999, 10), 10);
   assert.equal(clampUnit(5, 10), 5);
   assert.equal(clampUnit(5, 0), 5, 'max 未知时只保证下界');
+});
+
+// ---------- 阅读进度 ----------
+
+test('进度比例 = 当前单元 / 总单元', () => {
+  assert.equal(readRatio(1, 3), 1 / 3);
+  assert.equal(readRatio(2, 4), 0.5);
+  assert.equal(readRatio(3, 3), 1);
+});
+
+test('换材料后 current 大于新 total → 夹到 1（不冲出屏幕）', () => {
+  // 四个阅读器的 current 都只由 IntersectionObserver 改，换材料时不会立刻复位，
+  // 上一篇的第 37 段撞上新材料总共 5 段就是活生生的一条：不夹就是 7.4
+  assert.equal(readRatio(37, 5), 1);
+});
+
+test('current 越界 / 非整数时也落在 [0, 1]', () => {
+  assert.equal(readRatio(0, 10), 0.1, '下界夹到第 1 段');
+  assert.equal(readRatio(-3, 10), 0.1);
+  assert.equal(readRatio(2.7, 10), 0.2, '2.7 段按第 2 段算');
+});
+
+test('total 未就绪（0）→ 0，而不是 NaN / Infinity', () => {
+  assert.equal(readRatio(1, 0), 0);
+  assert.equal(readRatio(5, 0), 0);
+  assert.equal(readRatio(1, -3), 0);
+  assert.equal(readRatio(3, 10), 0.3, '对照组：total 正常时仍要算得出');
 });
 
 // ---------- linkify ----------

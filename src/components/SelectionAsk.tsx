@@ -1,7 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
 import { useIsMobile } from '../utils/useMobile';
 import { cleanSelectionText, isUsableSelection } from '../materials/region';
 import { useSelectionAsk, type AskSource, type Citation } from '../store/selectionAsk';
+import { Sym } from '../ui';
 import './selection-ask.css';
 
 /**
@@ -183,35 +185,39 @@ export default function SelectionAsk() {
         <span className="ask-float__text">{active.cite.text}</span>
       </div>
       <div className="ask-float__actions">
-        <mdui-button
-          variant="filled"
+        {/* onMouseDown.preventDefault 保住选区（见文件头注释 1），onPress 走 React Aria
+            的按压事件 —— 两者都经 filterDOMProps 透传，行为与原来的 onClick 一致。 */}
+        <Button
+          variant="primary"
           data-testid="ask-explain"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => fire('explain')}
+          onPress={() => fire('explain')}
         >
-          <mdui-sym-lightbulb slot="icon" />
+          <Sym name="lightbulb" />
           解释这段
-        </mdui-button>
-        <mdui-button
-          variant="outlined"
+        </Button>
+        <Button
+          variant="outline"
           data-testid="ask-compose"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => fire('compose')}
+          onPress={() => fire('compose')}
         >
-          <mdui-sym-chat slot="icon" />
+          <Sym name="chat" />
           就这段提问
-        </mdui-button>
-        <mdui-button-icon
+        </Button>
+        <Button
+          isIconOnly
+          variant="tertiary"
           data-testid="ask-close"
           aria-label="关闭"
           onMouseDown={(e) => e.preventDefault()}
-          onClick={() => {
+          onPress={() => {
             setHit(null);
             hideBar();
           }}
         >
-          <mdui-sym-close />
-        </mdui-button-icon>
+          <Sym name="close" />
+        </Button>
       </div>
     </div>
   );

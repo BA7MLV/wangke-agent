@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { Tooltip } from '@heroui/react';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type CommentRow } from '../store/db';
 import { runComments, type CommentsProgress } from '../pipelines/comments';
@@ -14,7 +15,7 @@ import {
 } from '../harness/comments';
 import { fmtTime } from '../utils/vtt';
 import { formatCaughtError } from '../utils/errorText';
-import { PanelProgress, alertDialog, toast } from '../ui';
+import { LoadingButton, PanelProgress, CueSkeleton, SkeletonReveal, useSkeletonGate, Sym, alertDialog, toast } from '../ui';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
@@ -26,7 +27,8 @@ type Row = CommentRow & { id: number };
 interface Props {
   videoId: string;
   playerRef: React.RefObject<MediaPlayerInstance | null>;
-  hasSubtitles: boolean;
+  /** `null` = 字幕状态还没读到：未知时不出「需先生成字幕」，也不报「还没有讨论」 */
+  hasSubtitles: boolean | null;
   /**
    * 展开状态上报给播放页。
    *
@@ -45,6 +47,8 @@ interface Props {
  */
 export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOpenChange }: Props) {
   const [rows, setRows] = useState<Row[]>([]);
+  /** 首次读回之前为 false —— 折叠态那行「还没有讨论」与展开态空态都靠它门控（不变量 I1） */
+  const [loaded, setLoaded] = useState(false);
   const [open, setOpen] = useState(false);
   const [sort, setSort] = useState<CommentSort>('hot');
   const [progress, setProgress] = useState<CommentsProgress | null>(null);
@@ -52,13 +56,23 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
   const commentsId = useId();
 
   const reload = useCallback(async () => {
-    const rs = await db.comments.where('videoId').equals(videoId).sortBy('time');
-    setRows(rs.filter((r): r is Row => r.id != null));
+    try {
+      const rs = await db.comments.where('videoId').equals(videoId).sortBy('time');
+      setRows(rs.filter((r): r is Row => r.id != null));
+    } catch (e) {
+      // 读失败按「确实为空」收尾，别把界面永远留在骨架/空白上（不变量 I5）
+      setErrorText(formatCaughtError(e));
+    } finally {
+      setLoaded(true);
+    }
   }, [videoId]);
 
   useEffect(() => {
+    setLoaded(false);
     void reload();
   }, [reload]);
+
+  const showSkeleton = useSkeletonGate(!loaded);
 
   const threads = useMemo(() => groupThreads(rows), [rows]);
   const ordered = useMemo(() => orderThreads(threads, sort), [threads, sort]);
@@ -118,16 +132,18 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
         aria-controls={`${commentsId}-panel`}
         onClick={toggle}
       >
-        <mdui-sym-forum />
+        <Sym name="forum" />
         <span className="comments-toggle__label">讨论区</span>
         <span className="comments-toggle__meta" data-testid="comments-count">
           {stats.threads > 0
             ? `${stats.threads} 条讨论 · ${stats.posts} 条发言`
-            : hasSubtitles
-              ? '还没有讨论'
-              : '需先生成字幕'}
+            : !loaded || hasSubtitles === null
+              ? null
+              : hasSubtitles
+                ? '还没有讨论'
+                : '需先生成字幕'}
         </span>
-        <mdui-sym-keyboard-arrow-down className="comments-toggle__chev" />
+        <Sym name="keyboard_arrow_down" className="comments-toggle__chev" />
       </button>
 
       {open && (
@@ -138,17 +154,24 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
           aria-labelledby={`${commentsId}-toggle`}
         >
           <div className="comments-bar">
-            <mdui-button
-              variant="filled"
-              loading={running}
-              disabled={!hasSubtitles}
-              onClick={start}
-              data-testid="comments-generate"
-              title={hasSubtitles ? undefined : '请先在「字幕」页生成字幕'}
-            >
-              <mdui-sym-forum slot="icon" />
-              {stats.threads > 0 ? '重新生成讨论' : '生成讨论'}
-            </mdui-button>
+            {/* HeroUI 的 Button 没有 title 属性，未生成字幕时的原因说明改用 Tooltip */}
+            <Tooltip>
+              <Tooltip.Trigger>
+                <LoadingButton
+                  loading={running}
+                  variant="primary"
+                  isDisabled={hasSubtitles !== true}
+                  onPress={start}
+                  data-testid="comments-generate"
+                >
+                  <Sym name="forum" />
+                  {stats.threads > 0 ? '重新生成讨论' : '生成讨论'}
+                </LoadingButton>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>{hasSubtitles === false ? '请先在「字幕」页生成字幕' : '按课程内容生成多轮讨论'}</p>
+              </Tooltip.Content>
+            </Tooltip>
 
             {stats.threads > 0 && (
               <div className="comments-sort" role="group" aria-label="讨论排序">
@@ -180,26 +203,31 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
           <PersistentError title="讨论生成失败" text={errorText} onClose={() => setErrorText(null)} />
 
           <div className="comments-body" data-testid="comments-list">
-            {stats.threads === 0 && !running && (
-              <div className="comments-placeholder" data-testid="comments-empty">
-                {hasSubtitles
-                  ? '点击「生成讨论」，AI 会按课程内容生成若干讨论串 —— 每串围绕一个容易栽跟头的地方，点时间戳可跳回视频'
-                  : '讨论基于字幕内容生成，请先在「字幕」页生成字幕'}
-              </div>
-            )}
+            <SkeletonReveal show={showSkeleton} skeleton={<CueSkeleton rows={6} />}>
+              {hasSubtitles === false && loaded && !running && (
+                <div className="comments-placeholder" data-testid="comments-empty">
+                  讨论基于字幕内容生成，请先在「字幕」页生成字幕
+                </div>
+              )}
+              {hasSubtitles === true && loaded && stats.threads === 0 && !running && (
+                <div className="comments-placeholder" data-testid="comments-empty">
+                  点击「生成讨论」，AI 会按课程内容生成若干讨论串 —— 每串围绕一个容易栽跟头的地方，点时间戳可跳回视频
+                </div>
+              )}
 
-            {ordered.map((t) => (
-              <div className="cmt-thread" data-testid="cmt-thread" key={t.id}>
-                <CommentItem row={t} onSeek={seek} />
-                {t.replies.length > 0 && (
-                  <div className="cmt-replies">
-                    {t.replies.map((r) => (
-                      <CommentItem key={r.id} row={r} onSeek={seek} />
-                    ))}
-                  </div>
-                )}
-              </div>
-            ))}
+              {ordered.map((t) => (
+                <div className="cmt-thread" data-testid="cmt-thread" key={t.id}>
+                  <CommentItem row={t} onSeek={seek} />
+                  {t.replies.length > 0 && (
+                    <div className="cmt-replies">
+                      {t.replies.map((r) => (
+                        <CommentItem key={r.id} row={r} onSeek={seek} />
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+            </SkeletonReveal>
           </div>
         </div>
       )}

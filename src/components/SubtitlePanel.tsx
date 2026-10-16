@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useMemo, useRef, useState } from 'react';
+import { Button, ListBox, Select } from '@heroui/react';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { liveQuery } from 'dexie';
 import { db, type SegmentRow, type SubtitleTrackRow } from '../store/db';
@@ -11,7 +12,19 @@ import { mergeBilingual, splitCueLines } from '../utils/bilingual';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
-import { Panel, PanelBar, PanelBody, PanelProgress, PanelPlaceholder, CueRow, useMduiEvent } from '../ui';
+import {
+  LoadingButton,
+  Panel,
+  PanelBar,
+  PanelBody,
+  PanelPlaceholder,
+  PanelProgress,
+  CueRow,
+  CueSkeleton,
+  SkeletonReveal,
+  useSkeletonGate,
+  Sym,
+} from '../ui';
 import './subtitle-danmaku.css';
 
 interface Props {
@@ -21,6 +34,11 @@ interface Props {
   onSegmentsChange: (cues: Cue[]) => void;
   /** 转写是否进行中：上游据此门控讲义/弹幕/卡片（避免拿半份字幕去生成） */
   onRunningChange?: (running: boolean) => void;
+  /**
+   * 首次读到字幕（或读失败）时置 true。上游据此把 `hasSubtitles` 从「未知」翻成布尔 ——
+   * 否则兄弟面板会把「还没读到」当成「确实没有字幕」，先闪一下「请先生成字幕」。
+   */
+  onLoadedChange?: (loaded: boolean) => void;
 }
 
 function download(filename: string, content: string, type: string) {
@@ -33,9 +51,25 @@ function download(filename: string, content: string, type: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegmentsChange, onRunningChange }: Props) {
+/**
+ * 「无对照」这一项在 HeroUI Select 里的 key。
+ *
+ * 为什么不用空串：mdui 的 menu-item 允许空串当值，而 RAC 的 Key 在 Select 里要经过
+ * selectedKey ↔ 集合成员的比较，空串会被当成「没有选中项」，于是这一项永远点不亮、
+ * 也回传不了。哨兵值只在 Select 边界内出现，组件状态仍是空串（不显示对照），
+ * `compareCues` 的查找逻辑一行没动。
+ */
+const NO_COMPARE_LANG = '__none__';
+
+export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegmentsChange, onRunningChange, onLoadedChange }: Props) {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
+  /**
+   * 首次读到（或读失败）之前为 false —— 空态只在 `loaded && 真的为空` 时出现。
+   * 判据不能是 `segments.length === 0`：liveQuery 的首个回调是异步的，
+   * 首帧数组必然为空，有字幕的课程会先闪一下「还没有字幕」（不变量 I1）。
+   */
+  const [loaded, setLoaded] = useState(false);
   const listRef = useRef<HTMLDivElement>(null);
   /** B 站自带的多语言字幕（只喂显示）；空 = 这个视频没有对照字幕可选 */
   const [tracks, setTracks] = useState<SubtitleTrackRow[]>([]);
@@ -49,14 +83,29 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
 
   // 转写进行中：每完成一段上游都会写库，这里用 liveQuery 增量跟进，不再等到最后 reload
   useEffect(() => {
+    // 切视频：上一份字幕已经不属于当前课程，先回到「未知」态，避免拿旧列表当新课程的空/满
+    setLoaded(false);
     const sub = liveQuery(async () =>
       (await db.segments.where('videoId').equals(videoId).sortBy('idx')).filter((r) => r.status === 1 && !!r.text),
     ).subscribe({
-      next: setSegments,
-      error: (e) => setLoadError(formatCaughtError(e)),
+      next: (rows) => {
+        setSegments(rows);
+        setLoaded(true);
+      },
+      error: (e) => {
+        setLoadError(formatCaughtError(e));
+        setLoaded(true);
+      },
     });
     return () => sub.unsubscribe();
   }, [videoId]);
+
+  // 上游（Player）据此把 hasSubtitles 从「未知」翻成布尔
+  useEffect(() => {
+    onLoadedChange?.(loaded);
+  }, [loaded, onLoadedChange]);
+
+  const showSkeleton = useSkeletonGate(!loaded);
 
   // 对照字幕轨（B 站多语言）：切视频要重新订阅并把选择清零，避免拿上个视频的语言去配
   useEffect(() => {
@@ -71,11 +120,6 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
     });
     return () => sub.unsubscribe();
   }, [videoId]);
-
-  const compareSelectRef = useMduiEvent('mdui-select', 'change', (_e, el) => {
-    const v = Array.isArray(el.value) ? (el.value[0] ?? '') : (el.value ?? '');
-    setCompareLang(v);
-  });
 
   // 展开为展示用 cue：优先 ASR 句级时间戳（超长的再按字数细分），无则按标点+字数估算。
   // 按段缓存结果——转写中每落一段都会重建 segments 数组，没有缓存会对全部段重跑一遍切分。
@@ -129,7 +173,9 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   // 自动滚动到当前字幕
   useEffect(() => {
     if (activeIdx < 0 || !listRef.current) return;
-    const el = listRef.current.children[activeIdx] as HTMLElement | undefined;
+    // 用 `.sub-item` 而不是 `children[activeIdx]`：列表外多了一层 SkeletonReveal 容器，
+    // 直接取 children 会数到那一层。骨架行用的是 `.skel-cue__row`，不会被选中。
+    const el = listRef.current.querySelectorAll<HTMLElement>('.sub-item')[activeIdx];
     el?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }, [activeIdx]);
 
@@ -145,43 +191,72 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   return (
     <Panel testId="panel-subs">
       <PanelBar>
-        <mdui-button variant="filled" loading={running} onClick={start} data-testid="subs-generate">
-          <mdui-sym-graphic-eq slot="icon" />
+        <LoadingButton
+          loading={running}
+          variant="primary"
+          onPress={start}
+          data-testid="subs-generate"
+        >
+          <Sym name="graphic_eq" />
           {running ? '转写中…' : segments.length > 0 ? '重新生成字幕' : '生成字幕'}
-        </mdui-button>
+        </LoadingButton>
         {running && (
-          <mdui-button variant="outlined" data-testid="subs-cancel" onClick={() => cancelTranscription(videoId)}>
-            <mdui-sym-close slot="icon" />
+          <Button
+            variant="outline"
+            data-testid="subs-cancel"
+            onPress={() => cancelTranscription(videoId)}
+          >
+            <Sym name="close" />
             取消
-          </mdui-button>
+          </Button>
         )}
         {segments.length > 0 && (
           <>
-            <mdui-button variant="outlined" data-testid="subs-download-vtt" onClick={() => download('subtitles.vtt', toVTT(cues), 'text/vtt')}>
-              <mdui-sym-download slot="icon" />
+            <Button
+              variant="outline"
+              data-testid="subs-download-vtt"
+              onPress={() => download('subtitles.vtt', toVTT(cues), 'text/vtt')}
+            >
+              <Sym name="download" />
               VTT
-            </mdui-button>
-            <mdui-button variant="outlined" data-testid="subs-download-srt" onClick={() => download('subtitles.srt', toSRT(cues), 'text/plain')}>
-              <mdui-sym-download slot="icon" />
+            </Button>
+            <Button
+              variant="outline"
+              data-testid="subs-download-srt"
+              onPress={() => download('subtitles.srt', toSRT(cues), 'text/plain')}
+            >
+              <Sym name="download" />
               SRT
-            </mdui-button>
+            </Button>
           </>
         )}
         {tracks.length > 0 && (
-          <mdui-select
-            ref={compareSelectRef}
-            value={compareLang}
+          /* 空串在 RAC 里不是合法 Key（「无对照」用哨兵值 NO_COMPARE_LANG 表示），
+             对外仍读写 compareLang 这个空串语义，下游 compareCues 的查找逻辑不用改。 */
+          <Select
+            selectedKey={compareLang || NO_COMPARE_LANG}
+            onSelectionChange={(key) => setCompareLang(key === NO_COMPARE_LANG ? '' : String(key))}
             data-testid="subs-compare"
-            title="叠加一路对照字幕（B 站自带，同屏两行）"
+            aria-label="叠加一路对照字幕（B 站自带，同屏两行）"
           >
-            <mdui-menu-item value="">无对照</mdui-menu-item>
-            {tracks.map((t) => (
-              <mdui-menu-item key={t.lang} value={t.lang}>
-                {t.lanDoc || t.lang}
-                {t.primary ? '（主）' : ''}
-              </mdui-menu-item>
-            ))}
-          </mdui-select>
+            <Select.Trigger>
+              <Select.Value />
+              <Select.Indicator />
+            </Select.Trigger>
+            <Select.Popover>
+              <ListBox>
+                <ListBox.Item id={NO_COMPARE_LANG} textValue="无对照">
+                  无对照
+                </ListBox.Item>
+                {tracks.map((t) => (
+                  <ListBox.Item key={t.lang} id={t.lang} textValue={t.lanDoc || t.lang}>
+                    {t.lanDoc || t.lang}
+                    {t.primary ? '（主）' : ''}
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+            </Select.Popover>
+          </Select>
         )}
         <ModelPicker slot="asr" field="asrModel" />
       </PanelBar>
@@ -209,29 +284,31 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
       />
 
       <PanelBody bodyRef={listRef} testId="subs-list">
-        {segments.length === 0 && !running && (
-          <PanelPlaceholder testId="subs-empty">还没有字幕，点击「生成字幕」开始转写</PanelPlaceholder>
-        )}
-        {cues.map((c, i) => (
-          <CueRow
-            key={c.start}
-            time={fmtTime(c.start)}
-            active={i === activeIdx}
-            testId="subs-row"
-            // 划词提问契约：在字幕行里选中文字后，全局浮层据此知道「选的是哪一句」
-            ask={{ source: 'subtitle', time: c.start, label: fmtTime(c.start) }}
-            onClick={() => {
-              if (playerRef.current) playerRef.current.currentTime = c.start + 0.01;
-            }}
-          >
-            {splitCueLines(c.text).map((line, li) => (
-              <Fragment key={li}>
-                {li > 0 && <br />}
-                {line}
-              </Fragment>
-            ))}
-          </CueRow>
-        ))}
+        <SkeletonReveal show={showSkeleton} skeleton={<CueSkeleton rows={9} />}>
+          {loaded && segments.length === 0 && !running && (
+            <PanelPlaceholder testId="subs-empty">还没有字幕，点击「生成字幕」开始转写</PanelPlaceholder>
+          )}
+          {cues.map((c, i) => (
+            <CueRow
+              key={c.start}
+              time={fmtTime(c.start)}
+              active={i === activeIdx}
+              testId="subs-row"
+              // 划词提问契约：在字幕行里选中文字后，全局浮层据此知道「选的是哪一句」
+              ask={{ source: 'subtitle', time: c.start, label: fmtTime(c.start) }}
+              onClick={() => {
+                if (playerRef.current) playerRef.current.currentTime = c.start + 0.01;
+              }}
+            >
+              {splitCueLines(c.text).map((line, li) => (
+                <Fragment key={li}>
+                  {li > 0 && <br />}
+                  {line}
+                </Fragment>
+              ))}
+            </CueRow>
+          ))}
+        </SkeletonReveal>
       </PanelBody>
     </Panel>
   );

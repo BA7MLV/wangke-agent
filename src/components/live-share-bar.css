@@ -31,8 +31,8 @@
   align-items: center;
   gap: 8px;
   padding: 6px 12px;
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
   font-size: 13px;
 }
 
@@ -41,11 +41,10 @@
   min-width: 0;
 }
 
-/* 「停止」骑在容器底色上：mdui 的 text 按钮默认取 primary 作前景色，在
- * primary-container 上对比度不稳（深色主题尤其）。覆盖令牌是 mdui 官方支持的
- * 定制方式（令牌在宿主上解析，shadow 内的 var() 读到的是继承值，必然生效），
- * 与 layout.css 的 .t-input.is-error 同一套路。 */
+/* 「停止」骑在容器底色上：按钮默认取主色作前景色，在浅色容器上对比度不稳
+ * （深色主题尤其）。这里显式改用主色的「软前景」色，与 layout.css 的
+ * .t-input.is-error 同一套路 —— 都属于「组件默认色在该场景下不可读」的订正。 */
 .live-share-bar__stop {
-  --mdui-color-primary: rgb(var(--mdui-color-on-primary-container));
+  color: var(--accent-soft-foreground);
   flex: none;
 }

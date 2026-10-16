@@ -4,6 +4,9 @@ dist-ssr
 # 用 --outDir 试构建时留下的产物目录（pdfjs 资源 + sw.js），不是源码
 dist-build
 dist-verify
+# 同上：--outDir 探针目录（shell-check / skel 用）
+dist-shell-check
+dist-skel
 *.local
 .DS_Store
 data
@@ -19,5 +22,9 @@ scripts/.tmp-*
 /.tmp-*
 .workbuddy/
 vite.config.ts.timestamp-*
+# agent 工具跑测时留下的截图（同 e2e-shots）
+.openchamber/
+# 根目录一次性复现脚本
+/tmp-repro-*.mjs
 
 .worktrees/

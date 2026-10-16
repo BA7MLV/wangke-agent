@@ -4,14 +4,14 @@ import { db, type VideoRow } from '../store/db';
 import { formatStudyDuration } from '../utils/studyLog';
 import { fmtTime } from '../utils/vtt';
 import { MAX_COURSE_CONTEXT, normalizeCourseContextIds, resolveCourseSearchScope } from './courseContext';
-import { validateAskUser, type AskUserData } from './askUser';
+import { validateAskUser, askUserToolResult, type AskUserData } from './askUser';
 import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { lexicalSearch } from './lexical';
 
 /**
  * 课程助手沿用 chatSessions / chats 两张表保存历史，但它不从属于某一门课程。
- * 用一个不会与真实 UUID 冲突的保留 id 表示「全课程库」作用域，避免再建一套平行表。
+ * 用一个不会与真实 UUID 冲突的保留 id 表示「全资料库」作用域，避免再建一套平行表。
  */
 export const LIBRARY_ASSISTANT_ID = '__library_assistant__';
 
@@ -105,12 +105,54 @@ function formatCourseLine(course: VideoRow, folderName?: string): string {
   return `- ${courseLink(course)} · ${kind} · ${progress.label}${folder}${deleted} · courseId=${course.id}`;
 }
 
-export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
+/**
+ * 向用户提问的工具。
+ *
+ * **刻意独立于课程工具**：它不读资料库，问的是「你想让我怎么做」，
+ * 所以在空资料库（通用问答模式）下依然要注册 —— 否则模型遇到分叉只能自己猜。
+ */
+const ASK_USER_TOOL: ToolDef = {
+  type: 'function',
+  function: {
+    name: 'ask_user',
+    description:
+      '当缺少关键信息、而几个答案会导向明显不同的做法时，向用户提问并给 2~5 个候选方案让用户点选。' +
+      '用户点完（或自己打字回答）你才会继续。不要用它来确认你已经能从课程数据判断出的事，也不要在没有分叉时凑选项',
+    parameters: {
+      type: 'object',
+      properties: {
+        question: { type: 'string', description: '一句话说清需要用户决定什么，不超过 200 字' },
+        options: {
+          type: 'array',
+          items: { type: 'string' },
+          minItems: 2,
+          maxItems: 5,
+          description: '2~5 个候选方案，每条不超过 60 字，写成用户能一眼分辨的短方案名而不是完整句子',
+        },
+        allowCustom: {
+          type: 'boolean',
+          description: '是否提供「我自己说」入口，默认 true；候选方案很可能都不贴切时传 false',
+        },
+      },
+      required: ['question', 'options'],
+    },
+  },
+};
+
+/**
+ * **依赖资料库存在**的工具：没有课程时它们只能返回空结果。
+ *
+ * 资料库为空时整个数组都不会注册给模型（见 `libraryAssistantTools`）——
+ * 注册一个必然空手而归的工具，等于主动邀请模型浪费轮次：它会先 `list_courses`
+ * 试一次，拿到「没有符合筛选条件的课程」，再换 `search_course_library` 试一次，
+ * 两轮用尽才肯开口回答一句本来通用知识就能答的问题。
+ */
+export const LIBRARY_COURSE_TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
       name: 'get_learning_overview',
-      description: '读取用户课程库和学习记录的总体概览，包括课程数量、进度分布、累计学习时间与衍生内容数量',
+      description: '读取用户资料库和学习记录的总体概览，包括课程数量、进度分布、累计学习时间与衍生内容数量',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -118,7 +160,7 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
     type: 'function',
     function: {
       name: 'list_courses',
-      description: '列出课程库中的课程，可按学习状态和资源类型筛选。需要找课、推荐下一门课或查看未完成课程时使用',
+      description: '列出资料库中的课程，可按学习状态和资源类型筛选。需要找课、推荐下一门课或查看未完成课程时使用',
       parameters: {
         type: 'object',
         properties: {
@@ -162,7 +204,7 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
     function: {
       name: 'search_course_library',
       description:
-        '检索字幕与阅读材料正文。已选择课程上下文时默认只查这些课程，否则查全课程库；传 courseId 可临时限定到某一门课程',
+        '检索字幕与阅读材料正文。已选择课程上下文时默认只查这些课程，否则查全资料库；传 courseId 可临时限定到某一门课程',
       parameters: {
         type: 'object',
         properties: {
@@ -199,35 +241,8 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {
-      name: 'ask_user',
-      description:
-        '当缺少关键信息、而几个答案会导向明显不同的做法时，向用户提问并给 2~5 个候选方案让用户点选。' +
-        '用户点完（或自己打字回答）你才会继续。不要用它来确认你已经能从课程数据判断出的事，也不要在没有分叉时凑选项',
-      parameters: {
-        type: 'object',
-        properties: {
-          question: { type: 'string', description: '一句话说清需要用户决定什么，不超过 200 字' },
-          options: {
-            type: 'array',
-            items: { type: 'string' },
-            minItems: 2,
-            maxItems: 5,
-            description: '2~5 个候选方案，每条不超过 60 字，写成用户能一眼分辨的短方案名而不是完整句子',
-          },
-          allowCustom: {
-            type: 'boolean',
-            description: '是否提供「我自己说」入口，默认 true；候选方案很可能都不贴切时传 false',
-          },
-        },
-        required: ['question', 'options'],
-      },
-    },
-  },
-  {
-    type: 'function',
-    function: {
       name: 'list_folders',
-      description: '查看课程库现有的分类文件夹、各自有多少门课程，以及多少门还没归类。整理目录前必须先看现状，避免造出重复分类',
+      description: '查看资料库现有的分类文件夹、各自有多少门课程，以及多少门还没归类。整理目录前必须先看现状，避免造出重复分类',
       parameters: { type: 'object', properties: {} },
     },
   },
@@ -236,7 +251,7 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
     function: {
       name: 'propose_folder_plan',
       description:
-        '提出一份课程库目录整理方案，展示给用户预览并等待确认。**这个工具不会直接改动任何数据**；' +
+        '提出一份资料库目录整理方案，展示给用户预览并等待确认。**这个工具不会直接改动任何数据**；' +
         '只有用户在方案卡上点「确认执行」之后才会真正建立文件夹并移动课程。' +
         '先 list_courses 了解全库、list_folders 看现状，再调用它；courseIds 必须来自工具结果的真实 id',
       parameters: {
@@ -268,30 +283,69 @@ export const LIBRARY_ASSISTANT_TOOLS: ToolDef[] = [
   },
 ];
 
+/**
+ * **工具集随资料库状态切换**，而不是永远给全量。
+ *
+ * @param hasCourses 资料库里有没有课（导入视频 / 阅读材料都算）
+ */
+export function libraryAssistantTools(hasCourses: boolean): ToolDef[] {
+  // 空库：只剩提问卡。技能工具（use_skill / read_skill_reference）由 store 另行并入，
+  // 它们不读资料库，通用模式下依然有用。
+  return hasCourses ? [...LIBRARY_COURSE_TOOLS, ASK_USER_TOOL] : [ASK_USER_TOOL];
+}
+
+/**
+ * 助手在「没有课程」时的人设。
+ *
+ * 与课程模式的提示词**完全分开写**而不是加开关：两套提示词里每一条工作规则都是
+ * 相反的（一条说「涉及用户数据必须先调工具」，一条说「没有数据就直接答」）。
+ * 混在一个模板里靠 if 拼，装作能用 if 覆盖，实际上模型会同时收到两条互相矛盾的
+ * 指令，然后挑那条更容易遵守的 —— 结果是空库时它照样去 list_courses。
+ */
+function generalAssistantSystemPrompt(skillMetaList?: string): string {
+  const skillSection = skillMetaList
+    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当用户问题与某项技能的用途匹配时，先调用 use_skill 加载完整规范，再按规范回答；技能正文列出参考文档时，可继续调用 read_skill_reference。不要凭技能名称猜测正文要求。`
+    : '\n\n本次会话没有可用技能。不要调用 use_skill 或 read_skill_reference，直接用通用知识回答。';
+
+  return `你是这个学习应用里的 AI 助手。用户目前**还没有导入任何课程**，所以你手上没有他的课程数据、字幕或学习进度，但你的通用能力完全可用。${skillSection}
+
+工作规则：
+1. 直接用你自己的知识回答问题：概念解释、学习方法、代码、写作、规划、闲聊都可以。不要因为「没有课程数据」就拒绝回答或反复道歉。
+2. 你唯一能调用的工具是 ask_user。只有在缺少关键信息、且不同答案会导向明显不同的做法时才用它，给2~5 个候选方案让用户点选，不要凑选项。
+3. 用户问到「我的课程、我的进度、我学过的内容」这类依赖他个人数据的问题时，如实说明当前资料库还是空的，并告诉他可以在「资料库」页面导入视频或 PDF / Markdown 材料 —— 导入之后你就能结合他的实际内容回答。给出你作为通用知识能提供的部分帮助，再补这句说明。
+4. 不编造他的课程、进度或学习记录。没有数据就说没有，不要虚构一个「你上一门课讲的是……」。
+5. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给候选方案，不要替用户猜。
+6. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要罗列无关信息。`;
+}
+
 export function libraryAssistantSystemPrompt(
   skillMetaList?: string,
   contextCourses: CourseContextItem[] = [],
+  hasCourses = true,
 ): string {
+  if (!hasCourses) return generalAssistantSystemPrompt(skillMetaList);
+
   const skillSection = skillMetaList
     ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当用户问题与某项技能的用途匹配时，先调用 use_skill 加载完整规范，再按规范回答；技能正文列出参考文档时，可继续调用 read_skill_reference。不要凭技能名称猜测正文要求。`
     : '\n\n本次会话没有可用技能。不要调用 use_skill 或 read_skill_reference，直接依据课程数据与通用能力回答。';
   const contextSection = contextCourses.length > 0
     ? `\n\n当前课程上下文：${contextCourses.map((course) => `《${course.name}》（courseId=${course.id}）`).join('、')}。除非用户明显换了话题，否则优先使用这些课程；话题变化时可以重新选择。`
-    : '\n\n当前没有固定课程上下文。根据用户问题从全课程库判断最相关的课程。';
+    : '\n\n当前没有固定课程上下文。根据用户问题从全资料库判断最相关的课程。';
 
   return `你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。${skillSection}${contextSection}
 
 工作规则：
 1. 只要问题涉及“我的课程、我的进度、课程里讲了什么、推荐我接下来学什么”等用户数据，回答前必须调用相应工具，不能凭空猜测。
+1b. 反过来：与他的课程无关的通用问题（概念解释、写代码、写作、生活常识、闲聊）**直接用你的通用知识回答**，不要为了「用上工具」而去检索资料库，也不要反问「你指的是哪门课」。这条与第 1 条同等重要。
 2. 课程上下文由你主动维护：问题明确针对某门或少数几门课程时，先通过 list_courses 或全库 search_course_library 找到精确 courseId，再调用 set_course_context 选择 1~5 门最相关课程。不要把无关课程塞进上下文。
 3. 用户明显换话题时，用 search_course_library 的 scope=all 从全库重新判断，再调用 set_course_context 替换上下文；问题是全库盘点、学习统计或跨全部课程比较时，调用 set_course_context 传空数组，避免旧课程限制本轮查询。
 4. 查具体知识点时用 search_course_library；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时，换同义词或更短的词再试。一次全库检索已经给出足够证据时，可以据此选择上下文并直接回答，不必机械地重复检索。
 5. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
 6. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
-7. 不编造课程、进度或系统记录。课程库中没有相关内容时，明确说明“课程库中没有检索到”，再把通用知识与课程数据分开回答。
+7. 不编造课程、进度或系统记录。资料库中没有相关内容时，明确说明“资料库中没有检索到”，再把通用知识与课程数据分开回答。
 8. 读操作之外只有两类写操作：ask_user（向用户提问）与 propose_folder_plan（提出目录整理方案）。除此之外不能声称已经替用户删除、收藏、导入、修改或完成课程；用户要求这类操作时，说明目前只能提供步骤或建议。
-9. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给 2~5 个候选方案让用户点选，不要替用户猜。选项要写成能一眼分辨的短方案名。凡是课程库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
-10. 整理课程库目录时：先 list_courses 了解全库、list_folders 看现有分类，再调用 propose_folder_plan 提交方案等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。**不要逐门调用 get_course_details**：课程名与类型在 list_courses 里已经够用（实测整理一整个分类时，逐门查详情会把工具调用次数用光，最后连方案都提交不出来），只在少数课程名看不出是什么内容时抽查一两门。
+9. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给 2~5 个候选方案让用户点选，不要替用户猜。选项要写成能一眼分辨的短方案名。凡是资料库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
+10. 整理资料库目录时：先 list_courses 了解全库、list_folders 看现有分类，再调用 propose_folder_plan 提交方案等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。**不要逐门调用 get_course_details**：课程名与类型在 list_courses 里已经够用（实测整理一整个分类时，逐门查详情会把工具调用次数用光，最后连方案都提交不出来），只在少数课程名看不出是什么内容时抽查一两门。
 11. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
 12. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
 }
@@ -348,7 +402,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       if (requestedIds.length === 0) {
         contextCourseIds = [];
         await options.onContextChange?.([]);
-        return '已清除固定课程上下文；后续问题将从全课程库自动选择。';
+        return '已清除固定课程上下文；后续问题将从全资料库自动选择。';
       }
 
       const rows = await db.videos.where('id').anyOf(requestedIds).toArray();
@@ -417,7 +471,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       if (hits.length === 0) {
         return scopedCourseIds
           ? '当前课程上下文中没有检索到相关内容。可以换关键词重试，或重新选择课程上下文。'
-          : '课程库中没有检索到相关内容。请尝试更短的关键词或同义说法。';
+          : '资料库中没有检索到相关内容。请尝试更短的关键词或同义说法。';
       }
       return hits
         .map((hit, index) => {
@@ -461,9 +515,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         return '当前入口不支持向用户提问（提问卡未接入）。请依据已有信息回答，并在回答中说明你的假设。';
       }
       try {
-        const picked = (await options.onAskUser(v.ask)).trim();
-        if (!picked) return '用户没有回答这个问题。请依据已有信息回答，并说明你做的假设。';
-        return `用户选择了：「${picked}」。`;
+        return askUserToolResult(await options.onAskUser(v.ask));
       } catch (e) {
         return `提问未完成：${e instanceof Error ? e.message : String(e)}`;
       }
@@ -498,14 +550,10 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       const v = validateFolderPlan(args);
       if (!v.ok) return `整理方案结构校验失败：${v.error}。请修正后重新调用 propose_folder_plan。`;
       if (!options.onPlanFolders) {
-        return '当前入口不支持修改课程库目录。你可以把方案写成分类清单交给用户，由用户在课程库中自行移动。';
+        return '当前入口不支持修改资料库目录。你可以把方案写成分类清单交给用户，由用户在资料库中自行移动。';
       }
       try {
-        const { ok, result } = await options.onPlanFolders(v.plan);
-        if (!ok) {
-          return '用户没有执行这份整理方案，课程库目录保持原样。请问用户接下来想怎么做，不要声称已经整理好了。';
-        }
-        return `用户已确认并执行整理方案：\n${formatPlanForModel(v.plan, result)}`;
+        return folderPlanToolResult(v.plan, await options.onPlanFolders(v.plan));
       } catch (e) {
         return `整理方案执行失败：${e instanceof Error ? e.message : String(e)}`;
       }
@@ -513,4 +561,17 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
 
     return `未知工具：${name}`;
   };
+}
+
+/**
+ * 方案确认 / 取消后喂回模型的那句话（与 `askUserToolResult` 同一条理由：两处说法不漂移）。
+ */
+export function folderPlanToolResult(
+  plan: FolderPlan,
+  verdict: { ok: boolean; result: AppliedPlanResult | null },
+): string {
+  if (!verdict.ok) {
+    return '用户没有执行这份整理方案，资料库目录保持原样。请问用户接下来想怎么做，不要声称已经整理好了。';
+  }
+  return `用户已确认并执行整理方案：\n${formatPlanForModel(plan, verdict.result)}`;
 }

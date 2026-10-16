@@ -1,7 +1,7 @@
 /**
  * 问答面板的样式（配 ChatPanel.tsx）。
  *
- * 颜色一律走 MD3 令牌（`rgb(var(--mdui-color-*))`，令牌值是 R,G,B 三元组必须包 rgb()）。
+ * 颜色一律走 HeroUI 语义令牌（--foreground / --muted / --accent），深浅两套自动成立。
  * 气泡形状差是 MD3 聊天的标志：靠对话侧收小圆角、另一侧全圆角 —— 这不是装饰，
  * 是「谁在说话」的第二条视觉线索，深浅色主题都成立。
  */
@@ -22,18 +22,21 @@
 }
 
 .chat-effort-label {
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-label-medium-size);
+  color: var(--muted);
+  font-size: 0.75rem;
   white-space: nowrap;
 }
 
 /* ── 消息流 ─────────────────────────────────────────────────────────────── */
-/* PanelBody 已负责滚动，这里只管消息的纵向节奏 */
+/* PanelBody 已负责滚动，这里只管消息的纵向节奏。
+   这个 div 同时就是滚动容器（PanelBody 的类名落在这里），所以上内边距也是
+   思考链吸顶标题的偏移量 —— 同 course-chat.css 的同名变量。 */
 .chat-list-wrap {
+  --reasoning-sticky-gap: 4px;
   display: flex;
   flex-direction: column;
   gap: 12px;
-  padding: 4px 0 8px;
+  padding: var(--reasoning-sticky-gap) 0 8px;
 }
 
 .chat-msg {
@@ -52,90 +55,40 @@
 .chat-bubble {
   max-width: 86%;
   padding: 10px 14px;
-  font-size: var(--mdui-typescale-body-medium-size);
+  font-size: 0.875rem;
   line-height: 1.65;
   overflow-wrap: anywhere;
 }
 
 .chat-bubble--ai {
-  border-radius: var(--mdui-shape-corner-large);
-  border-top-left-radius: var(--mdui-shape-corner-extra-small);
-  background: rgb(var(--mdui-color-surface-container-high));
-  color: rgb(var(--mdui-color-on-surface));
+  border-radius: var(--radius-lg);
+  border-top-left-radius: var(--radius-xs);
+  background: var(--default-soft);
+  color: var(--foreground);
+  /* 思考链展开态的吸顶标题要盖住滚上来的正文，底色随气泡走（见 reasoning-chain.css） */
+  --reasoning-sticky-bg: var(--default-soft);
 }
 
 .chat-bubble--user {
-  border-radius: var(--mdui-shape-corner-large);
-  border-bottom-right-radius: var(--mdui-shape-corner-extra-small);
-  background: rgb(var(--mdui-color-secondary-container));
-  color: rgb(var(--mdui-color-on-secondary-container));
+  border-radius: var(--radius-lg);
+  border-bottom-right-radius: var(--radius-xs);
+  background: var(--default-soft);
+  color: var(--default-soft-foreground);
 }
 
 /* 回答中断的消息：整体降为错误容器色，让「失败」一眼可见 */
 .chat-msg[data-error='true'] .chat-bubble--ai {
-  background: rgb(var(--mdui-color-error-container));
-  color: rgb(var(--mdui-color-on-error-container));
-}
-
-/* ── 思考过程（可折叠） ─────────────────────────────────────────────────── */
-.chat-reason {
-  margin-bottom: 6px;
-  font-size: 12px;
-}
-
-.chat-reason__toggle {
-  min-height: 40px;
-  padding: 0 8px;
-  margin-left: -8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  border: 0;
-  border-radius: var(--mdui-shape-corner-small);
-  background: transparent;
-  font: inherit;
-  text-align: left;
-  user-select: none;
-  color: rgb(var(--mdui-color-on-surface-variant));
-}
-
-.chat-reason__toggle:hover {
-  background: rgba(var(--mdui-color-on-surface), 0.08);
-}
-
-.chat-reason__toggle:focus-visible {
-  outline: 2px solid rgb(var(--mdui-color-primary));
-  outline-offset: 2px;
-}
-
-.chat-reason__chevron {
-  font-size: 1rem;
-  transition: transform var(--mdui-motion-duration-short2) var(--mdui-motion-easing-standard);
-}
-
-.chat-reason__chevron--open {
-  transform: rotate(90deg);
-}
-
-/* 正文现在是 accordion 的内层（.t-acc-panel-inner）：
-   margin / padding / max-height 全部落在内层，0fr 轨道本身不带任何盒模型，
-   否则收起时会剩一条收不掉的残余高度。滚动上限仍由这里提供。 */
-.chat-reason__body {
-  margin-top: 4px;
-  padding-left: 8px;
-  border-left: 2px solid rgb(var(--mdui-color-outline-variant));
-  max-height: 240px;
-  overflow: auto;
-  white-space: pre-wrap;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  background: var(--danger-soft);
+  color: var(--danger-soft-foreground);
+  /* 错误气泡底色变了，吸顶标题得跟着变，否则长思考链滚上去会露出错误色的横条 */
+  --reasoning-sticky-bg: var(--danger-soft);
 }
 
 /* ── 课程画面引用（AI 回答里的 [图@mm:ss]） ─────────────────────────────── */
 .chat-ts {
   cursor: pointer;
   font-variant-numeric: tabular-nums;
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
 }
 
 .chat-frame-wrap {
@@ -149,14 +102,14 @@
   display: block;
   max-height: 140px;
   max-width: 100%;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
 .chat-frame-img--pending {
   width: 200px;
   height: 112px;
-  background: rgb(var(--mdui-color-surface-container-highest));
+  background: var(--default);
 }
 
 /* 画面左下角的时间戳小签：反白的悬浮签，深浅主题下都用深底白字（叠在画面上） */
@@ -192,7 +145,7 @@
 .chat-shot__img {
   display: block;
   height: 56px;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
   cursor: pointer;
 }
 
@@ -205,9 +158,9 @@
   position: absolute;
   top: -10px;
   right: -10px;
-  --mdui-color-primary: var(--mdui-color-on-surface);
-  background: rgb(var(--mdui-color-surface-container-highest));
-  border-radius: var(--mdui-shape-corner-full);
+  color: var(--foreground);
+  background: var(--default);
+  border-radius: var(--radius-full);
   font-size: 0;
 }
 
@@ -240,15 +193,15 @@
   text-align: right;
   font-size: 11px;
   font-variant-numeric: tabular-nums;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .chat-ctx--warn {
-  color: rgb(var(--mdui-color-tertiary));
+  color: var(--muted);
 }
 
 .chat-ctx--bad {
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
 }
 
 /* ── 选区提问：引用条 ────────────────────────────────────────────────────
@@ -266,9 +219,9 @@
   align-items: flex-start;
   gap: 8px;
   padding: 6px 6px 6px 8px;
-  border-radius: var(--mdui-shape-corner-small);
-  background: rgb(var(--mdui-color-surface-container-high));
-  border-left: 3px solid rgb(var(--mdui-color-primary));
+  border-radius: var(--radius-sm);
+  background: var(--default-soft);
+  border-left: 3px solid var(--accent);
 }
 
 .chat-ref__img {
@@ -294,15 +247,15 @@
   align-self: flex-start;
   padding: 0 6px;
   border-radius: 999px;
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
   font-size: 11px;
   font-variant-numeric: tabular-nums;
 }
 
 /* 两行截断：引用条是「提醒用户引了什么」，不是再一次完整展示原文 */
 .chat-ref__text {
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
@@ -316,10 +269,6 @@
 }
 
 @media (pointer: coarse) {
-  .chat-reason__toggle {
-    min-height: 48px;
-  }
-
   .chat-ref__remove {
     width: 48px;
     height: 48px;
@@ -331,9 +280,9 @@
   display: block;
   margin-bottom: 6px;
   padding: 6px 8px;
-  border-left: 3px solid rgb(var(--mdui-color-primary));
-  border-radius: 0 var(--mdui-shape-corner-extra-small) var(--mdui-shape-corner-extra-small) 0;
-  background: rgba(var(--mdui-color-surface-container-highest), 0.7);
+  border-left: 3px solid var(--accent);
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  background: rgba(var(--default), 0.7);
   font-size: 12px;
   line-height: 1.5;
 }
@@ -342,12 +291,12 @@
   display: block;
   margin-bottom: 2px;
   font-size: 11px;
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
 }
 
 .chat-quote__text {
   display: block;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   white-space: pre-wrap;
   /* 引用原文可能很长，气泡里最多展示 6 行，避免一条消息占满整屏 */
   display: -webkit-box;
@@ -371,14 +320,16 @@
   padding: 8px 10px;
   font-size: 12px;
   line-height: 1.5;
-  border-radius: var(--mdui-shape-corner-small);
-  background: rgb(var(--mdui-color-surface-container-high));
-  color: rgb(var(--mdui-color-on-surface-variant));
+  border-radius: var(--radius-sm);
+  background: var(--default-soft);
+  color: var(--muted);
 }
 
-.chat-note > mdui-sym-warning {
+/* 原来这条规则写的是 `.chat-note > <sym-warning>`，换成 <Sym>（内联 svg）后
+   标签名不存在了，改挂到我们显式给的类名上 —— 选择器的意图（图标不参与伸缩、上错误/警示色）不变。 */
+.chat-note > .chat-note__icon {
   flex: none;
-  color: rgb(var(--mdui-color-tertiary));
+  color: var(--muted);
 }
 
 /* ── 沙箱 widget（show_widget 的 html 形态）────────────────────────────────
@@ -386,7 +337,7 @@
    不设背景色 —— 与 SVG 那条一致，底色交给页面，widget 自身透明。 */
 .widget-block {
   margin: 8px 0;
-  border-radius: var(--mdui-shape-corner-medium);
+  border-radius: var(--radius);
   overflow: hidden;
 }
 
@@ -401,12 +352,12 @@
 .widget-block--error {
   padding: 12px;
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  background: rgb(var(--mdui-color-surface-container-high));
-  border-radius: var(--mdui-shape-corner-small);
+  color: var(--muted);
+  background: var(--default-soft);
+  border-radius: var(--radius-sm);
 }
 
 .widget-block--error {
-  color: rgb(var(--mdui-color-error));
-  background: rgb(var(--mdui-color-error-container));
+  color: var(--danger);
+  background: var(--danger-soft);
 }

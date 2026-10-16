@@ -1,11 +1,12 @@
 /**
- * md 编辑态样式。颜色全部走 MD3 令牌：面层 `rgb(var(--mdui-color-surface-*))`，
- * 文字 `--mdui-color-on-*`，主色 `primary`；深色模式由 `html.mdui-theme-dark`
- * 自动切换，这里不写任何媒体查询（口径与 src/cards.css 头部一致）。
+ * md 编辑态样式。颜色全部走 HeroUI 语义令牌：面层 `--background` /
+ * `--default` / `--default-soft`，文字 `--foreground` / `--muted`，主色
+ * `--accent`；深浅色由 `<html>` 上的 `.dark` 类自动切换，这里不写任何媒体查询
+ * （口径与 src/cards.css 头部一致）。
  *
  * 不引 @codemirror/theme-one-dark 之类的成品主题：那些主题自带一套硬编码的
- * 灰色阶和 `!important`，会和 Material You 的动态取色打架（也跟本项目「颜色
- * 一律走令牌、不自造颜色」的约定冲突）。CodeMirror 的 baseTheme 已经给了
+ * 灰色阶和 `!important`，会和封面的 Material You 动态取色打架（也跟本项目
+ * 「颜色一律走令牌、不自造颜色」的约定冲突）。CodeMirror 的 baseTheme 已经给了
  * 足够的编辑器骨架样式（光标、选区、滚动条、.cm-line 的盒模型），这里只补
  * 「这个项目的 md 内容该长什么样」那一层。
  */
@@ -44,8 +45,8 @@ export const mdEditorTheme: Extension = EditorView.theme({
   // ── 编辑面本体 ──────────────────────────────────────────────────────────
   '&': {
     fontSize: '15px',
-    backgroundColor: 'rgb(var(--mdui-color-surface))',
-    color: 'rgb(var(--mdui-color-on-surface))',
+    backgroundColor: 'var(--background)',
+    color: 'var(--foreground)',
     height: '100%',
   },
   // 行高 1.7 是照着阅读视图 `.mr-md .x-markdown`
@@ -78,7 +79,7 @@ export const mdEditorTheme: Extension = EditorView.theme({
   // 实测加上之后 focus 环从 `rgb(0,0,0) none 3px` 变成主色的 2px 实线。
   // 焦点环是唯一的「必须盖掉 baseTheme」的地方，其余样式都不需要。
   '&.cm-focused': {
-    outline: '2px solid rgba(var(--mdui-color-primary), 0.35) !important',
+    outline: '2px solid rgba(var(--accent), 0.35) !important',
     outlineOffset: '-2px',
   },
   // 选区用主色的低透明度铺底，不用浏览器默认的 selection 蓝。
@@ -89,15 +90,15 @@ export const mdEditorTheme: Extension = EditorView.theme({
   // 于是聚焦时选区又变回 CodeMirror 自带的 `rgb(215,212,240)` 硬编码紫。
   // 同样宽的选择器 + 位置靠后 → 我们的赢。
   '&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-content ::selection': {
-    backgroundColor: 'rgba(var(--mdui-color-primary), 0.18)',
+    backgroundColor: 'rgba(var(--accent), 0.18)',
   },
   // 选中行：极淡的面层色。用 on-surface 而不是 surface 变体，是为了让
   // 「深色下也仅仅是微微亮一点」——activeLine 是背景，不该抢内容的对比度。
   '.cm-activeLine': {
-    backgroundColor: 'rgba(var(--mdui-color-on-surface), 0.04)',
+    backgroundColor: 'rgba(var(--foreground), 0.04)',
   },
   '.cm-cursor, .cm-dropCursor': {
-    borderLeftColor: 'rgb(var(--mdui-color-primary))',
+    borderLeftColor: 'var(--accent)',
     borderLeftWidth: '2px',
   },
 
@@ -110,7 +111,7 @@ export const mdEditorTheme: Extension = EditorView.theme({
   '.cm-md-h3': { fontSize: '1.2em', lineHeight: 1.6, fontWeight: 600 },
   '.cm-md-h4': { fontSize: '1.07em', lineHeight: 1.6, fontWeight: 600 },
   '.cm-md-h5': { fontSize: '1em', lineHeight: 1.6, fontWeight: 600 },
-  '.cm-md-h6': { fontSize: '1em', lineHeight: 1.6, fontWeight: 600, color: 'rgb(var(--mdui-color-on-surface-variant))' },
+  '.cm-md-h6': { fontSize: '1em', lineHeight: 1.6, fontWeight: 600, color: 'var(--muted)' },
 
   // ── 行内代码 ───────────────────────────────────────────────────────────
   // 等宽字体（编辑面本身已经是，这里显式写一遍是因为行内代码可能被标题的
@@ -120,8 +121,8 @@ export const mdEditorTheme: Extension = EditorView.theme({
   '.cm-md-inlinecode': {
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     fontSize: '0.94em',
-    backgroundColor: 'rgb(var(--mdui-color-surface-container-high))',
-    borderRadius: 'var(--mdui-shape-corner-extra-small)',
+    backgroundColor: 'var(--default-soft)',
+    borderRadius: 'var(--radius-xs)',
     // 只给横向 padding：纵向 padding 在行内盒上不改变行高，却会让底色
     // 溢出到上下相邻行的字面上（实测底色上下各多出 13px，压到邻居身上）。
     padding: '0 0.35em',
@@ -135,7 +136,7 @@ export const mdEditorTheme: Extension = EditorView.theme({
     fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
     // 比行内代码低一档的底色：整块代码是「背景」，行内代码是「标记」，
     // 两者同色会分不清哪层更重要。
-    backgroundColor: 'rgb(var(--mdui-color-surface-container))',
+    backgroundColor: 'var(--background-tertiary)',
     // 纵向 padding 在行内盒上**不改变行高**，但会让底色画到行盒之外 —— 这正是
     // 代码块要的：没有它，相邻两行的底色之间会露出一条缝（实测行高 25.5px 而
     // 行内盒只有 18px，缝 7px），整块代码看起来是一堆断开的横条而不是一块面板。
@@ -151,19 +152,19 @@ export const mdEditorTheme: Extension = EditorView.theme({
 
   // ── agent 改动高亮 ─────────────────────────────────────────────────────
   // 设计文档里定的语义是「绿」（设计稿 106 行「改动区间挂 diff 装饰（绿）」），
-  // 但 MD3 规范里没有 success 色，本项目自己在 theme.css 补了
-  // --app-color-success / --app-color-success-container 一对（深浅两套）。
-  // 用这一对而不是 primary：primary 是「交互色」，拿来当「这块被人改过」的
+  // 直接用 HeroUI 的 --success 三档（success / success-soft / success-soft-foreground，
+  // 浅深两套由主题自己反转）。
+  // 用 success 而不是 accent：accent 是「交互色」，拿来当「这块被人改过」的
   // 提示会和按钮、链接、focus 环混在一起，分不清是操作还是标记。
-  // 底色用 container 那档（浅色主题下淡绿、深色下深绿），不刺眼但一眼可见；
+  // 底色用 soft 那档（浅色主题下淡绿、深色下深绿），不刺眼但一眼可见；
   // 左侧色条用纯 success 那档，与底色同色系但更饱和。
   //
-  // 实测切换 mdui-theme-dark 时这两个令牌都会跟着变（theme.css 把 dark 覆盖挂在
-  // html 上，mdui 的 --mdui-color-* 同样如此），所以这里不需要媒体查询。
+  // 深浅色不用自己判断：这些令牌由 HeroUI 主题层挂在 html 上，跟随 .dark 类
+  // 自动反转（auto 模式也由 ui/theme.ts 解析系统偏好后落成同一个类）。
   '.cm-md-diffadd': {
-    backgroundColor: 'rgb(var(--app-color-success-container))',
-    borderRadius: 'var(--mdui-shape-corner-extra-small)',
-    boxShadow: 'inset 3px 0 0 rgb(var(--app-color-success))',
+    backgroundColor: 'var(--success-soft)',
+    borderRadius: 'var(--radius-xs)',
+    boxShadow: 'inset 3px 0 0 var(--success)',
     // 横向负 margin + padding 让底色从行首起、又不把文字推离左边距
     //（inset 阴影贴在盒子左边，所以盒子本身要盖住整行的左缘）。
     marginLeft: '-0.5em',

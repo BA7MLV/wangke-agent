@@ -5,8 +5,9 @@
  *
  * 图形真正上屏有两条路：
  *
- * 1. 正文里的 ```svg / ```mermaid 围栏 —— 走 `components/mermaid/svgRender.ts` 的
- *    **白名单**净化，禁掉 script / foreignObject / image / 外链。这条覆盖 diagram 与 art，
+ * 1. 正文里的 ```svg / ```mermaid / ```diagram 围栏 —— 走 `components/mermaid/svgRender.ts` 的
+ *    **白名单**净化（diagram 的渲染器产出物也过同一道，见 sanitizeSvgFragment），禁掉
+ *    script / foreignObject / image / 外链。这条覆盖 diagram 与 art，
  *    是默认路径，**没有因为本模块而放松分毫**。
  * 2. `html` 形态的 widget —— 覆盖 mockup / interactive / chart。这三者需要 HTML+JS，
  *    白名单净化做不到，只能真的执行脚本。于是问题变成「凭什么让它执行」。
@@ -176,8 +177,15 @@ export async function buildWidgetDocument(payload: WidgetPayload): Promise<strin
            border: 1px solid #B4B2A9; background: #F1EFE8; }
   input, select, textarea { padding: 4px 8px; border-radius: 8px;
            border: 1px solid #B4B2A9; background: transparent; }
-  table { border-collapse: collapse; }
-  th, td { border: 1px solid #D3D1C7; padding: 4px 8px; text-align: left; }
+  /* 表格走三线表，口径与正文的 markdown 表格一致（见 src/md-table.css）：
+     只有顶线 / 栏目线 / 底线，无竖线、无底纹。线色取 currentColor —— 深浅两套
+     （#2C2C2A / #D3D1C7）自动跟着上面 body 的文字色走，不必再补一条 dark 规则。
+     宽度仍由 widget 自己决定：widget 是模型写的小应用，表格可能只是其中一块，
+     这里不替它撑满。 */
+  table { border-collapse: collapse;
+          border-top: 2px solid currentColor; border-bottom: 2px solid currentColor; }
+  th, td { border: 0 none; padding: 4px 8px; text-align: left; }
+  th { border-bottom: 1px solid currentColor; }
 </style>
 <script>${BRIDGE}</script>
 ${sources.join('\n')}

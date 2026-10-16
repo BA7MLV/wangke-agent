@@ -1,23 +1,19 @@
 import type { ReactNode, RefObject } from 'react';
+import { ProgressBar, Spinner } from '@heroui/react';
 import './panel.css';
 
 /**
- * 播放页面板的统一骨架原语（阶段 3）。
+ * 播放页面板的统一骨架原语（HeroUI 版）。
  *
- * 五个面板（字幕 / 讲义 / 问答 / 弹幕 / 卡片）在被 antd 实现时各自手写了一遍同样的结构：
- * 「固定高度的工具条 + 固定高度的进度区 + flex:1 的滚动区」，还有一批写死颜色的内联样式
- * （`#888` / `#999` / `#1677ff` / `#e6f4ff`…）。收成原语之后：
+ * 五个面板（字幕 / 讲义 / 问答 / 弹幕 / 卡片）共用同一套结构：
+ * 「固定高度的工具条 + 固定高度的进度区 + flex:1 的滚动区」。
  *
  * 1. **高度链只有一份实现**：面板内容区一律 `.panel` = `height:100%` + `overflow:hidden`，
- *    内部滚动交给 `.panel-body`。antd 时代侧栏要靠 `.ant-tabs-content{height:100%}` 那一串
- *    覆盖才能接通，现在不需要了。
- * 2. **颜色只走 MD3 令牌**：深色模式因此自动成立（阶段 2 的令牌化只覆盖了外壳，
- *    面板里的内联色值是这次一起清的）。
- * 3. **`.sub-item` 这个类名刻意保留**：`e2e-live-subs` / `e2e-danmaku` / `e2e-cards`
+ *    内部滚动交给 `.panel-body`。
+ * 2. **`.sub-item` 这个类名刻意保留**：`e2e-live-subs` / `e2e-danmaku` / `e2e-cards`
  *    都用 `[role="tabpanel"]:visible .sub-item` 作为「当前面板里的条目行」选择器。
- *    它与 antd 无关、是应用自己的类名，改名只会给最关键的回归测试添乱。
- *    （面板容器上也刻意补了 `role="tabpanel"`，让这三个脚本的行选择器在
- *     桌面 `mdui-tab-panel` 与窄屏 `.panel-slot` 两种容器下都成立。）
+ *    面板容器上也刻意补了 `role="tabpanel"`，让这三个脚本的行选择器在
+ *    桌面 Tabs 面板与窄屏 `.panel-slot` 两种容器下都成立。
  */
 
 export interface PanelProps {
@@ -58,7 +54,7 @@ export function PanelSpacer() {
 }
 
 export interface PanelProgressProps {
-  /** 百分比（0–100）。**不传即 MD3 的不确定态**（mdui-linear-progress 未设 value 时就是不定的） */
+  /** 百分比（0–100）。**不传即不确定态**（HeroUI ProgressBar 不设 value 时就是循环动画） */
   percent?: number;
   /** 进度条下方的状态文字 */
   text?: ReactNode;
@@ -69,7 +65,12 @@ export interface PanelProgressProps {
 export function PanelProgress({ percent, text, testId }: PanelProgressProps) {
   return (
     <div className="panel-progress" data-testid={testId}>
-      <mdui-linear-progress max={100} value={percent} />
+      <ProgressBar
+        value={percent}
+        maxValue={100}
+        aria-label={typeof percent === 'number' ? `进度 ${Math.round(percent)}%` : '进行中'}
+        className="panel-progress__bar"
+      />
       {text != null && <div className="panel-progress__text">{text}</div>}
     </div>
   );
@@ -105,7 +106,7 @@ export function PanelPlaceholder({ children, testId }: { children: ReactNode; te
 export function PanelSpinner({ testId }: { testId?: string }) {
   return (
     <div className="panel-spinner" data-testid={testId}>
-      <mdui-circular-progress />
+      <Spinner size="lg" color="accent" />
     </div>
   );
 }
@@ -137,8 +138,7 @@ export interface CueRowProps {
 /**
  * 「时间 + 文本」的可点击条目：字幕行、弹幕行、卡片行共用。
  *
- * 高亮走 MD3 的 `primary-container` 语义色（原来是 antd 的 `#e6f4ff` 浅蓝），
- * 时间戳用 `primary`。深浅色由令牌自己解决。
+ * 高亮走 accent 浅底（原来是 antd 的 `#e6f4ff` 浅蓝），时间戳用主色。深浅色由令牌自己解决。
  */
 export function CueRow({ time, active, onClick, testId, children, ask }: CueRowProps) {
   const cls = active ? 'sub-item sub-item--active' : 'sub-item';
@@ -165,6 +165,35 @@ export function CueRow({ time, active, onClick, testId, children, ask }: CueRowP
     >
       <span className="sub-item__time">{time}</span>
       <span className="sub-item__text">{children}</span>
+    </div>
+  );
+}
+
+/**
+ * 面板条目行的**同形**骨架：字幕 / 弹幕 / 卡片共用。
+ *
+ * ⚠️ 刻意**不用** `.sub-item` 这个类名。它是 e2e-live-subs / e2e-danmaku / e2e-cards
+ * 判断「列表出来了」的选择器（`[role="tabpanel"]:visible .sub-item`），骨架冒用类名
+ * 会让它们在骨架阶段就误判（不变量 I8）。几何靠 panel.css 里把 `.sub-item` 与
+ * `.skel-cue__row` **分组进同一组选择器**来保证同源 —— 改了真行，骨架跟着改，不会漂。
+ *
+ * 高度按真内容实测：`.sub-item` 是 `padding: 8px 10px` + `13px × 1.55`（单行 ≈ 36px），
+ * 时间列是 `mm:ss`（≈ 34px 宽）。每三行给两行文本，模拟真字幕里的换行。
+ */
+export function CueSkeleton({ rows = 8 }: { rows?: number }) {
+  return (
+    <div className="skel-cue" data-testid="cue-skeleton" aria-hidden="true">
+      {Array.from({ length: rows }, (_, i) => (
+        <div className="skel-cue__row" key={i}>
+          <span className="skel-cue__time">
+            <span className="skel-bar skel-cue__bar--time" />
+          </span>
+          <span className="skel-cue__text">
+            <span className="skel-bar skel-cue__bar--line" />
+            {i % 3 === 0 && <span className="skel-bar skel-cue__bar--line skel-cue__bar--short" />}
+          </span>
+        </div>
+      ))}
     </div>
   );
 }

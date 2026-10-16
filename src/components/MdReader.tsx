@@ -1,14 +1,18 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { XMarkdown } from '@ant-design/x-markdown';
+import { Button, Spinner } from '@heroui/react';
 import { db, type MaterialBlockRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import type { MaterialReaderHandle } from '../materials/types';
 import { extractMdUnits } from '../materials/md';
+import { Sym } from '../ui';
 // ⚠️ **只要类型**。写成普通 import 会把整棵 CodeMirror 依赖图拖进 MdReader 的静态图，
 // 那正是这个文件用 React.lazy 隔离掉的那 120KB（理由见上面那段注释）。
 import type { MdEditorHandle } from '../md-editor/MdEditor';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
-import { Shimmer } from './motion';
+import { MarkdownTable } from './MdTable';
+import ReaderProgress from './ReaderProgress';
+import DocSkeleton from './DocSkeleton';
 import '../materials/material-reader.css';
 
 /**
@@ -21,7 +25,7 @@ import '../materials/material-reader.css';
  */
 const MdEditor = lazy(() => import('../md-editor/MdEditor'));
 
-const MD_COMPONENTS = { code: MarkdownCode, pre: MarkdownPre };
+const MD_COMPONENTS = { code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable };
 
 /**
  * 「段标签还没查到」的稳定空表。
@@ -323,23 +327,28 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
               编辑面里没有段落分界（也没挂 unitEls），显示它是在报一个看不见的东西。
               e2e 只在阅读态断言这个元素的文案（scripts/e2e-materials.mjs），
               所以这里换文案不影响它们。 */}
-          {editing ? '编辑中' : ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
+          {editing ? '编辑中' : ready ? `第 ${current} / ${total} 段` : <span className="skel-bar reader-pos-skel" aria-hidden="true" />}
         </span>
         <div className="mr-bar__spacer" />
         {ready && (
-          <mdui-button
-            variant={editing ? 'tonal' : 'outlined'}
+          /* mdui 的 tonal（编辑中，填充）/ outlined（未编辑，描边）在 HeroUI 里
+             分别是 secondary / outline —— 两态的视觉区分要留着，不能都写成 secondary。 */
+          <Button
+            variant={editing ? 'secondary' : 'outline'}
             data-testid="md-edit-toggle"
-            onClick={editing ? exitEdit : enterEdit}
+            onPress={editing ? () => void exitEdit() : enterEdit}
           >
-            {editing ? <mdui-sym-check slot="icon" /> : <mdui-sym-edit slot="icon" />}
+            {editing ? <Sym name="check" /> : <Sym name="edit" />}
             {editing ? '完成' : '编辑'}
-          </mdui-button>
+          </Button>
         )}
+        {/* 编辑态不画进度线：段号定位在编辑面里不成立（unitEls 也没挂），
+            与上面那句「编辑中」同一个理由 —— 报一个看不见的数比不报更糟。 */}
+        <ReaderProgress current={current} total={total} hidden={editing} />
       </div>
       {error && (
         <div className="mr-hint" data-testid="reader-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           {/* 文案自带「发生了什么」的前缀（见上面 ① 里的两处 setError），
               所以这里不再统一加「Markdown 打开失败：」—— 保存后重读失败不是打开失败。 */}
           <span>{error}</span>
@@ -349,7 +358,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
         <Suspense
           fallback={
             <div className="mr-docx__skel">
-              <mdui-circular-progress />
+              <Spinner size="sm" />
               正在加载编辑器…
             </div>
           }
@@ -394,12 +403,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
               </div>
             ))}
           </div>
-          {!ready && !error && (
-            <div className="mr-docx__skel">
-              <mdui-circular-progress />
-              正在排版文档…
-            </div>
-          )}
+          {!ready && !error && <DocSkeleton variant="column" />}
         </div>
       )}
     </div>

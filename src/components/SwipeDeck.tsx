@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { Button, Tooltip } from '@heroui/react';
 import type { CardRow } from '../store/db';
 import { fmtTime } from '../utils/vtt';
+import { Sym } from '../ui';
 import { ms, NumberPop } from './motion';
 
 interface Props {
@@ -181,45 +183,61 @@ export default function SwipeDeck({ pending, keptCount, judgedCount, onJudge, on
       </div>
 
       <div className="deck-actions">
-        <mdui-tooltip content="撤销上一张">
-          <mdui-button-icon data-testid="swipe-undo" aria-label="撤销上一张" disabled={!canUndo || leaving !== null} onClick={onUndo}>
-            <mdui-sym-undo />
-          </mdui-button-icon>
-        </mdui-tooltip>
-        {/* 「丢弃」是危险语义但 MD3 的按钮没有危险色变体，靠覆盖主色令牌上错误色。
+        <Tooltip>
+          <Tooltip.Trigger>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              data-testid="swipe-undo"
+              aria-label="撤销上一张"
+              isDisabled={!canUndo || leaving !== null}
+              onPress={onUndo}
+            >
+              <Sym name="undo" />
+            </Button>
+          </Tooltip.Trigger>
+          <Tooltip.Content>
+            <p>撤销上一张</p>
+          </Tooltip.Content>
+        </Tooltip>
+        {/* 「丢弃」是危险语义，用 HeroUI 的 danger-soft 变体（描边 + 错误色，
+            与原来的 outlined + 覆盖主色令牌观感一致）。
             语义不能只靠颜色，按钮文案仍然写清动作。 */}
-        <mdui-button
+        <Button
           data-testid="swipe-drop"
-          variant="outlined"
-          disabled={leaving !== null}
-          onClick={() => commit('left')}
-          style={{ '--mdui-color-primary': 'var(--mdui-color-error)' } as CSSProperties}
+          variant="danger-soft"
+          isDisabled={leaving !== null}
+          onPress={() => commit('left')}
         >
-          <mdui-sym-close slot="icon" />
+          <Sym name="close" />
           丢弃
-        </mdui-button>
-        <mdui-button data-testid="swipe-swap" variant="outlined" disabled={leaving !== null} onClick={flip}>
-          <mdui-sym-swap-horiz slot="icon" />
+        </Button>
+        <Button data-testid="swipe-swap" variant="outline" isDisabled={leaving !== null} onPress={flip}>
+          <Sym name="swap_horiz" />
           翻面
-        </mdui-button>
-        {/* 「保留」沿用原来的绿色语义（MD3 规范里没有 success 色，用应用自补的令牌）。
-            filled 变体的底色取 --mdui-color-primary、文字取 --mdui-color-on-primary，
-            所以两个都要覆盖成绿色系。 */}
-        <mdui-button
+        </Button>
+        {/* 「保留」沿用原来的绿色语义（MD3 规范里只有 error，没有 success，
+            HeroUI 同样没有 success 变体）。这里覆盖 HeroUI 自己的按钮令牌
+     --button-bg / --button-fg —— 卡片内按钮改用自己的局部变量，
+            的做法，改的是同一层「按钮底色 / 文字色」变量。 */}
+        <Button
           data-testid="swipe-keep"
-          variant="filled"
-          disabled={leaving !== null}
-          onClick={() => commit('right')}
+          variant="primary"
+          isDisabled={leaving !== null}
+          onPress={() => commit('right')}
           style={
             {
-              '--mdui-color-primary': 'var(--app-color-success)',
-              '--mdui-color-on-primary': 'var(--app-color-on-success)',
+              '--button-bg': 'var(--success)',
+              '--button-fg': 'var(--success-foreground)',
+              '--button-bg-hover': 'var(--success)',
+              '--button-bg-pressed': 'var(--success)',
             } as CSSProperties
           }
         >
-          <mdui-sym-check slot="icon" />
+          <Sym name="check" />
           保留
-        </mdui-button>
+        </Button>
       </div>
       <div className="deck-status" data-testid="swipe-status">
         已审 <NumberPop text={judgedCount} /> · 待审 <NumberPop text={pending.length} /> · 已保留{' '}

@@ -1,87 +1,490 @@
-import { useEffect, useId, useRef, useState, useCallback } from 'react';
+import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import { useNavigate } from 'react-router-dom';
+import {
+  Button,
+  Chip,
+  Disclosure,
+  Dropdown,
+  Input,
+  TextArea,
+  ToggleButton,
+  ToggleButtonGroup,
+  Toolbar,
+  Tooltip,
+} from '@heroui/react';
 import { useAppNav } from '../components/appNav';
-import { useModelMetaRevision } from '../utils/useModelMeta';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
+import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
-import { StreamParagraph, ThinkLine, Collapse } from '../components/motion';
+import { StreamParagraph, ThinkLine } from '../components/motion';
+import ReasoningChain from '../components/ReasoningChain';
+import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
-import { hasThinkingDepth, supportsThinking } from '../api/modelCaps';
-import { catalogOf, useSettings } from '../store/settings';
-import { useCourseChat, type CourseChatMessage } from '../store/courseChat';
-import type { ReasoningEffort } from '../api/siliconflow';
-import { confirmDialog, PageShell, toast, useMduiEvent } from '../ui';
+import ContextUsageButton from '../components/ContextUsageButton';
+import { useCourseChat, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
+import { useSettings } from '../store/settings';
+import { estimateTokens } from '../harness/context';
+import { libraryAssistantSystemPrompt } from '../harness/libraryAssistant';
+import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
+import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../utils/chatExport';
+import { copyText } from '../utils/clipboard';
+import { extractChatSources, type ChatSource } from '../utils/chatSources';
+import { prefersReducedMotion } from '../utils/motion';
+import { confirmDialog, PageShell, promptDialog, Sym, toast, useSkeletonGate } from '../ui';
+import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
 
-const STARTERS = [
+/**
+ * 有课程时的快捷提问：全部围绕「问我的课程库」。
+ *
+ * 与通用那组的分野不是措辞，而是**依赖哪份数据** —— 这一组每一条都需要工具才能回答。
+ */
+const LIBRARY_STARTERS = [
   {
-    icon: <mdui-sym-local-fire-department />,
+    icon: <Sym name="local_fire_department" />,
     label: '推荐下一门课',
-    prompt: '根据我的课程库和学习进度，推荐我下一门最值得学的课程，并说明理由。',
+    prompt: '根据我的资料和学习进度，推荐我下一门最值得学的课程，并说明理由。',
   },
   {
-    icon: <mdui-sym-play-circle />,
+    icon: <Sym name="play_circle" />,
     label: '看看未完成课程',
     prompt: '列出我还没学完的课程，按完成进度从高到低整理，并建议先完成哪一门。',
   },
   {
-    icon: <mdui-sym-toc />,
+    icon: <Sym name="toc" />,
     label: '梳理课程主题',
-    prompt: '根据课程名称和已有内容，帮我梳理整个课程库覆盖了哪些主要主题。',
+    prompt: '根据课程名称和已有内容，帮我梳理整个资料库覆盖了哪些主要主题。',
   },
   {
-    icon: <mdui-sym-folder />,
-    label: '整理课程库目录',
-    prompt: '帮我把课程库目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
+    icon: <Sym name="folder" />,
+    label: '整理资料目录',
+    prompt: '帮我把资料目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
   },
 ] as const;
 
-function ReasoningBlock({ reasoning, active }: { reasoning: string; active: boolean }) {
-  const [open, setOpen] = useState(active);
-  const bodyId = useId();
-  useEffect(() => {
-    if (!active) setOpen(false);
-  }, [active]);
+/**
+ * 没有课程时的快捷提问：一条工具都不需要，纯通用能力。
+ *
+ * 旧实现在空库时只给一个「先去导入课程」按钮，等于告诉用户「不导入就没法用」。
+ * 实际助手本身能答任何问题，导入课程只是让它多一份可引用的依据 —— 所以这里给的是
+ * 能立刻用上的问题，导入课程降级成旁边一个次要入口。
+ */
+const GENERAL_STARTERS = [
+  {
+    icon: <Sym name="neurology" />,
+    label: '讲清一个概念',
+    prompt: '用通俗的语言给我讲清楚「注意力机制」是什么，配一个生活里的类比。',
+  },
+  {
+    icon: <Sym name="calendar_month" />,
+    label: '安排学习计划',
+    prompt: '我想在两周内入门机器学习，帮我排一个每天 1 小时的学习计划，标出每天的重点。',
+  },
+  {
+    icon: <Sym name="code" />,
+    label: '写一段代码',
+    prompt: '帮我写一个 TypeScript 的 LRU 缓存类，带完整类型标注，并讲清楚时间复杂度。',
+  },
+  {
+    icon: <Sym name="style" />,
+    label: '润色一段文字',
+    prompt: '我写了一段项目周报但读着很乱，帮我重写一版：更短、更结论先行、每条都有数字。',
+  },
+] as const;
+
+/**
+ * 一条消息下面的操作行。
+ *
+ * 只放**能真跑**的动作 —— 摆一个点了没反应的菜单项比不摆更伤信任
+ * （同一取舍见 `AppBarSearch` 的注释）。
+ *
+ * 三组动作按「这条消息是什么」分：
+ * - **复制**：两者都有；
+ * - **重试**：两者都有，但语义不同 —— 回答上是「接着写 / 重新生成」，提问上是
+ *   「重新回答这句话」（删掉这一问一答再重发，见 store 的 `retryMessage`）。
+ *   入口给两处是有意的：想换一次回答时，视线可能停在回答末尾，也可能停在自己刚打完的那句上；
+ * - **分支**：两者都有。从提问处分叉（换个问法再问）与从回答处分叉（沿这个方向往下走）
+ *   都是真实需求。
+ *
+ * 默认透明、鼠标移上来或键盘焦点进入才显形：长回答里每条下面都挂着四颗图标，
+ * 会把正文流切碎。触屏没有 hover，靠 CSS 的 `@media (hover: none)` 常显（见 course-chat.css）。
+ *
+ * **助手与用户的操作行排布不同**：助手没有气泡，操作行跟着正文左对齐、排在正文之下；
+ * 用户有气泡，操作行**挂在气泡外面**（另起一行、与气泡右缘对齐）—— 塞进气泡里的话，
+ * 悬停时那块底色会跟着长出一条图标行，把气泡本身的内容挤变形（见 course-chat.css）。
+ *
+ * 见 docs/plans/2026-10-15-流式续传与分支-design.md §4。
+ */
+function MessageActions({
+  content,
+  isUser,
+  busy,
+  canRetry,
+  retryHint,
+  onRetry,
+  onFork,
+  onExport,
+}: {
+  content: string;
+  /** 用户消息：复制 / 重试 / 分支三颗（重试是「重新回答这句话」，见 store 的 `retryMessage`）。
+   *  只有「更多」菜单（复制纯文本 / 导出会话）是助手专有。 */
+  isUser: boolean;
+  /** 生成中：分支与重试都不可用（库里还没有那条正在流的消息，切过去会缺一截） */
+  busy: boolean;
+  /** 这条消息能不能重试：提问要「它的回答就是最后一条」，回答要「中断过」或「是最后一条完整回答」 */
+  canRetry: boolean;
+  /** 重试键的 tooltip。两种语义（继续写 / 重新生成）必须说得不一样，否则用户不知道会得到什么 */
+  retryHint: string;
+  onRetry: () => void;
+  onFork: () => void;
+  onExport: () => void;
+}) {
+  const copy = (text: string, okMsg: string) => {
+    void (async () => {
+      const ok = await copyText(text);
+      if (ok) toast.success(okMsg);
+      else toast.error('复制失败：剪贴板不可用');
+    })();
+  };
+
+  /** 操作行里的一颗图标。外观 / 禁用 / tooltip 三样收在一处，免得四颗按钮各写一遍 */
+  const action = (
+    label: string,
+    icon: React.ReactNode,
+    onPress: () => void,
+    testId: string,
+    disabled = false,
+  ) => (
+    <Tooltip>
+      <Tooltip.Trigger>
+        <Button
+          isIconOnly
+          variant="tertiary"
+          size="sm"
+          className="course-chat__action"
+          aria-label={label}
+          isDisabled={disabled}
+          data-testid={testId}
+          onPress={onPress}
+        >
+          {icon}
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Content>
+        <p>{label}</p>
+      </Tooltip.Content>
+    </Tooltip>
+  );
+
+  const copyLabel = isUser ? '复制这条提问' : '复制这条回答';
+
   return (
-    <div className="course-chat__reason">
-      <button
-        type="button"
-        className="course-chat__reason-toggle"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((value) => !value)}
-      >
-        <mdui-sym-chevron-right className={open ? 'course-chat__reason-icon course-chat__reason-icon--open' : 'course-chat__reason-icon'} />
-        {active ? '思考中…' : '思考过程'}
-      </button>
-      <Collapse open={open} id={bodyId} innerClassName="course-chat__reason-body">
-        {reasoning}
-      </Collapse>
+    <div className="course-chat__actions" data-testid="chat-message-actions">
+      {action(
+        copyLabel,
+        <Sym name="content_copy" />,
+        () => copy(content, `已复制${isUser ? '这条提问' : '这条回答'}（Markdown）`),
+        'chat-copy-message',
+      )}
+
+      {/* 重试：中断过的回答是「接着写」，完整的最后一条是「重新生成」，
+          提问上则是「重新回答这句话」——
+          三种语义由调用方给出不同的说法（见 retryHint），一颗图标两种消息共用 */}
+      {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
+
+      {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
+
+      {!isUser && (
+        <Dropdown>
+          {/* ⚠️ 与 ModelPicker 同一个坑：Dropdown.Trigger 自己渲染 <button>，
+              里面不能再套 HeroUI 的 Button（会产出 `<button><button>`）。外观直接挂类名。 */}
+          <Dropdown.Trigger
+            className="course-chat__action"
+            aria-label="更多操作"
+            data-testid="chat-message-more"
+          >
+            <Sym name="more_horiz" />
+          </Dropdown.Trigger>
+          <Dropdown.Popover placement="bottom start">
+            <Dropdown.Menu
+              onAction={(key) => {
+                if (key === 'copy-plain') copy(markdownToPlainText(content), '已复制这条回答（纯文本）');
+                else if (key === 'export') onExport();
+              }}
+            >
+              <Dropdown.Item id="copy-plain" textValue="复制纯文本" data-testid="chat-copy-plain">
+                <span className="course-chat__menu-item">
+                  <Sym name="format_size" />
+                  复制纯文本
+                </span>
+              </Dropdown.Item>
+              <Dropdown.Item id="export" textValue="导出本次会话" data-testid="chat-export-session">
+                <span className="course-chat__menu-item">
+                  <Sym name="download" />
+                  导出本次会话
+                </span>
+              </Dropdown.Item>
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
+      )}
     </div>
   );
 }
 
 /**
- * 课程助手页。
+ * 「N 个来源」：这条回答引用了哪些课程、引到了哪一处，折叠在正文之后。
  *
- * 这个组件**刻意只剩视图职责**：会话、消息、流式中间态、悬着的提问/确认全在
+ * 数据是从回答正文里**解析**出来的（见 utils/chatSources.ts 的说明），不是新字段 ——
+ * 系统提示词本来就要求模型保留课程链接与时间戳。所以这里没有「模型没按格式写就为空」
+ * 之外的失败模式：解析不到就不渲染这一行。
+ */
+function SourceList({ sources }: { sources: ChatSource[] }) {
+  const navigate = useNavigate();
+  if (sources.length === 0) return null;
+
+  return (
+    <Disclosure className="course-chat__sources" data-testid="chat-sources">
+      <Disclosure.Heading>
+        <Disclosure.Trigger className="course-chat__sources-trigger" data-testid="chat-sources-trigger">
+          {sources.length} 个来源
+          {/* 指示箭头用 HeroUI 自带的（它按 data-expanded 自己翻转），
+              只把尺寸与颜色收进本页的类里 */}
+          <Disclosure.Indicator className="course-chat__sources-caret" />
+        </Disclosure.Trigger>
+      </Disclosure.Heading>
+      <Disclosure.Content>
+        <Disclosure.Body className="course-chat__sources-body">
+          {sources.map((source) => (
+            <div key={source.courseId} className="course-chat__source" data-testid="chat-source-item">
+              <a
+                className="course-chat__source-link"
+                href={`#/player/${encodeURIComponent(source.courseId)}`}
+                onClick={(event) => {
+                  // 与正文里的课程链接同一套跳转：HashRouter 拥有 hash，别让浏览器重新加载
+                  event.preventDefault();
+                  navigate(`/player/${source.courseId}`);
+                }}
+              >
+                <Sym name="play_circle" />
+                <span className="course-chat__source-name">{source.courseName}</span>
+              </a>
+              {source.refs.length > 0 && (
+                <span className="course-chat__source-refs">{source.refs.join(' · ')}</span>
+              )}
+            </div>
+          ))}
+        </Disclosure.Body>
+      </Disclosure.Content>
+    </Disclosure>
+  );
+}
+
+/**
+ * AI 助手页（默认首页）。
+ *
+ * **有课与没课是两种模式，不是两种权限**：没导入任何课程时它照样能回答问题，
+ * 只是答案来自通用知识而不是他的课程数据（模式切换见 harness/libraryAssistant.ts
+ * 的 `libraryAssistantTools` 与 `libraryAssistantSystemPrompt`）。所以这个页面
+ * 从不因为「库里是空的」而禁用输入框 —— 那样等于告诉用户「不导入就用不了」。
+ *
+ * 这个组件**刻意只剩视图职责**：会话，消息，流式中间态，悬着的提问/确认全在
  * `store/courseChat.ts`。原因是「切到别的页面再回来也要接着跑」——状态跟着路由走的话，
  * 离开页面就等于把正在生成的对话扔了（详见该 store 顶部的说明）。
+ *
+ * UI 为 HeroUI v3（Tailwind v4 + React Aria）：会话切换走 Select，输入走 TextArea，
+ * 深度档位走 ToggleButtonGroup，提示走全局 toast / confirmDialog。
  */
+/**
+ * 数课程期间的骨架：与「标题 + 说明 + 一排快捷提问」逐块对齐。
+ *
+ * 高度不是拍脑袋，是照抄上面 `.course-chat__empty h2` / `> p` / `.course-chat__starter`
+ * 三条真规则的口径（字号 × 行高、药丸 min-height 40px、starters 的 26px 上边距）——
+ * 骨架和内容对不齐的话，读到数据那一刻会整块跳一下，比不出骨架更糟。
+ */
+function CourseCountSkeleton() {
+  return (
+    <div className="course-chat__empty-skel" aria-hidden="true">
+      <div className="skel-bar course-chat__empty-skel__head" />
+      <div className="skel-bar course-chat__empty-skel__line" />
+      <div className="skel-bar course-chat__empty-skel__line course-chat__empty-skel__line--short" />
+      <div className="course-chat__empty-skel__starters">
+        {[0, 1, 2].map((i) => (
+          <div className="skel-bar course-chat__empty-skel__pill" key={i} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 流式尾巴：一颗**黑色圆点**，替掉 XMarkdown 默认的 `▋`。
+ *
+ * 落在哪：XMarkdown 会把 `<xmd-tail>` 插进 markdown AST 的**最后一个文本 token**
+ * 之后（见它 Parser 的 `configureTailInjection`）—— 也就是下一个字符将出现的位置。
+ * 圆点跟着文字一起长，眼睛不用去屏幕底部找「生成到哪了」。
+ *
+ * 为什么是圆点：默认的方块 `▋` 与文字笔画一样重，长文本里会读成一个错字；
+ * 竖线是终端传统，这个产品里没有对应物。圆点轻一档，闪一闪只表示
+ * 「这儿还在写」，不假装自己是内容。
+ *
+ * 颜色取 `--foreground`（浅色主题下就是黑）：深色主题里死黑会看不见，
+ * 而「跟文字同色的指示符」在任何主题里都成立 —— 用户要的「黑色圆形」
+ * 在默认浅色主题下正是这个 token 的值。
+ */
+function StreamTailCircle() {
+  return <span className="course-chat__stream-dot" data-testid="chat-stream-dot" aria-hidden="true" />;
+}
+
+/**
+ * 排队条：生成中投递、**还没交出去**的话。
+ *
+ * 三条设计（与 store 的三条不变量一一对应，见 courseChat.ts 文件头）：
+ *
+ * 1. **逐条可编辑**：排队的那几秒里用户常常后悔，能改就不必删了重打。
+ *    改成空白 = 删掉（与 store 的 `updateQueued` 同款语义，留一条永远发不出去的
+ *    空气泡没有意义）；
+ * 2. **逐条可插队**（闪电键）：`sendQueuedNow`。想提前说一条就说一条，
+ *    所以不需要拖拽排序 —— 桌面端 Codex 那套可拖拽队列在这里是过度设计；
+ * 3. **整条可清空**（右上角）：停止生成之后想彻底收手时用。
+ *
+ * 位置在输入卡**正上方**：它和输入框是同一件事的两种状态（「已经排上的」
+ * 与「正在打的」），分居两地会让用户以为队列是另一个功能区。
+ */
+function QueueBar({
+  items,
+  onEdit,
+  onRemove,
+  onSendNow,
+  onClear,
+}: {
+  items: QueuedMessage[];
+  onEdit: (id: string, text: string) => void;
+  onRemove: (id: string) => void;
+  onSendNow: (id: string) => void;
+  onClear: () => void;
+}) {
+  if (items.length === 0) return null;
+  return (
+    <div className="course-chat__queue" data-testid="chat-queue">
+      <div className="course-chat__queue-head">
+        <span className="course-chat__queue-label">
+          <Sym name="schedule" aria-hidden="true" />
+          排队中 · {items.length}
+        </span>
+        <Tooltip>
+          <Tooltip.Trigger>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              className="course-chat__queue-clear"
+              aria-label="清空排队"
+              data-testid="chat-queue-clear"
+              onPress={onClear}
+            >
+              <Sym name="delete" />
+            </Button>
+          </Tooltip.Trigger>
+          <Tooltip.Content>
+            <p>清空排队</p>
+          </Tooltip.Content>
+        </Tooltip>
+      </div>
+      <div className="course-chat__queue-list">
+        {items.map((item, index) => (
+          <div className="course-chat__queue-item" key={item.id} data-testid="chat-queue-item">
+            <span className="course-chat__queue-index" aria-hidden="true">
+              {index + 1}
+            </span>
+            <Input
+              className="course-chat__queue-input"
+              aria-label={`第 ${index + 1} 条排队消息`}
+              data-testid="chat-queue-input"
+              value={item.text}
+              onChange={(event) => onEdit(item.id, event.target.value)}
+            />
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
+                  className="course-chat__queue-btn"
+                  aria-label="立刻插入这条，不等这一轮答完"
+                  data-testid="chat-queue-send-now"
+                  onPress={() => onSendNow(item.id)}
+                >
+                  <Sym name="bolt" />
+                </Button>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>立刻插入这条，不等这一轮答完</p>
+              </Tooltip.Content>
+            </Tooltip>
+            <Tooltip>
+              <Tooltip.Trigger>
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
+                  className="course-chat__queue-btn"
+                  aria-label="删掉这条排队消息"
+                  data-testid="chat-queue-remove"
+                  onPress={() => onRemove(item.id)}
+                >
+                  <Sym name="close" />
+                </Button>
+              </Tooltip.Trigger>
+              <Tooltip.Content>
+                <p>删掉这条</p>
+              </Tooltip.Content>
+            </Tooltip>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/**
+ * 距底部多少像素以内算「贴底」。
+ *
+ * 不能写成 `=== 0`：字号、滚动条舍入、以及流式追加的那一帧都会留下零点几像素的
+ * 残差，严格等于 0 会让「贴底」永远判 false —— 按钮于是常驻，还跟着新内容一直冒。
+ * 24px 与 `ReasoningChain` 判「用户滚没滚」用的是同一把尺，两处的「贴底」别各算各的。
+ */
+const NEAR_BOTTOM_PX = 24;
+
 export default function CourseChat() {
   const navigate = useNavigate();
   const nav = useAppNav('chat');
   const listRef = useRef<HTMLDivElement | null>(null);
-
+  /**
+   * 消息流是否**粘**在底部：粘着时新内容自动跟到底，用户一旦自己往上滚就松开。
+   *
+   * 必须是 ref 而不是 state —— 它每次滚动都在变，挂 state 等于每滚一下重渲整棵消息树。
+   * 同 `ReasoningChain` 的 `stickRef`。
+   */
+  const stickRef = useRef(true);
+  /** 「回到底部」按钮。显隐直接写它的 `data-show`，理由同上：这只是 paint 提示，不 setState */
+  const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
+  /** 上一次见到的 scrollTop：用来判断这次到底是**用户往上滚**，还是我们自己在吸底 */
+  const lastTopRef = useRef(0);
   const ready = useCourseChat((s) => s.ready);
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
   const loaded = useCourseChat((s) => s.loaded);
   const messages = useCourseChat((s) => s.messages);
   const loading = useCourseChat((s) => s.loading);
+  /**
+   * 正在生成的会话 id（可能不止一条）。侧栏 Recent 行尾的 分支/归档/删除 据此
+   * **只禁那条在跑的**：别的会话在后台跑不影响你操作一条空闲会话。
+   */
+  const runningIds = useCourseChat((s) => s.runningIds);
   const draft = useCourseChat((s) => s.draft);
   const courseCount = useCourseChat((s) => s.courseCount);
   const skillIds = useCourseChat((s) => s.skillIds);
@@ -90,63 +493,147 @@ export default function CourseChat() {
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const planApplying = useCourseChat((s) => s.planApplying);
   const bootstrap = useCourseChat((s) => s.bootstrap);
+  const refreshCourseCount = useCourseChat((s) => s.refreshCourseCount);
   const loadSession = useCourseChat((s) => s.loadSession);
-  const createSession = useCourseChat((s) => s.createSession);
-  const deleteSession = useCourseChat((s) => s.deleteSession);
+  // 「新建会话」的入口不在本组件里：它落在侧栏导航项「新会话」（见 appNav.tsx），
+  // 由那一项直接调 store 的 `createSession` —— 这里订阅了也只是个没人读的变量。
+  // 顶栏那颗「新建对话」2026-10-15 随「设置 / 搜索 / 新建对话」整组被否掉。理由见 railFooter 那段注释。
+  // 「删当前会话」的 `deleteSession` 也已不再订阅：入口收进 Recent 行尾菜单后走 `deleteSessionById`。
+  const deleteSessionById = useCourseChat((s) => s.deleteSessionById);
+  const renameSession = useCourseChat((s) => s.renameSession);
+  const setPinned = useCourseChat((s) => s.setPinned);
+  const setArchived = useCourseChat((s) => s.setArchived);
   const setDraft = useCourseChat((s) => s.setDraft);
   const send = useCourseChat((s) => s.send);
   const setSkillIds = useCourseChat((s) => s.setSkillIds);
   const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
   const answerAsk = useCourseChat((s) => s.answerAsk);
   const stop = useCourseChat((s) => s.stop);
+  // ── 流式期间的输入（排队 / 插入）─────────────────────────────────────────
+  /** 还没交出去的话（生成中投递的队列）。只在内存里，见 store 文件头第 3 条不变量 */
+  const queued = useCourseChat((s) => s.queued);
+  /** 当前默认投递方式：Enter 用它，Ctrl/⌘+Enter 用另一种 */
+  const sendMode = useCourseChat((s) => s.sendMode);
+  const setSendMode = useCourseChat((s) => s.setSendMode);
+  const removeQueued = useCourseChat((s) => s.removeQueued);
+  const updateQueued = useCourseChat((s) => s.updateQueued);
+  const clearQueue = useCourseChat((s) => s.clearQueue);
+  const sendQueuedNow = useCourseChat((s) => s.sendQueuedNow);
   const confirmPlan = useCourseChat((s) => s.confirmPlan);
   const cancelPlan = useCourseChat((s) => s.cancelPlan);
-
-  const llmModel = useSettings((state) => state.llmModel);
-  // 思考能力按这家供应商的能力数据源查（同一模型 id 在别家可能不支持思考）
-  const llmCatalog = useSettings((state) => catalogOf(state, state.llmModel.providerId));
-  const thinking = useSettings((state) => state.thinkingEnabled);
-  const effort = useSettings((state) => state.thinkingEffort);
-  const updateSettings = useSettings((state) => state.update);
-
-  // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
-  useModelMetaRevision();
+  const retryMessage = useCourseChat((s) => s.retryMessage);
+  const forkSession = useCourseChat((s) => s.forkSession);
+  /** 上下文窗口（输入 + 输出的总容量）：用量环的分母，也是历史裁剪的预算来源 */
+  const ctxWin = useSettings((s) => s.contextWindow);
+  /**
+   * 本轮技能元数据清单（`- 名称：用途` 的单行块）。
+   *
+   * 用量环要把它算进系统提示词 —— 它跟着本轮一起发出去，不数的话用量会低估。
+   * 与 `send` 用的是同一个口子（`loadSessionSkillMeta` + `skillMetaBlock`），
+   * 这样环上的数字才与真正发出去的提示词对齐。技能是异步从库里读的，所以先进 state；
+   * `skillIds` 变了重取一次（清空范围则退回 `undefined` = 无技能段）。
+   */
+  const [skillBlock, setSkillBlock] = useState<string | undefined>(undefined);
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const metas = await loadSessionSkillMeta(skillIds);
+      if (!cancelled) setSkillBlock(metas.length > 0 ? skillMetaBlock(metas) : undefined);
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [skillIds]);
 
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
 
+  // 每次挂载都重新数一次课程：`courseCount` 是 bootstrap 时的快照，
+  // 而「去课程库导入 → 切回对话页」是这里的常规动线，刷新晚了空状态会一直停在
+  // 「先去导入课程」，哪怕库里已经有课了。
+  useEffect(() => {
+    void refreshCourseCount();
+  }, [refreshCourseCount]);
+
   useEffect(() => {
     if (ready && activeId != null && !loaded) void loadSession(activeId);
   }, [ready, activeId, loaded, loadSession]);
-
-  const sessionRef = useMduiEvent('mdui-select', 'change', (_event, element) => {
-    const id = Number(element.value);
-    if (Number.isFinite(id)) void loadSession(id);
-  });
-  const effortRef = useMduiEvent('mdui-segmented-button-group', 'change', (_event, element) =>
-    updateSettings({ thinkingEffort: element.value as ReasoningEffort }),
-  );
-  // 输入框的取值走 mdui 自己的 input 事件（而不是 React 的 onInput）：mdui-text-field 是
-  // 自定义元素，value 挂在组件实例上，从原生事件的 target 里读会读到内部的 textarea。
-  const composerRef = useMduiEvent('mdui-text-field', 'input', (_event, element) =>
-    setDraft(element.value),
-  );
 
   const onPlanConfirm = async () => {
     const result = await confirmPlan();
     if (result.error) toast.error(`整理方案执行失败：${result.error}`);
   };
 
-  const onDeleteSession = async () => {
+  /**
+   * 侧栏 Recent 行尾菜单的删除 —— **删除会话现在只有这一个入口**。
+   *
+   * 输入卡工具行原先那颗「删除当前会话」已被上下文用量环取代（2026-10-16）：
+   * 那颗键与发送键相距约 40px，是这一行里唯一的破坏性动作，收进最近菜单后
+   * 工具行不再需要为它留出「离设置远一点」的布局代价，也让「切哪条会话」
+   * 与「删哪条会话」始终落在同一处（Recent 的同一行）。
+   *
+   * 走确认框：删会话不可逆，而 Recent 的「更多」菜单**离「切会话」只差几个像素**
+   * —— 误点一次就没了，没有确认框的删除不该放在这种位置。
+   */
+  const onDeleteRecent = async (sessionId: number, title: string) => {
     const ok = await confirmDialog({
-      headline: '删除当前会话？',
-      description: '这段课程助手对话会被永久删除，课程和学习数据不会受影响。',
+      headline: '删除这条会话？',
+      description: `「${title}」会被永久删除，课程和学习数据不会受影响。`,
       confirmText: '删除',
       cancelText: '取消',
       danger: true,
     });
-    if (ok) await deleteSession();
+    if (ok) await deleteSessionById(sessionId);
+  };
+
+  /** 行尾菜单 → 重命名。空标题由 promptDialog 拦（它按「取消」处理，不 resolve 值） */
+  const onRenameRecent = async (sessionId: number, title: string) => {
+    const next = await promptDialog({
+      headline: '重命名会话',
+      description: '给这段对话起个名字，方便以后在 Recent 里认出来。',
+      defaultValue: title,
+      placeholder: '会话标题',
+      confirmText: '保存',
+      validate: (value) => (value.length > 60 ? '标题太长了，60 个字以内就行' : null),
+    });
+    if (next) await renameSession(sessionId, next);
+  };
+
+  /**
+   * 从一条消息分叉出新会话（对话里的「分支」）。
+   *
+   * 传 `rowId` 而不是 `message.key`：库里认的是行 id，而 `key` 是视图层的临时键
+   * （`stored-<id>` 只是它在历史回放时的形态）。
+   */
+  const onForkMessage = async (message: CourseChatMessage) => {
+    const id = activeId;
+    if (id == null || message.rowId == null) return;
+    const newId = await forkSession(id, message.rowId);
+    if (newId != null) toast.success('已从这条消息分支出新会话');
+  };
+
+  /** 行尾菜单 → 分支（整条会话复制一份）。返回 null = 被拒（生成中）或空会话 */
+  const onForkRecent = async (sessionId: number) => {
+    const newId = await forkSession(sessionId);
+    if (newId == null) toast.warning('这条会话还没有内容，无法分支');
+    else toast.success('已分支出新会话');
+  };
+
+  /**
+   * 行尾菜单 → 归档。
+   *
+   * 同样要确认框，但文案与删除不同：归档**可恢复**（设置 → 数据 → 已归档会话），
+   * 说成「会被永久删除」是在骗用户，于是一句话就把用户劝退了。
+   */
+  const onArchiveRecent = async (sessionId: number, title: string) => {
+    const ok = await confirmDialog({
+      headline: '归档这条会话？',
+      description: `「${title}」会从 Recent 里收起来，之后可以在「设置 → 数据 → 已归档会话」里找回来。`,
+      confirmText: '归档',
+      cancelText: '取消',
+    });
+    if (ok) await setArchived(sessionId, true);
   };
 
   const CourseLink = useCallback(
@@ -185,25 +672,209 @@ export default function CourseChat() {
     lastMessage?.ask ? `${lastMessage.ask.question}${lastMessage.ask.picked ?? ''}` : '',
     lastMessage?.folderPlan?.applied ?? '',
   ].join('|');
+  /**
+   * 切会话（含首帧落位）回到粘底。
+   *
+   * 新会话必须从**最新一条**看起，不能继承上一个会话「用户滚上去读过」的状态 ——
+   * 否则切过去会停在半空，而那颗回到底部的按钮还得自己冒出来提醒。
+   * 声明在下面的滚动效果**之前**：同一 commit 里先复位、再吸附。
+   */
+  useEffect(() => {
+    stickRef.current = true;
+    lastTopRef.current = 0;
+    if (jumpBtnRef.current) jumpBtnRef.current.dataset.show = 'false';
+  }, [activeId]);
+
+  /**
+   * 用户滚到哪，就更新「还粘不粘底」和按钮显隐。
+   *
+   * `scroll` 不冒泡，只能挂在滚动容器自己身上（同 `ReasoningChain`）。
+   *
+   * ⚠️ 判「粘不粘底」**不能只看 `scrollTop` 离底部多远**：流式追加时内容一帧能长几十像素，
+   * 我们自己那次吸底滚动的事件要等到事件循环稍后才派发，那时 `scrollHeight` 已经又长了一截，
+   * 「离底部 > 24px」照样成立 —— 于是每来一个 token 都误判成「用户滚上去了」，粘底随即松手，
+   * 流到一半就停在半空。真正说明用户**主动往上滚**的只有一件事：`scrollTop` 变小了
+   * （我们自己的吸底只会把它推到最大，内容增长则压根不动它）。所以这里按**方向**判。
+   *
+   * 显隐写 `data-show`（不在 JSX 里声明这个属性）而不是挂 state：它每滚一下都在变，
+   * 挂 state 会让整棵消息树跟着重渲。
+   */
+  useEffect(() => {
+    const element = listRef.current;
+    if (!element) return;
+    const onScroll = () => {
+      const top = element.scrollTop;
+      const distance = element.scrollHeight - element.clientHeight - top;
+      if (distance <= NEAR_BOTTOM_PX) stickRef.current = true;
+      else if (top < lastTopRef.current - 1) stickRef.current = false;
+      lastTopRef.current = top;
+      if (jumpBtnRef.current) jumpBtnRef.current.dataset.show = stickRef.current ? 'false' : 'true';
+    };
+    element.addEventListener('scroll', onScroll, { passive: true });
+    return () => element.removeEventListener('scroll', onScroll);
+  }, []);
+
+  /**
+   * 新消息 / 流式追加时滚到底部。
+   *
+   * 只在**还粘着底**时才跟：用户已经自己滚上去读历史了，每来一个 token 都把他拽回来
+   * 是纯打扰（这条原来写死了总是吸附，正是「回到底部」按钮需要存在的原因本身）。
+   * 松手之后由那颗按钮把人送回去。
+   */
   useEffect(() => {
     const id = requestAnimationFrame(() => {
       const element = listRef.current;
-      if (element) element.scrollTop = element.scrollHeight;
+      if (element && stickRef.current) element.scrollTop = element.scrollHeight;
     });
     return () => cancelAnimationFrame(id);
   }, [scrollSignal]);
 
-  const iconButton = (label: string, icon: React.ReactNode, onClick: () => void, disabled?: boolean) => (
-    <mdui-tooltip content={label}>
-      <mdui-button-icon aria-label={label} onClick={onClick} disabled={disabled}>
-        {icon}
-      </mdui-button-icon>
-    </mdui-tooltip>
+  /** 回到底部：重新粘底并滚到最新。尊重系统「减少动态效果」偏好 —— 那时直接跳过去 */
+  const jumpToLatest = () => {
+    const element = listRef.current;
+    if (!element) return;
+    stickRef.current = true;
+    element.scrollTo({
+      top: element.scrollHeight,
+      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
+    });
+  };
+
+  const iconButton = (
+    label: string,
+    icon: React.ReactNode,
+    onClick: () => void,
+    options: {
+      disabled?: boolean;
+      variant?: 'primary' | 'secondary' | 'tertiary';
+      testId?: string;
+      className?: string;
+    } = {},
+  ) => (
+    <Tooltip>
+      <Tooltip.Trigger>
+        <Button
+          isIconOnly
+          aria-label={label}
+          variant={options.variant ?? 'tertiary'}
+          size="sm"
+          isDisabled={options.disabled}
+          className={options.className}
+          data-testid={options.testId}
+          onPress={onClick}
+        >
+          {icon}
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Content>
+        <p>{label}</p>
+      </Tooltip.Content>
+    </Tooltip>
   );
 
-  const sessionReady = activeId != null && loaded;
-  /** 本轮循环是否还活着：决定两张卡能不能交互（刷新后从库里读回的卡是「死的」） */
+  /**
+   * 可以发消息了吗。
+   *
+   * 懒创建之后**不能**再带 `activeId != null`：草稿态（会话还没落库）是完全正常的状态，
+   * 用户就是在那儿发出第一条消息的。带上它的话草稿态的输入框与发送键永远是禁用的，
+   * 用户连第一条都发不出去 —— 这是本轮最容易踩、且症状最像「应用坏了」的一处。
+   */
+  const sessionReady = loaded;
+  /** 有没有课程可用：决定提示词、工具集与空状态走哪一套。null = 还在数 */
+  const hasCourses = (courseCount ?? 0) > 0;
+  /**
+   * 本轮上下文用量估算（系统提示词 + 历史 + 当前草稿），仅供工具行那枚环提示。
+   *
+   * 与 `store/courseChat` 的 `send` 同口径：系统提示词走 `libraryAssistantSystemPrompt`、
+   * 历史只算 `content`（reasoning / 工具回执都不随下一轮重发）、草稿按当前输入框内容算。
+   * 不做精确的分词计数，`estimateTokens` 本来就是「按字符量级的保守估值」——
+   * 环的作用是让用户看出「快满了」，不是报一个能被审计的账。
+   */
+  const ctxEst = useMemo(() => {
+    const system = estimateTokens(libraryAssistantSystemPrompt(skillBlock, contextCourses, hasCourses));
+    const history = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+    return system + history + estimateTokens(draft);
+  }, [skillBlock, contextCourses, hasCourses, messages, draft]);
+  /**
+   * 课程库还在数的期间要不要出骨架。
+   *
+   * 实测这一步是本机 IndexedDB 的 count，量级 1ms，所以正常情况下
+   * `courseCount == null` 只会存在一两帧 —— 这时**什么都不渲染**才是对的
+   * （原先那句「正在读取课程库…」反而把一次不可感知的等待变成了一次可见的闪动）。
+   * 只有真的慢（慢设备、主线程被长任务占住）才会越过阈值露出骨架。
+   *
+   * ## 「数不出来」的兜底
+   *
+   * `courseCount` 只可能由 `bootstrap()` / `refreshCourseCount()` 写入，两者都是
+   * `db.videos.count()` —— 读失败时它**永远停在 `null`**。只按「骨架 / 什么都不渲染」两档走，
+   * 那会让骨架永久停在屏幕上（或落成一屏空白），比原来「闪一下文案」严重得多。
+   * 所以再挂一道 3 秒的长门：越过它就认为这次计数没指望了，按「通用助手」那套渲染 ——
+   * 宁可退化成没课时的样子（用户至少还能用、还能点去导入），也不要一屏空白或一屏骨架。
+   */
+  const coursesStuck = useSkeletonGate(courseCount == null, { delayMs: 3000, minVisibleMs: 0 });
+  /** 真正出骨架的条件：还在数 **且** 没到「数不出来」的兜底线 */
+  const coursesLoading = useSkeletonGate(courseCount == null) && !coursesStuck;
+  /** 顶栏标题跟着当前会话走：标题栏写死「课程助手」的话，用户在 Recent 里切了会话，
+      顶栏毫无反应，分不清自己看的是哪一段对话。 */
+  const activeSession = sessions.find((session) => session.id === activeId);
+  /**
+   * 顶栏标题。
+   *
+   * 草稿态（`activeId == null`，会话还没落库）**留空**：顶栏标题这一栏回答的是
+   * 「我在看哪条会话」，草稿态还没有会话，写「新会话」等于给一行还没写下的东西起名。
+   * 用户口径（2026-10-16）：新会话默认**不在顶栏显示「新会话」**。
+   * 找不到行（不该发生）时仍然退回页面名，不编一个假标题。
+   */
+  const activeTitle = activeSession?.title ?? (activeId == null ? '' : 'AI 助手');
+  /**
+   * 本轮循环是否还活着（或卡片是否**从断点恢复**成了可答）：两张卡的 `active` 由
+   * `pendingAsk` / `pendingPlan` 的 `messageKey` 是否对上这条消息决定。刷新后从库里读回的卡
+   * 会被重新武装（`restored: true`），所以它**不是死的** —— 作答即从断点续跑，
+   * 见 docs/plans/2026-10-16-ask-user-resume-design.md。只有「旧数据没有检查点」或
+   * 「循环被中断」时，卡片才退化成只读。
+   */
   const loopAlive = pendingAsk != null || pendingPlan != null;
+
+  /**
+   * Recent 的展示顺序：**置顶的在前**，组内保持 store 给的 `createdAt` 升序（旧 → 新）。
+   *
+   * 排序只在展示层做，**不去改 store 里的 `sessions`**：那边有两条逻辑拿
+   * `sessions[sessions.length - 1]` 当「最新的那条会话」（bootstrap 的默认选中、
+   * 删完之后的落脚点），一换序这两处就会跳到错的会话上。
+   *
+   * 已归档的会话**不进 Recent**（store 的 `sessions` 里本来就没有它们，
+   * 这里不再重复过滤 —— 归档项的落脚点是设置 → 数据 → 已归档会话）。
+   */
+  const recentSessions = useMemo(
+    () => (sessions.some((s) => s.pinned) ? [...sessions].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)) : sessions),
+    [sessions],
+  );
+
+  /**
+   * 导出整个会话为 .md。
+   *
+   * 课程名传「课程库」而不是某门课：这个会话是**跨课程**的（助手自己挑上下文），
+   * 写死成当前选中的那门课会在文件头留下一句假话。
+   */
+  const exportSession = () => {
+    if (messages.length === 0) return void toast.info('当前会话还没有内容');
+    const markdown = buildSessionMarkdown({
+      title: activeSession?.title ?? '新会话',
+      videoName: '资料',
+      messages: messages.map((message) => ({
+        role: message.role === 'user' ? ('user' as const) : ('assistant' as const),
+        content: message.content,
+        reasoning: message.reasoning,
+      })),
+    });
+    const url = URL.createObjectURL(new Blob([markdown], { type: 'text/markdown;charset=utf-8' }));
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = exportFileName('资料', activeSession?.title ?? '新会话');
+    anchor.click();
+    URL.revokeObjectURL(url);
+    toast.success('已导出 Markdown 文件');
+  };
 
   const renderCards = (message: CourseChatMessage) => (
     <>
@@ -211,16 +882,15 @@ export default function CourseChat() {
         <AskCard
           ask={message.ask}
           active={pendingAsk?.messageKey === message.key}
+          restored={pendingAsk?.messageKey === message.key && !!pendingAsk?.restored}
           onPick={(option) => void answerAsk(option)}
-          // 「我自己说」只做一件事：把输入框交给用户。打字回车时 `send` 会把它
-          // 当作这次提问的回答（见 store 里的 pendingAsk 分支），不会新起一轮。
-          onCustom={() => composerRef.current?.focus()}
         />
       )}
       {message.folderPlan && (
         <FolderPlanCard
           plan={message.folderPlan}
           active={pendingPlan?.messageKey === message.key}
+          restored={pendingPlan?.messageKey === message.key && !!pendingPlan?.restored}
           busy={planApplying && pendingPlan?.messageKey === message.key}
           onConfirm={() => void onPlanConfirm()}
           onCancel={() => void cancelPlan()}
@@ -229,153 +899,260 @@ export default function CourseChat() {
     </>
   );
 
+  /**
+   * 输入卡下面的提示行。
+   *
+   * 生成中它改说**当前模式**：Enter 与 Ctrl/⌘+Enter 各走到哪条路，是这一时期
+   * 用户唯一需要记住的按键知识，而 tooltip 要 hover 才看得见。其余时候保持原来的
+   * 免责声明（别在非生成期占着这行说按键）。
+   */
+  const composerNote = (() => {
+    if (loading && !pendingAsk) {
+      const queueHint = queued.length > 0 ? ` · 已排 ${queued.length} 条` : '';
+      return sendMode === 'queue'
+        ? `Enter 排队，答完这轮自动发下一条 · Ctrl/⌘+Enter 立刻插入并打断${queueHint}`
+        : `Enter 立刻插入，打断这轮换个问法 · Ctrl/⌘+Enter 改成排队${queueHint}`;
+    }
+    // 提问卡悬着时队列发不出去（drainQueue 让位给 pendingAsk，见 store 第 2 条不变量），
+    // 这时也要说清队列还在，否则用户以为话已经排上了却半天没动静
+    if (queued.length > 0) return `已排 ${queued.length} 条，这一轮结束后接着发`;
+    return hasCourses
+      ? 'AI 会结合课程数据与所选技能回答，请核对引用来源。'
+      : 'AI 可能答错，重要信息请自行核对。导入课程后回答会更贴合你的学习内容。';
+  })();
+
   return (
     <PageShell
-      title="课程助手"
+      title={activeTitle}
       fill
       rootClassName="page-course-chat"
-      rail={nav.rail}
-      bottomNav={nav.bottom}
+      rail={nav}
+      /* 侧栏顶部**没有身份块**：上一版按 showcase 截图恢复过一块
+         「网课学习助手 / 本机课程库 · N 门课程」，被用户当场否掉（2026-10-14 同日修订）。
+         这块位置现在直接是主导航 —— 见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */
+      recent={{
+        label: 'Recent',
+        // 「新建对话」不再混在 Recent 里当伪项：它是**动作**不是历史记录，
+        // 混在一起的代价是 Recent 列表的每一行语义都不一样（点标题切会话、点最后一行新建），
+        // 而 ListBox 的选中态也没法表达它。它现在的家是侧栏首项「新会话」
+        // （那些位置试过顶栏、也试过混进本列表，见 appNav.tsx 与设计文档 §七）。
+        items: recentSessions.map((session) => ({
+          id: String(session.id),
+          label: session.title,
+          active: session.id === activeId,
+          /**
+           * 生成中**也能切会话**（2026-10-16）：正在跑的那一轮绑在它自己的会话上，切走会 park
+           * 它的视图、循环照旧在后台写，切回来看得到仍在流式的回答 —— 见 store 的 `loadSession`。
+           * 旧实现这里判 `!loading`，于是「等它答，先去看另一条」点了没反应。
+           */
+          onClick: () => {
+            const id = session.id;
+            if (id != null) void loadSession(id);
+          },
+          testId: `chat-recent-${session.id}`,
+          /**
+           * 行尾菜单的五个动作。顺序按「改动量从小到大」排，最后是破坏性的删除 ——
+           * 菜单里的**最后一项是破坏性动作**是通例，让误触时手指落在无害动作上。
+           *
+           * 禁用规则：重命名 / 置顶**任何时候都允许**（只改标题与排序位，不碰消息）；
+           * 分支 / 归档 / 删除都要读库里的消息行，而**这条会话**在生成时那条回答还没落库，
+           * 复制/删除会缺一截 —— 所以只禁**正在跑的那条**（`runningIds`），
+           * 而不是一有生成就整列变灰。按钮变灰比点了没反应更早说清楚。
+           */
+          menu: [
+            {
+              key: 'rename',
+              label: '重命名',
+              icon: <Sym name="edit" />,
+              onAction: () => void onRenameRecent(session.id!, session.title),
+            },
+            {
+              key: 'pin',
+              label: session.pinned ? '取消置顶' : '置顶',
+              icon: <Sym name={session.pinned ? 'pin_off' : 'pin'} />,
+              onAction: () => void setPinned(session.id!, !session.pinned),
+            },
+            {
+              // 分支排在归档之前：它**不是破坏性动作**，该离删除远一点
+              key: 'fork',
+              label: '分支出新会话',
+              icon: <Sym name="fork" />,
+              isDisabled: runningIds.includes(session.id!),
+              onAction: () => void onForkRecent(session.id!),
+            },
+            {
+              key: 'archive',
+              label: '归档',
+              icon: <Sym name="archive" />,
+              isDisabled: runningIds.includes(session.id!),
+              onAction: () => void onArchiveRecent(session.id!, session.title),
+            },
+            {
+              key: 'delete',
+              label: '删除',
+              icon: <Sym name="delete" />,
+              danger: true,
+              isDisabled: runningIds.includes(session.id!),
+              onAction: () => void onDeleteRecent(session.id!, session.title),
+            },
+          ],
+          // 删除同样只禁这条在跑的（见上）。`onDelete` 还兼着 Delete / Backspace 快捷键的判据：
+          // 行尾按钮 Tab 走不到，键盘用户只能靠它。
+          onDelete: () => void onDeleteRecent(session.id!, session.title),
+          deleteLabel: `删除会话 ${session.title}`,
+          deleteTestId: `chat-recent-delete-${session.id}`,
+          deleteDisabled: runningIds.includes(session.id!),
+        })),
+      }}
+      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      /* 顶栏右侧**一个控件都不留**（2026-10-15 修订）：原来的「设置 / 搜索 / 新建对话」
+         被用户整组否掉，所以这里连 `actions` 都不传（`PageShell` 不渲染那一栏，
+         标题右侧就是留白）。
+         「新建会话」2026-10-15 二轮在**侧栏导航项**上回来了（首项「新会话」，
+         见 components/appNav.tsx）：懒创建之后它是零成本动作 —— 切草稿态既不落库
+         也不产生垃圾，所以不必再挤进顶栏。侧栏 Recent 里那个伪项仍然不恢复：
+         它是**动作**不是历史记录，混进列表会让每一行的语义都不一样，而 ListBox
+         的选中态也表达不了它。
+         设置入口没丢：侧栏底部的 `railFooter`（窄屏在抽屉里）仍然是入口。 */
     >
       <div className="course-chat" data-testid="course-chat-page">
-        <section className="course-chat__main" aria-label="课程助手聊天">
-          <div className="course-chat__toolbar" role="group" aria-label="会话与回答设置">
-            <mdui-select
-              ref={sessionRef}
-              className="course-chat__session-select"
-              value={activeId != null ? String(activeId) : undefined}
-              // 生成中禁用：切会话会把正在流的那条消息换成库里读回来的版本（库里还没有它）
-              disabled={loading}
-              aria-label="切换会话"
-            >
-              {sessions.map((session) => (
-                <mdui-menu-item key={session.id} value={String(session.id)}>
-                  {session.title}
-                </mdui-menu-item>
-              ))}
-            </mdui-select>
-            {iconButton('新开会话', <mdui-sym-add />, () => void createSession(), loading)}
-            <span className="course-chat__delete-action">
-              {iconButton('删除当前会话', <mdui-sym-delete />, () => void onDeleteSession(), loading)}
-            </span>
-            <span className="course-chat__toolbar-divider" aria-hidden="true" />
-            <ModelPicker slot="chat" field="llmModel" />
-            <SkillPicker value={skillIds} onChange={setSkillIds} />
-            {supportsThinking(llmCatalog, llmModel.model) && (
-              <mdui-tooltip content={thinking ? '关闭思考' : '开启思考'}>
-                <mdui-button-icon
-                  aria-label={thinking ? '关闭思考' : '开启思考'}
-                  aria-pressed={thinking}
-                  variant={thinking ? 'tonal' : 'standard'}
-                  onClick={() => updateSettings({ thinkingEnabled: !thinking })}
-                >
-                  <mdui-sym-lightbulb />
-                </mdui-button-icon>
-              </mdui-tooltip>
-            )}
-            {/* 深度控件只在模型**声明了**档位或预算区间时出现：只有开关的模型
-              （Qwen3.5 系、部分 DeepSeek）给不出深度，给个装饰性旋钮反而是骗人 */}
-            {supportsThinking(llmCatalog, llmModel.model) &&
-              thinking &&
-              hasThinkingDepth(llmCatalog, llmModel.model) && (
-              <span className="course-chat__effort-field">
-                <span className="course-chat__effort-label">思考深度</span>
-                <mdui-segmented-button-group ref={effortRef} selects="single" value={effort} className="course-chat__effort" aria-label="思考深度">
-                  <mdui-segmented-button value="low">低</mdui-segmented-button>
-                  <mdui-segmented-button value="high">高</mdui-segmented-button>
-                  <mdui-segmented-button value="max">最大</mdui-segmented-button>
-                </mdui-segmented-button-group>
-              </span>
-            )}
-          </div>
-
+        <section className="course-chat__main" aria-label="AI 助手聊天">
           {/* 只在助手**真的选定**了课程时才出现这条信息栏：没有选中时一行字都是废话
               （曾经那里写着「助手自动选择」，说的就是「这里本来是空的」）。 */}
           {contextCourses.length > 0 && (
             <div className="course-chat__context" data-testid="course-chat-context">
               <span className="course-chat__context-label">
-                <mdui-sym-toc aria-hidden="true" />
+                <Sym name="toc" aria-hidden="true" />
                 课程上下文
               </span>
               <div className="course-chat__context-chips">
                 {contextCourses.map((course) => (
-                  <span className="course-chat__context-chip" key={course.id} title={course.name}>
+                  <Chip key={course.id} className="course-chat__context-chip" variant="secondary" size="sm">
                     {course.name}
-                  </span>
+                  </Chip>
                 ))}
               </div>
-              <mdui-tooltip content="清除课程上下文，恢复自动选择">
-                <mdui-button-icon
-                  className="course-chat__context-reset"
-                  aria-label="恢复自动选择课程"
-                  onClick={clearCourseContext}
-                  disabled={loading}
-                >
-                  <mdui-sym-refresh />
-                </mdui-button-icon>
-              </mdui-tooltip>
+              {iconButton('恢复自动选择课程', <Sym name="refresh" />, clearCourseContext, {
+                disabled: loading,
+                testId: 'chat-context-reset',
+              })}
             </div>
           )}
 
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
             {messages.length === 0 && (
               <div className="course-chat__empty">
-                <div className="course-chat__empty-mark" aria-hidden="true">
-                  <mdui-sym-forum />
-                </div>
-                <h2>问你的整个课程库</h2>
-                <p>
-                  我会先判断问题对应哪些课程，再读取相关内容；需要时也会调用当前会话允许的技能。
-                </p>
-                {courseCount == null ? (
-                  <div className="course-chat__empty-loading">正在读取课程库…</div>
-                ) : courseCount === 0 ? (
-                  <button type="button" className="course-chat__import" onClick={() => navigate('/')}>
-                    <mdui-sym-add />
-                    先去导入课程
-                  </button>
-                ) : (
-                  <div className="course-chat__starters" aria-label="快捷提问">
-                    {STARTERS.map((starter) => (
-                      <button
-                        key={starter.label}
-                        type="button"
-                        className="course-chat__starter"
-                        onClick={() => void send(starter.prompt)}
-                        disabled={loading || !sessionReady}
+                {/* 空态里的标题、说明与快捷提问**都取决于库里有没有课**，
+                    所以在 `courseCount` 到手之前一个字都不能写死 ——
+                    写死的话先显示「有什么想聊的？」再翻成「问你的整个课程库」，
+                    用户看到的是一次文案闪变（原先那句「正在读取课程库…」就是这个问题的补丁，
+                    但补丁本身也会闪）。
+
+                    三档：等超过阈值 → 出骨架；还在 200ms 宽限内 → 什么都不渲染；
+                    读到了 → 真正的空态。另有 3 秒的超时兜底（`coursesStuck`），
+                    免得「数不出来」变成一屏永久空白。 */}
+                {coursesLoading ? (
+                  <CourseCountSkeleton />
+                ) : courseCount == null && !coursesStuck ? null : (
+                  <>
+                    <h2>{hasCourses ? '问你的全部资料' : '有什么想聊的？'}</h2>
+                    {/* 有课程时**不写解释句**（2026-10-16 用户口径）：
+                        原来那句「我会先判断问题对应哪些课程……」被整句去掉，
+                        空态直接是标题 + 快捷提问。无课程时才留一句兜底说明。 */}
+                    {!hasCourses && (
+                      <p>我可以直接回答任何问题。导入课程之后，我还能结合你课程里的字幕、讲义和进度作答。</p>
+                    )}
+                    <div className="course-chat__starters" aria-label="快捷提问">
+                      {(hasCourses ? LIBRARY_STARTERS : GENERAL_STARTERS).map((starter) => (
+                        <Button
+                          key={starter.label}
+                          variant="secondary"
+                          className="course-chat__starter"
+                          data-testid={`chat-starter-${starter.label}`}
+                          onPress={() => void send(starter.prompt)}
+                          isDisabled={loading || !sessionReady}
+                        >
+                          <span className="course-chat__starter-icon" aria-hidden="true">
+                            {starter.icon}
+                          </span>
+                          <span className="course-chat__starter-label">{starter.label}</span>
+                          <Sym name="chevron_right" aria-hidden="true" />
+                        </Button>
+                      ))}
+                    </div>
+                    {/* 导入入口从「唯一的出路」降级成「可选的增强」。空库时它是主按钮
+                        （那时库里确实没东西），有库时它只是标题下的一行小字。 */}
+                    {!hasCourses && (
+                      <Button
+                        className="course-chat__import"
+                        variant="tertiary"
+                        size="sm"
+                        onPress={() => navigate('/library')}
+                        data-testid="chat-go-import"
                       >
-                        <span aria-hidden="true">{starter.icon}</span>
-                        <span>{starter.label}</span>
-                        <mdui-sym-chevron-right aria-hidden="true" />
-                      </button>
-                    ))}
-                  </div>
+                        <Sym name="add" />
+                        导入课程，让回答有据可依
+                      </Button>
+                    )}
+                  </>
                 )}
               </div>
             )}
 
-            {messages.map((message) => {
+            {messages.map((message, index) => {
               const user = message.role === 'user';
+              /**
+               * 「重新生成」只对**最后一条**完整回答成立：改历史中间的一步要用「分支」
+               * （删掉它后面所有消息是一次不可见的批量删除，用户会看到一条会话凭空少一段）。
+               * 判据与 store 的 `retryMessage` 一致，两边都挡一道。
+               */
+              const canRetry = !!message.interrupted || index === messages.length - 1;
+              /**
+               * 提问上的「重试」= 重新回答这句话，所以它只在**这条提问的答复就是最后一条**时成立
+               * （提问后面必须紧跟一条回答，且那条回答在末尾）。判据与 store 的 `retryMessage` 一致，
+               * 两边都挡一道。
+               */
+              const canRetryAsk =
+                user && messages[index + 1]?.role === 'ai' && index === messages.length - 2;
               return (
                 <article
                   key={message.key}
-                  className={user ? 'course-chat__message course-chat__message--user' : 'course-chat__message course-chat__message--ai'}
+                  className={
+                    user
+                      ? 'course-chat__message course-chat__message--user'
+                      : 'course-chat__message course-chat__message--ai'
+                  }
                   data-error={message.error ? 'true' : undefined}
                 >
-                  {!user && (
-                    <span className="course-chat__avatar" aria-hidden="true">
-                      <mdui-sym-forum filled />
-                    </span>
-                  )}
-                  <div className={user ? 'course-chat__bubble course-chat__bubble--user' : 'course-chat__bubble course-chat__bubble--ai'}>
+                  {/* AI 侧不挂头像气泡：showcase 里助手的回答是**直接铺在正文流里**的，
+                      加一个头像就把每条回答切成了「卡片」，长回答读起来很累。 */}
+                  <div
+                    className={
+                      user ? 'course-chat__bubble course-chat__bubble--user' : 'course-chat__bubble course-chat__bubble--ai'
+                    }
+                  >
                     {user ? (
                       message.content
-                    ) : message.hint && !message.content && !message.ask && !message.folderPlan ? (
-                      <ThinkLine text={message.hint} />
                     ) : (
                       <>
+                        {/* 思考链与工具链都是**过程记录**，独立于正文渲染。
+                            此前「有 hint 就整块换成 ThinkLine」，于是模型一调工具
+                            （hint 被设上）思考链就消失、跑完又冒出来 —— 一块内容闪两次。 */}
                         {message.reasoning && (
-                          <ReasoningBlock reasoning={message.reasoning} active={!!message.streaming && !message.content} />
+                          <ReasoningChain
+                            reasoning={message.reasoning}
+                            active={!!message.streaming && !message.content}
+                            since={message.reasoningStartedAt}
+                            elapsedMs={message.reasoningMs}
+                          />
+                        )}
+                        {message.tools && (
+                          <ToolTrace calls={message.tools} running={!!message.streaming} />
+                        )}
+                        {/* 状态行只在「还没有卡片要用户处理」时出现：提问卡挂着的时候，
+                            卡片本身就是「等你」的提示，再叠一行转圈的「等你选一个…」是重复 */}
+                        {message.hint && !message.content && !message.ask && !message.folderPlan && (
+                          <ThinkLine text={message.hint} />
                         )}
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
@@ -389,70 +1166,281 @@ export default function CourseChat() {
                               p: StreamParagraph,
                               code: MarkdownCode,
                               pre: MarkdownPre,
+                              table: MarkdownTable,
                             }}
-                            streaming={{ hasNextChunk: !!message.streaming, tail: !!message.streaming }}
+                            streaming={{
+                              hasNextChunk: !!message.streaming,
+                              /**
+                               * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
+                               * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
+                               * 文字一起长，正好落在下一个字符将出现的位置。
+                               *
+                               * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
+                               * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
+                               * 这里传 `false` 就是显式关掉。
+                               */
+                              tail: message.streaming ? { component: StreamTailCircle } : false,
+                            }}
                           />
+                        )}
+                        {/* 操作行与来源都只在**这一轮写完**之后出现：流式进行中时正文还在变，
+                            这两个块的计数与内容每一帧都不一样，闪得人没法读。 */}
+                        {/* 中断提示条。正文里**不嵌**「回答中断：xxx」那句（与「已停止生成」
+                            不同）—— 这半截内容要能当 assistant 前缀发给模型接着写，
+                            正文里夹一句系统口吻的说明会污染它。中断由这条提示条表达。 */}
+                        {!message.streaming && message.interrupted && (
+                          <div className="course-chat__interrupted" data-testid="chat-interrupted">
+                            <Sym name="warning" />
+                            <span className="course-chat__interrupted-text">
+                              这条回答写到一半被中断了
+                              {message.interruptReason ? `：${message.interruptReason}` : ''}
+                            </span>
+                            {/* 提示条里直接给入口，不指望用户去 hover 找那颗重试图标 ——
+                                中断是一个「需要你现在决定」的状态，不该藏在悬停里 */}
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="course-chat__interrupted-continue"
+                              data-testid="chat-continue"
+                              isDisabled={loading}
+                              onPress={() => void retryMessage(message.key)}
+                            >
+                              继续写
+                            </Button>
+                          </div>
+                        )}
+                        {!message.streaming && message.content && message.rowId != null && (
+                          <MessageActions
+                            content={message.content}
+                            isUser={false}
+                            busy={loading}
+                            canRetry={canRetry}
+                            /* 两种语义必须说得不一样，否则用户不知道点下去会得到什么 */
+                            retryHint={message.interrupted ? '接着写（从断点继续，不重复已写内容）' : '重新生成这条回答'}
+                            onRetry={() => void retryMessage(message.key)}
+                            onFork={() => void onForkMessage(message)}
+                            onExport={exportSession}
+                          />
+                        )}
+                        {!message.streaming && message.content && (
+                          <SourceList sources={extractChatSources(message.content)} />
                         )}
                       </>
                     )}
                   </div>
+
+                  {/* 提问的操作行**挂在气泡外面**（另起一行、右对齐）—— 复制这条提问 / 重新回答这句话 /
+                      从这条提问分叉。塞回气泡里的话，悬停时那块底色会多长出一条图标行，
+                      气泡本身跟着变形（见 MessageActions 的注释）。
+                      还没落库的消息没有行可复制、也没有可重发的行，所以不显示。 */}
+                  {user && !message.streaming && message.rowId != null && (
+                    <MessageActions
+                      content={message.content}
+                      isUser
+                      busy={loading}
+                      canRetry={canRetryAsk}
+                      retryHint="重新回答这句话（删掉这一问一答，用同样的问题重跑一次）"
+                      onRetry={() => void retryMessage(message.key)}
+                      onFork={() => void onForkMessage(message)}
+                      onExport={exportSession}
+                    />
+                  )}
                 </article>
               );
             })}
           </div>
 
+          {/* 悬浮输入区：排队条（有队列时才出现）+ HeroUI 的 TextArea + Toolbar 组合。
+              showcase 之所以把工具收在框内右下，是因为「正在写什么」和「能做什么」
+              必须始终在同一块里 —— 分成两条横栏会让人来回找发送键在哪。
+
+              **回答设置全在这一行里**（模型 chip / 技能范围）：它们改的都是
+              「这条问题怎么答」，与输入框同框才不用来回找。思考开关与思考深度
+              也算回答设置，只是收在模型 chip 弹出的面板里（见 Toolbar 上方那段注释）。
+              它们原先在消息区上方单独一条浮条里，那条横栏把「设置」和「消息」切成两段，
+              而设置既不属于某条消息，也不该占着消息区顶部最贵的一行 —— 见
+              docs/plans/2026-10-14-对话页改版-design.md §2.4。
+
+              顺序有讲究：设置靠左、动作靠右。右端是**发送键**；它左边那颗是
+              **上下文用量环**（只读），靠 `margin-left: auto` 把两者一起顶到最右端。
+              删除会话原在这条环的位置（破坏性动作，离设置越远越好认），
+              2026-10-16 起收进侧栏 Recent 的行尾菜单 —— 那里「切哪条」与「删哪条」
+              落在同一行，比挤在发送键旁边更好认，也去掉了这颗键的误触风险。
+
+              这一行平时是三组控件（模型 / 技能 / 发送）+ 一枚用量环，比原先少三组：
+              思考开关与思考深度收进了模型 chip 的弹层、删除会话移去了侧栏（同上）。
+              **生成中再多出两组**：设置组末尾长出「排队 / 插入」切换，动作组里
+              停止键与发送键并存（2026-10-16 流式期间输入，见 store 文件头与
+              docs/plans/2026-10-16-流式期间输入-design.md）。*/}
           <div className="course-chat__composer-wrap">
+            {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
+                默认隐藏，显隐由消息流的 scroll 监听直接写 `data-show`（见组件里的
+                onScroll）—— 它每滚一下都在变，不挂 state、不带动整棵消息树重渲。
+                不放进 JSX 声明 `data-show`：让 React 完全不碰这个属性，滚动时写的值
+                才不会被下一次重渲抹掉。 */}
+            <button
+              type="button"
+              ref={jumpBtnRef}
+              className="course-chat__scroll-bottom"
+              data-testid="chat-scroll-bottom"
+              aria-label="回到底部"
+              onClick={jumpToLatest}
+            >
+              <Sym name="arrow_downward" />
+            </button>
+            {/* 排队条与输入卡同框、压在它正上方：两者是同一件事的两种状态
+                （「已经排上的」与「正在打的」），分居两地会让用户以为队列
+                是另一个功能区。队列为空时整条不渲染。 */}
+            <QueueBar
+              items={queued}
+              onEdit={updateQueued}
+              onRemove={removeQueued}
+              onSendNow={(id) => void sendQueuedNow(id)}
+              onClear={clearQueue}
+            />
             <div className="course-chat__composer">
-              <mdui-text-field
-                ref={composerRef}
+              <TextArea
                 className="course-chat__input"
-                variant="outlined"
-                rows={2}
+                aria-label="给 AI 助手发送消息"
+                rows={1}
+                fullWidth
                 value={draft}
-                disabled={!sessionReady || (loading && pendingAsk == null)}
+                onChange={(event) => setDraft(event.target.value)}
+                /**
+                 * **生成中不再禁用**（2026-10-16 修订）。
+                 *
+                 * 旧逻辑是 `disabled={!sessionReady || (loading && pendingAsk == null)}`：
+                 * 想补一句话只能先按停止，而停止会把已经写了一半的回答作废。
+                 * 用户真正的意图往往只是「等它答完，接着问下一句」—— 那条路现在是
+                 * **排队**（Enter），输入框全程可打。
+                 *
+                 * 唯一还禁用的是「历史没就绪」（`!sessionReady`）：那确实没东西可发。
+                 */
+                disabled={!sessionReady}
                 placeholder={
                   pendingAsk
                     ? '直接输入就是你的回答，回车确认'
-                    : '问课程、内容或学习进度，回车发送'
+                    : loading
+                      ? sendMode === 'queue'
+                        ? '说一句排队，答完这轮自动接着问…'
+                        : '说一句立刻插入，打断这轮换个问法…'
+                      : hasCourses
+                        ? '问课程，或直接说点别的…'
+                        : '想问点什么？'
                 }
-                aria-label="给课程助手发送消息"
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
                   event.preventDefault();
-                  void send(draft);
+                  /**
+                   * Enter = 当前模式（默认排队）；Ctrl/⌘+Enter = **另一种**。
+                   *
+                   * 与 Codex CLI 的 Enter/Tab 同构：两者都是「这一次怎么发」，
+                   * 不改默认值 —— 默认值由工具行上那颗切换钮管（`sendMode`）。
+                   * 没在生成中时 `mode` 传什么都一样（`send` 直接发），所以这里
+                   * 不需要再判一次 `loading`。
+                   */
+                  const override: SendMode | undefined =
+                    event.ctrlKey || event.metaKey ? (sendMode === 'queue' ? 'steer' : 'queue') : undefined;
+                  void send(draft, override);
                 }}
               />
-              {/* 生成中：发送按钮**变成**停止键，而不是并排加一个 ——
-                  输入框此时是禁用的，并排两个按钮会让人以为发送还能用。
-                  有提问卡悬着时例外：那时循环在等用户答，输入框必须留着。 */}
-              {loading && !pendingAsk ? (
-                <mdui-tooltip content="停止生成">
-                  <mdui-button-icon
-                    className="course-chat__send"
-                    aria-label="停止生成"
-                    variant="tonal"
-                    data-testid="chat-stop"
-                    onClick={stop}
+              {/* Toolbar 负责方向键在工具间循环 —— 键盘用户按 Tab 进输入框后，
+                  一次方向键就能落到工具行，不必再Tab 十几次穿过整条消息流。
+                  ⚠️ 里面的 ToggleButtonGroup 自己也是 Toolbar（RAC 的 useToolbar），
+                  但它的 onKeyDown 会 stopPropagation，所以方向键在档位里换档、
+                  不会同时把焦点甩出这一行 —— 嵌套是安全的，别拆。 */}
+              <Toolbar
+                className="course-chat__composer-tools"
+                aria-label="输入区工具"
+                orientation="horizontal"
+              >
+                {/* 模型 chip 那一格点开是张下拉面板：模型列表 + 思考开关 + 思考深度。
+                    后两者原先是工具行上的两颗独立控件（灯泡 icon + 横向滑块），
+                    但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——
+                    同一件事两个入口，用户得先想「思考深度是不是归模型管」才找得到。
+                    `showThinking` 把它们收进同一个面板，工具行因此只剩四个控件。 */}
+                <ModelPicker
+                  slot="chat"
+                  field="llmModel"
+                  variant="chip"
+                  showThinking
+                  thinkingDepthDisabled={loading}
+                />
+                <SkillPicker value={skillIds} onChange={setSkillIds} />
+                {/*
+                  生成中才出现的「排队 / 插入」切换：回答的是**这一轮答完之前，
+                  Enter 与发送键怎么投递**。它算回答设置（改的是「这话怎么发」），
+                  所以留在设置组里、紧挨破坏性动作之前 —— 离发送键最近的一颗设置。
+                  不生成时它没有意义（那时发出去就是立刻发），藏起来免得常驻占一行。
+                */}
+                {loading && !pendingAsk && (
+                  <ToggleButtonGroup
+                    className="course-chat__send-mode"
+                    selectionMode="single"
+                    disallowEmptySelection
+                    size="sm"
+                    aria-label="流式期间的投递方式"
+                    selectedKeys={[sendMode]}
+                    onSelectionChange={(keys) => {
+                      const next = [...keys][0];
+                      if (next) setSendMode(next as SendMode);
+                    }}
                   >
-                    <mdui-sym-stop />
-                  </mdui-button-icon>
-                </mdui-tooltip>
-              ) : (
-                <mdui-tooltip content={pendingAsk ? '确认这个回答' : '发送'}>
-                  <mdui-button-icon
-                    className="course-chat__send"
-                    aria-label={pendingAsk ? '确认这个回答' : '发送'}
-                    variant="filled"
-                    loading={loading}
-                    disabled={!sessionReady || !draft.trim() || (loading && pendingAsk == null)}
-                    onClick={() => void send(draft)}
-                  >
-                    <mdui-sym-send />
-                  </mdui-button-icon>
-                </mdui-tooltip>
-              )}
+                    <ToggleButton id="queue" data-testid="chat-send-mode-queue">
+                      排队
+                    </ToggleButton>
+                    <ToggleButton id="steer" data-testid="chat-send-mode-steer">
+                      插入
+                    </ToggleButton>
+                  </ToggleButtonGroup>
+                )}
+                {/* 外面这层 span 不只是分组：`margin-left: auto` 得挂在**工具行的直接
+                    子节点**上才生效（它把用量环与发送键一起顶到右端）。
+                    环本身只读、不可点，删除会话已收进侧栏 Recent 的行尾菜单。 */}
+                <span className="course-chat__context-usage-slot">
+                  <ContextUsageButton tokens={ctxEst} windowTokens={ctxWin} testId="chat-context-usage" />
+                </span>
+                {/*
+                  发送键**常驻**（2026-10-16 修订，旧逻辑是「生成中变成停止键」）。
+
+                  并排两个而不是二选一，是因为它们回答两个不同的问题：
+                  「这话怎么发」（发送，按当前模式排队/插入）与「别写了」（停止）。
+                  旧做法把两者绑成一颗按钮，于是想补一句话只能先按停止 ——
+                  停止会作废这轮已经写了一半的回答，而用户往往只是想接着问一句。
+
+                  生成中它按 `sendMode` 投递：Enter / 点这颗键 = 排队（默认），
+                  想立刻打断就切到「插入」或按 Ctrl/⌘+Enter。tooltip 说清这次按键
+                  会走到哪条路，免得用户按完才发现回答被截断。
+                */}
+                {iconButton(
+                  loading
+                    ? sendMode === 'queue'
+                      ? '排队发送：等这一轮答完自动发出去'
+                      : '插入发送：立刻打断这一轮，换成这句'
+                    : pendingAsk
+                      ? '确认这个回答'
+                      : '发送',
+                  <Sym name="arrow_upward" />,
+                  () => void send(draft),
+                  {
+                    className: 'course-chat__send',
+                    disabled: !sessionReady || !draft.trim(),
+                    testId: 'chat-send',
+                  },
+                )}
+                {/* 停止键与发送键并存：只断 LLM 请求与循环，已流出的内容保留
+                    （见 store 的 `stop`）。有提问卡悬着时隐藏 —— 那时循环在等用户
+                    答卡，没有「正在生成」可停。 */}
+                {loading && !pendingAsk &&
+                  iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
+                    className: 'course-chat__stop',
+                    testId: 'chat-stop',
+                  })}
+              </Toolbar>
             </div>
-            <div className="course-chat__composer-note">AI 会结合课程数据与所选技能回答，请核对引用来源。</div>
+            <div className="course-chat__composer-note" data-testid="chat-composer-note">
+              {composerNote}
+            </div>
           </div>
         </section>
       </div>

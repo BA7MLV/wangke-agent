@@ -4,7 +4,7 @@ import { COVER_EDGE, downscaleToCover, encodeCanvas, pickCoverFrame } from '../m
 import { paintTextCover } from '../media/textCover';
 import { openPdf } from '../materials/pdf';
 import { mdCoverText, readMdText } from '../materials/md';
-import { getColorFromImage } from '../ui/mdui';
+import { getColorFromImage } from '../ui/dynamicColor';
 
 /**
  * 生成并保存一份封面（**派生资源**）。

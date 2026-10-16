@@ -1,5 +1,5 @@
 /* 讲义面板（HandoutPanel / HandoutDocView）的 chrome 样式。
- * 配色一律走 MD3 令牌 rgb(var(--mdui-color-*))，深色模式自动成立。
+ * 配色一律走 HeroUI 语义令牌（--foreground / --muted / --accent / --border），深色模式自动成立。
  * 注意：公文「纸」（handout-doc.css 里的 .hd-doc）内部排版色不在此文件动 ——
  * 那张纸在深色模式下就是一张白纸浮在深色背景上（同 PDF 阅读器）。 */
 
@@ -24,7 +24,7 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow: auto;
-  background: rgb(var(--mdui-color-surface-container));
+  background: var(--background-tertiary);
 }
 
 .hp-legacy__skel {
@@ -45,9 +45,9 @@
   pointer-events: none;
   text-align: center;
   font-size: 11px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   padding: 14px 0 4px;
-  background: linear-gradient(transparent, rgb(var(--mdui-color-surface-container)) 55%);
+  background: linear-gradient(transparent, var(--background-tertiary) 55%);
 }
 
 /* 骨架占位条（替原内联 #ececec / #f0f0f0，令牌化后深浅色自适配） */
@@ -56,7 +56,7 @@
   width: 92%;
   margin: 10px 0;
   border-radius: 4px;
-  background: rgb(var(--mdui-color-surface-container-high));
+  background: var(--default-soft);
 }
 
 .hp-skel__bar--title {
@@ -74,7 +74,7 @@
   width: 70%;
   margin: 18px auto;
   border-radius: 6px;
-  background: rgb(var(--mdui-color-surface-container-high));
+  background: var(--default-soft);
 }
 
 /* ── 生成参数对话框 ─────────────────────────────────────────────────────── */
@@ -87,24 +87,24 @@
 .hp-settings__hint {
   font-size: 12px;
   line-height: 1.5;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   margin: 4px 0;
 }
 
 .hp-settings__empty {
   font-size: 13px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .hp-settings__used {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  border-top: 1px solid rgb(var(--mdui-color-outline-variant));
+  color: var(--muted);
+  border-top: 1px solid var(--border-secondary);
   padding-top: 8px;
   margin-top: 4px;
 }
 
-/* 单个技能的「自动 / 必用 / 排除」行（标题 + 分段控件，不用 mdui-list-item） */
+/* 单个技能的「自动 / 必用 / 排除」行（标题 + 分段控件，不用列表项组件） */
 .hp-skill-row {
   display: flex;
   justify-content: space-between;
@@ -118,7 +118,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 14px;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
 }
 
 /* ── 块级 hover 浮动操作（替原 antd Button；复用 .hd-act 配色，收成自适应宽度） ── */
@@ -126,7 +126,7 @@
   flex: none;
   min-width: 56px;
   padding: 0 10px;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
 }
 
 /* ── AI 改写输入行 / 列表编辑行 / 表格字段标签 ─────────────────────────── */
@@ -136,7 +136,10 @@
   align-items: flex-start;
 }
 
-.hd-ai-input mdui-text-field {
+/* 原来写的是 `mdui-text-field`（自定义元素）。迁移到 HeroUI 后 AI 面板里是
+   <textarea>（TextArea）、列表行里是 <input>（Input），两条规则改成按真正的
+   表单元素选 —— 语义比「组件根元素」更准，且不再依赖组件实现。 */
+.hd-ai-input textarea {
   flex: 1 1 auto;
   min-width: 0;
 }
@@ -149,13 +152,13 @@
   align-items: flex-start;
 }
 
-.hd-list-row mdui-text-field {
+.hd-list-row input {
   flex: 1 1 auto;
   min-width: 0;
 }
 
 .hd-field-label {
   font-size: 12px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   margin-bottom: 2px;
 }

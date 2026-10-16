@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ReasoningEffort } from '../api/siliconflow';
+import { normalizeThinkingEffort } from '../api/modelCaps';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
 
@@ -226,11 +227,36 @@ export const useSettings = create<SettingsStore>()(
   persist(
     (set) => ({
       ...initialSettings(),
-      update: (patch) => set(patch),
+      /**
+       * 写入前收敛思考档位。**所有写入路径都过这里** —— 界面、迁移包导入、将来的同步载荷，
+       * 所以旧版本留下的 `'max'` 之类档位名在这一处就被换成现在的一套，不用每个调用方各修一遍。
+       *
+       * 认不出来的名字**整条丢掉**而不是留着：留在 store 里会让滑块 `findIndex` 返回 -1、
+       * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
+       */
+      update: (patch) => {
+        if (patch.thinkingEffort === undefined) {
+          set(patch);
+          return;
+        }
+        const effort = normalizeThinkingEffort(patch.thinkingEffort);
+        const next: Partial<Settings> = { ...patch };
+        if (effort) next.thinkingEffort = effort;
+        else delete next.thinkingEffort;
+        set(next);
+      },
     }),
     {
       name: 'wangke-settings',
-      version: 2,
+      /**
+       * v2 → v3：思考档位从 3 档（low / high / max）扩成 6 档
+       * （不思考 + minimal / low / medium / high / xhigh），`max` 改名 `xhigh`。
+       *
+       * 必须**升版本号**：persist 只在版本号对不上时才走 migrate，版本号不动的话
+       * 老用户 localStorage 里那个 `'max'` 会原样读进来 —— 而这正是 `update` 拦不到的那条路
+       * （hydrate 不经过 `update`）。
+       */
+      version: 3,
       migrate: (persisted, version) => migrateSettings(persisted as Record<string, unknown>, version),
     },
   ),
@@ -269,7 +295,11 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   // 宁可放过一次本该迁移的旧数据（那种情况读到的 providers 不是数组，仍会走下面的旧路径），
   // 也不能凭一个数字字段销毁用户数据。
   if (Array.isArray(persisted.providers)) {
-    return { ...initialSettings(), ...(persisted as unknown as Settings) };
+    const current = { ...initialSettings(), ...(persisted as unknown as Settings) };
+    // v2 → v3：档位从 3 档扩成 6 档，`max` 改名 `xhigh`。hydrate **不经过 store 的
+    // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
+    current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
+    return current;
   }
   const s = persisted as unknown as LegacySettings;
   // v0 → v1：视觉模型仍是旧默认值（用户未自定义）时，跟随新默认提速
@@ -300,7 +330,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     contextWindow: typeof s.contextWindow === 'number' ? s.contextWindow : base.contextWindow,
     asrConcurrency: typeof s.asrConcurrency === 'number' ? s.asrConcurrency : base.asrConcurrency,
     thinkingEnabled: typeof s.thinkingEnabled === 'boolean' ? s.thinkingEnabled : base.thinkingEnabled,
-    thinkingEffort: s.thinkingEffort ?? base.thinkingEffort,
+    thinkingEffort: normalizeThinkingEffort(s.thinkingEffort) ?? base.thinkingEffort,
     captionScale: typeof s.captionScale === 'number' ? s.captionScale : base.captionScale,
     agentRounds: typeof s.agentRounds === 'number' ? s.agentRounds : base.agentRounds,
     bilibiliProxy: s.bilibiliProxy ?? base.bilibiliProxy,

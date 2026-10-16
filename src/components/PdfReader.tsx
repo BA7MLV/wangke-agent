@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { Button, Dropdown, Input, TextField } from '@heroui/react';
 import type { PDFDocumentProxy, PDFPageProxy } from 'pdfjs-dist';
 import {
   openPdf,
@@ -16,7 +17,9 @@ import {
   type RegionImage,
 } from '../materials/region';
 import { useSelectionAsk } from '../store/selectionAsk';
-import { Shimmer } from './motion';
+import { Sym, useSkeletonGate } from '../ui';
+import ReaderProgress from './ReaderProgress';
+import DocSkeleton from './DocSkeleton';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -66,6 +69,8 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
   const scrollRef = useRef<HTMLDivElement>(null);
   const pageEls = useRef(new Map<number, HTMLDivElement>());
   const showBar = useSelectionAsk((s) => s.showBar);
+  /** 文档还没打开（numPages 仍为 0）时，先在正文区放一页同形骨架，别留一片空白 */
+  const showSkeleton = useSkeletonGate(numPages === 0 && !error);
 
   // ── 打开文档 ──────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -240,7 +245,7 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
     return (
       <div className="mr-root">
         <div className="mr-hint" data-testid="reader-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           PDF 打开失败：{error}
         </div>
       </div>
@@ -250,94 +255,120 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
   return (
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
-        <mdui-button-icon
+        <Button
+          isIconOnly
+          variant="tertiary"
           data-testid="reader-prev"
-          title="上一页"
-          disabled={current <= 1 ? true : undefined}
-          onClick={() => goto(current - 1)}
+          aria-label="上一页"
+          isDisabled={current <= 1}
+          onPress={() => goto(current - 1)}
         >
-          <mdui-sym-chevron-right className="mr-bar__flip" />
-        </mdui-button-icon>
+          <Sym name="chevron_right" className="mr-bar__flip" />
+        </Button>
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {numPages === 0 ? <Shimmer text="载入中…" /> : `${current} / ${numPages}`}
+          {numPages === 0 ? (
+            <span className="skel-bar reader-pos-skel" aria-hidden="true" />
+          ) : (
+            `${current} / ${numPages}`
+          )}
         </span>
-        <mdui-button-icon
+        <Button
+          isIconOnly
+          variant="tertiary"
           data-testid="reader-next"
-          title="下一页"
-          disabled={numPages === 0 || current >= numPages ? true : undefined}
-          onClick={() => goto(current + 1)}
+          aria-label="下一页"
+          isDisabled={numPages === 0 || current >= numPages}
+          onPress={() => goto(current + 1)}
         >
-          <mdui-sym-chevron-right />
-        </mdui-button-icon>
-        <mdui-text-field
-          className="mr-bar__input"
-          variant="outlined"
-          type="number"
-          inputmode="numeric"
-          placeholder="页码"
-          value={jumpDraft}
-          data-testid="reader-jump"
-          onInput={(e) => setJumpDraft(e.currentTarget.value)}
-          // 回车必须自己接：mdui-text-field 的 change 事件在「失焦」时才发，
-          // 只靠 onChange 的话「输入页码回车」什么都不会发生（用户会以为跳页坏了）
-          onKeyDown={(e) => {
-            if (e.key !== 'Enter') return;
-            e.preventDefault();
-            submitJump();
-          }}
-          onChange={submitJump}
-        />
+          <Sym name="chevron_right" />
+        </Button>
+        <TextField className="mr-bar__input">
+          <Input
+            type="number"
+            inputMode="numeric"
+            placeholder="页码"
+            value={jumpDraft}
+            data-testid="reader-jump"
+            onChange={(e) => setJumpDraft(e.currentTarget.value)}
+            // 回车必须自己接：输入框的 change 事件在「失焦」时才发，
+            // 只靠 onBlur 的话「输入页码回车」什么都不会发生（用户会以为跳页坏了）
+            onKeyDown={(e) => {
+              if (e.key !== 'Enter') return;
+              e.preventDefault();
+              submitJump();
+            }}
+            onBlur={submitJump}
+          />
+        </TextField>
         <div className="mr-bar__spacer" />
-        <mdui-button-icon
+        <Button
+          isIconOnly
+          variant="tertiary"
           data-testid="reader-zoom-out"
-          title="缩小"
-          onClick={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}
+          aria-label="缩小"
+          onPress={() => setZoom((z) => Math.max(0.5, Math.round((z - 0.1) * 10) / 10))}
         >
-          <mdui-sym-zoom-out />
-        </mdui-button-icon>
+          <Sym name="zoom_out" />
+        </Button>
         <span className="mr-bar__pos">{Math.round(zoom * 100)}%</span>
-        <mdui-button-icon
+        <Button
+          isIconOnly
+          variant="tertiary"
           data-testid="reader-zoom-in"
-          title="放大"
-          onClick={() => setZoom((z) => Math.min(3, Math.round((z + 0.1) * 10) / 10))}
+          aria-label="放大"
+          onPress={() => setZoom((z) => Math.min(3, Math.round((z + 0.1) * 10) / 10))}
         >
-          <mdui-sym-zoom-in />
-        </mdui-button-icon>
+          <Sym name="zoom_in" />
+        </Button>
         {outline.length > 0 && (
-          <mdui-dropdown>
-            <mdui-button-icon slot="trigger" data-testid="reader-outline" title="目录">
-              <mdui-sym-toc />
-            </mdui-button-icon>
-            <mdui-menu>
-              {outline.slice(0, 200).map((e, i) => (
-                <mdui-menu-item key={`${e.page}-${i}`} onClick={() => goto(e.page)}>
-                  {e.title}
-                  <span slot="end" className="mr-bar__pos">{e.page}</span>
-                </mdui-menu-item>
-              ))}
-            </mdui-menu>
-          </mdui-dropdown>
+          <Dropdown>
+            <Dropdown.Trigger>
+              <Button isIconOnly variant="tertiary" data-testid="reader-outline" aria-label="目录">
+                <Sym name="toc" />
+              </Button>
+            </Dropdown.Trigger>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu
+                onAction={(key) => {
+                  // id 用「页码-序号」而不是纯页码：目录里同页的两个条目（父子标题
+                  // 落在同一页）会撞成同一个 key，onAction 就分不清点了哪一条。
+                  const idx = Number(String(key).slice(String(key).lastIndexOf('-') + 1));
+                  const hit = outline.slice(0, 200)[idx];
+                  if (hit) goto(hit.page);
+                }}
+              >
+                {outline.slice(0, 200).map((e, i) => (
+                  <Dropdown.Item key={`${e.page}-${i}`} id={`${e.page}-${i}`} textValue={e.title}>
+                    {e.title}
+                    <span className="mr-bar__pos">{e.page}</span>
+                  </Dropdown.Item>
+                ))}
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         )}
         {/* 框选开关：显式工具态，避免和「拖选文字」抢同一个手势 */}
-        <mdui-button
-          variant={areaMode ? 'filled' : 'outlined'}
+        <Button
+          variant={areaMode ? 'primary' : 'secondary'}
           data-testid="reader-tool-areaselect"
-          title="框选一块区域当图片提问"
-          onClick={() => setAreaMode((v) => !v)}
+          aria-label="框选一块区域当图片提问"
+          onPress={() => setAreaMode((v) => !v)}
         >
-          <mdui-sym-crop-free slot="icon" />
+          <Sym name="crop_free" />
           {areaMode ? '框选中…' : '框选'}
-        </mdui-button>
+        </Button>
+        <ReaderProgress current={current} total={numPages} />
       </div>
 
       {areaMode && (
         <div className="mr-hint" data-testid="reader-area-hint">
-          <mdui-sym-crop-free />
+          <Sym name="crop_free" />
           在页面上拖出要提问的区域（框完自动退出框选）
         </div>
       )}
 
       <div className="mr-scroll" ref={scrollRef}>
+        {showSkeleton && <DocSkeleton variant="page" />}
         {Array.from({ length: numPages }, (_, i) => i + 1).map((n) => (
           <div
             key={n}

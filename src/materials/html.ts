@@ -230,7 +230,7 @@ export interface PrepareHtmlOptions {
   /** 是否允许加载远程图片 / 样式表 / 字体 */
   remote: boolean;
   /**
-   * 高亮色，`"R G B"` 形式（与 mdui 的 `--mdui-color-primary` 同格式）。
+   * 高亮色，`"R G B"` 形式（调用方需先把 HeroUI 的 --accent 解析成 rgb 再传入）。
    * iframe 是独立文档，CSS 自定义属性**不跨文档继承**，所以只能把值取出来写死进去。
    */
   markRgb?: string;

@@ -3,16 +3,22 @@
  *
  * 业务代码只从这里取 hook 与封装好的反馈 API：
  * ```ts
- * import { toast, confirmDialog, useMduiEvent, useMduiProperty } from '../ui';
+ * import { toast, confirmDialog, PageShell, Sym } from '../ui';
  * ```
  *
- * 副作用模块 `./mdui`（样式 + 组件注册 + 语言包）由 `src/main.tsx` 单独引入，不在这里 re-export，
- * 避免 tree-shaking 之外的隐式依赖——想让 mdui 组件可用，就应该显式 import 那一次。
+ * HeroUI 组件本身从 `@heroui/react` 直接引入（`import { Button, Card } from '@heroui/react'`），
+ * 不在这里转发 —— 适配层只保留「本项目自己的原语与反馈语义」。
  */
-export { useMduiEvent, type MduiElementOf, type MduiEventHandler } from './useMduiEvent';
-export { useMduiProperty } from './useMduiProperty';
 export { applyTheme, useResolvedDark, useDynamicColor, systemPrefersDark } from './theme';
-export { toast, confirmDialog, alertDialog, type ConfirmOptions } from './feedback';
+export {
+  toast,
+  confirmDialog,
+  alertDialog,
+  promptDialog,
+  FeedbackHost,
+  type ConfirmOptions,
+  type PromptOptions,
+} from './feedback';
 export {
   PageShell,
   SectionCard,
@@ -20,15 +26,20 @@ export {
   EmptyState,
   Banner,
   HelpTip,
+  AppBarSearch,
   type PageShellProps,
   type SectionCardProps,
   type FieldProps,
   type EmptyStateProps,
   type BannerProps,
   type HelpTipProps,
+  type AppBarSearchProps,
   type NavItem,
   type NavConfig,
+  type RecentItem,
+  type RecentAction,
 } from './layout';
+export { useRailCollapsed } from './rail';
 export {
   Panel,
   PanelBar,
@@ -38,10 +49,22 @@ export {
   PanelPlaceholder,
   PanelSpinner,
   CueRow,
+  CueSkeleton,
   type PanelProps,
   type PanelBarProps,
   type PanelProgressProps,
   type PanelBodyProps,
   type CueRowProps,
 } from './panel';
-export { snackbar, confirm, alert, prompt, dialog, setTheme, getTheme, setColorScheme, getColorFromImage, mduiLocaleReady } from './mdui';
+export { Sym, type SymProps } from './icons';
+export { SYMBOL_NAMES, type SymbolName } from './icons';
+export { LoadingButton, type LoadingButtonProps } from './loading-button';
+export {
+  SkeletonReveal,
+  useSkeletonGate,
+  SKELETON_DELAY_MS,
+  SKELETON_MIN_VISIBLE_MS,
+  type SkeletonGateOptions,
+  type SkeletonRevealProps,
+} from './skeleton';
+export { MODAL_CONTAINER_CLASS } from './modalContainer';

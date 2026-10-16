@@ -205,7 +205,7 @@ const wakeControls = async () => {
 
 console.log('7. 控制栏开关：关闭后弹幕不再弹出，刷新后保持关闭');
 await wakeControls();
-await page.locator('.dm-toggle-btn').click();
+await page.locator('.player-dm-toggle').click();
 const stored = await page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings') ?? '{}'));
 if (stored?.state?.danmakuEnabled !== false) fail('localStorage 应持久化 danmakuEnabled=false');
 else ok('开关已持久化（关）');
@@ -222,7 +222,7 @@ else ok('刷新后开关保持关闭');
 // 这一步只是收尾：刷新后能不能唤醒控制栏依赖 hover 时序，headless 下偶发点不到，
 // 点不到就直接把设置改回去，不让收尾把一条断言全绿的用例判红。
 await wakeControls();
-const restored = await page.locator('.dm-toggle-btn').click({ timeout: 5000 }).then(() => true).catch(() => false);
+const restored = await page.locator('.player-dm-toggle').click({ timeout: 5000 }).then(() => true).catch(() => false);
 if (!restored) {
   await page.evaluate(() => {
     const raw = JSON.parse(localStorage.getItem('wangke-settings') ?? '{}');

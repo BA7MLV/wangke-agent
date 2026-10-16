@@ -5,7 +5,8 @@
 //   3. 新到的图元带落画 class；描边的 stroke-dashoffset 从「全长」走到 0（真的在走，不是在闪）
 //   4. 闭合后落回完整净化产物：工具条齐全、画布内容 === sanitizeSvg 的输出
 //   5. 半截里带外部资源引用的 SVG：预览期不画（等闭合），闭合后照旧报错回退源码
-//   6. 围栏外普通正文不受影响
+//   6. 围栏参数里的 title 在流式期间就显示在块头（比第一笔落画还早）；没写的退回图种标签
+//   7. 围栏外普通正文不受影响
 //
 // 模型流是**页内假的**：`addInitScript` 里把 window.fetch 换成脚本化 SSE 发生器，
 // 逐 chunk 推送 —— 要验的就是「边生成边画」，接真模型反而把时序抖没了。
@@ -111,6 +112,12 @@ async function typeAndSend(text) {
 
 console.log('1. 导入测试视频');
 await page.goto(BASE, { waitUntil: 'networkidle' });
+// 应用现在默认落在「课程助手」页，导入控件在课程库页 —— 已在导入页就原地等，没在就点过去。
+// 两条路都留着：路由默认值会随导航栏改版变，但页面里总有一个能过去的入口。
+if (!(await page.locator('input[type="file"]').count())) {
+  await page.locator('[data-testid="chat-go-import"], [data-testid="nav-rail-home"]').first().click();
+  await page.locator('input[type="file"]').waitFor({ timeout: 15000 });
+}
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 const videoId = await page.evaluate(async () => {
@@ -146,7 +153,7 @@ await page.waitForSelector('video', { timeout: 20000 });
 await page.getByRole('tab', { name: '问答', exact: true }).click();
 await page.waitForTimeout(600);
 
-const answer = `这道抛物线开口向上，顶点在 (135, 58)：\n\n\`\`\`svg\n${GOOD_SVG}\n\`\`\`\n\n横轴为 x，纵轴为 y。`;
+const answer = `这道抛物线开口向上，顶点在 (135, 58)：\n\n\`\`\`svg title="抛物线开口方向"\n${GOOD_SVG}\n\`\`\`\n\n横轴为 x，纵轴为 y。`;
 await page.evaluate(
   ([chunks, delayMs]) => window.__LLM__.queue.push({ chunks, delayMs }),
   [toChunks(answer).map((content) => ({ content })), 90],
@@ -188,6 +195,8 @@ const samples = await page.evaluate(async () => {
         offsets,
         canvasBox: canvas ? Math.round(canvas.getBoundingClientRect().height) : 0,
         live: !!block.querySelector('[data-testid="svg-live"]'),
+        // 围栏参数里的标题（```svg title="…"）：它随**首行**到达，比图元都早
+        title: block.querySelector('[data-testid="svg-title"]')?.textContent ?? null,
         // 真画出来了吗：截图之外还要看「有没有非定义的顶层元素」。
         // 首个元素通常是 <defs>，它本来就什么都不画 —— 拿它判空会把「纸已铺好、笔还没落」误报成没画出来。
         inked: (() => {
@@ -210,6 +219,10 @@ console.log(`   取样 ${samples.length} 次，相位序列：${phases.join(' �
 check(phases.includes('waiting') && phases.includes('drawing') && phases.includes('ok'),
   `相位走 waiting → drawing → ok（实得 ${phases.join(' → ')}）`);
 check(drawing.length >= 3, `drawing 态持续了多拍（${drawing.length} 次取样）`);
+// 标题比图先到：它在围栏**首行**的参数里，而落画要等根标签闭合。
+// 断言取「drawing 期间已经能读到完整标题」，不锁死它比第一拍更早 —— 首行本身也是逐 token 到的。
+check(drawing.some((s) => s.title === '抛物线开口方向'),
+  `围栏参数里的标题在流式期间就显示在块头（drawing 中读到的标题：${JSON.stringify([...new Set(drawing.map((s) => s.title))])}）`);
 
 // 元素单调增长：这就是「边生成边画」的核心可观测特征
 const nonDecreasing = tops.every((v, i) => i === 0 || v >= tops[i - 1]);
@@ -309,6 +322,8 @@ const finalState = await page.evaluate(async () => {
     },
     live: !!block.querySelector('[data-testid="svg-live"]'),
     pending: !!block.querySelector('[data-testid="svg-pending"]'),
+    title: block.querySelector('[data-testid="svg-title"]')?.textContent ?? null,
+    tag: block.querySelector('.xmd-mermaid-tag')?.textContent ?? null,
     chatText: document.querySelector('[data-testid="chat-msg-ai"]')?.textContent ?? '',
   };
 });
@@ -322,6 +337,8 @@ check(finalState.text.some((t) => t?.includes('顶点')), `中文标签完整（
 check(finalState.tools.copy && finalState.tools.zoom && finalState.tools.download && finalState.tools.source,
   '闭合后工具条齐全（复制/大图/下载/源码）');
 check(!finalState.live && !finalState.pending, '闭合后不再显示「生成中」提示');
+check(finalState.title === '抛物线开口方向' && finalState.tag === 'SVG',
+  `闭合后标题与图种标签都在块头（title=${JSON.stringify(finalState.title)} tag=${JSON.stringify(finalState.tag)}）`);
 check(finalState.chatText.includes('横轴为 x'), '围栏外的正文原样保留');
 
 await page.locator('[data-testid="svg-canvas"]').scrollIntoViewIfNeeded();
@@ -346,6 +363,8 @@ const badStream = await page.evaluate(() => {
     source: bad?.querySelector('[data-testid="svg-source"]')?.textContent ?? null,
     canvas: !!bad?.querySelector('[data-testid="svg-canvas"]'),
     live: !!bad?.querySelector('[data-testid="svg-live"]'),
+    // 这条围栏没写 title：块头只显示图种标签，不该冒出一个空标题元素
+    title: bad?.querySelector('[data-testid="svg-title"]') ?? null,
     // 安全闸门在**预览期**就已经拦住了：半截里那句外部 url() 不会先画出来再回退
     drewDuringStream: blocks.filter((b) => b.getAttribute('data-phase') === 'drawing' && b.querySelector('svg')).length,
   };
@@ -355,6 +374,7 @@ check(!!badStream.err?.includes('外部资源'), `闭合后报错点明原因（
 check(!!badStream.source?.includes('evil.example'), '失败态仍给出源码');
 check(!badStream.canvas && !badStream.live, '失败态没有残留画布 / 生成中提示');
 check(badStream.drewDuringStream === 0, '带外部引用的 SVG 在预览期从未进过 drawing 态（闸门在闭合前就拦下）');
+check(badStream.title === null, '没写 title 的围栏不冒空标题（老内容退回图种标签，不变样）');
 await page.screenshot({ path: `${SHOTS}/svg-stream-reject.png`, fullPage: true });
 
 console.log(`\n${failed === 0 ? '全部通过' : `${failed} 项失败`}`);

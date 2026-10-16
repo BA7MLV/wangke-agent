@@ -1,7 +1,7 @@
 /**
  * 技能范围选择器（配 SkillPicker.tsx）。
  *
- * 颜色一律走 MD3 令牌（`rgb(var(--mdui-color-*))`，令牌值是 R,G,B 三元组必须包 rgb()）。
+ * 颜色一律走 HeroUI 语义令牌（--foreground / --muted / --accent），深浅两套自动成立。
  */
 
 .skill-picker {
@@ -17,32 +17,47 @@
   margin-bottom: 8px;
   font-size: 12px;
   line-height: 1.5;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 .skill-picker__empty {
   padding: 12px 0;
   font-size: 13px;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
-.skill-picker__row {
-  display: flex;
-  flex-direction: column;
+/* 一行 = 一个复选项。勾选框、名称、描述**全都**在 `Checkbox.Content` 这个
+   `<label>` 里，于是「点哪都能切换」是结构保证的，不需要额外绑事件。
+   （2026-10-15 之前描述是 Checkbox 的兄弟节点，点它不切换 —— 而它占了大半行。） */
+.skill-picker__item {
   padding: 3px 0;
 }
 
-.skill-picker__name {
-  font-size: var(--mdui-typescale-body-medium-size);
+/* 勾选框对齐到**第一行文字**（名称），而不是两行整体居中。
+   ⚠️ 必须写成两段选择器：HeroUI 的 `.checkbox__content` 自带 `align-items: center`，
+   与单段类名特异度相同（都是 0,1,0），谁赢取决于样式注入顺序。项目里已经踩过
+   一模一样的坑（`course-chat.css` 里那段焦点环注释），多一层类名抬到 0,2,0 就与顺序无关。 */
+.skill-picker .skill-picker__content {
+  align-items: flex-start;
 }
 
-/* 缩进对齐到复选框文字起始处（mdui-checkbox 的框宽 + 间隙）。
-   这个值不是令牌，是对齐用的目测值 —— 改动 checkbox 尺寸时这里要跟着调。 */
+.skill-picker__text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.skill-picker__name {
+  font-size: 0.875rem;
+}
+
+/* 描述不再手工缩进：它现在和名称同处一列，对齐由结构带来。
+   原先那个 `padding-left: 34px` 是「按复选框框宽 + 间隙目测」出来的值，
+   改一次 checkbox 尺寸就得跟着调，脆。 */
 .skill-picker__desc {
-  padding-left: 34px;
   font-size: 11px;
   line-height: 1.4;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }
 
 /* 「一个都没勾」的提醒：不是错误，用中性容器色而不是 error 色 ——
@@ -50,9 +65,9 @@
 .skill-picker__warn {
   margin-top: 10px;
   padding: 8px 10px;
-  border-radius: var(--mdui-shape-corner-small);
-  background: rgb(var(--mdui-color-surface-container-high));
+  border-radius: var(--radius-sm);
+  background: var(--default-soft);
   font-size: 12px;
   line-height: 1.5;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
 }

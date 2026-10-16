@@ -266,3 +266,81 @@ const executeTool = createToolExecutor(videoId, { kind, onQuiz, allowedSkillIds:
 - **不做技能内容的会话内预览**：对话框只显示 `name` + `description`（tooltip）。要看正文去设置页。窄面板里塞不下正文。
 - **技能被删除时的白名单残留**：`loadSessionSkillMeta` 靠取交集自动忽略不存在的 id，但 `skillIds` 数组里的死 id 不会被清理。数据量极小（个位数），不值得为此加清理逻辑 —— 但**不要在别处把它当成「技能总数」用**。
 - **dev 下会建出重复的「新会话」（既有问题，本次未修）**：`ChatPanel` 挂载时那段「查会话列表 → 空则建一个」不是幂等的。React StrictMode 在 dev 下把 effect 跑两遍，两个调用都在任何插入落库之前查完，于是建出 2 个「新会话」（实测 dev 2 个 / 生产 1 个）。这与技能范围无关，属于既有行为，**没动它**。`ensureBuiltinSkills` 用模块级 in-flight promise 闸门解决过同类问题，会话创建可以照搬同一手法 —— 但那是一次独立改动，值得单独一份设计。e2e 里的会话数断言因此写成「比之前多」而不是写死数字。
+
+---
+
+## 修复：勾选框根本没有渲染出来（2026-10-15）
+
+用户原话：「技能范围这个没有办法选择啊，优化一下。」
+
+实测（headless Chrome 截图，1280×900）确认现象：对话框里 8 个技能**一个勾选框都没有**，
+只剩技能名（粗体）+ 描述，整块看着像一段普通说明文字 —— 没有任何可点的东西。
+
+### 根因
+
+HeroUI v3 的 `Checkbox` 是**复合组件**，勾选框的视觉部分要显式写出来：
+
+```jsx
+<Checkbox isSelected={…} onChange={…}>
+  <Checkbox.Content>
+    <Checkbox.Control>
+      <Checkbox.Indicator />
+    </Checkbox.Control>
+    <span>技能名</span>
+  </Checkbox.Content>
+</Checkbox>
+```
+
+`SkillPicker` 里只写了 `Checkbox.Content`，漏了 `Control` + `Indicator`。
+`CheckboxRoot` **不会**替调用方补这两层 —— `@heroui/react/dist/components/checkbox/checkbox.js`
+里 `CheckboxIndicator` 只在被渲染时才存在。同仓库 `settings/ModelsModule.tsx` 的写法是对的，
+一对比就能看出来。
+
+### 为什么 e2e 一直没报
+
+两条叠在一起：
+
+1. **断言认错了元素。** 脚本写的是
+   `page.$$eval('[data-testid="skill-scope-item"]', els => els.every(e => e.checked))`，
+   而 `data-testid` 落在 `.checkbox` 这个 `<div>` 上（不是隐藏的 `<input>`），
+   `e.checked` 恒为 `undefined` —— 这条断言**必然为假**，与事实对不上。
+2. **脚本本身已经跑不起来。** 2026-10-14 对话页改版后 `/` 是 AI 助手页，空库时那里没有
+   `input[type="file"]`，第 1 步导入就超时。于是第 1 条红了也没人看见。
+
+**真正的教训在第 3 点**：这次漏掉的是**纯视觉**缺陷 —— 状态全对（落库值、`data-limited`、
+`data-selected` 一切正常），用户却看不见任何可点的东西。原来的断言全是状态断言，
+而状态断言永远照不到这一类。所以回归覆盖必须补一条「元素真的画出来了」。
+
+### 改了什么
+
+| 文件 | 改动 |
+|---|---|
+| `src/components/SkillPicker.tsx` | 补 `Checkbox.Control` + `Checkbox.Indicator`；Indicator 加 `data-testid="skill-scope-check"` 当 e2e 锚点；描述从 `Checkbox` 的**兄弟节点**移进 `Checkbox.Content` |
+| `src/components/skill-picker.css` | 删 `.skill-picker__row`（描述移进 label 后这层多余，`<Checkbox>` 直接当列表项）；`.skill-picker__desc` 去掉 `padding-left: 34px`；新增 `.skill-picker .skill-picker__content { align-items: flex-start }` |
+| `scripts/e2e-chat-skill-scope.mjs` | 导入步骤改走 `/#/library`；`e.checked` → `data-selected`；新增 3 条断言 |
+
+**顺带修掉第二个「选不了」**：描述原本是 `Checkbox` 的兄弟节点，点它不切换勾选 ——
+而它占了一整行的大半面积。用户很可能点的就是那里。现在名称与描述同处 `Checkbox.Content`
+这个 `<label>` 内，**整行可点**，且不靠额外绑事件（是结构保证的）。
+
+`.skill-picker .skill-picker__content` 写成两段选择器是**必须的**：HeroUI 的 `.checkbox__content`
+自带 `align-items: center`，与单段类名特异度相同（都是 0,1,0），谁赢取决于样式注入顺序 ——
+`course-chat.css` 里那段焦点环注释记的是一模一样的坑。多一层类名抬到 0,2,0 就与顺序无关。
+
+### 验证（2026-10-15 实跑）
+
+| 手段 | 结果 |
+|---|---|
+| `scripts/e2e-chat-skill-scope.mjs`（dev 5173） | 全绿，含新增的三条：**每个技能都渲染出勾选框（8/8）**、勾选框有非零尺寸、点描述文字也能切换勾选 |
+| `scripts/test-qa-skill-scope.mjs` | 14 passed / 0 failed |
+| `npx tsc -b --force` | 通过 |
+| 人工截图（headless Chrome，1280×900） | 勾选框可见；勾选态实心蓝框、取消态空框 |
+
+### 遗留
+
+- **`MigrationCard.tsx` 的 `restore-settings` 复选框是同一个毛病**（`data-testid="restore-settings"`
+  那处，只写了 `Checkbox.Content`，没有 `Control` / `Indicator`）—— 迁移对话框里「同时恢复界面设置」
+  那一项也看不见框，用户不知道那是个复选框。本次**没动**：不在用户点名的范围内，
+  且那块正在并行改动。要修就是补两行。
+- 全仓 `<Checkbox>` 共 3 处，本次已核对：`settings/ModelsModule.tsx` 正确、
+  `SkillPicker.tsx` 本次修好、`MigrationCard.tsx` 见上条。没有别的漏网。

@@ -1,10 +1,88 @@
 /* 阶段 3：字幕 / 弹幕面板与共用件（PersistentError / ModelPicker）的样式。
-   颜色一律走 MD3 令牌（rgb(var(--mdui-color-*))），深色模式自动成立；
+   颜色一律走 HeroUI 语义令牌（--foreground / --muted / --accent），深色模式自动成立；
    不再写死 #888 / #999 / #1677ff / #e6f4ff 这类内联色。 */
 
-/* ── 工具条里的模型切换（图标触发 + 点击弹出菜单，替 mdui-select 内联展示） ── */
+/* ── 工具条里的模型切换（图标触发 + 点击弹出菜单，不再内联展示模型名） ── */
+/* 触发按钮本体：Dropdown.Trigger 渲染的就是 <button>，外观直接挂 className。
+   尺寸对齐 HeroUI 的 size="sm" 图标按钮（32px 方形 + 淡底），悬停才显底。 */
+.model-picker__trigger {
+  display: grid;
+  place-items: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) var(--ease-out),
+    color var(--duration-quick) var(--ease-out);
+}
+
+.model-picker__trigger:hover,
+.model-picker__trigger[data-expanded='true'] {
+  background: var(--default-soft);
+  color: var(--accent);
+}
+
+.model-picker__trigger:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
+/* 药丸形态（对话页输入卡内）：同一颗按钮换个排布 —— grid 居中那套只适合方形图标键，
+   文字一进来就要 flex + 自适应宽度。宽度用 max-width 而不是写死，模型名长到放不下时
+   由 .model-picker__chip-name 省略号收尾，别把输入卡撑宽。 */
+.model-picker__trigger--chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  max-width: 220px;
+  height: 30px;
+  padding: 0 8px 0 6px;
+  border-radius: var(--radius-full);
+  background: var(--default-soft);
+  color: var(--foreground);
+  font-size: 0.8125rem;
+}
+
+.model-picker__trigger--chip:hover,
+.model-picker__trigger--chip[data-expanded='true'] {
+  background: var(--default);
+  color: var(--foreground);
+}
+
+.model-picker__chip-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 槽位图标固定 16px，不跟字号：药丸字号是 13px，图标跟着缩会显得比右边那颗
+   箭头还小，两个图标一大一小看着像没对齐。 */
+.model-picker__trigger--chip > svg:first-child {
+  flex: none;
+  width: 16px;
+  height: 16px;
+}
+
+/* ⚠️ width/height 必须写：<Sym> 一旦收到 className 就不再输出 width/height 属性
+   （见 ui/icons.tsx 的 dimension 逻辑），此时尺寸只能由 CSS 给。 */
+.model-picker__chip-caret {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+
 /* 菜单项：模型 id 省略号 + 静态语义标记（多模态 / 可思考）。
-   标记用 .tag-mini（layout.css 已定义），不引 mdui-chip 的可交互语义。 */
+   标记用 .tag-mini（layout.css 已定义），不引 HeroUI Chip 的可交互语义。 */
 .model-picker__opt {
   display: flex;
   align-items: center;
@@ -15,7 +93,7 @@
 .model-picker__check {
   flex: none;
   font-size: 18px;
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
 }
 
 /* 供应商名：多供应商后模型 id 不再唯一，独立一列才不会认错。
@@ -36,6 +114,90 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
+}
+
+/* ── chip 形态的下拉面板（对话页输入卡） ─────────────────────────────── */
+/* 一个面板里装「用哪个模型」+「怎么答」两件事。面板跟着 chip 走、贴边限宽，
+   不遮整屏 —— 输入卡还看得见，才知道这块是它的设置。 */
+.model-picker__panel {
+  display: flex;
+  flex-direction: column;
+  /* HeroUI 的 `.dropdown__popover` 只给 `md:min-w-55` 和 **`max-w-[48svw]`**。
+     那个上限在桌面上看不出来（48% × 1440 = 691px，宽过我们的目标值），
+     但手机上 48% × 390 ≈ 187px —— 正好把供应商名 + 模型 id 挤成省略号。
+     `max-width` 永远压过 `width`，所以宽度和上限必须**一起**写。 */
+  width: min(22rem, calc(100vw - 1.5rem));
+  max-width: min(22rem, calc(100vw - 1.5rem));
+  /* ⚠️ `max-height` 必须带 `!important`：RAC 的 `Popover` 会把「可用空间」算出来、
+     以**行内** `max-height` 写回这个元素（1440×900 下实测 804px）。行内样式压过样式表，
+     不写 `!important` 的话这一行是**死代码** —— 面板会一直撑到 89% 屏高，把整块对话盖住，
+     与这里想要的「贴着输入卡的一屏半高弹层」完全不是一回事。
+     高度交给面板（而不是 ScrollShadow）还有一个好处：下面的思考区永远看得见。 */
+  max-height: min(60vh, 26rem) !important;
+  padding: 0.5rem 0.5rem 0.625rem;
+}
+
+.model-picker__panel-head {
+  display: flex;
+  flex: none;
+  align-items: baseline;
+  gap: 0.5rem;
+  padding: 0.125rem 0.5rem 0.5rem;
+}
+
+.model-picker__panel-list {
+  overflow-y: auto;
+}
+
+.model-picker__panel-items {
+  gap: 1px;
+}
+
+.model-picker__panel-item {
+  min-height: 36px;
+  gap: 0.625rem;
+  padding-inline: 0.5rem;
+  border-radius: var(--radius);
+  font-size: 0.8125rem;
+  font-weight: 400;
+  text-align: left;
+}
+
+.model-picker__panel-sep {
+  flex: none;
+  margin: 0.5rem 0.375rem;
+}
+
+/* 思考区：**一条**设置行 —— 标签贴左、控件占右。
+   这里曾经是「思考 / 先推演再作答…」两行标题，下面再跟一行「思考深度」标签 ——
+   同一个东西被起了两次名字，而中间那句是承诺不是信息。现在只有一行。
+   `space-between` 是给开关形态用的（滑块自带 `flex:1`，不吃这个）；两种形态下
+   控件都落在同一个右侧位置，换模型时不会左右横跳。 */
+.model-picker__think {
+  flex: none;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0 0.5rem;
+}
+
+.model-picker__think-label {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+/* 只有开关的模型才需要一句「为什么没有滑块」。压在行下方、小一号、同样弱化 ——
+   它解释的是一个**缺失**，不该和标签抢视线，更不该夹在标签与控件中间把行拆成两段。 */
+.model-picker__think-hint {
+  flex: none;
+  margin: 0.25rem 0 0;
+  padding: 0 0.5rem;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  line-height: 1.5;
 }
 
 /* ── PersistentError：失败详情常驻条 ─────────────────────────────────── */

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { SectionCard, Field, confirmDialog, toast, useMduiEvent } from '../ui';
+import { Button, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
+import { SectionCard, Field, Sym, confirmDialog, toast } from '../ui';
 import { useSettings } from '../store/settings';
 import { clearStudyDays, loadStudyDays, useStudyTime } from '../store/studyTime';
 import { computeStats, dateKey, formatStudyDuration } from '../utils/studyLog';
@@ -26,13 +27,6 @@ export default function StudyTimeCard() {
     void reload();
   }, [reload, flushCount]);
 
-  const enabledRef = useMduiEvent('mdui-switch', 'change', (_e, el) =>
-    settings.update({ studyTrackingEnabled: el.checked }),
-  );
-  const idleRef = useMduiEvent('mdui-segmented-button-group', 'change', (_e, el) =>
-    settings.update({ studyIdleMinutes: Number(el.value) || 5 }),
-  );
-
   const askClear = () => {
     void confirmDialog({
       headline: '清空学习时长记录？',
@@ -53,46 +47,62 @@ export default function StudyTimeCard() {
       testId="card-study-time"
       subtitle="打开应用就会自动计时：只算「页面在前台」且「没长时间离开」的时间；正在播放视频时不判空闲"
       actions={
-        <mdui-button variant="tonal" data-testid="study-open-page" onClick={() => navigate('/study')}>
-          <mdui-sym-calendar-month slot="icon" />
+        <Button variant="secondary" data-testid="study-open-page" onPress={() => navigate('/study')}>
+          <Sym name="calendar_month" />
           查看热力图
-        </mdui-button>
+        </Button>
       }
     >
       <Field
         label="自动记录"
+        layout="row"
         hint="关掉后不再累计新时长，已有记录保留"
         testId="field-study-tracking"
       >
-        <mdui-switch
-          ref={enabledRef}
+        <Switch
+          isSelected={settings.studyTrackingEnabled}
+          onChange={(on) => settings.update({ studyTrackingEnabled: on })}
           data-testid="study-tracking"
-          checked={settings.studyTrackingEnabled}
-        />
+          aria-label="自动记录学习时长"
+        >
+          <Switch.Content>
+            <Switch.Control>
+              <Switch.Thumb />
+            </Switch.Control>
+          </Switch.Content>
+        </Switch>
       </Field>
 
       <Field
         label="多久没操作算离开"
+        layout="row"
         hint="播放视频时这条不生效（看课本来就不需要一直操作）"
         testId="field-study-idle"
       >
-        <mdui-segmented-button-group
-          ref={idleRef}
+        {/* mdui-segmented-button-group 的 selects="single" → ToggleButtonGroup 的
+            selectionMode="single"；选中项用 selectedKeys 单选数组表达（值是字符串 key）。 */}
+        <ToggleButtonGroup
+          selectionMode="single"
+          disallowEmptySelection
+          selectedKeys={[String(settings.studyIdleMinutes)]}
+          onSelectionChange={(keys) => {
+            const next = Number([...keys][0]);
+            if (Number.isFinite(next)) settings.update({ studyIdleMinutes: next });
+          }}
+          aria-label="多久没操作算离开"
           data-testid="study-idle"
-          selects="single"
-          value={String(settings.studyIdleMinutes)}
         >
           {IDLE_OPTIONS.map((m) => (
-            <mdui-segmented-button key={m} value={String(m)}>
+            <ToggleButton key={m} id={String(m)}>
               {m} 分钟
-            </mdui-segmented-button>
+            </ToggleButton>
           ))}
-        </mdui-segmented-button-group>
+        </ToggleButtonGroup>
       </Field>
 
-      <Field label="已有记录" testId="field-study-summary">
-        <div className="row row--between" style={{ width: '100%' }}>
-          <span className="text-secondary" data-testid="study-summary">
+      <Field label="已有记录" layout="row" testId="field-study-summary">
+        <div className="flex w-full flex-nowrap items-start justify-between gap-3">
+          <span className="text-muted" data-testid="study-summary">
             {summary ? (
               <>
                 活跃 <NumberPop text={summary.days} /> 天 · 累计{' '}
@@ -104,14 +114,14 @@ export default function StudyTimeCard() {
               <Shimmer text="读取中…" />
             )}
           </span>
-          <mdui-button
-            variant="text"
+          <Button
+            variant="tertiary"
             data-testid="study-clear"
-            disabled={!summary || summary.days === 0}
-            onClick={askClear}
+            isDisabled={!summary || summary.days === 0}
+            onPress={askClear}
           >
             清空记录
-          </mdui-button>
+          </Button>
         </div>
       </Field>
     </SectionCard>

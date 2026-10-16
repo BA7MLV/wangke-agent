@@ -8,7 +8,7 @@
  * 运行：node scripts/test-chat-export.mjs
  */
 import assert from 'node:assert/strict';
-import { buildSessionMarkdown, exportFileName } from '../src/utils/chatExport.ts';
+import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../src/utils/chatExport.ts';
 
 let passed = 0;
 const failures = [];
@@ -146,6 +146,38 @@ test('exportFileName：剔除文件系统非法字符并限长', () => {
 test('exportFileName：空值兜底', () => {
   assert.equal(exportFileName('', ''), '课程-会话.md');
   assert.equal(exportFileName('   ', '  '), '课程-会话.md');
+});
+
+// ── markdownToPlainText：给「复制纯文本」用的一次降级 ───────────────────────
+test('plain：去掉加粗/斜体/行内代码/删除线的标记符，保留文字', () => {
+  assert.equal(markdownToPlainText('这是**重点**，也是*强调*，`code` 与 ~~删掉~~。'), '这是重点，也是强调，code 与 删掉。');
+});
+
+test('plain：链接与图片只留可见文字', () => {
+  assert.equal(markdownToPlainText('见 [《高等数学》](#/player/c1) 的第 3 页。'), '见 《高等数学》 的第 3 页。');
+  assert.equal(markdownToPlainText('![图@03:12](blob:x)'), '图@03:12');
+});
+
+test('plain：行首标记去掉，但缩进与换行保持', () => {
+  const md = '# 标题\n\n> 引用一句\n\n- 第一条\n- 第二条\n\n1. 有序\n';
+  assert.equal(markdownToPlainText(md), '标题\n\n引用一句\n\n第一条\n第二条\n\n有序');
+});
+
+test('plain：代码围栏只去掉围栏行，内容原样', () => {
+  const md = '看这段：\n\n```ts\nconst a = 1 * 2;\n```\n';
+  assert.equal(markdownToPlainText(md), '看这段：\n\nconst a = 1 * 2;');
+});
+
+test('plain：不误伤正文里的星号与下划线', () => {
+  // `2 * 3` 两侧有空格，不该被当成斜体标记
+  assert.equal(markdownToPlainText('结果是 2 * 3 = 6。'), '结果是 2 * 3 = 6。');
+  // 单下划线词（snake_case）不该被当成斜体
+  assert.equal(markdownToPlainText('字段名是 user_name。'), '字段名是 user_name。');
+});
+
+test('plain：空输入与纯空白返回空串', () => {
+  assert.equal(markdownToPlainText(''), '');
+  assert.equal(markdownToPlainText('  \n\n  '), '');
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

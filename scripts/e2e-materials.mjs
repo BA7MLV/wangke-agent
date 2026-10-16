@@ -289,6 +289,34 @@ await check('跳页输入 1 + 回车 → 1 / 3', async () => {
   );
 });
 
+/**
+ * 读进度线：工具条底边那条填充线。
+ *
+ * 断言读的是元素上的 `data-ratio` 而不是量出来的宽度 —— 子像素取整会让宽度差 0.5%，
+ * 比例才是这个组件真正对外的契约（组件见 components/ReaderProgress.tsx）。
+ */
+const readProgressRatio = () =>
+  page.$eval('[data-testid="reader-progress"]', (el) => Number(el.dataset.ratio));
+
+await check('进度线跟着页码走（1/3 → 2/3 → 1/3）', async () => {
+  // 此时在第 1 页（上一条「跳页输入 1」留下的位置）
+  assert.ok(Math.abs((await readProgressRatio()) - 1 / 3) < 1e-6, `第 1 页的比例：${await readProgressRatio()}`);
+
+  await page.click('[data-testid="reader-next"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="reader-page-indicator"]')?.textContent.trim() === '2 / 3',
+    { timeout: 10000 },
+  );
+  assert.ok(Math.abs((await readProgressRatio()) - 2 / 3) < 1e-6, `第 2 页的比例：${await readProgressRatio()}`);
+
+  await page.click('[data-testid="reader-prev"]');
+  await page.waitForFunction(
+    () => document.querySelector('[data-testid="reader-page-indicator"]')?.textContent.trim() === '1 / 3',
+    { timeout: 10000 },
+  );
+  assert.ok(Math.abs((await readProgressRatio()) - 1 / 3) < 1e-6, `回到第 1 页的比例：${await readProgressRatio()}`);
+});
+
 await check('书签目录可点，点「第二章」跳到第 2 页', async () => {
   await page.click('[data-testid="reader-outline"]');
   const item = page.locator('mdui-menu-item', { hasText: '第二章 矩阵的秩' });
@@ -552,6 +580,11 @@ await check('点 [第5段] 引用 → Word 阅读器滚动到第 5 段', async (
     () => document.querySelector('[data-testid="reader-page-indicator"]')?.textContent.trim() === '第 5 / 10 段',
     { timeout: 10000 },
   );
+});
+
+await check('Word 进度线跟着跳到第 5 段（5/10）', async () => {
+  const ratio = await page.$eval('[data-testid="reader-progress"]', (el) => Number(el.dataset.ratio));
+  assert.ok(Math.abs(ratio - 0.5) < 1e-6, `第 5 / 10 段的比例应是 0.5，实际 ${ratio}`);
 });
 
 console.log('\n—— 8. 扫描件（无文本层）——');

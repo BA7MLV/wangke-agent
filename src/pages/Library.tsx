@@ -2,16 +2,40 @@ import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import {
+  Button,
+  Card,
+  Chip,
+  Dropdown,
+  Input,
+  Modal,
+  ProgressBar,
+  Radio,
+  RadioGroup,
+  SearchField,
+  Tag,
+  TagGroup,
+  TextArea,
+  TextField,
+  ToggleButton,
+  ToggleButtonGroup,
+  buttonVariants,
+} from '@heroui/react';
+import {
   Banner,
   EmptyState,
   HelpTip,
+  LoadingButton,
   PageShell,
+  SkeletonReveal,
+  Sym,
   alertDialog,
   confirmDialog,
   toast,
-  useMduiEvent,
+  MODAL_CONTAINER_CLASS,
+  useSkeletonGate,
 } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { SettingsButton } from '../components/SettingsModal';
 import { IconSwap, NumberPop } from '../components/motion';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
@@ -147,6 +171,34 @@ interface ImportTask {
   error?: string;
 }
 
+/**
+ * 拖拽的两种「卡片级」投放区（除已有的文件夹组头之外）。
+ *
+ * - `pin`：拖到顶栏左侧 → 置顶 / 取消置顶（在所属组内排最前）；
+ * - `delete`：拖到顶栏右侧 → 删除（走与行内删除同一个确认弹窗）。
+ *
+ * 只在拖拽进行中出现，位置钉在视口顶部两角（`position: fixed`），
+ * 命中检测照旧用手动 `getBoundingClientRect`（Pointer Events + 指针捕获下
+ * 不能靠 DOM 事件目标），见 `moveDrag`。
+ */
+type DragZone = 'pin' | 'delete';
+
+interface DragState {
+  video: VideoRow;
+  x: number;
+  y: number;
+  /** 悬停到的文件夹组头 key（含 `UNCAT_KEY`），未悬停为 null */
+  overKey: string | null;
+  /** 悬停到的卡片级投放区，未悬停为 null */
+  zone: DragZone | null;
+}
+
+/** 整卡长按多久进入拖拽（毫秒）。与系统「长按呼出菜单」的常见时长同量级 */
+const LONG_PRESS_MS = 400;
+
+/** 长按期间允许的抖动上限（px）：超过即判定为滚动/点按，取消长按 */
+const LONG_PRESS_SLOP = 8;
+
 const TASK_STATUS_TEXT: Record<ImportTask['status'], string> = {
   queued: '排队中',
   probing: '读取信息',
@@ -174,6 +226,29 @@ const LIBRARY_FILTERS = [
 ] as const;
 type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['value'];
 
+/* ── 版式常量（Tailwind） ──────────────────────────────────────────────────────
+   资料页原先的几何全写在 `library.css` / `layout.css` 的 `.video-row` / `.drop-zone`
+   等自写类里。HeroUI 化之后这些规则整段删掉，几何改由下面这串工具类表达 ——
+   配色只读 HeroUI 语义令牌（`bg-surface` / `text-muted` / `bg-default-soft` …）。
+
+   **真卡片与骨架共用同一串类**：迁移前靠「骨架复用真类名 + 自写 CSS 给真类定几何」
+   保持同形；现在类名只作量测钩子（无样式），同形改由这些常量承担。谁改了这里，
+   真内容与骨架一起变，`scripts/probe-loading-latency.mjs` 的 H 组仍按 ±4px 守着。
+   ──────────────────────────────────────────────────────────────────────────── */
+const GRID_CLS =
+  'video-grid mt-2 mb-1 grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-5 max-[640px]:grid-cols-1 max-[640px]:gap-4';
+/** 卡片根：表面 / 圆角 / 阴影由 HeroUI `Card` 自带，这里只补内边距与纵向排布 */
+const CARD_CLS = 'video-row group relative gap-0 p-1.5 pb-2';
+const THUMB_CLS =
+  'video-row__thumb relative block aspect-video w-full cursor-pointer overflow-hidden rounded-2xl bg-default-soft';
+const MAIN_CLS = 'video-row__main mt-2 min-w-0 px-0.5';
+const NAME_CLS = 'video-row__name line-clamp-2 text-[15px] font-medium leading-snug text-foreground';
+const META_CLS = 'video-row__meta mt-0.5 truncate text-xs text-muted';
+const TAGS_CLS = 'video-row__tags mt-1.5 flex items-center gap-1.5 px-0.5';
+const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap-1 px-0.5';
+/** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
+const SKEL_CLS = 'skel-bar block';
+
 function loadCollapsed(): Set<string> {
   try {
     const arr = JSON.parse(localStorage.getItem(COLLAPSE_STORE_KEY) ?? '[]') as unknown;
@@ -183,12 +258,123 @@ function loadCollapsed(): Set<string> {
   }
 }
 
+/**
+ * 资料库首屏骨架：**与真内容同形**。
+ *
+ * 做法不是「自画灰条去示意」，而是**把真内容那一套包裹类原样搬过来**
+ * （`.library-browse` / `.library-toolbar` / `.group-header` / `.video-grid` /
+ * `.video-row` / `.video-row__main` / `__tags` / `__actions`），只把「该是文字 / 按钮」
+ * 的位置换成灰块。间距、圆角、外边距全部继承真类，骨架不需要抄一遍像素 ——
+ * 「同形」因此是结构上成立的，而不是靠一堆手写的 height 恰好凑对。
+ *
+ * ⚠️ 上一版就是靠手写高度去凑的，并且这一版之前的注释还写着「逐像素对齐」——
+ * 而量出来是卡片矮 49px（少整条操作按钮行）、列表起点高 144px（工具栏那段没留占位）。
+ * **「同形」不能靠看截图判断**，所以现在它由 `scripts/probe-loading-latency.mjs` 的
+ * H 组按 ±4px 断言（卡片高 / 列表起点 / 缩略图高 / 操作行高）。改这里之后请跑那个脚本。
+ *
+ * 会呼吸的灰由 `.skel-breathe` 单独加，它不设背景也不设任何几何属性，
+ * 所以不会覆盖真类的任何一条样式。
+ *
+ * ⚠️ 刻意**不**挂 `data-testid="video-item"`：e2e 拿它判断「列表出来了」，
+ * 骨架冒充它会让所有等待列表的断言在骨架阶段就误判为通过。
+ * 它自己的 testid 只有一个用途：量测脚本判断「这一屏到底出没出过骨架」
+ * （见 scripts/probe-loading-latency.mjs 的 G 组）。
+ */
+function LibrarySkeleton({ count }: { count: number }) {
+  return (
+    <div className="skel-library" data-testid="library-skeleton" aria-hidden="true">
+      {/*
+       * 工具栏 / 筛选行 / 分组头这一段，在真页面上挂在「有没有数据」上
+       * （render 里 `(videos.length > 0 || folders.length > 0) && <section className="library-browse">`）。
+       * 首屏加载中它整段不存在，而骨架已经在它下面了 —— 不留等高占位的话，数据一到
+       * 这一段会从**上面**插进来，把骨架连同后面的卡片一起往下推。
+       *
+       * 这里复用真类名（**不带任何 data-testid**）就是为了直接继承高度与间距。
+       * 代价是一条必须守住的前提：骨架只在「首屏 + 还没有任何数据」时出现
+       * （见 render 里的 isFirstLoad）。刷新时库里有旧数据、那一段真元素本来就在场，
+       * 若那时再挂这份占位就会两套叠在一起。
+       */}
+      {/* 外面这层 `<section className="library-browse">` 不能省：它的 `margin-top: 28px`
+          就是真页面里工具栏与上方投放区之间的距离（窄屏是 24px）。少了它整条链路会高 28px。 */}
+      <section className="library-browse">
+        <div className="library-toolbar">
+          <div className="library-toolbar__summary">
+            <div className="skel-bar skel-library__h2" />
+            <div className="skel-bar skel-library__sub" />
+          </div>
+          <div className="skel-bar skel-library__search" />
+          <div className="skel-bar skel-library__newfolder" />
+        </div>
+        <div className="library-filter-row">
+          <div className="library-filters">
+            {LIBRARY_FILTERS.map((item) => (
+              <div key={item.value} className="skel-bar skel-library__filter" />
+            ))}
+          </div>
+        </div>
+      </section>
+      <div className="group-header">
+        {/* 真高度来自 `.group-header__toggle` 的 min-height + padding，
+            所以占位照抄那两条，而不是猜一个数字 */}
+        <div className="skel-library__group-toggle">
+          <div className="skel-bar skel-library__group-name" />
+        </div>
+      </div>
+
+      <div className="video-grid">
+        {Array.from({ length: count }, (_, i) => (
+          <div className="video-row" key={i}>
+            {/* 缩略图 + 右下角时长徽标：真卡片上最显眼的两个块 */}
+            <div className="video-row__thumb skel-breathe">
+              <span className="skel-library__badge" />
+            </div>
+            {/* 卡内三层沿用真类的包裹（__main / __tags / __actions）——
+                它们各自的 margin / gap 就是真卡片的间距，骨架不需要自己再抄一遍像素。
+                「同形」因此是结构上成立的，而不是靠一堆手写的 height 恰好凑对。 */}
+            <div className="video-row__main">
+              <h3 className="video-row__name">
+                <span className="skel-bar skel-library__name" />
+              </h3>
+              <div className="video-row__meta">
+                <span className="skel-bar skel-library__meta" />
+              </div>
+            </div>
+            <div className="video-row__tags">
+              <span className="tag-mini skel-breathe skel-library__tag" />
+            </div>
+            <div className="video-row__actions">
+              <span className="skel-library__action skel-library__action--pill" />
+              <span className="skel-library__action" />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export default function Library() {
   const navigate = useNavigate();
   const nav = useAppNav('home');
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
+  /**
+   * 列表的加载状态。
+   *
+   * ⚠️ 为什么不能拿 `videos.length === 0 && folders.length === 0` 兼表「空库」：
+   * 首帧这两个数组**必然是空的**（reload 是异步 IndexedDB 读），于是「还没加载出来」
+   * 和「库里确实没东西」被混成了同一个状态 —— 有数据的库冷启动时，空态会先闪现
+   * 64–94ms 再被列表顶掉（实测见 `scripts/probe-loading-latency.mjs` 的 B 组）。
+   *
+   * 三态分开之后，空态只在 `ready` 且数组真的为空时才出现。
+   * 同一套规矩在 `store/courseChat.ts` 已经是这么写的（`loaded` / `error` 各自独立，
+   * 注释里明确禁止用 `activeId === null` 兼表「正在加载」）。
+   */
+  const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
+  const [loadError, setLoadError] = useState<string | null>(null);
+  /** 首次读库是否已经落定（成功或失败都算）—— 决定后续刷新失败时是「换错误页」还是「只弹 toast」 */
+  const initialLoadSettled = useRef(false);
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<LibraryFilter>('all');
   const searchInputRef = useRef<HTMLInputElement>(null);
@@ -206,12 +392,16 @@ export default function Library() {
   const [moveNewName, setMoveNewName] = useState('');
   /**
    * 拖拽移动（Pointer Events 实现，iPad Safari 不支持 HTML5 DnD）：
-   * 按住视频行的拖拽手柄 → 悬浮卡片跟随 → 拖到组头上松手移入该文件夹。
+   * 按住视频行的拖拽手柄（立即）或整张卡片长按（约 400ms）→ 悬浮卡片跟随 →
+   * 拖到组头上松手移入该文件夹、拖到顶栏左侧松手置顶、拖到顶栏右侧松手删除。
    * dragRef 镜像 drag 供事件处理器同步读取（避免闭包拿到旧 state）。
    */
-  const [drag, setDrag] = useState<{ video: VideoRow; x: number; y: number; overKey: string | null } | null>(null);
-  const dragRef = useRef<{ video: VideoRow; x: number; y: number; overKey: string | null } | null>(null);
+  const [drag, setDrag] = useState<DragState | null>(null);
+  const dragRef = useRef<DragState | null>(null);
   const headerRefs = useRef(new Map<string, HTMLDivElement>());
+  /** 顶栏两个投放区的 DOM，命中检测时现量矩形（拖拽期间才挂载） */
+  const pinZoneRef = useRef<HTMLDivElement>(null);
+  const deleteZoneRef = useRef<HTMLDivElement>(null);
   // 顺序导入链：多个文件排队逐个写入，避免并发写存储互相拖慢
   const chainRef = useRef<Promise<void>>(Promise.resolve());
   const nativeInputRef = useRef<HTMLInputElement>(null);
@@ -235,32 +425,37 @@ export default function Library() {
   /** 导入中的阶段文案（多 P 时是「P2 … · 2/5」） */
   const [biliLabel, setBiliLabel] = useState('');
   const [biliError, setBiliError] = useState<string | null>(null);
-  /** chips 容器：mdui-chip 的 change 事件会冒泡，用容器代理省去逐个 ref */
-  const langListRef = useRef<HTMLDivElement>(null);
-  const pageListRef = useRef<HTMLDivElement>(null);
   /** 语言列表刷新的竞态计数：只认最后一次请求 */
   const langReqRef = useRef(0);
 
-  // mdui-dialog 自己处理 Esc / 点遮罩关闭时只是把 open 属性拿掉，React 的 state 不知道，
-  // 必须接 closed 事件同步回 state，否则出现「关不掉 / 自己弹回来」（阶段 1 已实测）。
-  const renameDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setRenaming(null));
-  const folderDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setFolderModal(null));
-  const moveDlgRef = useMduiEvent('mdui-dialog', 'closed', () => setMoving(null));
-  const biliDlgRef = useMduiEvent('mdui-dialog', 'closed', () => {
-    if (!biliImporting) {
-      setBiliOpen(false);
-      resetBiliDraft();
-    }
-  });
-  const moveRadioRef = useMduiEvent('mdui-radio-group', 'change', (_e, el) => setMoveTarget(el.value));
-
   const reload = async () => {
-    const [rows, folderRows] = await Promise.all([
-      db.videos.orderBy('createdAt').reverse().toArray(),
-      db.folders.orderBy('createdAt').toArray(),
-    ]);
-    setVideos(rows);
-    setFolders(folderRows);
+    try {
+      const [rows, folderRows] = await Promise.all([
+        db.videos.orderBy('createdAt').reverse().toArray(),
+        db.folders.orderBy('createdAt').toArray(),
+      ]);
+      setVideos(rows);
+      setFolders(folderRows);
+      setLoadError(null);
+      initialLoadSettled.current = true;
+      setLoadState('ready');
+    } catch (e) {
+      const message = formatCaughtError(e);
+      setLoadError(message);
+      /**
+       * 只有**首次**加载失败才把整页切成错误页。
+       *
+       * 后续的刷新（revision 变化、后台任务收尾）失败时换掉整页是错的 ——
+       * 用户手里已经有一份能看的列表，一次后台重读失败不该把它抽走：
+       * 内容还在、只是可能不是最新，这比「突然什么都没有了」好得多。
+       * 这种情形留一条 toast 就够。
+       */
+      if (initialLoadSettled.current) {
+        toast.error(`资料刷新失败：${message}`);
+      } else {
+        setLoadState('error');
+      }
+    }
   };
 
   useEffect(() => {
@@ -322,14 +517,23 @@ export default function Library() {
         uncat.push(v);
       }
     }
+    /**
+     * 组内置顶优先，其余维持 reload 的新→旧顺序。
+     *
+     * 用一次稳定排序而不是「先挑出置顶再 concat」：`Array.prototype.sort` 在现代引擎里
+     * 是稳定排序，同置顶状态下相对次序不动 —— 于是 `videos`（createdAt 倒序）的顺序
+     * 被原样保留，不必在这里再比一次时间戳。
+     */
+    const byPinned = (list: VideoRow[]) =>
+      [...list].sort((a, b) => (b.pinned === 1 ? 1 : 0) - (a.pinned === 1 ? 1 : 0));
     return [
       ...folders.map((f) => ({
         key: String(f.id),
         name: f.name,
-        videos: byFolder.get(f.id!) ?? [],
+        videos: byPinned(byFolder.get(f.id!) ?? []),
         folder: f as FolderRow | null,
       })),
-      { key: UNCAT_KEY, name: '未分类', videos: uncat, folder: null },
+      { key: UNCAT_KEY, name: '未分类', videos: byPinned(uncat), folder: null },
     ];
   }, [videos, folders]);
 
@@ -353,6 +557,30 @@ export default function Library() {
   );
   const visibleCount = visibleGroups.reduce((count, group) => count + group.videos.length, 0);
   const materialCount = videos.filter((video) => video.kind === 'material').length;
+
+  /**
+   * 首次读库要不要出骨架。
+   *
+   * 实测本机 IndexedDB 全表读回 p50 是 0.3ms，所以**绝大多数情况下这里一直是 false**
+   * —— 列表直接就位，连一帧骨架都不会出现，这正是想要的结果（见 ui/skeleton.tsx 的说明）。
+   * 它只在慢设备 / 主线程被长任务占住时才会真的露脸。
+   *
+   * ⚠️ 判据写成「加载中 **且手上还没有任何东西可显示**」，而不是只看 `loadState === 'loading'`。
+   *
+   * 就今天的代码而言这两个写法**等价** —— `setLoadState('loading')` 只出现在重试按钮里，
+   * 刷新（`libraryRevision` 变化、导入 / 删除后的重读）根本不会把状态打回 `loading`。
+   * 之所以还是把「没有内容」这半句写上，是因为它才是这个判断真正的意思：
+   * 骨架的正确用法是填「还什么都没有」的那个空档，一旦手里有内容可显示，就不该拿骨架
+   * 去盖住它（把已经看得见的内容换成骨架，比刷新慢一点糟糕得多）。
+   * 这是一个守卫：将来谁给刷新也加上 `loading`（这很自然，想让刷新有个指示），
+   * 这里不会跟着退化成「刷新时把列表清空」。
+   *
+   * 顺带说明为什么这里能安全地看数组长度：它和 `loadState === 'loading'` **同时成立**
+   * 才等于「首屏」，不存在把「未加载」当成「确实为空」的老问题 ——
+   * 那个老问题恰恰是只看数组长度、不看加载状态造成的。
+   */
+  const isFirstLoad = loadState === 'loading' && videos.length === 0 && folders.length === 0;
+  const showSkeleton = useSkeletonGate(isFirstLoad);
 
   const clearFilters = () => {
     setSearchText('');
@@ -510,41 +738,21 @@ export default function Library() {
     });
   }
 
-  // 分 P chips：选中切换 + 切换后刷新语言列表
-  useEffect(() => {
-    const el = pageListRef.current;
-    if (!biliOpen || !el || !biliTarget) return;
-    const onChange = (e: Event) => {
-      const chip = e.target as HTMLElement & { selected?: boolean };
-      const n = Number(chip?.dataset?.page);
-      if (!Number.isFinite(n) || n <= 0) return;
-      setBiliPagesSel((prev) => {
-        const next = chip.selected !== false ? [...new Set([...prev, n])].sort((a, b) => a - b) : prev.filter((p) => p !== n);
-        const first = firstSelectedPage(biliTarget, next);
-        if (first != null && first !== biliLangPage) void refreshLangsForPage(biliTarget, first);
-        return next;
-      });
-    };
-    el.addEventListener('change', onChange);
-    return () => el.removeEventListener('change', onChange);
-  }, [biliOpen, biliTarget, biliLangPage]);
+  // 分 P chips：选中切换 + 切换后刷新语言列表。
+  // mdui-chip 时代靠容器上的 change 事件冒泡来读 chip.selected；迁到 TagGroup 后
+  // 直接用受控的 selectedKeys + onSelectionChange，回调给的是「新的完整选中集」。
+  const selectPages = (keys: Iterable<string>) => {
+    if (!biliTarget) return;
+    const next = [...keys].map(Number).filter((n) => Number.isFinite(n) && n > 0).sort((a, b) => a - b);
+    setBiliPagesSel(next);
+    const first = firstSelectedPage(biliTarget, next);
+    if (first != null && first !== biliLangPage) void refreshLangsForPage(biliTarget, first);
+  };
 
-  // 语言 chips：选中切换（mdui-chip 自己已经把 selected 翻好了，读它以免和 React 状态打架）
-  useEffect(() => {
-    const el = langListRef.current;
-    if (!biliOpen || !el) return;
-    const onChange = (e: Event) => {
-      const chip = e.target as HTMLElement & { selected?: boolean };
-      const lang = chip?.dataset?.lang;
-      if (!lang) return;
-      const on = chip.selected !== false;
-      setBiliLangs((prev) =>
-        on ? (prev.includes(lang) ? prev : [...prev, lang]) : prev.filter((l) => l !== lang),
-      );
-    };
-    el.addEventListener('change', onChange);
-    return () => el.removeEventListener('change', onChange);
-  }, [biliOpen, biliTarget]);
+  // 语言 chips：同样改成受控选中集
+  const selectLangs = (keys: Iterable<string>) => {
+    setBiliLangs([...keys]);
+  };
 
   /**
    * B 站导入第一步：解析链接，拿到标题/时长与「自带字幕」语言列表。
@@ -805,6 +1013,17 @@ export default function Library() {
     });
   };
 
+  /**
+   * 置顶 / 取消置顶。入口有两处：行内菜单（键盘与触屏可达）与长按拖拽到顶栏左侧。
+   * 语义是**组内**排最前（见 `groups` 的 byPinned），不是全库独立置顶区。
+   */
+  const togglePin = async (v: VideoRow) => {
+    const next = v.pinned === 1 ? 0 : 1;
+    await db.videos.update(v.id, { pinned: next });
+    toast.success(next === 1 ? `已置顶《${v.name}》` : `已取消置顶《${v.name}》`);
+    await reload();
+  };
+
   // ---------- 文件夹操作 ----------
 
   const openFolderModal = (mode: 'create' | 'rename', folder?: FolderRow) => {
@@ -891,34 +1110,57 @@ export default function Library() {
     await reload();
   };
 
-  // ---------- 拖拽移入文件夹 ----------
+  // ---------- 拖拽：移入文件夹 / 置顶 / 删除 ----------
+
+  /**
+   * 拖拽的统一起点。两个入口都汇到这里：
+   * - 手柄按下：立即开始（桌面精确操作，无需等待）；
+   * - 整卡长按：计时器到点后开始（触屏无 hover，长按是「拿起」的自然手势）。
+   *
+   * 捕获指针：后续的 move/up 都派发到 `el`（手柄或整张卡片），React 合成事件照常触发。
+   */
+  const beginDrag = (el: HTMLElement, pointerId: number, v: VideoRow, x: number, y: number) => {
+    el.setPointerCapture(pointerId);
+    const d: DragState = { video: v, x, y, overKey: null, zone: null };
+    dragRef.current = d;
+    setDrag(d);
+  };
 
   const startDrag = (e: React.PointerEvent<HTMLElement>, v: VideoRow) => {
     e.preventDefault();
-    // 捕获指针：后续的 move/up 都派发到手柄元素，React 合成事件照常触发
-    e.currentTarget.setPointerCapture(e.pointerId);
-    const d = { video: v, x: e.clientX, y: e.clientY, overKey: null as string | null };
-    dragRef.current = d;
-    setDrag(d);
+    beginDrag(e.currentTarget, e.pointerId, v, e.clientX, e.clientY);
   };
 
   const moveDrag = (e: React.PointerEvent<HTMLElement>) => {
     const d = dragRef.current;
     if (!d) return;
-    // 拖动中指针捕获抑制了页面滚动，贴近视口边缘时手动滚动
-    const main = document.querySelector('mdui-layout-main');
+    // 拖动中指针捕获抑制了页面滚动，贴近视口边缘时手动滚动。
+    // 滚动容器是 PageShell 的内容区。用 data-testid 而不是类名找它 ——
+    // 外壳的版式类名已经全部并进 Tailwind 工具类，没有稳定的类名可依赖了。
+    const main = document.querySelector<HTMLElement>('[data-testid="page-main"]');
     if (e.clientY < 80) main?.scrollBy(0, -12);
     else if (e.clientY > window.innerHeight - 80) main?.scrollBy(0, 12);
-    // 命中检测：指针落在哪个组头的矩形内
-    let overKey: string | null = null;
-    for (const [key, el] of headerRefs.current) {
+    const inRect = (el: HTMLElement | null): boolean => {
+      if (!el) return false;
       const r = el.getBoundingClientRect();
-      if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
-        overKey = key;
-        break;
+      return e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom;
+    };
+    // 顶栏两个投放区优先：落在里面就吃掉这次命中，不再去比组头
+    // （组头在它们下方的文档流里，两套矩形理论上不会重叠，但优先级写死更稳）
+    let zone: DragZone | null = null;
+    if (inRect(pinZoneRef.current)) zone = 'pin';
+    else if (inRect(deleteZoneRef.current)) zone = 'delete';
+    let overKey: string | null = null;
+    if (!zone) {
+      for (const [key, el] of headerRefs.current) {
+        const r = el.getBoundingClientRect();
+        if (e.clientX >= r.left && e.clientX <= r.right && e.clientY >= r.top && e.clientY <= r.bottom) {
+          overKey = key;
+          break;
+        }
       }
     }
-    const next = { ...d, x: e.clientX, y: e.clientY, overKey };
+    const next: DragState = { ...d, x: e.clientX, y: e.clientY, overKey, zone };
     dragRef.current = next;
     setDrag(next);
   };
@@ -927,7 +1169,17 @@ export default function Library() {
     const d = dragRef.current;
     dragRef.current = null;
     setDrag(null);
-    if (!d?.overKey) return;
+    if (!d) return;
+    // 顶栏投放区：置顶 / 删除。删除走与行内同一个确认弹窗（销毁性操作不静默执行）
+    if (d.zone === 'delete') {
+      askDeleteVideo(d.video);
+      return;
+    }
+    if (d.zone === 'pin') {
+      await togglePin(d.video);
+      return;
+    }
+    if (!d.overKey) return;
     const target = d.overKey === UNCAT_KEY ? null : Number(d.overKey);
     if (target === (d.video.folderId ?? null)) return; // 原地放回
     await setVideoFolder(d.video.id, target);
@@ -941,17 +1193,24 @@ export default function Library() {
     setDrag(null);
   };
 
-  // 拖动期间禁止文本选中；Esc 取消拖拽
+  // 拖动期间禁止文本选中、禁止触屏在拖动中滚动页面；Esc 取消拖拽。
+  // 触屏长按起手时 `touch-action` 不是 none（整张卡片要保持可滚动），
+  // 所以这里补一条非 passive 的 touchmove 阻止默认滚动 —— 只在拖拽进行中挂上。
   useEffect(() => {
     if (!drag) return;
     document.body.style.userSelect = 'none';
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') cancelDrag();
     };
+    const preventTouchScroll = (e: TouchEvent) => {
+      if (e.cancelable) e.preventDefault();
+    };
     window.addEventListener('keydown', onKey);
+    window.addEventListener('touchmove', preventTouchScroll, { passive: false });
     return () => {
       document.body.style.userSelect = '';
       window.removeEventListener('keydown', onKey);
+      window.removeEventListener('touchmove', preventTouchScroll);
     };
   }, [drag != null]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -978,7 +1237,10 @@ export default function Library() {
         data-testid="group-header"
         data-group-key={g.key}
         onClick={(e) => {
-          if (!hasFilters && !(e.target as HTMLElement).closest('mdui-dropdown')) toggleCollapse(g.key);
+          // 点 ⋯ 菜单本身不折叠：HeroUI 的 dropdown 触发器带 data-slot="dropdown-trigger"
+          if (!hasFilters && !(e.target as HTMLElement).closest('[data-slot="dropdown-trigger"]')) {
+            toggleCollapse(g.key);
+          }
         }}
       >
         <button
@@ -998,11 +1260,11 @@ export default function Library() {
                 之前是条件渲染，展开 / 收起时箭头是硬跳的。 */}
             <IconSwap
               active={isCollapsed ? 'a' : 'b'}
-              a={<mdui-sym-chevron-right />}
-              b={<mdui-sym-keyboard-arrow-down />}
+              a={<Sym name="chevron-right" />}
+              b={<Sym name="keyboard_arrow_down" />}
             />
           </span>
-          <span className="group-header__icon" aria-hidden="true"><mdui-sym-folder /></span>
+          <span className="group-header__icon" aria-hidden="true"><Sym name="folder" /></span>
           <span className="group-header__name">{g.name}</span>
           <span className="group-header__count">
             {/* number-pop-in：导入 / 删除后数量变化时逐位重新入场 */}
@@ -1010,32 +1272,38 @@ export default function Library() {
           </span>
         </button>
         {g.folder && (
-          <mdui-dropdown>
-            <mdui-button-icon
-              slot="trigger"
+          // mdui-dropdown + mdui-menu → HeroUI Dropdown。
+          // 菜单项用 id 标识、onAction 收 key（不再逐项挂 onClick）；
+          // 触发器就是那个图标按钮本身，用 buttonVariants 拿到与库内其它图标按钮一致的观感。
+          <Dropdown>
+            <Dropdown.Trigger
+              className={buttonVariants({ isIconOnly: true, variant: 'tertiary', size: 'sm' })}
               data-testid="btn-folder-more"
               aria-label={`${g.name}的文件夹操作`}
-              onClick={(e) => e.stopPropagation()}
             >
-              <mdui-sym-more-vert />
-            </mdui-button-icon>
-            <mdui-menu>
-              <mdui-menu-item
-                data-testid="menu-folder-rename"
-                onClick={() => openFolderModal('rename', g.folder!)}
+              <Sym name="more_vert" />
+            </Dropdown.Trigger>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu
+                aria-label={`${g.name}的文件夹操作`}
+                onAction={(key) => {
+                  if (key === 'rename') openFolderModal('rename', g.folder!);
+                  else if (key === 'delete') {
+                    confirmDeleteFolder(g.folder!, groups.find((group) => group.key === g.key)?.videos.length ?? 0);
+                  }
+                }}
               >
-                <mdui-sym-edit slot="icon" />
-                重命名文件夹
-              </mdui-menu-item>
-              <mdui-menu-item
-                data-testid="menu-folder-delete"
-                onClick={() => confirmDeleteFolder(g.folder!, groups.find((group) => group.key === g.key)?.videos.length ?? 0)}
-              >
-                <mdui-sym-delete slot="icon" />
-                删除文件夹
-              </mdui-menu-item>
-            </mdui-menu>
-          </mdui-dropdown>
+                <Dropdown.Item id="rename" textValue="重命名文件夹" data-testid="menu-folder-rename">
+                  <Sym name="edit" />
+                  重命名文件夹
+                </Dropdown.Item>
+                <Dropdown.Item id="delete" textValue="删除文件夹" data-testid="menu-folder-delete">
+                  <Sym name="delete" />
+                  删除文件夹
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         )}
       </div>
     );
@@ -1050,9 +1318,11 @@ export default function Library() {
       onPlay={() => navigate(`/player/${v.id}`)}
       onRename={() => openRename(v)}
       onMove={() => openMove(v)}
+      onTogglePin={() => void togglePin(v)}
       onDelete={() => askDeleteVideo(v)}
       onReparse={v.kind === 'material' ? () => reparseMaterial(v) : undefined}
       onDragStart={(e) => startDrag(e, v)}
+      onBeginDrag={(el, pointerId, x, y) => beginDrag(el, pointerId, v, x, y)}
       onDragMove={moveDrag}
       onDragEnd={() => void endDrag()}
       onDragCancel={cancelDrag}
@@ -1061,11 +1331,14 @@ export default function Library() {
 
   return (
     <PageShell
-      title="课程库"
+      title="资料"
       wide
       rootClassName="page-library"
-      rail={nav.rail}
-      bottomNav={nav.bottom}
+      rail={nav}
+      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      /* 顶栏右上角那颗设置图标撤掉（2026-10-15，与 AI 助手页同一口径）：
+         设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
+         同一个入口在一条顶栏里露两次没有必要。 */
     >
       {SHOW_PWA_HINT && (
         // 标题留结论（该做什么），「为什么」收进问号——那段解释在手机上要占四行，
@@ -1073,7 +1346,7 @@ export default function Library() {
         <Banner
           variant="warning"
           testId="pwa-hint"
-          icon={<mdui-sym-warning />}
+          icon={<Sym name="warning" />}
           title="建议用 Safari 将本页「添加到主屏幕」后使用"
           help={
             <HelpTip headline="为什么要添加到主屏幕" label="说明" testId="pwa-hint-help">
@@ -1102,7 +1375,7 @@ export default function Library() {
         }}
         onDrop={handleDrop}
       >
-        <mdui-sym-cloud-upload className="drop-zone__icon" aria-hidden="true" />
+        <Sym name="cloud_upload" className="drop-zone__icon" />
         <div className="drop-zone__copy">
           <div className="drop-zone__title">导入课程与资料</div>
           {/* 格式与存储位置留在正文；系统选择器和空间管理细节收进说明。 */}
@@ -1123,29 +1396,29 @@ export default function Library() {
           </div>
         </div>
         <div className="drop-zone__actions">
-          <mdui-button
+          {/* onClick 保留：投放区整块可点，按钮要拦住冒泡才不会顺手弹出文件选择器
+              （RAC 的 usePress 会把 onClick 接到真实 click 上，stopPropagation 有效）。 */}
+          <Button
             data-testid="btn-native-pick"
-            variant="filled"
-            onClick={(e) => {
-              e.stopPropagation();
-              nativeInputRef.current?.click();
-            }}
+            variant="primary"
+            onPress={() => nativeInputRef.current?.click()}
+            onClick={(e) => e.stopPropagation()}
           >
-            <mdui-sym-upload slot="icon" />
+            <Sym name="upload" />
             导入文件
-          </mdui-button>
-          <mdui-button
+          </Button>
+          <Button
             data-testid="btn-bili-import"
-            variant="tonal"
-            onClick={(e) => {
-              e.stopPropagation();
+            variant="secondary"
+            onPress={() => {
               setBiliError(null);
               setBiliOpen(true);
             }}
+            onClick={(e) => e.stopPropagation()}
           >
-            <mdui-sym-link slot="icon" />
+            <Sym name="link" />
             从 B 站导入
-          </mdui-button>
+          </Button>
         </div>
         {/* iOS 上隐藏 input 需可聚焦，不能用 display:none */}
         <input
@@ -1184,20 +1457,27 @@ export default function Library() {
                       : TASK_STATUS_TEXT[t.status]}
                 </span>
                 {t.status === 'error' && (
-                  <mdui-button-icon
+                  <Button
+                    isIconOnly
+                    variant="tertiary"
+                    size="sm"
                     data-testid="btn-dismiss-import-error"
                     aria-label="关掉这条失败提示"
-                    onClick={() => setTasks((prev) => prev.filter((x) => x.key !== t.key))}
+                    onPress={() => setTasks((prev) => prev.filter((x) => x.key !== t.key))}
                   >
-                    <mdui-sym-close />
-                  </mdui-button-icon>
+                    <Sym name="close" />
+                  </Button>
                 )}
               </div>
               {t.status !== 'done' && t.status !== 'error' && (
-                <mdui-linear-progress
+                // mdui-linear-progress 不给 value 就是不确定态；RAC 用显式的 isIndeterminate 表达，
+                // 两者一一对应（value 有值时按百分比走，没有就转圈）。
+                <ProgressBar
                   data-testid="import-progress"
-                  max={100}
-                  value={t.status === 'writing' ? t.percent : undefined}
+                  maxValue={100}
+                  value={t.status === 'writing' ? t.percent : 0}
+                  isIndeterminate={t.status !== 'writing'}
+                  aria-label="导入进度"
                 />
               )}
             </div>
@@ -1206,14 +1486,14 @@ export default function Library() {
       )}
 
       {(videos.length > 0 || folders.length > 0) && (
-        <section className="library-browse" aria-label="浏览课程库">
+        <section className="library-browse" aria-label="浏览资料">
           <div className="library-toolbar">
             <div className="library-toolbar__summary">
               <h2>你的课程与资料</h2>
               <p>{videos.length - materialCount} 个视频 · {materialCount} 份阅读材料</p>
             </div>
             <div className="library-search" role="search">
-              <mdui-sym-search aria-hidden="true" />
+              <Sym name="search" className="library-search__icon" />
               <input
                 ref={searchInputRef}
                 type="search"
@@ -1230,23 +1510,30 @@ export default function Library() {
                 }}
               />
               {searchText && (
-                <mdui-button-icon
+                <Button
+                  isIconOnly
+                  variant="tertiary"
+                  size="sm"
                   className="library-search__clear"
                   data-testid="library-search-clear"
                   aria-label="清除搜索"
-                  onClick={() => {
+                  onPress={() => {
                     setSearchText('');
                     searchInputRef.current?.focus();
                   }}
                 >
-                  <mdui-sym-close />
-                </mdui-button-icon>
+                  <Sym name="close" />
+                </Button>
               )}
             </div>
-            <mdui-button data-testid="btn-new-folder" variant="text" onClick={() => openFolderModal('create')}>
-              <mdui-sym-create-new-folder slot="icon" />
+            <Button
+              data-testid="btn-new-folder"
+              variant="tertiary"
+              onPress={() => openFolderModal('create')}
+            >
+              <Sym name="create_new_folder" />
               新建文件夹
-            </mdui-button>
+            </Button>
           </div>
           <div className="library-filter-row">
             <div className="library-filters" role="group" aria-label="按内容筛选">
@@ -1259,7 +1546,7 @@ export default function Library() {
                   aria-pressed={filter === item.value}
                   onClick={() => setFilter(item.value)}
                 >
-                  {filter === item.value && <mdui-sym-check aria-hidden="true" />}
+                  {filter === item.value && <Sym name="check" className="library-filter__check" />}
                   {item.label}
                 </button>
               ))}
@@ -1272,297 +1559,433 @@ export default function Library() {
       )}
 
       <div data-testid="video-list">
-        {videos.length === 0 && folders.length === 0 ? (
-          // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
-          // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
-          <EmptyState testId="empty-state" icon={<mdui-sym-video-library />} title="还没有课程或资料" />
-        ) : hasFilters && visibleCount === 0 ? (
-          <EmptyState
-            testId="library-no-results"
-            icon={<mdui-sym-search />}
-            title="没有找到匹配的内容"
-            description={searchQuery ? '试试其他名称，或清除筛选查看全部内容。' : '当前筛选下没有内容，可以切换到全部查看。'}
-            action={<mdui-button variant="tonal" onClick={clearFilters}>清除搜索和筛选</mdui-button>}
-          />
-        ) : (
-          visibleGroups.map((g) => (
-            <div key={g.key}>
-              {renderGroupHeader(g)}
-              <div id={`library-group-${g.key}`} hidden={collapsed.has(g.key) && !hasFilters}>
-                {(!collapsed.has(g.key) || hasFilters) && (
-                  <div className="video-grid">{g.videos.map(renderVideoItem)}</div>
-                )}
+        <SkeletonReveal show={showSkeleton} skeleton={<LibrarySkeleton count={isMobile ? 3 : 6} />}>
+          {/* 只在首屏把内容让给骨架；其余任何时刻（包括将来真给刷新加了 loading 态）
+              都要继续渲染手上的列表，不能把已有内容清空 —— 这是「台上至少有一层」那条
+              不变量在调用侧的对应写法，与 showSkeleton 的判据保持一致。 */}
+          {isFirstLoad ? null : loadState === 'error' ? (
+            /* 读库失败：原先既没有 try/catch 也没有错误态，IndexedDB 打不开时
+               页面会停在「什么都没有」的样子，用户只会以为自己的课程丢了。
+               错误态至少要把「读不出来」和「确实没有」分开。 */
+            <Banner
+              variant="error"
+              testId="library-load-error"
+              icon={<Sym name="error" />}
+              title="资料读取失败"
+              description={loadError ?? '本机数据库打不开，课程与资料暂时读不出来。'}
+              action={
+                <Button
+                  variant="secondary"
+                  data-testid="btn-library-retry"
+                  onPress={() => {
+                    setLoadState('loading');
+                    setLoadError(null);
+                    void reload();
+                  }}
+                >
+                  重试
+                </Button>
+              }
+            />
+          ) : videos.length === 0 && folders.length === 0 ? (
+            // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
+            // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
+            <EmptyState testId="empty-state" icon={<Sym name="video_library" />} title="还没有课程或资料" />
+          ) : hasFilters && visibleCount === 0 ? (
+            <EmptyState
+              testId="library-no-results"
+              icon={<Sym name="search" />}
+              title="没有找到匹配的内容"
+              description={searchQuery ? '试试其他名称，或清除筛选查看全部内容。' : '当前筛选下没有内容，可以切换到全部查看。'}
+              action={<Button variant="secondary" onPress={clearFilters}>清除搜索和筛选</Button>}
+            />
+          ) : (
+            visibleGroups.map((g) => (
+              <div key={g.key}>
+                {renderGroupHeader(g)}
+                <div id={`library-group-${g.key}`} hidden={collapsed.has(g.key) && !hasFilters}>
+                  {(!collapsed.has(g.key) || hasFilters) && (
+                    <div className="video-grid">{g.videos.map(renderVideoItem)}</div>
+                  )}
+                </div>
               </div>
-            </div>
-          ))
-        )}
+            ))
+          )}
+        </SkeletonReveal>
       </div>
 
       {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
       {drag && (
         <div className="drag-ghost" style={{ left: drag.x, top: drag.y - 48 }}>
-          <mdui-sym-drag-indicator className="drag-ghost__icon" />
+          <Sym name="drag_indicator" className="drag-ghost__icon" />
           <span className="drag-ghost__name">{drag.video.name}</span>
         </div>
       )}
 
+      {/* 顶栏两个卡片级投放区：拖拽进行中才挂载，钉在视口顶部两角。
+          左侧「置顶」（已置顶的卡片显示为「取消置顶」），右侧「删除」。
+          pointerEvents:none —— 命中检测走 getBoundingClientRect，不需要它们接事件，
+          也就不会挡住悬浮卡片或误触。 */}
+      {drag && (
+        <div className="drag-zones" aria-hidden="true">
+          <div
+            ref={pinZoneRef}
+            className={drag.zone === 'pin' ? 'drag-zone drag-zone--pin drag-zone--over' : 'drag-zone drag-zone--pin'}
+            data-testid="drag-zone-pin"
+          >
+            <Sym name={drag.video.pinned === 1 ? 'pin_off' : 'pin'} className="drag-zone__icon" />
+            <span>{drag.video.pinned === 1 ? '取消置顶' : '置顶'}</span>
+          </div>
+          <div
+            ref={deleteZoneRef}
+            className={drag.zone === 'delete' ? 'drag-zone drag-zone--delete drag-zone--over' : 'drag-zone drag-zone--delete'}
+            data-testid="drag-zone-delete"
+          >
+            <Sym name="delete" className="drag-zone__icon" />
+            <span>删除</span>
+          </div>
+        </div>
+      )}
+
       {/* ── 弹窗 ─────────────────────────────────────────────────────────── */}
-      <mdui-dialog
-        ref={renameDlgRef}
-        open={!!renaming}
-        headline="修改标题"
-        data-testid="rename-dialog"
-        close-on-esc
-        close-on-overlay-click
-      >
-        <mdui-text-field
-          data-testid="rename-input"
-          value={renameText}
-          maxlength={100}
-          placeholder="输入视频标题"
-          autofocus
-          onInput={(e) => setRenameText((e.target as HTMLElement & { value: string }).value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void confirmRename();
-          }}
-        />
-        <mdui-button slot="action" variant="text" data-testid="rename-cancel" onClick={() => setRenaming(null)}>
-          取消
-        </mdui-button>
-        <mdui-button slot="action" variant="filled" data-testid="rename-save" onClick={() => void confirmRename()}>
-          保存
-        </mdui-button>
-      </mdui-dialog>
+      {/* mdui-dialog → HeroUI Modal：内容分装进 Header/Body/Footer，Esc 与点遮罩关闭
+          由 onOpenChange 同步回 state（不再需要 useMduiEvent 监听 closed 事件）。 */}
+      <Modal.Root isOpen={!!renaming} onOpenChange={(open) => !open && setRenaming(null)}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="rename-dialog">
+              <Modal.Header>
+                <Modal.Heading>修改标题</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                {/* data-testid 挂 TextField 包装层：e2e 用 `[data-testid="rename-input"] input` 定位控件 */}
+                <TextField data-testid="rename-input" fullWidth>
+                  <Input
+                    value={renameText}
+                    maxLength={100}
+                    placeholder="输入视频标题"
+                    aria-label="视频标题"
+                    autoFocus
+                    onChange={(e) => setRenameText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void confirmRename();
+                    }}
+                  />
+                </TextField>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" data-testid="rename-cancel" onPress={() => setRenaming(null)}>
+                  取消
+                </Button>
+                <Button variant="primary" data-testid="rename-save" onPress={() => void confirmRename()}>
+                  保存
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
 
-      <mdui-dialog
-        ref={folderDlgRef}
-        open={!!folderModal}
-        headline={folderModal?.mode === 'rename' ? '重命名文件夹' : '新建文件夹'}
-        data-testid="folder-dialog"
-        close-on-esc
-        close-on-overlay-click
-      >
-        <mdui-text-field
-          data-testid="folder-input"
-          value={folderText}
-          maxlength={50}
-          placeholder="如：行测、申论、面试"
-          autofocus
-          onInput={(e) => setFolderText((e.target as HTMLElement & { value: string }).value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter') void confirmFolderModal();
-          }}
-        />
-        <mdui-button slot="action" variant="text" data-testid="folder-cancel" onClick={() => setFolderModal(null)}>
-          取消
-        </mdui-button>
-        <mdui-button
-          slot="action"
-          variant="filled"
-          data-testid="folder-save"
-          onClick={() => void confirmFolderModal()}
-        >
-          保存
-        </mdui-button>
-      </mdui-dialog>
+      <Modal.Root isOpen={!!folderModal} onOpenChange={(open) => !open && setFolderModal(null)}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="folder-dialog">
+              <Modal.Header>
+                <Modal.Heading>
+                  {folderModal?.mode === 'rename' ? '重命名文件夹' : '新建文件夹'}
+                </Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                <TextField data-testid="folder-input" fullWidth>
+                  <Input
+                    value={folderText}
+                    maxLength={50}
+                    placeholder="如：行测、申论、面试"
+                    aria-label="文件夹名称"
+                    autoFocus
+                    onChange={(e) => setFolderText(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') void confirmFolderModal();
+                    }}
+                  />
+                </TextField>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" data-testid="folder-cancel" onPress={() => setFolderModal(null)}>
+                  取消
+                </Button>
+                <Button variant="primary" data-testid="folder-save" onPress={() => void confirmFolderModal()}>
+                  保存
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
 
-      <mdui-dialog
-        ref={moveDlgRef}
-        open={!!moving}
-        headline={moving ? `移动《${moving.name}》到` : ''}
-        data-testid="move-dialog"
-        close-on-esc
-        close-on-overlay-click
-      >
-        <mdui-radio-group ref={moveRadioRef} value={moveTarget} data-testid="move-radio-group">
-          <mdui-radio value="-1">未分类</mdui-radio>
-          {folders.map((f) => (
-            <mdui-radio key={f.id} value={String(f.id)}>
-              {f.name}
-            </mdui-radio>
-          ))}
-        </mdui-radio-group>
-        <div className="row row--nowrap" style={{ marginTop: 16 }}>
-          <mdui-text-field
-            data-testid="move-new-name"
-            value={moveNewName}
-            maxlength={50}
-            placeholder="新建文件夹名称"
-            onInput={(e) => setMoveNewName((e.target as HTMLElement & { value: string }).value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') void createFolderInMove();
-            }}
-          />
-          <mdui-button
-            data-testid="move-create-folder"
-            variant="tonal"
-            disabled={!moveNewName.trim()}
-            onClick={() => void createFolderInMove()}
-          >
-            新建并选中
-          </mdui-button>
-        </div>
-        <mdui-button slot="action" variant="text" data-testid="move-cancel" onClick={() => setMoving(null)}>
-          取消
-        </mdui-button>
-        <mdui-button slot="action" variant="filled" data-testid="move-confirm" onClick={() => void confirmMove()}>
-          移动
-        </mdui-button>
-      </mdui-dialog>
-
-      <mdui-dialog
-        ref={biliDlgRef}
-        open={biliOpen}
-        headline="导入哔哩哔哩视频"
-        data-testid="bili-dialog"
-        close-on-esc={!biliImporting}
-        close-on-overlay-click={!biliImporting}
-      >
-        <mdui-text-field
-          data-testid="bili-url"
-          value={biliUrl}
-          rows={2}
-          autosize
-          max-rows={4}
-          placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
-          disabled={biliImporting || biliResolving}
-          onInput={(e) => {
-            setBiliUrl((e.target as HTMLElement & { value: string }).value);
-            setBiliTarget(null); // 改链接后旧的解析结果（含字幕列表）作废
-          }}
-        />
-        <div className="text-secondary" style={{ marginTop: 8, fontSize: 12 }}>
-          {isBiliBridgeAvailable()
-            ? '已连接油猴桥，将从本机直连 B 站。未登录约 360P，设置里贴 SESSDATA 可解锁更高清晰度。'
-            : '推荐先在「设置」安装油猴脚本（桌面浏览器）；没有脚本则需填写代理。未登录约 360P。'}
-        </div>
-        {biliTarget && (
-          <div style={{ marginTop: 12 }} data-testid="bili-target">
-            <div className="row row--nowrap" style={{ alignItems: 'baseline', gap: 8 }}>
-              <strong
-                style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
-              >
-                {biliTarget.title}
-              </strong>
-              <span className="text-secondary" style={{ fontSize: 12 }} data-testid="bili-summary">
-                {multiPage
-                  ? `共 ${biliTarget.pages.length} P · 已选 ${biliPagesSel.length} P · 合计 ${formatTotalDuration(selectedSec)}`
-                  : formatTotalDuration(selectedSec)}
-              </span>
-            </div>
-            {multiPage && (
-              <>
-                <div className="row row--nowrap" style={{ gap: 8, marginTop: 10 }}>
-                  <span className="text-secondary" style={{ flex: 1, fontSize: 12 }}>
-                    分 P（每个 P 是一条独立视频，可多选）
-                  </span>
-                  <mdui-button variant="text" data-testid="bili-pages-all" onClick={() => selectAllPages(true)}>
-                    全选
-                  </mdui-button>
-                  <mdui-button
-                    variant="text"
-                    data-testid="bili-pages-none"
-                    disabled={biliPagesSel.length === 0}
-                    onClick={() => selectAllPages(false)}
+      <Modal.Root isOpen={!!moving} onOpenChange={(open) => !open && setMoving(null)}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="move-dialog">
+              <Modal.Header>
+                <Modal.Heading>{moving ? `移动《${moving.name}》到` : ''}</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                {/* mdui-radio-group/-radio → RadioGroup/Radio；选中值走 value + onChange。
+                    Radio 需要显式组合 Content/Control/Indicator 才有可点的圆点。 */}
+                <RadioGroup
+                  value={moveTarget}
+                  onChange={(key) => setMoveTarget(String(key))}
+                  data-testid="move-radio-group"
+                  aria-label="移动到文件夹"
+                >
+                  <Radio value="-1">
+                    <Radio.Content>
+                      <Radio.Control>
+                        <Radio.Indicator />
+                      </Radio.Control>
+                      未分类
+                    </Radio.Content>
+                  </Radio>
+                  {folders.map((f) => (
+                    <Radio key={f.id} value={String(f.id)}>
+                      <Radio.Content>
+                        <Radio.Control>
+                          <Radio.Indicator />
+                        </Radio.Control>
+                        {f.name}
+                      </Radio.Content>
+                    </Radio>
+                  ))}
+                </RadioGroup>
+                <div className="row row--nowrap" style={{ marginTop: 16 }}>
+                  <TextField data-testid="move-new-name" fullWidth>
+                    <Input
+                      value={moveNewName}
+                      maxLength={50}
+                      placeholder="新建文件夹名称"
+                      aria-label="新建文件夹名称"
+                      onChange={(e) => setMoveNewName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') void createFolderInMove();
+                      }}
+                    />
+                  </TextField>
+                  <Button
+                    data-testid="move-create-folder"
+                    variant="secondary"
+                    isDisabled={!moveNewName.trim()}
+                    onPress={() => void createFolderInMove()}
                   >
-                    清空
-                  </mdui-button>
+                    新建并选中
+                  </Button>
                 </div>
-                <div
-                  ref={pageListRef}
-                  className="row"
-                  style={{ flexWrap: 'wrap', gap: 8, marginTop: 6, maxHeight: 168, overflowY: 'auto' }}
-                  data-testid="bili-pages"
-                >
-                  {biliTarget.pages.map((p) => (
-                    <mdui-chip
-                      key={p.page}
-                      selectable
-                      selected={biliPagesSel.includes(p.page)}
-                      data-page={String(p.page)}
-                      data-testid="bili-page"
-                      title={`${pageLabel(p)} · ${formatDuration(p.duration)}`}
-                    >
-                      {pageLabel(p)}
-                    </mdui-chip>
-                  ))}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" data-testid="move-cancel" onPress={() => setMoving(null)}>
+                  取消
+                </Button>
+                <Button variant="primary" data-testid="move-confirm" onPress={() => void confirmMove()}>
+                  移动
+                </Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
+
+      {/* 导入中不允许 Esc / 点遮罩关闭：isDismissable 管遮罩，isKeyboardDismissDisabled 管 Esc。
+          （原 mdui 版的 close-on-esc / close-on-overlay-click 二选一即可关闭。） */}
+      <Modal.Root
+        isOpen={biliOpen}
+        onOpenChange={(open) => {
+          if (!open && !biliImporting) {
+            setBiliOpen(false);
+            resetBiliDraft();
+          }
+        }}
+      >
+        <Modal.Backdrop isDismissable={!biliImporting} isKeyboardDismissDisabled={biliImporting}>
+          <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="bili-dialog">
+              <Modal.Header>
+                <Modal.Heading>导入哔哩哔哩视频</Modal.Heading>
+              </Modal.Header>
+              <Modal.Body>
+                {/* 原来是多行自增的 mdui-text-field → TextField 包 TextArea。
+                    TextArea 没有 isDisabled，用原生 disabled。 */}
+                <TextField fullWidth>
+                  <TextArea
+                    data-testid="bili-url"
+                    rows={2}
+                    value={biliUrl}
+                    placeholder="粘贴 B 站视频链接 / BV 号 / b23.tv 短链"
+                    aria-label="B 站视频链接"
+                    disabled={biliImporting || biliResolving}
+                    onChange={(e) => {
+                      setBiliUrl(e.target.value);
+                      setBiliTarget(null); // 改链接后旧的解析结果（含字幕列表）作废
+                    }}
+                  />
+                </TextField>
+                <div className="text-secondary" style={{ marginTop: 8, fontSize: 12 }}>
+                  {isBiliBridgeAvailable()
+                    ? '已连接油猴桥，将从本机直连 B 站。未登录约 360P，设置里贴 SESSDATA 可解锁更高清晰度。'
+                    : '推荐先在「设置」安装油猴脚本（桌面浏览器）；没有脚本则需填写代理。未登录约 360P。'}
                 </div>
-              </>
-            )}
-            {biliLangItems.length > 0 ? (
-              <>
-                <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
-                  {multiPage ? `字幕语言（按 P${biliLangPage ?? ''} 上可用的语言）` : '自带字幕'}
-                  ：选中的第一路作主字幕（讲义/问答用它），其余可选做播放页的「对照语言」
-                </div>
-                <div
-                  ref={langListRef}
-                  className="row"
-                  style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}
-                  data-testid="bili-langs"
-                >
-                  {biliLangItems.map((s) => (
-                    <mdui-chip
-                      key={s.lan}
-                      selectable
-                      selected={biliLangs.includes(s.lan)}
-                      data-lang={s.lan}
-                      data-testid="bili-lang"
-                    >
-                      {s.lanDoc || s.lan}
-                    </mdui-chip>
-                  ))}
-                </div>
-              </>
-            ) : (
-              <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
-                该视频没有自带字幕，导入后可点「生成字幕」走本地转写
-              </div>
-            )}
-          </div>
-        )}
-        {biliImporting && (
-          <div style={{ marginTop: 12 }}>
-            <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }} data-testid="bili-label">
-              {biliLabel ? `正在下载 ${biliLabel}` : '正在下载…'}
-            </div>
-            <mdui-linear-progress data-testid="bili-progress" max={100} value={biliProgress} />
-          </div>
-        )}
-        {biliError && (
-          <Banner
-            variant="error"
-            testId="bili-error"
-            icon={<mdui-sym-error />}
-            title="导入失败"
-            description="详情见上方的错误弹窗，可一键复制"
-          />
-        )}
-        <mdui-button slot="action" variant="text" data-testid="bili-cancel" onClick={() => setBiliOpen(false)}>
-          取消
-        </mdui-button>
-        {biliTarget ? (
-          <mdui-button
-            slot="action"
-            variant="filled"
-            data-testid="bili-confirm"
-            loading={biliImporting}
-            onClick={() => void handleBiliImport()}
-          >
-            开始导入
-          </mdui-button>
-        ) : (
-          <mdui-button
-            slot="action"
-            variant="filled"
-            data-testid="bili-confirm"
-            loading={biliResolving}
-            onClick={() => void handleBiliResolve()}
-          >
-            解析
-          </mdui-button>
-        )}
-      </mdui-dialog>
+                {biliTarget && (
+                  <div style={{ marginTop: 12 }} data-testid="bili-target">
+                    <div className="row row--nowrap" style={{ alignItems: 'baseline', gap: 8 }}>
+                      <strong
+                        style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}
+                      >
+                        {biliTarget.title}
+                      </strong>
+                      <span className="text-secondary" style={{ fontSize: 12 }} data-testid="bili-summary">
+                        {multiPage
+                          ? `共 ${biliTarget.pages.length} P · 已选 ${biliPagesSel.length} P · 合计 ${formatTotalDuration(selectedSec)}`
+                          : formatTotalDuration(selectedSec)}
+                      </span>
+                    </div>
+                    {multiPage && (
+                      <>
+                        <div className="row row--nowrap" style={{ gap: 8, marginTop: 10 }}>
+                          <span className="text-secondary" style={{ flex: 1, fontSize: 12 }}>
+                            分 P（每个 P 是一条独立视频，可多选）
+                          </span>
+                          <Button variant="tertiary" data-testid="bili-pages-all" onPress={() => selectAllPages(true)}>
+                            全选
+                          </Button>
+                          <Button
+                            variant="tertiary"
+                            data-testid="bili-pages-none"
+                            isDisabled={biliPagesSel.length === 0}
+                            onPress={() => selectAllPages(false)}
+                          >
+                            清空
+                          </Button>
+                        </div>
+                        {/* mdui-chip selectable → TagGroup/Tag（React Aria 的多选标签）：
+                            选中集以 selectedKeys 受控，onSelectionChange 直接给新集合，
+                            不再需要「容器上监听 change 冒泡」那套补丁。 */}
+                        <TagGroup
+                          selectionMode="multiple"
+                          selectedKeys={biliPagesSel.map(String)}
+                          onSelectionChange={(keys) => selectPages([...keys].map(String))}
+                          aria-label="选择分 P"
+                        >
+                          <TagGroup.List
+                            className="row"
+                            style={{ flexWrap: 'wrap', gap: 8, marginTop: 6, maxHeight: 168, overflowY: 'auto' }}
+                            data-testid="bili-pages"
+                          >
+                            {biliTarget.pages.map((p) => (
+                              <Tag
+                                key={p.page}
+                                id={String(p.page)}
+                                textValue={pageLabel(p)}
+                                /* 原 title 提示（分 P 名 + 时长）改由 aria-label 承载：
+                                   RAC 的 filterDOMProps 不放行 title 属性。 */
+                                aria-label={`${pageLabel(p)} · ${formatDuration(p.duration)}`}
+                                data-page={String(p.page)}
+                                data-testid="bili-page"
+                              >
+                                {pageLabel(p)}
+                              </Tag>
+                            ))}
+                          </TagGroup.List>
+                        </TagGroup>
+                      </>
+                    )}
+                    {biliLangItems.length > 0 ? (
+                      <>
+                        <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
+                          {multiPage ? `字幕语言（按 P${biliLangPage ?? ''} 上可用的语言）` : '自带字幕'}
+                          ：选中的第一路作主字幕（讲义/问答用它），其余可选做播放页的「对照语言」
+                        </div>
+                        <TagGroup
+                          selectionMode="multiple"
+                          selectedKeys={biliLangs}
+                          onSelectionChange={(keys) => selectLangs([...keys].map(String))}
+                          aria-label="选择字幕语言"
+                        >
+                          <TagGroup.List
+                            className="row"
+                            style={{ flexWrap: 'wrap', gap: 8, marginTop: 8 }}
+                            data-testid="bili-langs"
+                          >
+                            {biliLangItems.map((s) => (
+                              <Tag
+                                key={s.lan}
+                                id={s.lan}
+                                textValue={s.lanDoc || s.lan}
+                                data-lang={s.lan}
+                                data-testid="bili-lang"
+                              >
+                                {s.lanDoc || s.lan}
+                              </Tag>
+                            ))}
+                          </TagGroup.List>
+                        </TagGroup>
+                      </>
+                    ) : (
+                      <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
+                        该视频没有自带字幕，导入后可点「生成字幕」走本地转写
+                      </div>
+                    )}
+                  </div>
+                )}
+                {biliImporting && (
+                  <div style={{ marginTop: 12 }}>
+                    <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }} data-testid="bili-label">
+                      {biliLabel ? `正在下载 ${biliLabel}` : '正在下载…'}
+                    </div>
+                    <ProgressBar
+                      data-testid="bili-progress"
+                      maxValue={100}
+                      value={biliProgress}
+                      aria-label="下载进度"
+                    />
+                  </div>
+                )}
+                {biliError && (
+                  <Banner
+                    variant="error"
+                    testId="bili-error"
+                    icon={<Sym name="error" />}
+                    title="导入失败"
+                    description="详情见上方的错误弹窗，可一键复制"
+                  />
+                )}
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" data-testid="bili-cancel" onPress={() => setBiliOpen(false)}>
+                  取消
+                </Button>
+                {biliTarget ? (
+                  <LoadingButton
+                    variant="primary"
+                    data-testid="bili-confirm"
+                    loading={biliImporting}
+                    onPress={() => void handleBiliImport()}
+                  >
+                    开始导入
+                  </LoadingButton>
+                ) : (
+                  <LoadingButton
+                    variant="primary"
+                    data-testid="bili-confirm"
+                    loading={biliResolving}
+                    onPress={() => void handleBiliResolve()}
+                  >
+                    解析
+                  </LoadingButton>
+                )}
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>
     </PageShell>
   );
 }
@@ -1639,9 +2062,11 @@ function VideoRow({
   onPlay,
   onRename,
   onMove,
+  onTogglePin,
   onDelete,
   onReparse,
   onDragStart,
+  onBeginDrag,
   onDragMove,
   onDragEnd,
   onDragCancel,
@@ -1652,10 +2077,14 @@ function VideoRow({
   onPlay: () => void;
   onRename: () => void;
   onMove: () => void;
+  onTogglePin: () => void;
   onDelete: () => void;
   /** 只有阅读材料有：重新解析 + 重建索引 */
   onReparse?: () => void;
+  /** 手柄按下：立即开始拖拽 */
   onDragStart: (e: React.PointerEvent<HTMLElement>) => void;
+  /** 整卡长按到点：以卡片元素为指针捕获目标开始拖拽 */
+  onBeginDrag: (el: HTMLElement, pointerId: number, x: number, y: number) => void;
   onDragMove: (e: React.PointerEvent<HTMLElement>) => void;
   onDragEnd: () => void;
   onDragCancel: () => void;
@@ -1697,12 +2126,96 @@ function VideoRow({
   const job = useTranscribeJob(v.id);
   const activeJob = isJobActive(job) ? job : undefined;
   const jobCopy = activeJob ? libraryJobCopy(activeJob) : undefined;
+
+  /**
+   * 整卡长按起拖。
+   *
+   * 为什么要长按而不是「按下即拖」：整张卡片在触屏上还要能**滚动列表**、点缩略图进播放页，
+   * 若按下就进入拖拽这两件事都会被抢走。长按（按住不动约 400ms）是触屏里表达「拿起」的
+   * 通用手势，且与「点一下 = 进入」互不冲突。
+   *
+   * 手柄那条路径不受影响：它按下即拖，长按逻辑遇到手柄直接让位。
+   */
+  const articleRef = useRef<HTMLElement>(null);
+  const pressTimer = useRef<number | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  /** 长按起拖后要吃掉落点那次 click（否则松手会顺手点进播放页 / 弹出菜单） */
+  const swallowClick = useRef(false);
+
+  const clearPress = () => {
+    if (pressTimer.current != null) {
+      window.clearTimeout(pressTimer.current);
+      pressTimer.current = null;
+    }
+    pressOrigin.current = null;
+  };
+
+  const onCardPointerDown = (e: React.PointerEvent<HTMLElement>) => {
+    // 长按只认主指针（触屏 / 鼠标左键）
+    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    const target = e.target as HTMLElement;
+    // 手柄自己按下即拖，别和长按抢
+    if (target.closest('[data-testid="drag-handle"]')) return;
+    // 卡片里的按钮 / 输入 / 下拉触发器保持各自的原生行为，长按不接管
+    if (target.closest('button, a, input, textarea, select, [data-slot="dropdown-trigger"]')) return;
+    const el = articleRef.current;
+    if (!el) return;
+    // 新一次按下：清掉上一轮可能残留的「吃掉 click」（正常情况那一下已经被消耗）
+    swallowClick.current = false;
+    const x = e.clientX;
+    const y = e.clientY;
+    pressOrigin.current = { x, y, pointerId: e.pointerId };
+    pressTimer.current = window.setTimeout(() => {
+      pressTimer.current = null;
+      const origin = pressOrigin.current;
+      pressOrigin.current = null;
+      if (!origin) return;
+      // 起拖：吃掉落点那次 click，交给父级的统一拖拽逻辑
+      swallowClick.current = true;
+      onBeginDrag(el, origin.pointerId, x, y);
+    }, LONG_PRESS_MS);
+  };
+
+  const onCardPointerMove = (e: React.PointerEvent<HTMLElement>) => {
+    const origin = pressOrigin.current;
+    if (!origin || pressTimer.current == null) return;
+    // 还没到点就移动超过阈值 → 判定为滚动，取消长按（此时页面照常滚）
+    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > LONG_PRESS_SLOP) clearPress();
+  };
+
   return (
     <article
+      ref={articleRef}
       className={dragging ? 'video-row video-row--dragging' : 'video-row'}
       data-testid="video-item"
       data-video-id={v.id}
+      data-pinned={v.pinned === 1 ? '1' : undefined}
       aria-labelledby={`library-title-${v.id}`}
+      onPointerDown={onCardPointerDown}
+      onPointerMove={(e) => {
+        onCardPointerMove(e);
+        onDragMove(e);
+      }}
+      onPointerUp={() => {
+        clearPress();
+        onDragEnd();
+      }}
+      onPointerCancel={() => {
+        clearPress();
+        onDragCancel();
+      }}
+      onPointerLeave={clearPress}
+      onClickCapture={(e) => {
+        if (swallowClick.current) {
+          swallowClick.current = false;
+          e.preventDefault();
+          e.stopPropagation();
+        }
+      }}
+      onContextMenu={(e) => {
+        // 长按期间抑制系统菜单（桌面右键 / 触屏长按呼出）
+        if (dragging || pressTimer.current != null) e.preventDefault();
+      }}
     >
       <div
         className="video-row__handle"
@@ -1718,11 +2231,8 @@ function VideoRow({
           }
         }}
         onPointerDown={onDragStart}
-        onPointerMove={onDragMove}
-        onPointerUp={onDragEnd}
-        onPointerCancel={onDragCancel}
       >
-        <mdui-sym-drag-indicator />
+        <Sym name="drag_indicator" />
       </div>
       {/* 缩略图：16:9 通栏，右下角压时长徽标（YouTube 卡片的两件套）。
           点缩略图直接进播放页，与卡片式的「整张可点」一致 */}
@@ -1743,15 +2253,22 @@ function VideoRow({
             style={v.dominantColor ? { background: v.dominantColor } : undefined}
           >
             {isMaterial ? (
-              v.materialFormat === 'pdf' ? <mdui-sym-picture-as-pdf /> : <mdui-sym-description />
+              v.materialFormat === 'pdf' ? <Sym name="picture_as_pdf" /> : <Sym name="description" />
             ) : (
-              <mdui-sym-play-circle />
+              <Sym name="play_circle" />
             )}
           </span>
         )}
         <span className="video-row__duration">
           {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
         </span>
+        {/* 置顶徽标：压在缩略图右上角。标签行里也有一条「已置顶」，
+            但缩略图是卡片最显眼的位置，一眼就能看出哪些排在了前面。 */}
+        {v.pinned === 1 && (
+          <span className="video-row__pin" data-testid="video-pin" aria-hidden="true">
+            <Sym name="pin" filled />
+          </span>
+        )}
         {/* 播放进度条：贴缩略图底边（YouTube 卡片同款位置）。
             与上面的时长徽标不冲突（条高 4px 贴底、徽标 bottom: 6px），
             与主区的 .video-row__job 也不冲突 —— 那是转写/建索引的**后台任务**进度，
@@ -1781,8 +2298,10 @@ function VideoRow({
         </div>
         {activeJob && (
           <div className="video-row__job" data-testid="video-job">
-            <mdui-linear-progress
-              max={100}
+            {/* 与导入进度条同一套映射：算得出百分比就定量显示，算不出走不确定态。 */}
+            <ProgressBar
+              maxValue={100}
+              aria-label={jobCopy?.detail ?? '后台任务进度'}
               value={
                 // 只有「按份数推进」的任务才有确定百分比：转写（按段）与材料解析（按页/段）。
                 // 其余（排队/抽取/VAD）走不确定态。
@@ -1790,7 +2309,10 @@ function VideoRow({
                   ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
                   : activeJob.phase === 'parse' && activeJob.total > 1
                     ? Math.round((activeJob.done / Math.max(1, activeJob.total)) * 100)
-                    : undefined
+                    : 0
+              }
+              isIndeterminate={
+                !(activeJob.phase === 'asr' || (activeJob.phase === 'parse' && activeJob.total > 1))
               }
             />
             <span>{jobCopy?.detail}</span>
@@ -1798,59 +2320,126 @@ function VideoRow({
         )}
       </div>
       <div className="video-row__tags">
+        {v.pinned === 1 && <span className="tag-mini tag-mini--primary">已置顶</span>}
         {v.fileDeleted === 1 && <span className="tag-mini">文件已删</span>}
         <span className={status.variant ? `tag-mini tag-mini--${status.variant}` : 'tag-mini'}>
           {jobCopy ? jobCopy.tag : status.text}
         </span>
       </div>
       <div className="video-row__actions">
-        <mdui-button data-testid="btn-play" variant="tonal" onClick={onPlay}>
-          <mdui-sym-play-circle slot="icon" />
+        <Button data-testid="btn-play" variant="secondary" onPress={onPlay}>
+          <Sym name="play_circle" />
           {isMaterial ? '阅读' : '学习'}
-        </mdui-button>
+        </Button>
         {isMobile ? (
-          <mdui-dropdown>
-            <mdui-button-icon slot="trigger" data-testid="btn-more" aria-label="更多操作">
-              <mdui-sym-more-vert />
-            </mdui-button-icon>
-            <mdui-menu>
-              <mdui-menu-item data-testid="menu-rename" onClick={onRename}>
-                <mdui-sym-edit slot="icon" />
-                重命名
-              </mdui-menu-item>
-              <mdui-menu-item data-testid="menu-move" onClick={onMove}>
-                <mdui-sym-folder-open slot="icon" />
-                移动到文件夹
-              </mdui-menu-item>
-              {/* 解析失败/想换索引重来时用得上；参数化重试比隐式后台扫描可控 */}
-              {isMaterial && onReparse && (
-                <mdui-menu-item data-testid="menu-reparse" onClick={onReparse}>
-                  <mdui-sym-refresh slot="icon" />
-                  重新解析
-                </mdui-menu-item>
-              )}
-              <mdui-menu-item data-testid="menu-delete" onClick={onDelete}>
-                <mdui-sym-delete slot="icon" />
-                {v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
-              </mdui-menu-item>
-            </mdui-menu>
-          </mdui-dropdown>
+          // 手机端：图标按钮 + Dropdown 菜单（菜单项用 id + onAction 分发）
+          <Dropdown>
+            <Dropdown.Trigger
+              className={buttonVariants({ isIconOnly: true, variant: 'tertiary', size: 'sm' })}
+              data-testid="btn-more"
+              aria-label="更多操作"
+            >
+              <Sym name="more_vert" />
+            </Dropdown.Trigger>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu
+                aria-label="更多操作"
+                onAction={(key) => {
+                  if (key === 'rename') onRename();
+                  else if (key === 'move') onMove();
+                  else if (key === 'pin') onTogglePin();
+                  else if (key === 'reparse') onReparse?.();
+                  else if (key === 'delete') onDelete();
+                }}
+              >
+                <Dropdown.Item id="rename" textValue="重命名" data-testid="menu-rename">
+                  <Sym name="edit" />
+                  重命名
+                </Dropdown.Item>
+                <Dropdown.Item id="move" textValue="移动到文件夹" data-testid="menu-move">
+                  <Sym name="folder_open" />
+                  移动到文件夹
+                </Dropdown.Item>
+                <Dropdown.Item
+                  id="pin"
+                  textValue={v.pinned === 1 ? '取消置顶' : '置顶'}
+                  data-testid="menu-pin"
+                >
+                  <Sym name={v.pinned === 1 ? 'pin_off' : 'pin'} />
+                  {v.pinned === 1 ? '取消置顶' : '置顶'}
+                </Dropdown.Item>
+                {/* 解析失败/想换索引重来时用得上；参数化重试比隐式后台扫描可控 */}
+                {isMaterial && onReparse && (
+                  <Dropdown.Item id="reparse" textValue="重新解析" data-testid="menu-reparse">
+                    <Sym name="refresh" />
+                    重新解析
+                  </Dropdown.Item>
+                )}
+                <Dropdown.Item
+                  id="delete"
+                  textValue={v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
+                  data-testid="menu-delete"
+                >
+                  <Sym name="delete" />
+                  {v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         ) : (
           <>
-            <mdui-button-icon data-testid="btn-rename" aria-label="重命名" onClick={onRename}>
-              <mdui-sym-edit />
-            </mdui-button-icon>
-            <mdui-button-icon data-testid="btn-move" aria-label="移动到文件夹" onClick={onMove}>
-              <mdui-sym-folder-open />
-            </mdui-button-icon>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              data-testid="btn-rename"
+              aria-label="重命名"
+              onPress={onRename}
+            >
+              <Sym name="edit" />
+            </Button>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              data-testid="btn-move"
+              aria-label="移动到文件夹"
+              onPress={onMove}
+            >
+              <Sym name="folder_open" />
+            </Button>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              data-testid="btn-pin"
+              aria-label={v.pinned === 1 ? '取消置顶' : '置顶'}
+              onPress={onTogglePin}
+            >
+              <Sym name={v.pinned === 1 ? 'pin_off' : 'pin'} />
+            </Button>
             {isMaterial && onReparse && (
-              <mdui-button-icon data-testid="btn-reparse" aria-label="重新解析" onClick={onReparse}>
-                <mdui-sym-refresh />
-              </mdui-button-icon>
+              <Button
+                isIconOnly
+                variant="tertiary"
+                size="sm"
+                data-testid="btn-reparse"
+                aria-label="重新解析"
+                onPress={onReparse}
+              >
+                <Sym name="refresh" />
+              </Button>
             )}
-            <mdui-button-icon data-testid="btn-delete" aria-label="删除" onClick={onDelete}>
-              <mdui-sym-delete />
-            </mdui-button-icon>
+            <Button
+              isIconOnly
+              variant="tertiary"
+              size="sm"
+              data-testid="btn-delete"
+              aria-label="删除"
+              onPress={onDelete}
+            >
+              <Sym name="delete" />
+            </Button>
           </>
         )}
       </div>

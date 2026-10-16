@@ -134,20 +134,13 @@
 
 /* Shimmer / thinking 的高亮色跟随主题。
    浅色主题：底色是浅灰字，高亮扫过近黑；深色主题整体翻转。
-   `auto` 只能靠媒体查询判断，和 mdui 自己处理 auto 的方式一致。 */
-html.mdui-theme-dark {
+   深浅色统一由 <html> 上的 .dark 类表达 —— auto 模式也由 JS 解析系统偏好后
+   落成同一个类（见 ui/theme.ts 的 applyTheme），所以不必再分媒体查询。 */
+html.dark {
   --shimmer-base: #9a9a9a;
   --shimmer-highlight: #f2f2f2;
   --think-base: #9a9a9a;
   --think-highlight: #f2f2f2;
-}
-@media (prefers-color-scheme: dark) {
-  html.mdui-theme-auto {
-    --shimmer-base: #9a9a9a;
-    --shimmer-highlight: #f2f2f2;
-    --think-base: #9a9a9a;
-    --think-highlight: #f2f2f2;
-  }
 }
 
 /* ── 04 Text states swap ───────────────────────────────────────── */
@@ -521,13 +514,18 @@ html.mdui-theme-dark {
 /* ── 21 Accordion expand ──────────────────────────────────────── */
 /* grid-template-rows 0fr → 1fr 做高度动画，不需要 JS 量高；
    padding 必须落在 .t-acc-panel-inner 上 —— 落在 0fr 轨道上会留一条
-   永远收不掉的残余高度。 */
+   永远收不掉的残余高度。
+
+   ⚠️ data-open 与 .t-acc-panel 在**同一个元素**上（见 Collapse），所以展开态的
+   选择器必须写成 `.t-acc-panel[data-open='true']`。之前这里写的是
+   `.t-acc[data-open='true'] .t-acc-panel`（后代选择器），而那个元素就是它自己 ——
+   规则永远匹配不上，轨道被钉死在 0fr、正文高度恒为 0，思考链**从来没显示过**。 */
 .t-acc-panel {
   display: grid;
   grid-template-rows: 0fr;
   transition: grid-template-rows var(--acc-collapse) var(--acc-ease);
 }
-.t-acc[data-open='true'] .t-acc-panel {
+.t-acc-panel[data-open='true'] {
   grid-template-rows: 1fr;
   transition: grid-template-rows var(--acc-expand) var(--acc-ease);
 }
@@ -539,7 +537,7 @@ html.mdui-theme-dark {
     opacity var(--acc-collapse) var(--acc-ease),
     filter  var(--acc-collapse) var(--acc-ease);
 }
-.t-acc[data-open='true'] .t-acc-panel-inner {
+.t-acc-panel[data-open='true'] .t-acc-panel-inner {
   opacity: 1;
   filter: blur(0);
   transition:

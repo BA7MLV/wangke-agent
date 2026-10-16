@@ -5,6 +5,7 @@ import type { AskUserData } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
 import type { HtmlView } from '../materials/types';
+import type { ChatMessage } from '../api/siliconflow';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
@@ -39,6 +40,15 @@ export interface VideoRow {
   finished?: 0 | 1;
   /** 视频文件本体已删（释放空间），字幕/讲义/问答等内容保留 */
   fileDeleted?: 1;
+  /**
+   * 置顶（`1` = 已置顶，其它/不设 = 未置顶）。
+   *
+   * 排序语义是**所属组内排最前**（有文件夹就排在那个文件夹里，未分类就排在未分类里），
+   * 不是全库级的独立置顶区 —— 与 `ChatSessionRow.pinned` 同一条口径。
+   * 用 `0 | 1` 而不是布尔：清除靠 `Table.update()` 写回，写 `0` 语义显式、行为可测
+   * （同 `finished` 的取舍），判断一律 `=== 1`。非索引字段，老数据零迁移、无需升版本。
+   */
+  pinned?: 0 | 1;
   /** 讲义技能手动覆盖：pin=必用，drop=排除（skill id 列表）；不设则由路由器自动选 */
   skillOverride?: { pin: number[]; drop: number[] };
   /** 所属文件夹 id（folders 表）；不设则在「未分类」组。非索引字段 */
@@ -201,6 +211,20 @@ export interface ChatSessionRow {
    * 那会把「用户明确禁用了全部技能」静默退化成「全部可用」。
    */
   skillIds?: number[];
+  /**
+   * 置顶（非索引字段，无需升级版本）。展示层排前面，组内仍按 `createdAt` 升序。
+   * 不设 = 未置顶，老会话零迁移。
+   */
+  pinned?: boolean;
+  /**
+   * 归档（非索引字段，无需升级版本）。
+   *
+   * ⚠️ **只存标记是不够的**：归档项从侧栏 Recent 消失，落脚点在设置 → 数据 →
+   * 「已归档会话」那张卡（ArchivedSessionsCard）。没有那张卡的话归档就是软删除 ——
+   * 用户按下去就再也找不回那条会话。详见
+   * docs/plans/2026-10-15-recent-会话操作菜单-design.md §4。
+   */
+  archived?: boolean;
 }
 
 /** 聊天消息附带的截图（仅存缩略图，大图随发随弃） */
@@ -224,6 +248,27 @@ export interface QuizState {
   picks: number[];
 }
 
+/**
+ * 一次工具调用（`ChatRow.tools` 的一项，也是会话里工具链一行的数据）。
+ *
+ * 只存**摘要**：动作短语由 `utils/toolTrace.ts` 从 `name` 现算（不落库，改文案不用迁移老数据），
+ * 参数与结果各压成一行 —— 一次字幕检索的结果可能上千字，存全文会让每条历史消息凭空胖一圈
+ * （同 `ChatRow.widget` 那条取舍）。
+ *
+ * `status` 里只有 `running` 是流式中间态，**不会落库**：落库的都是 done / error。
+ */
+export interface ChatToolCall {
+  /** 工具协议名（如 `search_transcript`）。展示文案一律现算 */
+  name: string;
+  /** 这次调用在对谁做（检索词 / 技能名 / 起始时间），没有就是 undefined */
+  detail?: string;
+  /** 结果摘要（`summarizeToolResult` 的产物，已截断成一行） */
+  result?: string;
+  /** 执行耗时（毫秒）。工具跑得慢时它是「为什么等了这么久」的唯一线索 */
+  ms?: number;
+  status: 'running' | 'done' | 'error';
+}
+
 export interface ChatRow {
   id?: number;
   videoId: string;
@@ -235,16 +280,54 @@ export interface ChatRow {
   images?: ChatImage[];
   /** 思考过程（推理模型，历史回放折叠展示） */
   reasoning?: string;
+  /**
+   * 思考耗时（毫秒，非索引字段，无需升级版本）：首个思考 token → 末个。
+   *
+   * 单独存而不是靠 `reasoning` 的长度反推 —— 深度思考可能只吐几十个字就想了半分钟，
+   * 也可能几百字只用了两秒。历史消息展开时展示「已思考用时 x 秒」，旧数据没这字段就不显示。
+   */
+  reasoningMs?: number;
+  /**
+   * 这一轮调过的工具（非索引字段，无需升级版本）：agent 循环里每次工具调用的动作与结果摘要。
+   *
+   * 为什么落库而不是只在流式期间显示：工具调用是「回答是怎么来的」的一部分 ——
+   * 用户回看历史时会问「它到底查没查我的课程」（同 `reasoning` 落库的理由）。
+   * 只存摘要，不存原始返回（见 `ChatToolCall` 的注释）。
+   */
+  tools?: ChatToolCall[];
   /** 答题卡（非索引字段，无需升级版本） */
   quiz?: QuizState;
   /**
    * 助手向用户提问的选项卡（非索引字段，无需升级版本）。
-   * `picked` 为空 = 用户还没答；**刷新页面会杀掉正在等待的 agent 循环**，
-   * 此时这张卡会退化成只读（`picked` 永远空），文案显式说明而不是给一个点了没反应的按钮。
+   *
+   * `picked` 为空 = 用户还没答。挂起时这张卡**连同 `resume` 一起落库**，刷新后由
+   * 加载逻辑重新装上、可继续作答并从断点续跑（见 `docs/plans/2026-10-16-ask-user-resume-design.md`）。
+   * 旧数据没有 `resume` 时退化成只读（`AskCard` 的「本次会话已结束」文案）。
    */
   ask?: AskUserState;
   /** 目录整理方案卡（非索引字段，无需升级版本）。`applied`：0=待确认 1=已落库 2=用户取消 */
   folderPlan?: FolderPlanState;
+  /**
+   * 挂起中回合的**续跑检查点**（非索引字段，无需升级版本）。
+   *
+   * 阻塞式工具（`ask_user` / `propose_folder_plan`）在等用户时，这一轮的 agent 循环停在
+   * `await executeTool(...)` 上；刷新会杀掉循环。这个字段把「停在哪、这一轮 already 攒了
+   * 什么」留下来，加载时据此从断点续跑。回合真正结束（答完 / 出错 / 停止）即删除。
+   */
+  resume?: TurnResume;
+  /**
+   * 这条回答**没写完**（流式中途失败，非索引字段，无需升级版本）。
+   *
+   * 中断的那半条回答**照常落库**（这正是「失败也要留下痕迹」的落点），
+   * 这个字段只是告诉界面「它还可以接着写」。
+   *
+   * ⚠️ **不把中断提示写进 `content`**：续写要把这半条回答当 assistant 前缀原样发给模型，
+   * 正文里夹一句系统口吻的中文说明会污染它（模型可能接着那句话往下写）。
+   * 中断与否是这条消息的**元数据**，和 `reasoningMs` 同类，该单独存。
+   */
+  interrupted?: boolean;
+  /** 中断原因（提示条上显示）。只在 `interrupted` 为 true 时有意义 */
+  interruptReason?: string;
   /**
    * 沙箱图形卡（非索引字段，无需升级版本）：show_widget 的 `html` 形态产出。
    *
@@ -258,6 +341,22 @@ export interface ChatRow {
 export interface AskUserState extends AskUserData {
   /** 被选中的选项原文；不设 = 尚未作答。存原文而不是下标，改选项顺序也不会错位 */
   picked?: string;
+}
+
+/**
+ * 挂起中回合的续跑检查点（`ChatRow.resume`）。
+ *
+ * 为什么存 `midTurn` 而不是「重放工具调用」：`out` 里已经带着每一轮的工具结果，
+ * 续跑时把它们原样拼回消息列表，旧工具**一次都不用重跑**。存的是 `runAgentLoop` 的
+ * `out` 去掉初始 `[system, ...history]` 之后的部分。
+ */
+export interface TurnResume {
+  /** 挂起的工具名：决定续跑时喂什么结果、恢复哪张卡 */
+  toolName: 'ask_user' | 'propose_folder_plan';
+  /** 挂起那次 tool_call 的 id（续跑时拼 `role: 'tool'` 消息要用它对齐） */
+  toolCallId: string;
+  /** 回合内累积的消息（见上） */
+  midTurn: ChatMessage[];
 }
 
 /** 目录整理方案卡状态（`ChatRow.folderPlan`） */

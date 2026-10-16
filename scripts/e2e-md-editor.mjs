@@ -353,6 +353,16 @@ await check('A1 打开 md 材料 → 阅读视图出现（分块渲染成 md 段
   );
 });
 
+await check('A2 阅读态工具条上有进度线，比例 = 1 / 总段数', async () => {
+  // 口径与段号指示器同源（见 materials/units.ts 的 readRatio）：刚打开必然停在第 1 段
+  const { ratio, total } = await page.$eval('[data-testid="reader-progress"]', (el) => ({
+    ratio: Number(el.dataset.ratio),
+    total: Number(document.querySelectorAll('.mr-md__block').length),
+  }));
+  assert.ok(total > 0, '一个段落都没渲染');
+  assert.ok(Math.abs(ratio - 1 / total) < 1e-6, `第 1 段 / ${total} 段的比例应是 ${1 / total}，实际 ${ratio}`);
+});
+
 await check('D13 阅读态的 data-askable / data-ask-unit / data-ask-label 三件套仍在', async () => {
   // 划词提问与「[第N段] 引用跳转」都靠这三个属性定位（见 MdReader 的 mr-md__block）。
   // 编辑功能是加在阅读态之上的，这一组属性一旦被改坏，划词提问会静默失效。
@@ -381,6 +391,13 @@ await check('A2 点「编辑」→ CodeMirror 编辑面上屏', async () => {
   assert.ok(await page.locator('[data-testid="md-edit-state"]').isVisible());
   assert.ok(await page.locator('[data-testid="md-source-view"]').isVisible());
   assert.ok(await page.locator('[data-testid="md-agent-undo"]').isVisible());
+  // 编辑态**不画**进度线：段号定位在编辑面里不成立（unitEls 也没挂），
+  // 留一条线就是在报一个看不见的数（画成 0% 同样不行 —— 那是在说「你没读过」）
+  assert.equal(
+    await page.locator('[data-testid="reader-progress"]').count(),
+    0,
+    '编辑态不该有进度线',
+  );
 });
 
 await check('A3 光标不在首行时，首行的 # 没有被渲染出来（隐藏生效）', async () => {
@@ -569,6 +586,12 @@ await check('C12 纯删除（new_string: ""）也能撤销，原文整段回来'
 console.log('\n—— 5. 回到阅读态：只读路径没被编辑功能带坏 ——');
 await check('D13b 退出编辑后阅读视图恢复，且看不到被撤销掉的 agent 改动', async () => {
   await exitEdit();
+  // 进度线随阅读态回来（A2 断言过编辑态没有它，这里补上另一半）
+  assert.equal(
+    await page.locator('[data-testid="reader-progress"]').count(),
+    1,
+    '退出编辑后进度线没回来',
+  );
   const text = await page.locator('.mr-scroll').innerText();
   const info = await page.$$eval('.mr-md__block', (els) =>
     els.map((el) => ({

@@ -3,11 +3,12 @@
  *
  * ## 这个工具到底做什么（名字有误导性，先说清）
  *
- * 它**不渲染**任何东西。图形真正上屏靠的是回答正文里的 ```svg / ```mermaid 围栏，
+ * 它**不渲染**任何东西。图形真正上屏靠的是回答正文里的 ```svg / ```mermaid / ```diagram 围栏，
  * 由 `components/mermaid/` 在渲染 Markdown 时接管。这个工具只做一件事：
  *
  *   把模型写好的源码**先过一遍真正的渲染管线**（svg 走 `sanitizeSvg`、mermaid 走
- *   `renderMermaid` 的 parse），通过就回一段可直接放进正文的围栏文本。
+ *   `renderMermaid` 的 parse、diagram 走 `validateDiagram` + `renderDiagram`），
+ *   通过就回一段可直接放进正文的围栏文本。
  *
  * ## 为什么值得多这一次调用
  *
@@ -24,12 +25,20 @@
  */
 
 import type { WidgetLib } from './widgetRuntime';
+import { MAX_FENCE_TITLE } from '../components/mermaid/fence.ts';
 
-export type WidgetFormat = 'svg' | 'mermaid' | 'html';
+export type WidgetFormat = 'svg' | 'mermaid' | 'diagram' | 'html';
 
 export interface WidgetArgs {
   format: WidgetFormat;
   code: string;
+  /**
+   * 图的标题（```diagram title="抛物线开口方向"）。图块左上角显示，也当下载文件名。
+   *
+   * 它必须由**这里**回执带回围栏（见 widgetAcceptedText）：模型是照着回执「原样贴进正文」的，
+   * 回执里不带标题，标题就在这一趟往返里丢掉了 —— 而丢的地方恰恰是模型看不见的。
+   */
+  title?: string;
   /** html 形态才用：声明要宿主内联的库 */
   libs?: WidgetLib[];
 }
@@ -49,16 +58,23 @@ const MAX_HTML = 60_000;
 
 /** 校验 show_widget 的入参。任何字段非法都返回**可直接照着改**的错误描述 */
 export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
-  const a = (raw as { format?: unknown; code?: unknown; libs?: unknown } | null) ?? {};
+  const a = (raw as { format?: unknown; code?: unknown; libs?: unknown; title?: unknown } | null) ?? {};
 
   const format = a.format;
-  if (format !== 'svg' && format !== 'mermaid' && format !== 'html')
-    return { ok: false, error: 'format 必须是 "svg"、"mermaid" 或 "html"' };
+  if (format !== 'svg' && format !== 'mermaid' && format !== 'diagram' && format !== 'html')
+    return { ok: false, error: 'format 必须是 "svg"、"mermaid"、"diagram" 或 "html"' };
 
   const code = typeof a.code === 'string' ? a.code.trim() : '';
   if (!code) return { ok: false, error: 'code 不能为空' };
 
   if (format === 'html') {
+    // html 形态渲染成独立图形卡，卡上没有标题栏 —— 收下它就只能悄悄丢掉。
+    // 与其让模型以为「标题写上了」，不如现在说清它该往哪儿写。
+    if (a.title != null)
+      return {
+        ok: false,
+        error: 'html 形态没有标题栏，title 只用于 mermaid / diagram / svg 围栏。图的名字请写进正文那句话里，或不传 title',
+      };
     if (code.length > MAX_HTML)
       return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_HTML}）。只画图，不要把正文塞进来` };
     // 文档外壳由宿主的 runtime 统一提供。模型自己套一层会让 CSP 与桥接脚本的注入位置失控，
@@ -83,7 +99,43 @@ export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
   if (code.length > MAX_CODE)
     return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_CODE}）。只画图，不要把正文塞进来` };
 
-  return { ok: true, args: { format, code } };
+  const title = normalizeTitle(a.title);
+  if (!title.ok) return title;
+  return { ok: true, args: title.title ? { format, code, title: title.title } : { format, code } };
+}
+
+/**
+ * 校验围栏标题。这里**拒**超长而不是像 fence.ts 那样截断 —— 两个位置的分工不同：
+ * 预检是唯一能教会模型的时机（说清「标题是图的名字、不是正文句子」，它下一轮就写短了），
+ * 渲染层则必须保证「模型写什么都画得出来」，所以那边截断兜底。
+ *
+ * 引号一并在这里收口：围栏参数按引号解析，标题里两种引号同时出现就没法安全表达
+ * （见 fenceHeader），与其拼一段解析不回来的围栏，不如现在说清。
+ */
+function normalizeTitle(raw: unknown): { ok: true; title?: string } | { ok: false; error: string } {
+  if (raw == null) return { ok: true };
+  if (typeof raw !== 'string') return { ok: false, error: 'title 必须是字符串' };
+  const t = raw.replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!t) return { ok: true }; // 空标题＝没写，按没写处理
+  if ([...t].length > MAX_FENCE_TITLE)
+    return {
+      ok: false,
+      error: `title 过长（${[...t].length} 字，上限 ${MAX_FENCE_TITLE}）。标题是这张图的名字，点明它讲什么就够，不要把正文句子塞进来`,
+    };
+  if (t.includes('"') && t.includes("'"))
+    return { ok: false, error: 'title 里不要同时出现双引号与单引号（围栏参数按引号解析）：去掉引号或只留一种' };
+  return { ok: true, title: t };
+}
+
+/**
+ * 围栏首行：`diagram` 或 `diagram title="抛物线开口方向"`。
+ *
+ * 引号按标题里已出现的那一种让位：解析侧（fence.ts 的 fenceTitleOf）认 `"…"` / `'…'` / 裸值，
+ * 两种引号同时出现由上面的预检拒掉，所以这里只需二选一。
+ */
+function fenceHeader(format: WidgetFormat, title?: string): string {
+  if (!title) return format;
+  return title.includes('"') ? `${format} title='${title}'` : `${format} title="${title}"`;
 }
 
 const KNOWN_LIBS: readonly WidgetLib[] = ['chart.js'];
@@ -127,7 +179,7 @@ export function widgetAcceptedText(args: WidgetArgs): string {
     `预检通过（${args.format}）。**图还没有上屏** —— 请把下面这段围栏原样放进你的回答正文，`,
     '放在它要解释的那句话旁边，前后各用一句话说明，不要只丢一张图，也不要在正文外重复解释一遍。',
     '',
-    '```' + args.format,
+    '```' + fenceHeader(args.format, args.title),
     args.code,
     '```',
   ].join('\n');
@@ -138,13 +190,55 @@ export function widgetAcceptedText(args: WidgetArgs): string {
  *
  * 「已阻止渲染」这类原文对模型没有可操作性 —— 它不知道该删哪一处。
  * 所以这里按报错文本归因，给出对应的改法；认不出来时回落到通用建议 + 原文。
+ *
+ * ⚠️ 归因顺序：diagram 的分支必须**整体排在 svg/mermaid 之前**。两个原因：
+ * 1. type 报错的文案里含着「```mermaid」字样，排后会被 mermaid 分支截胡；
+ * 2. diagram 的 schema 报错与 svg 的净化报错文本完全不重叠，排前不会误伤。
  */
 export function widgetRejectedText(err: unknown): string {
   const raw = err instanceof Error ? err.message : String(err);
 
-  // 按「净化层会抛什么」归因，措辞对齐 components/mermaid/svgRender.ts
+  // —— diagram（JSON 中间层）：归因对齐 diagramSchema.ts / expr.ts 的报错文案 ——
   let fix: string;
-  if (/没有找到 <svg/i.test(raw))
+  if (/表达式第 \d+ 字符附近出错/.test(raw))
+    fix =
+      'fn 表达式写法不对：只支持 x、pi/e/tau、+ - * / ^ %、括号与白名单函数（sin/cos/tan/exp/ln/log/sqrt/abs/min/max/pow 等），支持隐式乘法（2x、2sin(x)）。报错给了字符位置，照着改';
+  else if (/不认识的字段/.test(raw))
+    fix =
+      'diagram 的 schema 是锁死的：只用了 schema 列出的字段（大小写敏感）。把报错点名的字段改成可用字段或删掉；完整 schema 见「讲解配图」技能';
+  else if (/引用了不存在的节点/.test(raw))
+    fix = 'edge 的 from/to 必须指向 nodes 里已存在的 id；报错消息里列出了全部可用 id，照着改';
+  else if (/type 必须是/.test(raw))
+    fix =
+      'type 只能取 "graph"（节点+连线）或 "plot"（函数图像/几何/坐标轴）。流程/时序/状态/层级/占比这类标准结构图优先改用 ```mermaid 围栏';
+  else if (/不是合法的 JSON/.test(raw))
+    fix =
+      '围栏里必须是一个 JSON 对象（{"type": …} 开头）。检查多余的逗号、缺引号、把说明文字写进了围栏；也不要把 SVG / mermaid 源码放进 ```diagram';
+  // 上限类：schema 的几种文案形状不同 ——「超过 10 个」「超过 16 条」「超过 4 项」
+  // 「超过 20 字」「超过 12 个点」，所以量词用并集而不是逐个枚举
+  else if (/超过 \d+ (?:个|条|项|字)/.test(raw))
+    fix = '超出数量上限了：拆成两张图，或删掉不重要的节点 / 曲线 / 标注（上限见「讲解配图」技能）';
+  else if (/自环/.test(raw))
+    fix = '不支持 from 与 to 相同的自环：去掉这条边，或把说明写进节点文案';
+  else if (/domain/.test(raw))
+    fix = '曲线的 domain 超出了 x 范围：把 domain 收进坐标轴范围内，或加大 x 范围';
+  else if (/至少需要 3 个点/.test(raw))
+    fix = 'polygon 的 points 至少 3 个点';
+  else if (/r 必须是正数/.test(raw))
+    fix = 'circle 的 r 必须是正数';
+  else if (/十六进制颜色|color/.test(raw))
+    fix = 'color 只能是 #1677ff 这样的十六进制颜色或少数命名色，不要写 url(...) 或渐变';
+  else if (/shape 只能是/.test(raw))
+    fix = '节点 shape 只能是 box / round / ellipse / diamond';
+  else if (/anchor 只能是/.test(raw))
+    fix = 'label 的 anchor 只能是 start / middle / end';
+  else if (/direction 只能/.test(raw))
+    fix = 'direction 只能是 "TB"（纵向）或 "LR"（横向）';
+  else if (/必须是非空字符串|必须是有限数字|必须是 \[a, b\]|必须是 true \/ false|必须是数组|不能为空|必须小于/.test(raw))
+    fix =
+      '字段类型或取值不对：按 schema 的类型写（字符串加引号、数字不加引号、坐标写 [x, y] 二元组、范围写 [最小值, 最大值]），完整 schema 见「讲解配图」技能';
+  // —— svg（模型直出裸 SVG，历史兼容路径）——
+  else if (/没有找到 <svg/i.test(raw))
     fix = 'code 必须是一段完整的 SVG，以 <svg 开头、以 </svg> 结尾';
   else if (/没有闭合|缺少 <\/svg>/i.test(raw))
     fix = 'SVG 没有闭合，补上 </svg>';
@@ -158,7 +252,7 @@ export function widgetRejectedText(err: unknown): string {
   else if (/脚本|外部嵌入|已阻止渲染/i.test(raw))
     fix = '含有脚本或外部嵌入（script、on* 事件、iframe、foreignObject、image、动画），全部会被丢弃，请只画静态图形';
   else if (/不支持|unknown diagram|no diagram type|mermaid/i.test(raw))
-    fix = 'mermaid 语法或图种不被支持。改用 flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie，或干脆改用 svg 手写';
+    fix = 'mermaid 语法或图种不被支持。改用 flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie';
   else
     fix = '按下面的原始报错定位问题后重试';
 

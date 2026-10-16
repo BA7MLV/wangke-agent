@@ -126,7 +126,11 @@ const seedSubtitle = (videoId) =>
   }, videoId);
 
 console.log('1. 导入测试视频并播种字幕');
-await page.goto(BASE, { waitUntil: 'networkidle' });
+// ⚠️ 2026-10-14 对话页改版后，`/` 是 AI 助手页：空库时那里**没有** file input，
+// 导入入口是那颗 `chat-go-import` 按钮，点它才跳到课程库。直接开课程库页更稳 ——
+// 那颗按钮只在 `!hasCourses` 时渲染，而 hasCourses 要等一次异步查询才有值。
+await page.goto(`${BASE}/#/library`, { waitUntil: 'networkidle' });
+await page.waitForSelector('input[type="file"]', { timeout: 15000 });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 const videoId = await readVideoId();
@@ -160,10 +164,40 @@ await page.click('[data-testid="skill-picker"]');
 await page.waitForSelector('[data-testid="skill-scope-item"]', { timeout: 10000 });
 const total = await page.locator('[data-testid="skill-scope-item"]').count();
 check(total > 0, `对话框列出 ${total} 个启用技能`);
+
+// 勾选框必须真的画出来。这条是 2026-10-15 补的，起因是一个真实缺陷：
+// HeroUI v3 的 Checkbox 是复合组件，漏写 `Control` + `Indicator` 就**只剩文字、没有框** ——
+// 状态全对，用户却看不见任何可点的东西。原来的断言只看状态（data-selected / 落库值），
+// 照不到这一类纯视觉的错。判据用「元素在 + 有非零尺寸」，不认 HeroUI 的内部类名。
+const boxCount = await page.locator('[data-testid="skill-scope-check"]').count();
+check(boxCount === total, `每个技能都渲染出勾选框（${boxCount}/${total}）`);
+const boxRect = await page.locator('[data-testid="skill-scope-check"]').first().boundingBox();
+check(!!boxRect && boxRect.width > 0 && boxRect.height > 0, '勾选框有非零尺寸（真的画出来了）');
+
+// ⚠️ `data-testid="skill-scope-item"` 落在 `.checkbox` 这个 div 上，**不是**隐藏的
+// <input>，所以 `e.checked` 恒为 undefined —— 写成 `els.every(e => e.checked)` 这条断言
+// 必然为假，与事实对不上（HeroUI 改造后就一直如此）。改读 RAC 的 `data-selected`。
 const allChecked = await page.$$eval('[data-testid="skill-scope-item"]', (els) =>
-  els.every((e) => e.checked),
+  els.every((e) => e.getAttribute('data-selected') === 'true'),
 );
 check(allChecked, '未限定时默认全部勾选');
+
+// 整行（含描述）都该是可点区域：描述占了一行的大半面积，点它没反应会被读成「选不了」。
+// 直接点描述文字 —— 它原来是 Checkbox 的兄弟节点，最典型的「点了没反应」的位置。
+const beforeRowClick = await page
+  .locator('[data-testid="skill-scope-item"]')
+  .first()
+  .getAttribute('data-selected');
+await page.locator('.skill-picker__desc').first().click();
+await page.waitForTimeout(300);
+const afterRowClick = await page
+  .locator('[data-testid="skill-scope-item"]')
+  .first()
+  .getAttribute('data-selected');
+check(beforeRowClick !== afterRowClick, '点描述文字也能切换勾选（整行可点）');
+// 还原，后面的断言按「全勾选」这个前提写
+await page.locator('.skill-picker__desc').first().click();
+await page.waitForTimeout(300);
 
 await page.locator('[data-testid="skill-scope-item"]').first().click();
 await page.waitForTimeout(400);

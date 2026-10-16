@@ -5,15 +5,23 @@ import { useSettings } from './store/settings';
 import { applyTheme } from './ui/theme';
 // MD3 的参考字体是 Roboto。只自托管**拉丁/数字子集**（latin，约 15KB/字重，离线可用）：
 // 中文交给系统字体（PingFang SC / 微软雅黑），因为思源黑体全量要好几 MB，中文应用引 Web 字体不划算，
-// 且平台自带的中文字形更符合各系统习惯。字重只用 400（正文）+ 500（标题，MD3 typescale 用 Medium）。
+// 且平台自带的中文字形更符合各系统习惯。字重只用 400（正文）+ 500（标题）。
 import '@fontsource/roboto/latin-400.css';
 import '@fontsource/roboto/latin-500.css';
-// mdui 的样式 / 组件注册 / 语言包（这一条 import 就是副作用本身）。
-// 放在应用自己的样式之前，让 theme.css 保持在最后一层
-import { mduiLocaleReady } from './ui/mdui';
+// HeroUI v3 样式（Tailwind v4 基础层 + 主题令牌 + 组件样式）。
+//
+// ⚠️ 必须引 `/css` 子路径：`@heroui/styles` 主入口解析到 dist/index.js，
+// 那是个纯 JS 模块（只导出 buttonVariants 之类的样式函数），**不含任何 CSS**。
+// 症状很有迷惑性：DOM 上 class="button button--md button--secondary" 齐全、
+// 组件也渲染出来了，但 computed style 一条都对不上（按钮 56×25、Switch 0×0）。
+// 放在应用自己的样式之前，让 theme.css 保持在最后一层。
+import '@heroui/styles/css';
 import './theme.css';
 import './transitions.css';
 import './handout-doc.css';
+// Markdown 内容表格的三线表口径（与讲义 .hd-table 一致）。必须排在 x-markdown
+// 自带样式之后：它给 .x-markdown 定的 --td-th-padding 是同等权重，靠顺序取胜。
+import './md-table.css';
 
 // 申请持久化存储，防止浏览器在空间紧张时清除 IndexedDB 中的视频/字幕数据
 navigator.storage?.persist?.().catch(() => {});
@@ -26,7 +34,7 @@ applyTheme(useSettings.getState().theme);
  * 关闭浏览器自己的滚动恢复。
  *
  * 讲义/材料是自己管阅读位置的（`handout/readingPos.ts`、`videos.lastUnit`），而浏览器的
- * 恢复是**在内容渲染完之后才生效**的，且不由我们控制时机：两者会打架，实测表现为
+ * 恢复是**在内容渲染完之后才生效的**，且不由我们控制时机：两者会打架，实测表现为
  * 「明明读到第五节，打开却停在第四节中段」（实测偏差一个段落：期望 s1b3@40、实际 s1b2@74）。
  *
  * 关掉是安全的：本应用里没有一处依赖原生恢复 —— 库页、播放器、聊天都不做滚动恢复，
@@ -36,7 +44,7 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 
-/** 主题切换时同步 <html> 上的主题类（深浅的实际配色全在 CSS 令牌里，这里只负责挂类名） */
+/** 主题切换时同步 <html> 上的主题类（深浅的实际配色全在 CSS 变量里，这里只负责挂类名） */
 function Root() {
   const theme = useSettings((s) => s.theme);
   React.useEffect(() => {
@@ -53,6 +61,5 @@ function render() {
   );
 }
 
-// 等 mdui 语言包就绪再渲染首帧，避免 mdui 组件先闪一下英文文案。
-// 语言包是静态 import 的，这个 promise 在微任务里就 resolve；失败也已内部兜住，不会阻塞启动。
-mduiLocaleReady.finally(render);
+// HeroUI 的组件是纯 React 实现（无 Web Components 注册等待），直接渲染首帧。
+render();

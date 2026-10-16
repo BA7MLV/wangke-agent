@@ -47,7 +47,7 @@ test('每个 skill 有 name + description（路由依赖 description）', () => 
   }
 });
 
-test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论 / 讲解配图 / 课程库整理', () => {
+test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科样例 / 公考行测 / 公考申论 / 讲解配图 / 资料整理', () => {
   const names = skills.map((s) => s.name);
   assert.ok(names.includes('公文讲义写作'));
   assert.ok(names.includes('公文版式规格'));
@@ -55,14 +55,16 @@ test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科�
   assert.ok(names.includes('公考行测讲义'));
   assert.ok(names.includes('公考申论讲义'));
   assert.ok(names.includes('讲解配图'));
-  assert.ok(names.includes('课程库整理'));
+  assert.ok(names.includes('资料整理'));
 });
 
 test('「讲解配图」写死两种围栏名、五类图种、节点上限，并划清不用于讲义', () => {
   const s = skills.find((x) => x.name === '讲解配图');
   assert.ok(s, '缺讲解配图');
-  // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这两个）
-  for (const kw of ['```mermaid', '```svg']) assert.ok(s.body.includes(kw), `缺围栏名：${kw}`);
+  // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这三个，
+  // 但 2026-10-13 起新内容只教 mermaid 与 diagram 两种）
+  for (const kw of ['```mermaid', '```diagram']) assert.ok(s.body.includes(kw), `缺围栏名：${kw}`);
+  assert.ok(!s.body.includes('```svg'), 'svg 围栏已退场（历史数据兼容），技能不该再教');
   // 前端不认的围栏名要明确列为反例
   for (const kw of ['dot', 'plantuml']) assert.ok(s.body.includes(kw), `缺反例围栏名：${kw}`);
   // 五类图种
@@ -72,10 +74,11 @@ test('「讲解配图」写死两种围栏名、五类图种、节点上限，�
   // 数量上限与防滥画
   assert.match(s.body, /不超过 10 个节点/);
   assert.match(s.body, /不超过 10 个字/);
-  // 安全面：svg 不能带脚本与外部引用
-  for (const kw of ['<script>', 'onclick', '<foreignObject>']) {
-    assert.ok(s.body.includes(kw), `svg 安全约束缺：${kw}`);
-  }
+  // JSON 中间层的口径（替代了过去的 svg 安全约束）：
+  // 模型不手算坐标、字段名大小写敏感、标签按纯文本写（渲染器转义）
+  assert.match(s.body, /不要手算任何坐标/);
+  assert.match(s.body, /大小写敏感/);
+  assert.match(s.body, /标签文本按纯文本写/);
   // 讲义走公文 IR、不渲染图表围栏，技能必须自己说清适用范围
   assert.match(s.body, /讲义/);
 });
@@ -127,9 +130,9 @@ test('注入预算：写作+版式 ≤4000 字，单个 skill ≤10000 字', () 
   assert.ok(total <= 4000, `核心两个 skill 共 ${total} 字超 4000`);
 });
 
-test('「课程库整理」写明主轴互斥、数量区间、id 来源与确认闸门', () => {
-  const s = skills.find((x) => x.name === '课程库整理');
-  assert.ok(s, '缺课程库整理');
+test('「资料整理」写明主轴互斥、数量区间、id 来源与确认闸门', () => {
+  const s = skills.find((x) => x.name === '资料整理');
+  assert.ok(s, '缺资料整理');
   // 这几条是提示词 ↔ 工具的硬契约：模型不认「只能有一套主轴」就会混着分，
   // 不认「必须等确认」就会声称整理完成
   assert.match(s.body, /主轴/);

@@ -109,7 +109,7 @@ export function formatPlanForModel(plan: FolderPlan, applied: AppliedPlanResult 
   const lines = applied.perFolder.map((p) => `- ${p.name}：实际归入 ${p.count} 门`);
   if (applied.createdFolders.length > 0) lines.push(`新建文件夹：${applied.createdFolders.join('、')}`);
   if (applied.missing.length > 0) {
-    lines.push(`⚠️ 忽略了 ${applied.missing.length} 个课程库中不存在的 id：${applied.missing.join('、')}（不要再次使用它们）`);
+    lines.push(`⚠️ 忽略了 ${applied.missing.length} 个资料库中不存在的 id：${applied.missing.join('、')}（不要再次使用它们）`);
   }
   lines.push(`合计移动 ${applied.moved} 门课程。`);
   return lines.join('\n');

@@ -1,5 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
+import { Button } from '@heroui/react';
+import { LoadingButton, Sym } from '../ui';
 import { db, type FolderPlanState, type VideoRow } from '../store/db';
 import './ask-cards.css';
 
@@ -10,6 +12,8 @@ interface Props {
   plan: FolderPlanState;
   /** 本轮 agent 循环是否还活着（决定「确认执行」可不可点） */
   active: boolean;
+  /** 从库里的挂起点恢复（刷新后重新武装）—— 决定显不显示「会话已恢复」 */
+  restored?: boolean;
   busy?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
@@ -24,7 +28,7 @@ interface Props {
  * 课程名从 `videos` 现查（方案里只有 id）：模型给的 id 可能指向已删除的课程，也可能
  * 根本不存在 —— 显示不出来的行会以「1 门无法识别」计入数量，不静默消失。
  */
-export default function FolderPlanCard({ plan, active, busy, onConfirm, onCancel }: Props) {
+export default function FolderPlanCard({ plan, active, restored, busy, onConfirm, onCancel }: Props) {
   const navigate = useNavigate();
   const [names, setNames] = useState<Map<string, VideoRow> | null>(null);
   const ids = plan.folders.flatMap((entry) => entry.courseIds);
@@ -58,9 +62,15 @@ export default function FolderPlanCard({ plan, active, busy, onConfirm, onCancel
   return (
     <div className="plan-card" data-testid="plan-card" data-applied={applied}>
       <div className="plan-card__head">
-        <mdui-sym-create-new-folder aria-hidden="true" />
-        <span>课程库目录整理方案</span>
+        <Sym name="create-new-folder" aria-hidden="true" />
+        <span>资料目录整理方案</span>
         <span className="plan-card__count">{plan.folders.length} 个分类 / {total} 门</span>
+        {restored && applied === 0 && (
+          <span className="ask-card__restored" data-testid="plan-restored">
+            <Sym name="history" aria-hidden="true" />
+            会话已恢复
+          </span>
+        )}
       </div>
       <p className="plan-card__summary">{plan.summary}</p>
 
@@ -71,7 +81,7 @@ export default function FolderPlanCard({ plan, active, busy, onConfirm, onCancel
           return (
             <section key={entry.name} className="plan-folder">
               <h4 className="plan-folder__name">
-                <mdui-sym-folder aria-hidden="true" />
+                <Sym name="folder" aria-hidden="true" />
                 {entry.name}
                 <span className="plan-folder__n">{entry.courseIds.length}</span>
               </h4>
@@ -103,7 +113,7 @@ export default function FolderPlanCard({ plan, active, busy, onConfirm, onCancel
                       )}
                       {unknown > 0 && (
                         <li className="plan-folder__unknown" data-testid="plan-folder-unknown">
-                          {unknown} 门无法识别（课程库里已不存在，执行时会跳过）
+                          {unknown} 门无法识别（资料库里已不存在，执行时会跳过）
                         </li>
                       )}
                     </>
@@ -117,47 +127,52 @@ export default function FolderPlanCard({ plan, active, busy, onConfirm, onCancel
 
       {applied === 0 && (
         <p className="plan-card__gate">
-          <mdui-sym-warning aria-hidden="true" />
-          确认后才会真正建立文件夹并移动课程；取消则课程库保持原样。
+          <Sym name="warning" aria-hidden="true" />
+          确认后才会真正建立文件夹并移动课程；取消则资料库保持原样。
         </p>
       )}
       {applied === 1 && (
         <p className="plan-card__done" data-testid="plan-card-applied">
-          <mdui-sym-check aria-hidden="true" />
+          <Sym name="check" aria-hidden="true" />
           已执行。到
           <button type="button" className="plan-card__link" onClick={() => navigate('/')}>
-            课程库
+            资料
           </button>
           就能看到新的分类。
         </p>
       )}
       {applied === 2 && (
         <p className="plan-card__cancel" data-testid="plan-card-cancelled">
-          <mdui-sym-undo aria-hidden="true" />
-          已放弃，课程库没有改动。
+          <Sym name="undo" aria-hidden="true" />
+          已放弃，资料库没有改动。
         </p>
       )}
 
       {applied === 0 && (
         <div className="plan-card__actions">
-          <mdui-button variant="text" disabled={!actionable} onClick={onCancel} data-testid="plan-cancel">
+          <Button
+            variant="tertiary"
+            isDisabled={!actionable}
+            onPress={onCancel}
+            data-testid="plan-cancel"
+          >
             取消
-          </mdui-button>
-          <mdui-button
-            variant="filled"
-            disabled={!actionable}
+          </Button>
+          <LoadingButton
+            variant="primary"
+            isDisabled={!actionable}
             loading={busy}
-            onClick={onConfirm}
+            onPress={onConfirm}
             data-testid="plan-confirm"
           >
-            <mdui-sym-check slot="icon" />
+            <Sym name="check" />
             确认执行
-          </mdui-button>
+          </LoadingButton>
         </div>
       )}
       {!active && applied === 0 && (
         <p className="plan-card__dead" data-testid="plan-card-expired">
-          本次会话已结束，这份方案没法再执行。重新说一次「整理课程库」即可。
+          本次会话已结束，这份方案没法再执行。重新说一次「整理资料」即可。
         </p>
       )}
     </div>

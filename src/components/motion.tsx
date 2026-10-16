@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react';
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 
 /** 读取 :root 上的 motion token（毫秒），保持 JS 计时与 CSS 变量同步。
  *  构建压缩会把 150ms 改写成 .15s，这里兼容 s / ms 两种单位。 */
@@ -387,11 +387,16 @@ export function CountBadge({
  *
  * `innerClassName` 挂在内层（正文自己的 max-height / overflow 滚动上限
  * 写在这里）—— padding 与滚动上限都**不能**落在 0fr 轨道上，否则收不干净。
+ *
+ * `innerRef` 给那些要**操纵滚动位置**的正文用（思考链要随流式续写滚到底部，
+ * 见 ReasoningChain）。为什么不能靠事件委托：滚动容器就是内层这个元素本身，
+ * 组件外拿不到它。事件在 t-acc 轨道上收是收不到 scroll 的 —— 滚动不冒泡。
  */
 export function Collapse({
   open,
   id,
   innerClassName,
+  innerRef,
   children,
 }: {
   open: boolean;
@@ -399,11 +404,18 @@ export function Collapse({
   id?: string;
   /** 正文自己的类名（max-height / overflow 等） */
   innerClassName?: string;
+  /** 正文滚动容器的 ref（要滚到底部 / 监听 scroll 时用） */
+  innerRef?: Ref<HTMLDivElement>;
   children: ReactNode;
 }) {
   return (
     <div id={id} className="t-acc t-acc-panel" data-open={open ? 'true' : 'false'}>
-      <div className={innerClassName ? `t-acc-panel-inner ${innerClassName}` : 't-acc-panel-inner'}>{children}</div>
+      <div
+        ref={innerRef}
+        className={innerClassName ? `t-acc-panel-inner ${innerClassName}` : 't-acc-panel-inner'}
+      >
+        {children}
+      </div>
     </div>
   );
 }

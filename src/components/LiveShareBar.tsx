@@ -1,3 +1,4 @@
+import { Button } from '@heroui/react';
 import { useLiveLink } from '../livelink/store';
 import './live-share-bar.css';
 
@@ -29,14 +30,15 @@ export default function LiveShareBar() {
       <span className="live-share-bar__text" data-testid="live-share-text">
         {shareText(status, guestCount, error)}
       </span>
-      <mdui-button
-        variant="text"
+      <Button
+        variant="tertiary"
+        size="sm"
         className="live-share-bar__stop"
         data-testid="live-share-stop"
-        onClick={disable}
+        onPress={disable}
       >
         停止
-      </mdui-button>
+      </Button>
     </div>
   );
 }

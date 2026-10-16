@@ -1,0 +1,105 @@
+/* ============================================================================
+   Markdown 内容表格 → 三线表（线撑满整栏，宽表横滚）
+   ----------------------------------------------------------------------------
+   口径与讲义渲染器一致（src/handout-doc.css 的 .hd-table）：**只有三条横线** ——
+   顶线、栏目线、底线，两侧不封口、单元格之间不画竖线、无底纹。
+   粗细取 2px / 1px（讲义那套 1.5 / 0.5 在屏幕上是亚像素，会被取整成同一条粗细）。
+
+   为什么是全局（而不是只挂 .chat-bubble）：
+   x-markdown 是问答正文 / 题卡解析 / Markdown 素材共用的渲染器，三处原本都只有
+   x-markdown 自带的内边距——**一条线都没有**，表格反而成了正文里结构感最弱的地方。
+   样式统一挂 `.x-markdown`，四处一起成立。
+
+   整栏宽度靠 `MdTable.tsx` 那层滚动容器，见下面第二段注释。
+   ========================================================================== */
+
+/* ── 三线：顶线 / 栏目线 / 底线 ────────────────────────────────────────── */
+
+.x-markdown table:not(pre) {
+  border-top: 2px solid var(--foreground);
+  border-bottom: 2px solid var(--foreground);
+}
+
+/* 先清竖线：任何来源的单元格边框都不该出现在三线表里；栏目线由下一条补回来 */
+.x-markdown table:not(pre) :is(th, td) {
+  border: 0 none;
+}
+
+/* 栏目线：表头下沿。选择器比上一条更具体（多 thead / tr / th 三层），顺序放后面也稳 */
+.x-markdown table:not(pre) > thead > tr > th {
+  border-bottom: 1px solid var(--foreground);
+}
+
+/* ── 行高：默认内边距是照「无线的表格」设的 ──────────────────────────────
+   0.85em / 1em 配上三条线太散，收到 0.5em / 0.75em。
+   .mr-md（素材阅读器）与 .quiz-explain__md（题卡解析）各自声明了 --td-th-padding，
+   它们的选择器权重更高（两段类名），这里只是补上没声明的那些场景的默认值。 */
+.x-markdown {
+  --td-th-padding: 0.5em 0.75em;
+}
+
+/* ── 对齐：三线表的三条规矩 ──────────────────────────────────────────────
+   ① 表头与表身数据**同侧**：栏目名压在数据上，一眼能认出哪列是哪列。
+   ② 文字列左对齐 —— 长文本（「拉流窗口按锚定播放头向前预取的时间跨度」）居中会散成
+      一团，读不出左边界。
+   ③ 数值列右对齐 —— 位数才能上下对齐比较，这是三线表存在的主要理由。
+   显式写了对齐的列（`| :---: |` / `| ---: |`）一律听作者的，不覆盖。
+
+   两个必须绕的开：
+   · ①只能靠 `:not([align])` 实现，不能直接写 `th { text-align: start }`。
+     x-markdown 把列对齐渲染成 `align="right"` **属性**（presentational hint），
+     hint 在层叠里低于任何作者声明 —— 一句 `th{text-align:start}` 就会把作者写的
+     数值右对齐一起吃掉，而且丢得无声无息。
+     浏览器 UA 给 `th` 的默认恰好是 `text-align: center`，所以「表头居中、数据左对齐」
+     的错位不用这条修不掉。
+   · ③的数据判定不在 CSS 里（CSS 读不到文字），由 `MdTable.tsx` 打上 `.md-table-num`，
+     对齐方向仍留在下面这条规则里。 */
+.x-markdown {
+  --md-table-align-text: start; /* 文字列 / 未显式对齐的列 */
+  --md-table-align-num: end; /* 数值列（自动判定） */
+}
+
+.x-markdown table:not(pre) :is(th, td):not([align]) {
+  text-align: var(--md-table-align-text);
+}
+
+/* 数值列：表头与数据一起右对齐。与上一条同权重，靠顺序取胜，必须放它后面。 */
+.x-markdown table:not(pre) :is(th, td).md-table-num {
+  text-align: var(--md-table-align-num);
+}
+
+/* ── 整栏宽度：宽度给内层真表格，滚动给外层容器 ───────────────────────────
+   分两层的原因见 `src/components/MdTable.tsx`：x-markdown 原本用
+   `display:block` 换横滚，代价是表格盒再也拉不宽（窄表只剩内容那么宽，
+   三条线跟着缩在左边一截）。这里把表格还原成真 `table` 盒撑满整栏、列自动摊开，
+   宽表则由外层 `.md-table-scroll` 出滚动条。 */
+
+.md-table-scroll {
+  margin: var(--table-margin);
+  overflow-x: auto;
+}
+
+/* x-markdown 对 p / ul / ol / pre / table 都有一条「首尾不留外边距」（见其 :first-child
+   / :last-child 那两组规则）。表格被容器包住之后，`:first-child` 落到容器身上，
+   表格这条就失效了 —— 于是一条**以表格开头**的回答会平白多出 1em 上边距。这里补回来。 */
+.md-table-scroll:first-child {
+  margin-top: 0;
+}
+
+.md-table-scroll:last-child {
+  margin-bottom: 0;
+}
+
+/* ⚠️ 选择器必须照着 x-markdown 自己的 `:not()` 守卫写全，才能盖住它的
+   `display:block / width:max-content / max-width:100% / margin:var(--table-margin)`：
+   它是 `.x-markdown:not(.x-md-disable-all):not(.x-md-disable-table) table:not(pre)`，
+   三段类名；这里再多一段 `.md-table-scroll` 才稳（不靠文件顺序，改动到哪都成立）。 */
+.x-markdown:not(.x-md-disable-all):not(.x-md-disable-table) .md-table-scroll > table:not(pre) {
+  display: table;
+  width: 100%;
+  /* 列宽不许被压：内容比容器宽就撑开，交给外层滚动 */
+  min-width: max-content;
+  max-width: none;
+  /* 外边距归容器：这样滚动条贴的是容器的边，而不是表格的边 */
+  margin: 0;
+}

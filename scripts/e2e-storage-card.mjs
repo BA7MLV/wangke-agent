@@ -12,7 +12,8 @@ const errors = [];
 page.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));
 page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text().slice(0, 300)); });
 
-await page.goto(`${BASE}/#/settings`, { waitUntil: 'networkidle' });
+// 存储卡在「数据」模块里；`#/settings` 只落到默认的「模型」模块，必须深链过去。
+await page.goto(`${BASE}/#/settings/data`, { waitUntil: 'networkidle' });
 await page.waitForSelector('[data-testid="card-storage"] [data-testid="storage-row"]', { timeout: 10000 });
 console.log('1. 存储占用卡片渲染 OK');
 
@@ -23,7 +24,10 @@ const info = await page.evaluate(() => {
   const progress = card.querySelector('[data-testid="storage-progress"]');
   return {
     progressValue: progress ? progress.value : null,
-    progressText: text('.storage-progress-text'),
+    // 配额说明在 `data-testid="storage-quota"` 上。旧版读的是 `.storage-progress-text`
+    // 那个自写类名，它在设置面 HeroUI 化时连同 CSS 一起删了 ——
+    // 选择器空集匹配不到任何东西，断言会以「说明异常」的形式一直红着。
+    progressText: text('[data-testid="storage-quota"]'),
     persist: text('[data-testid="storage-persist-tag"]'),
     rows: [...card.querySelectorAll('[data-testid="storage-row"]')].map((li) => li.textContent.trim()),
     note: text('[data-testid="storage-note"]').slice(0, 40),

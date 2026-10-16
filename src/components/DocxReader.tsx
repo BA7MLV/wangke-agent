@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { db, type MaterialBlockRow } from '../store/db';
-import { Shimmer } from './motion';
+import { Sym } from '../ui';
+import ReaderProgress from './ReaderProgress';
+import DocSkeleton from './DocSkeleton';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -177,24 +179,20 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
     <div className="mr-root" data-testid="material-reader">
       <div className="mr-bar">
         <span className="mr-bar__pos" data-testid="reader-page-indicator">
-          {ready ? `第 ${current} / ${total} 段` : <Shimmer text="载入中…" />}
+          {ready ? `第 ${current} / ${total} 段` : <span className="skel-bar reader-pos-skel" aria-hidden="true" />}
         </span>
         <div className="mr-bar__spacer" />
+        <ReaderProgress current={current} total={total} />
       </div>
       {error && (
         <div className="mr-hint" data-testid="reader-error">
-          <mdui-sym-error />
+          <Sym name="error" />
           Word 打开失败：{error}
         </div>
       )}
       <div className="mr-scroll" ref={scrollRef}>
         <div className="mr-docx" ref={bodyRef} />
-        {!ready && !error && (
-          <div className="mr-docx__skel">
-            <mdui-circular-progress />
-            正在排版文档…
-          </div>
-        )}
+        {!ready && !error && <DocSkeleton variant="page" />}
       </div>
     </div>
   );

@@ -8,14 +8,20 @@ const TEST_FILE = process.env.TEST_FILE;
 if (!TEST_FILE) { console.error('需要 TEST_FILE'); process.exit(1); }
 
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
-const page = await browser.newPage({ viewport: { width: 1280, height: 800 } });
+const page = await browser.newPage({
+  // 1440 宽：右侧问答面板之外，播放器面板仍有 ~705px，Vidstack 才不会判成小布局
+  // （阈值约 640px；面板窄于它时档位组按设计折叠为循环按钮，见 player-enhance.css）
+  viewport: { width: 1440, height: 900 },
+  // 屏蔽 PWA 的 Service Worker：它会 precache 上一轮构建的资源，导致断言读到旧样式
+  serviceWorkers: 'block',
+});
 page.on('pageerror', (e) => console.log('[pageerror]', String(e).slice(0, 400)));
 
 const fail = (msg) => { console.error(`❌ ${msg}`); process.exitCode = 1; };
 const ok = (msg) => console.log(`   ✓ ${msg}`);
 
 console.log('1. 打开首页并导入测试视频');
-await page.goto('http://localhost:4173', { waitUntil: 'networkidle' });
+await page.goto('http://localhost:4173/#/library', { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 
@@ -37,15 +43,15 @@ const wakeControls = async () => {
 };
 
 console.log('3. 倍速快捷按钮：5 档平铺（含 4x），点击 4x 生效且高亮');
-const rateBtns = page.locator('.rate-btn-full');
+const rateBtns = page.locator('.player-rate-group .toggle-button');
 if ((await rateBtns.count()) !== 5) fail(`应有 5 个倍速按钮，实际 ${await rateBtns.count()}`);
 await wakeControls();
-await page.locator('.rate-btn-full', { hasText: '4x' }).click();
+await page.locator('.player-rate-group .toggle-button', { hasText: '4x' }).click();
 await page.waitForTimeout(200);
 const rate = await page.evaluate(() => document.querySelector('video')?.playbackRate);
 if (rate !== 4) fail(`点击 4x 后 playbackRate 应为 4，实际 ${rate}`);
 else ok('playbackRate = 4');
-const activeText = await page.locator('.rate-btn-full[data-active]').innerText();
+const activeText = await page.locator('.player-rate-group .toggle-button[data-selected="true"]').innerText();
 if (activeText !== '4x') fail(`高亮按钮应为 4x，实际 ${activeText}`);
 else ok('4x 按钮已高亮');
 
@@ -91,7 +97,7 @@ const getVar = () => page.evaluate(() =>
   document.querySelector('.video-pane')?.style.getPropertyValue('--media-user-font-size'));
 const v0 = await getVar();
 if (v0 !== '1') fail(`初始 --media-user-font-size 应为 1，实际 "${v0}"`);
-await page.locator('.caption-size-btn').click();
+await page.locator('.player-caption-size').click();
 await page.waitForTimeout(200);
 const v1 = await getVar();
 if (v1 !== '1.35') fail(`点击后应为 1.35（大），实际 "${v1}"`);
@@ -117,12 +123,12 @@ await page.waitForTimeout(600); // 等 ResizeObserver 切换 data-sm
 const boxSm = await page.locator('[data-media-player]').boundingBox();
 await page.mouse.move(boxSm.x + boxSm.width / 2, boxSm.y + boxSm.height / 2, { steps: 5 });
 await page.waitForTimeout(300);
-const cycleVisible = await page.locator('.rate-btn-cycle').isVisible();
-const fullVisible = await page.locator('.rate-btn-full').first().isVisible();
+const cycleVisible = await page.locator('.player-rate-cycle').isVisible();
+const fullVisible = await page.locator('.player-rate-group .toggle-button').first().isVisible();
 if (!cycleVisible || fullVisible) fail(`窄屏应只显示循环按钮（cycle=${cycleVisible}, full=${fullVisible}）`);
 else ok('已折叠为循环按钮');
 const rateBefore = await page.evaluate(() => document.querySelector('video')?.playbackRate);
-await page.locator('.rate-btn-cycle').click();
+await page.locator('.player-rate-cycle').click();
 await page.waitForTimeout(200);
 const rateAfter = await page.evaluate(() => document.querySelector('video')?.playbackRate);
 if (rateBefore === rateAfter) fail('循环按钮点击后倍速应变化');
@@ -130,7 +136,7 @@ else ok(`循环切换：${rateBefore}x → ${rateAfter}x`);
 await page.screenshot({ path: 'e2e-shots/player-enhance-small.png' });
 
 console.log('8. 自定义倍速在「设置 → 播放」里维护，回到播放器并入档位栏');
-await page.setViewportSize({ width: 1280, height: 800 });
+await page.setViewportSize({ width: 1440, height: 900 });
 await page.waitForTimeout(400);
 // 播放页 → 首页 → 设置页。
 // 返回按钮统一用 data-testid="nav-back"：播放页还是 antd Button，设置页已经换成 mdui 的
@@ -189,11 +195,11 @@ await page.waitForFunction(
   () => { const v = document.querySelector('video'); return v && v.readyState >= 2 && v.duration > 0; },
   { timeout: 15000 },
 );
-const withCustom = await page.locator('.rate-btn-full').count();
+const withCustom = await page.locator('.player-rate-group .toggle-button').count();
 if (withCustom !== 7) fail(`内置 5 档 + 自定义 2 档应 7 个按钮，实际 ${withCustom}`);
 else ok('自定义档位已并入档位栏');
 await wakeControls();
-await page.locator('.rate-btn-full', { hasText: '1.25x' }).click();
+await page.locator('.player-rate-group .toggle-button', { hasText: '1.25x' }).click();
 await page.waitForTimeout(200);
 const r125 = await page.evaluate(() => document.querySelector('video')?.playbackRate);
 if (r125 !== 1.25) fail(`点击 1.25x 后 playbackRate 应为 1.25，实际 ${r125}`);

@@ -9,13 +9,33 @@
 .ask-card,
 .plan-card {
   margin-top: 12px;
-  border: 1px solid rgb(var(--mdui-color-outline-variant));
-  border-radius: var(--mdui-shape-corner-large);
-  background: rgb(var(--mdui-color-surface-container-low));
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius-lg);
+  background: var(--background-secondary);
 }
 
 .ask-card {
   padding: 12px 14px 10px;
+  animation: ask-card-in 220ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+/* 卡片入场：淡入 + 轻微上移。提问卡是「助手突然停下来问你」，需要一点出现感，
+   否则它会在流式正文里凭空冒出来。尊重系统「减少动态效果」偏好。 */
+@keyframes ask-card-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-card {
+    animation: none;
+  }
 }
 
 /* ── 提问卡 ──────────────────────────────────────────────────────────────── */
@@ -25,22 +45,41 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--mdui-color-primary));
-  font-size: var(--mdui-typescale-label-medium-size);
-  font-weight: var(--mdui-typescale-label-large-weight);
+  color: var(--accent);
+  font-size: 0.75rem;
+  font-weight: 500;
 }
 
-.ask-card__head > mdui-sym-help,
-.plan-card__head > mdui-sym-create-new-folder {
+.ask-card__head > svg,
+.plan-card__head > svg {
   font-size: 17px;
 }
 
 .ask-card__question {
   margin: 8px 0 10px;
-  color: rgb(var(--mdui-color-on-surface));
-  font-size: var(--mdui-typescale-body-medium-size);
+  color: var(--foreground);
+  font-size: 0.875rem;
   line-height: 1.65;
   text-wrap: pretty;
+}
+
+/* 「会话已恢复」：从断点恢复的卡才会出现。用户得知道这张卡为什么突然又能点了 ——
+   否则刷新后一张明明该是「上次那个问题」的卡还亮着，会以为是新问的 */
+.ask-card__restored {
+  margin-left: auto;
+  padding: 1px 8px;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: 999px;
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
+  font-size: 0.6875rem;
+  font-weight: 500;
+}
+
+.ask-card__restored > svg {
+  font-size: 13px;
 }
 
 .ask-card__options {
@@ -49,7 +88,7 @@
 }
 
 /* 单选方案：原生 <button> + MD3 令牌上色（与 cards.css 的 .quiz-option 同一套理由：
-   MD3 里「一行一个可选项」在语义上更接近列表项，mdui-button 的胶囊形状会让它们像一排按钮） */
+   「一行一个可选项」在语义上更接近列表项，按钮的胶囊形状会让它们像一排按钮） */
 .ask-option {
   box-sizing: border-box;
   min-height: 44px;
@@ -57,19 +96,19 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  border: 1px solid rgb(var(--mdui-color-outline-variant));
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-surface));
-  color: rgb(var(--mdui-color-on-surface));
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
   font: inherit;
-  font-size: var(--mdui-typescale-body-medium-size);
+  font-size: 0.875rem;
   text-align: left;
   cursor: pointer;
 }
 
 .ask-option:hover:not(:disabled) {
-  background: rgb(var(--mdui-color-surface-container-high));
-  border-color: rgb(var(--mdui-color-outline));
+  background: var(--default-soft);
+  border-color: var(--border);
 }
 
 .ask-option:disabled {
@@ -78,10 +117,34 @@
 }
 
 .ask-option[data-picked='true'] {
-  border-color: rgb(var(--mdui-color-primary));
-  background: rgb(var(--mdui-color-primary-container));
-  color: rgb(var(--mdui-color-on-primary-container));
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
   opacity: 1;
+}
+
+/* 序号徽标：`1`~`5` 与数字键快选对应，给键盘用户一条明路，也让「这是个可选项」更显眼 */
+.ask-option__num {
+  flex: none;
+  width: 20px;
+  height: 20px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--default-soft);
+  color: var(--muted);
+  font-size: 0.6875rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.ask-option[data-picked='true'] .ask-option__num {
+  background: var(--background);
+  color: var(--accent);
+}
+
+.ask-option__text {
+  flex: 1;
+  min-width: 0;
 }
 
 /* 判定位常驻（未选中时留空）：与 .quiz-option__mark 同一个理由 —— 选中的那一刻
@@ -103,16 +166,16 @@
   align-items: center;
   gap: 6px;
   border: 0;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: rgb(var(--mdui-color-on-surface-variant));
+  color: var(--muted);
   font: inherit;
-  font-size: var(--mdui-typescale-label-large-size);
+  font-size: 0.875rem;
   cursor: pointer;
 }
 
 .ask-card__custom:hover:not(:disabled) {
-  background: rgba(var(--mdui-color-on-surface), 0.08);
+  background: rgba(var(--foreground), 0.08);
 }
 
 .ask-card__custom:disabled {
@@ -120,11 +183,62 @@
   opacity: 0.55;
 }
 
+/* 卡内联作答：展开后的输入行。与把视线甩到下面的输入框相比，就地作答因果更清楚 */
+.ask-card__custom-input {
+  margin-top: 6px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.ask-card__input {
+  flex: 1;
+  min-width: 0;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid var(--border-secondary);
+  border-radius: var(--radius);
+  background: var(--background);
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+
+.ask-card__input:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.ask-card__custom-send {
+  flex: none;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius);
+  background: var(--accent);
+  color: var(--background);
+  font: inherit;
+  font-size: 18px;
+  cursor: pointer;
+}
+
+.ask-card__custom-send:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.ask-card__custom-send:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .ask-card__dead,
 .plan-card__dead {
   margin: 6px 0 0;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-small-size);
+  color: var(--muted);
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
@@ -132,7 +246,7 @@
 .ask-card__custom:focus-visible,
 .plan-folder__course:focus-visible,
 .plan-card__link:focus-visible {
-  outline: 2px solid rgb(var(--mdui-color-primary));
+  outline: 2px solid var(--accent);
   outline-offset: 2px;
 }
 
@@ -144,15 +258,20 @@
 
 .plan-card__count {
   margin-left: auto;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-label-small-size);
+  color: var(--muted);
+  font-size: 0.6875rem;
   font-weight: 400;
+}
+
+/* 方案卡头上「分类数」已经占着 `margin-left:auto`，恢复提示顺手跟在它后面即可 */
+.plan-card__head .ask-card__restored {
+  margin-left: 8px;
 }
 
 .plan-card__summary {
   margin: 8px 0 12px;
-  color: rgb(var(--mdui-color-on-surface));
-  font-size: var(--mdui-typescale-body-medium-size);
+  color: var(--foreground);
+  font-size: 0.875rem;
   line-height: 1.65;
   text-wrap: pretty;
 }
@@ -164,8 +283,8 @@
 
 .plan-folder {
   padding: 8px 10px;
-  border-radius: var(--mdui-shape-corner-medium);
-  background: rgb(var(--mdui-color-surface));
+  border-radius: var(--radius);
+  background: var(--background);
 }
 
 .plan-folder__name {
@@ -173,20 +292,20 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--mdui-color-on-surface));
-  font-size: var(--mdui-typescale-title-small-size);
+  color: var(--foreground);
+  font-size: 0.875rem;
   font-weight: 500;
 }
 
-.plan-folder__name > mdui-sym-folder {
-  color: rgb(var(--mdui-color-primary));
+.plan-folder__name > svg {
+  color: var(--accent);
   font-size: 16px;
 }
 
 .plan-folder__n {
   margin-left: auto;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-label-small-size);
+  color: var(--muted);
+  font-size: 0.6875rem;
   font-weight: 400;
 }
 
@@ -200,11 +319,11 @@
   max-width: 100%;
   padding: 3px 6px;
   border: 0;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-sm);
   background: transparent;
-  color: rgb(var(--mdui-color-on-surface));
+  color: var(--foreground);
   font: inherit;
-  font-size: var(--mdui-typescale-body-small-size);
+  font-size: 0.75rem;
   text-align: left;
   cursor: pointer;
   overflow: hidden;
@@ -214,8 +333,8 @@
 }
 
 .plan-folder__course:hover {
-  background: rgb(var(--mdui-color-surface-container-high));
-  color: rgb(var(--mdui-color-primary));
+  background: var(--default-soft);
+  color: var(--accent);
 }
 
 .plan-folder__more,
@@ -223,12 +342,12 @@
 .plan-folder__empty,
 .plan-folder__loading {
   padding: 3px 6px;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-small-size);
+  color: var(--muted);
+  font-size: 0.75rem;
 }
 
 .plan-folder__unknown {
-  color: rgb(var(--mdui-color-error));
+  color: var(--danger);
 }
 
 .plan-card__gate,
@@ -238,22 +357,22 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  color: rgb(var(--mdui-color-on-surface-variant));
-  font-size: var(--mdui-typescale-body-small-size);
+  color: var(--muted);
+  font-size: 0.75rem;
   line-height: 1.5;
 }
 
-.plan-card__gate > mdui-sym-warning {
-  color: rgb(var(--mdui-color-tertiary));
+.plan-card__gate > svg {
+  color: var(--muted);
   font-size: 16px;
 }
 
-.plan-card__done > mdui-sym-check {
-  color: rgb(var(--mdui-color-primary));
+.plan-card__done > svg {
+  color: var(--accent);
   font-size: 16px;
 }
 
-.plan-card__cancel > mdui-sym-undo {
+.plan-card__cancel > svg {
   font-size: 16px;
 }
 
@@ -261,7 +380,7 @@
   padding: 0 2px;
   border: 0;
   background: transparent;
-  color: rgb(var(--mdui-color-primary));
+  color: var(--accent);
   font: inherit;
   text-decoration: underline;
   cursor: pointer;
@@ -293,7 +412,7 @@
     justify-content: stretch;
   }
 
-  .plan-card__actions > mdui-button {
+  .plan-card__actions > .button {
     flex: 1 1 0;
   }
 }
