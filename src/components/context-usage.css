@@ -1,4 +1,4 @@
-/* 上下文用量环 / 立即压缩入口（见 ContextUsageButton.tsx）。
+/* 上下文用量环 / 详情入口（见 ContextUsageButton.tsx）。
    它顶替了原先「删除当前会话」那颗按钮的位置（删除仍可在侧栏 Recent 的行尾菜单里做）。 */
 
 /* 环的填充色跟随按钮文字色，默认取 `--muted`（比正文淡一档，不与发送键抢眼）。 */
@@ -6,6 +6,13 @@
   flex: none;
   color: var(--muted);
 }
+
+.ctx-usage-details { width: min(22rem, calc(100vw - 2rem)); }
+.ctx-usage-details__data { display: grid; gap: 0.5rem; font-size: 0.75rem; }
+.ctx-usage-details__data > div { display: flex; justify-content: space-between; gap: 1rem; }
+.ctx-usage-details__data dt { color: var(--muted); }
+.ctx-usage-details__data dd { margin: 0; font-variant-numeric: tabular-nums; text-align: right; }
+.ctx-usage-details [data-error='true'] { color: var(--danger); }
 
 /* 环本体固定 18px，不随按钮尺寸或字号变形 */
 .ctx-usage__ring {

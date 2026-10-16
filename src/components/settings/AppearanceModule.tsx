@@ -1,8 +1,8 @@
 import { ColorSwatchPicker, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { Check } from 'lucide-react';
-import { useSettings, type AppTheme } from '../../store/settings';
+import { useSettings, type AppTheme, type FontScale } from '../../store/settings';
 import { Field, SectionCard } from '../../ui';
-import { ACCENT_COLOR_OPTIONS } from '../../ui/theme';
+import { ACCENT_COLOR_OPTIONS, FONT_SCALE_OPTIONS } from '../../ui/theme';
 
 /**
  * 「外观」模块：主题与阅读时是否联网。
@@ -35,6 +35,30 @@ export default function AppearanceModule() {
             <ToggleButton id="auto">跟随系统</ToggleButton>
             <ToggleButton id="light">浅色</ToggleButton>
             <ToggleButton id="dark">深色</ToggleButton>
+          </ToggleButtonGroup>
+        </Field>
+        <Field
+          label="字号"
+          layout="row"
+          hint="整体缩放界面文字与控件大小。「标准」是浏览器默认字号（16px），适合大多数人；觉得偏小或偏大再往上/下选一档"
+          testId="field-font-scale"
+        >
+          <ToggleButtonGroup
+            data-testid="font-scale-select"
+            aria-label="界面字号"
+            selectionMode="single"
+            disallowEmptySelection
+            selectedKeys={[settings.fontScale]}
+            onSelectionChange={(keys) => {
+              const next = [...keys][0];
+              if (next) settings.update({ fontScale: next as FontScale });
+            }}
+          >
+            {FONT_SCALE_OPTIONS.map(({ id, label }) => (
+              <ToggleButton key={id} id={id}>
+                {label}
+              </ToggleButton>
+            ))}
           </ToggleButtonGroup>
         </Field>
         <Field

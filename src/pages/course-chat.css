@@ -33,22 +33,56 @@
   background: transparent;
 }
 
-/* 空会话首屏：标题在上，输入栏居中，推荐提问跟在输入栏下方。
-   有消息后恢复常规消息流和贴底输入区。 */
-.course-chat--empty {
-  position: relative;
+/* 空会话使用同一条正常布局流：输入增高时只推开下方提问，不再重叠或跳位。
+   保留输入框 DOM，切换到消息态时不会丢失焦点。 */
+.course-chat--empty .course-chat__main {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-content: start;
+  gap: 24px;
+  overflow-y: auto;
+  padding: clamp(100px, 22dvh, 220px) max(20px, calc((100% - var(--course-chat-column)) / 2))
+    max(24px, env(safe-area-inset-bottom));
 }
 
-.course-chat--empty .course-chat__messages {
-  padding-bottom: 24px;
+.course-chat--empty .course-chat__messages,
+.course-chat--empty .course-chat__empty {
+  display: contents;
+}
+
+.course-chat--empty .course-chat__empty > h2,
+.course-chat--empty .course-chat__empty-skel {
+  grid-row: 1;
+  margin: 0;
+  text-align: center;
 }
 
 .course-chat--empty .course-chat__composer-wrap {
-  position: absolute;
-  z-index: 1;
-  top: 33%;
-  right: 0;
-  left: 0;
+  grid-row: 2;
+  min-width: 0;
+  padding: 0;
+}
+
+/* Reserve the writing area instead of letting each line push the whole welcome
+   layout away. Long drafts scroll inside the textarea, not the page. */
+.course-chat--empty .course-chat__input {
+  height: 82px;
+  min-height: 82px;
+  max-height: 82px;
+  overscroll-behavior: contain;
+}
+
+.course-chat--empty .course-chat__starters {
+  grid-row: 3;
+  width: min(100%, 660px);
+  justify-self: center;
+  margin: 0;
+}
+
+.course-chat--empty .course-chat__import {
+  grid-row: 4;
+  justify-self: center;
+  margin: 0;
 }
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
@@ -215,13 +249,13 @@
   color: var(--muted);
   font-size: 0.8125rem;
   font-weight: 500;
-  text-align: left;
+  text-align: center;
 }
 
 .course-chat__starter-list {
   display: flex;
   flex-wrap: wrap;
-  justify-content: flex-start;
+  justify-content: center;
   gap: 8px;
 }
 
@@ -488,6 +522,43 @@
   margin-right: -6px;
 }
 
+.course-chat__user-trigger {
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: context-menu;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.course-chat__user-trigger[data-focus-visible='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.course-chat__message-time {
+  display: block;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.course-chat__actions .course-chat__fork-action {
+  min-width: 44px;
+  height: 30px;
+  padding: 0 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+@media (hover: none), (pointer: coarse), (max-width: 640px) {
+  .course-chat__message--user > .course-chat__actions {
+    display: none;
+  }
+}
+
 /* 「更多」菜单里的条目：图标 + 文字。图标跟着文字走，别让它抢注意力 */
 .course-chat__menu-item {
   display: inline-flex;
@@ -730,9 +801,10 @@
   width: 100%;
   min-width: 0;
   min-height: 34px;
-  max-height: 180px;
+  max-height: min(180px, 25dvh);
   padding: 5px 0;
   overflow-y: auto;
+  overscroll-behavior: contain;
   resize: none;
   border: 0;
   border-radius: var(--radius-lg);
@@ -815,9 +887,14 @@
   font-size: 0.75rem;
 }
 
-.course-chat__new-chat {
+.page-course-chat .course-chat__new-chat {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  flex: none;
   border: 1px solid var(--border);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-full);
   background: var(--background);
   color: var(--foreground);
 }
@@ -826,19 +903,6 @@
 .course-chat__new-chat:active {
   background: var(--surface-secondary);
   color: var(--foreground);
-}
-
-@media (max-width: 900px) {
-  .course-chat__new-chat {
-    width: 44px;
-    height: 44px;
-    min-width: 44px;
-    padding: 0;
-  }
-
-  .course-chat__new-chat-label {
-    display: none;
-  }
 }
 
 .course-chat__send {
@@ -1045,13 +1109,9 @@
     right: 10px;
   }
 
-  .course-chat--empty .course-chat__messages {
-    padding-bottom: 20px;
-  }
-
-  .course-chat--empty .course-chat__composer-wrap {
-    position: relative;
-    top: auto;
+  .course-chat--empty .course-chat__main {
+    gap: 20px;
+    padding: clamp(84px, 15dvh, 130px) 10px max(20px, env(safe-area-inset-bottom));
   }
 
   .course-chat__empty {
@@ -1131,6 +1191,10 @@
    两边取值相同、无观感差异；窄屏那档 10px 与收起态的 10px 对齐。 */
 html[data-keyboard='open'] .course-chat__composer-wrap {
   padding-bottom: 12px;
+}
+
+html[data-keyboard='open'] .course-chat--empty .course-chat__composer-wrap {
+  padding-bottom: 0;
 }
 
 @media (max-width: 760px) {

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react';
 import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
 import { useNavigate } from 'react-router-dom';
 import {
@@ -36,7 +36,8 @@ import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../ut
 import { copyText } from '../utils/clipboard';
 import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { prefersReducedMotion } from '../utils/motion';
-import { useViewportResize } from '../utils/useMobile';
+import { useMediaQuery, useViewportResize } from '../utils/useMobile';
+import { messageTime } from '../utils/messageTime';
 import { confirmDialog, PageShell, promptDialog, Sym, toast, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
@@ -122,7 +123,7 @@ const GENERAL_STARTERS = [
  *   都是真实需求。
  *
  * 默认透明、鼠标移上来或键盘焦点进入才显形：长回答里每条下面都挂着四颗图标，
- * 会把正文流切碎。触屏没有 hover，靠 CSS 的 `@media (hover: none)` 常显（见 course-chat.css）。
+ * 会把正文流切碎。触屏助手操作常显，用户消息则长按气泡打开菜单。
  *
  * **助手与用户的操作行排布不同**：助手没有气泡，操作行跟着正文左对齐、排在正文之下；
  * 用户有气泡，操作行**挂在气泡外面**（另起一行、与气泡右缘对齐）—— 塞进气泡里的话，
@@ -207,7 +208,10 @@ function MessageActions({
           三种语义由调用方给出不同的说法（见 retryHint），一颗图标两种消息共用 */}
       {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
 
-      {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
+      <Button variant="tertiary" size="sm" className="course-chat__fork-action"
+        aria-label="从这条消息分叉出新会话" data-testid="chat-fork-message" isDisabled={busy} onPress={onFork}>
+        Fork
+      </Button>
 
       {!isUser && (
         <Dropdown>
@@ -229,13 +233,11 @@ function MessageActions({
             >
               <Dropdown.Item id="copy-plain" textValue="复制纯文本" data-testid="chat-copy-plain">
                 <span className="course-chat__menu-item">
-                  <Sym name="format_size" />
                   复制纯文本
                 </span>
               </Dropdown.Item>
               <Dropdown.Item id="export" textValue="导出本次会话" data-testid="chat-export-session">
                 <span className="course-chat__menu-item">
-                  <Sym name="download" />
                   导出本次会话
                 </span>
               </Dropdown.Item>
@@ -244,6 +246,46 @@ function MessageActions({
         </Dropdown>
       )}
     </div>
+  );
+}
+
+/** 触屏只在长按时展开时间与动作；键盘仍可通过组件库的菜单快捷键打开。 */
+function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
+  message: CourseChatMessage;
+  busy: boolean;
+  canRetry: boolean;
+  onRetry: () => void;
+  onFork: () => void;
+}) {
+  const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
+  if (!touchMenu) return <div className="course-chat__bubble course-chat__bubble--user">{message.content}</div>;
+  return (
+    <Dropdown trigger="longPress">
+      <Dropdown.Trigger className="course-chat__bubble course-chat__bubble--user course-chat__user-trigger"
+        aria-label={`${message.content}，长按查看时间和操作`} data-testid="chat-user-message-trigger">
+        {message.content}
+      </Dropdown.Trigger>
+      <Dropdown.Popover placement="bottom end" className="course-chat__message-menu">
+        {message.createdAt != null && (
+          <time className="course-chat__message-time" dateTime={new Date(message.createdAt).toISOString()} data-testid="chat-message-time">
+            {messageTime(message.createdAt)}
+          </time>
+        )}
+        <Dropdown.Menu aria-label="提问操作" disabledKeys={busy || message.rowId == null ? ['retry', 'fork'] : canRetry ? [] : ['retry']}
+          onAction={(key) => {
+            if (key === 'retry') onRetry();
+            else if (key === 'fork') onFork();
+            else if (key === 'copy') void copyText(message.content).then((ok) => {
+              if (ok) toast.success('已复制这条提问（Markdown）');
+              else toast.error('复制失败：剪贴板不可用');
+            });
+          }}>
+          <Dropdown.Item id="copy" textValue="复制" data-testid="chat-user-copy"><Sym name="content_copy" />复制</Dropdown.Item>
+          <Dropdown.Item id="retry" textValue="重试" data-testid="chat-user-retry"><Sym name="refresh" />重试</Dropdown.Item>
+          <Dropdown.Item id="fork" textValue="Fork · 分支出新会话" data-testid="chat-user-fork">Fork · 分支出新会话</Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
   );
 }
 
@@ -497,6 +539,8 @@ export default function CourseChat() {
    * ② 聚焦时把消息流吸底（键盘弹出会顶矮面板）。
    */
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const voiceDraftBase = useRef('');
+  const [voiceEditVersion, setVoiceEditVersion] = useState(0);
   /**
    * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
    *
@@ -609,12 +653,19 @@ export default function CourseChat() {
    * `scrollHeight`，否则每次只增不减。内联高度会被 CSS 的 max-height 夹住，
    * 超长文本在框内滚动，不会把输入卡顶出屏幕。
    */
-  useEffect(() => {
+  useLayoutEffect(() => {
     const el = composerRef.current;
     if (!el) return;
-    el.style.height = 'auto';
-    el.style.height = `${el.scrollHeight}px`;
-  }, [draft]);
+    // The empty-state card reserves three lines, so dictation/typing cannot move
+    // the heading and starter cards. Only an actual conversation may grow.
+    if (messages.length === 0) {
+      el.style.removeProperty('height');
+      return;
+    }
+    el.style.height = '0px';
+    const maxHeight = parseFloat(getComputedStyle(el).maxHeight);
+    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
+  }, [draft, messages.length]);
 
   // 每次挂载都重新数一次课程：`courseCount` 是 bootstrap 时的快照，
   // 而「去课程库导入 → 切回对话页」是这里的常规动线，刷新晚了空状态会一直停在
@@ -857,12 +908,13 @@ export default function CourseChat() {
    * 不做精确的分词计数，`estimateTokens` 本来就是「按字符量级的保守估值」——
    * 环的作用是让用户看出「快满了」，不是报一个能被审计的账。
    */
-  const ctxEst = useMemo(() => {
+  const ctxBreakdown = useMemo(() => {
     const system = estimateTokens(libraryAssistantSystemPrompt(skillBlock, contextCourses, hasCourses));
     const historyRows = compressionEnabled ? retainedContext(messages, contextPlan) : messages;
     const history = historyRows.reduce((sum, message) => sum + estimateTokens(message.content), 0);
-    return system + history + estimateTokens(draft);
+    return { system, history, current: estimateTokens(draft) };
   }, [skillBlock, contextCourses, hasCourses, messages, draft, contextPlan, compressionEnabled]);
+  const ctxEst = ctxBreakdown.system + ctxBreakdown.history + ctxBreakdown.current;
   const contextCompression = useContextCompression({
     sessionId: activeId, tokens: ctxEst, windowTokens: ctxWin, query: draft,
     busy: loading || !loaded || pendingAsk != null || pendingPlan != null,
@@ -1057,6 +1109,7 @@ export default function CourseChat() {
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
       actions={
         <Button
+          isIconOnly
           variant="tertiary"
           className="course-chat__new-chat"
           aria-label="新建对话"
@@ -1067,7 +1120,6 @@ export default function CourseChat() {
           }}
         >
           <Sym name="edit" />
-          <span className="course-chat__new-chat-label">新建对话</span>
         </Button>
       }
     >
@@ -1182,14 +1234,11 @@ export default function CourseChat() {
                 >
                   {/* AI 侧不挂头像气泡：showcase 里助手的回答是**直接铺在正文流里**的，
                       加一个头像就把每条回答切成了「卡片」，长回答读起来很累。 */}
-                  <div
-                    className={
-                      user ? 'course-chat__bubble course-chat__bubble--user' : 'course-chat__bubble course-chat__bubble--ai'
-                    }
-                  >
-                    {user ? (
-                      message.content
-                    ) : (
+                  {user ? (
+                    <UserMessageBubble message={message} busy={loading} canRetry={canRetryAsk}
+                      onRetry={() => void retryMessage(message.key)} onFork={() => void onForkMessage(message)} />
+                  ) : (
+                    <div className="course-chat__bubble course-chat__bubble--ai">
                       <>
                         {/* 思考链与工具链都是**过程记录**，独立于正文渲染。
                             此前「有 hint 就整块换成 ThinkLine」，于是模型一调工具
@@ -1282,8 +1331,8 @@ export default function CourseChat() {
                           <SourceList sources={extractChatSources(message.content)} />
                         )}
                       </>
-                    )}
-                  </div>
+                    </div>
+                  )}
 
                   {/* 提问的操作行**挂在气泡外面**（另起一行、右对齐）—— 复制这条提问 / 重新回答这句话 /
                       从这条提问分叉。塞回气泡里的话，悬停时那块底色会多长出一条图标行，
@@ -1365,7 +1414,10 @@ export default function CourseChat() {
                 rows={1}
                 fullWidth
                 value={draft}
-                onChange={(event) => setDraft(event.target.value)}
+                onChange={(event) => {
+                  setVoiceEditVersion((version) => version + 1);
+                  setDraft(event.target.value);
+                }}
                 /**
                  * 移动端键盘的回车键改成「发送」：Android Chrome 认 enterkeyhint，
                  * 会把按键的文案与语义从「换行」换成「发送」（iOS Safari 暂不认，
@@ -1410,6 +1462,7 @@ export default function CourseChat() {
                   if (event.key !== 'Enter' || event.shiftKey) return;
                   if (event.nativeEvent.isComposing || composingRef.current) return;
                   event.preventDefault();
+                  setVoiceEditVersion((version) => version + 1);
                   /**
                    * Enter = 当前模式（默认排队）；Ctrl/⌘+Enter = **另一种**。
                    *
@@ -1434,59 +1487,45 @@ export default function CourseChat() {
                     但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——
                     同一件事两个入口，用户得先想「思考深度是不是归模型管」才找得到。
                     `showThinking` 把它们收进同一个面板，工具行因此只剩四个控件。 */}
-                {!draft && <ModelPicker
+                <ModelPicker
                   slot="chat"
                   field="llmModel"
                   variant="chip"
                   showThinking
                   thinkingDepthDisabled={loading}
-                />}
-                <VoiceInput key={activeId ?? 'draft'} disabled={!sessionReady} onText={(text) => {
-                  const current = useCourseChat.getState().draft;
-                  setDraft(current ? `${current} ${text}` : text);
-                }} />
-                {/* 无输入文字时展示模型与上下文；输入期间让出操作区。 */}
-                {!draft && <span className="course-chat__context-usage-slot">
+                />
+                <span className="course-chat__context-usage-slot">
                   <ContextUsageButton
-                    tokens={ctxEst} windowTokens={ctxWin} testId="chat-context-usage"
+                    tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="chat-context-usage"
                     compression={contextCompression.state} onCompress={contextCompression.compress}
                     isDisabled={loading || !loaded || activeId == null || pendingAsk != null || pendingPlan != null}
                   />
-                </span>}
+                </span>
                 {/* 停止键放在发送键前，发送始终固定在最右侧。 */}
                 {loading && !pendingAsk &&
                   iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
                     className: 'course-chat__stop',
                     testId: 'chat-stop',
                   })}
-                {/*
-                  发送键**常驻**（2026-10-16 修订，旧逻辑是「生成中变成停止键」）。
-
-                  并排两个而不是二选一，是因为它们回答两个不同的问题：
-                  「这话怎么发」（发送，按当前模式排队/插入）与「别写了」（停止）。
-                  旧做法把两者绑成一颗按钮，于是想补一句话只能先按停止 ——
-                  停止会作废这轮已经写了一半的回答，而用户往往只是想接着问一句。
-
-                  生成中它按 `sendMode` 投递：Enter / 点这颗键 = 排队（默认），
-                  想立刻打断就切到「插入」或按 Ctrl/⌘+Enter。tooltip 说清这次按键
-                  会走到哪条路，免得用户按完才发现回答被截断。
-                */}
-                {iconButton(
-                  loading
+                <VoiceInput
+                  key={activeId ?? 'draft'}
+                  disabled={!sessionReady}
+                  hasText={!!draft.trim()}
+                  editVersion={voiceEditVersion}
+                  onStart={() => { voiceDraftBase.current = useCourseChat.getState().draft; }}
+                  onText={(text) => {
+                    const base = voiceDraftBase.current;
+                    setDraft(base ? `${base} ${text}` : text);
+                  }}
+                  onSend={() => void send(useCourseChat.getState().draft)}
+                  sendLabel={loading
                     ? sendMode === 'queue'
                       ? '排队发送：等这一轮答完自动发出去'
                       : '插入发送：立刻打断这一轮，换成这句'
                     : pendingAsk
                       ? '确认这个回答'
-                      : '发送',
-                  <Sym name="arrow_upward" />,
-                  () => void send(draft),
-                  {
-                    className: 'course-chat__send',
-                    disabled: !sessionReady || !draft.trim(),
-                    testId: 'chat-send',
-                  },
-                )}
+                      : '发送'}
+                />
               </Toolbar>
             </div>
           </div>

@@ -426,7 +426,7 @@ export default function ChatPanel({
   );
 
   // 上下文用量估算（system + 历史 + 当前输入/截图/引用），仅作 UI 提示
-  const ctxEst = useMemo(() => {
+  const ctxBreakdown = useMemo(() => {
     // 注意 estimateTokens：两个 qaSystem 返回的都是**提示词文本**，忘了包就变成字符串拼接
     // 末尾的 canEditMd 参数：这里用「格式是 md」代替 send 里的完整判断（材料 + 编辑面开着）——
     // 注册表是模块级的，点「编辑」不会触发本组件重渲染，按状态算就得把它塞进 useMemo 依赖。
@@ -441,8 +441,9 @@ export default function ChatPanel({
     // 引用块会随本轮一起发出去，得算进去（一段 1200 字上限 ≈ 1.2k tokens），否则用量条会低估
     const refTokens = refs.reduce((n, c) => n + estimateTokens(c.text) + 12, 0);
     const cur = estimateTokens(input) + shots.length * 1200 + refTokens; // 每张图约 1.2k tokens
-    return sys + hist + cur;
+    return { system: sys, history: hist, current: cur };
   }, [msgs, input, shots, refs, videoName, isMaterial, materialKind, contextPlan, compressionEnabled]);
+  const ctxEst = ctxBreakdown.system + ctxBreakdown.history + ctxBreakdown.current;
   const contextCompression = useContextCompression({
     sessionId: activeId, tokens: ctxEst, windowTokens: ctxWin, query: input,
     busy: loading || !indexReady || activeId !== loadedSessionId,
@@ -1553,7 +1554,8 @@ export default function ChatPanel({
           <div className="chat-input" data-testid="chat-input">
             <TextArea
               fullWidth
-              rows={2}
+              rows={1}
+              aria-label="给学习助手发送消息"
               placeholder={indexReady ? '输入问题，回车发送' : '等待索引就绪…'}
               disabled={!indexReady}
               value={input}
@@ -1621,7 +1623,7 @@ export default function ChatPanel({
                   isDisabled={!indexReady}
                   onPress={() => send(input)}
                 >
-                  <Sym name="send" />
+                  <Sym name="arrow_upward" />
                 </Button>
               </Tooltip.Trigger>
               <Tooltip.Content>
@@ -1632,12 +1634,12 @@ export default function ChatPanel({
         </div>
         <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
           <ContextUsageButton
-            tokens={ctxEst} windowTokens={ctxWin} testId="panel-context-usage"
+            tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="panel-context-usage"
             compression={contextCompression.state} onCompress={contextCompression.compress}
             isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
           />
           ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
-          {ratio > 0.9 && ' · 点击用量环压缩'}
+          {ratio > 0.9 && ' · 点击用量环查看详情'}
         </div>
       </div>
     </Panel>

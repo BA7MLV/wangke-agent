@@ -14,7 +14,7 @@ import StudyModule from './settings/StudyModule';
 import DataModule from './settings/DataModule';
 
 /**
- * 设置模块登记表：左侧一列模块名，右侧只渲染当前模块。
+ * 设置模块登记表：顶部横向模块栏，下方只渲染当前模块。
  *
  * 为什么是「一次只渲染一个」而不是全渲染 + 隐藏：
  *   - 「模型」模块会在挂载时拉能力元数据，「内容源」模块会探测 B 站登录态 ——
@@ -42,9 +42,7 @@ export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
  * 做成独立页面会把用户的当前位置顶掉，还得再点一次「返回」才回来。
  * （`#/settings` 这条 hash 仍然存在，但它只是**入口**，见 SettingsRoute。）
  *
- * 版式：左侧模块列 + 右侧内容区（宽屏），窄屏折叠成顶部横向标签条。
- * 这个结构取自系统设置 / macOS 偏好设置 —— 一屏能看清「一共有几类设置」，
- * 又不用为每类设置单独做一个路由。
+ * 版式：顶部单行分类栏，空间不足时横向滚动，内容区独立纵向滚动。
  *
  * 版式与配色全部由 HeroUI 组件 + Tailwind 令牌表达（没有 `settings-modal.css`）：
  * 底色/圆角/阴影来自 `Modal`，分隔与画布色读 `bg-background-secondary` /
@@ -93,6 +91,7 @@ export default function SettingsModal() {
               </Drawer.Header>
               <ListBox
                 aria-label="设置模块"
+                orientation="horizontal"
                 selectionMode="single"
                 disallowEmptySelection
                 selectedKeys={[localModule]}
@@ -100,11 +99,11 @@ export default function SettingsModal() {
                   const next = [...keys][0];
                   if (next) setLocalModule(next as SettingsModule);
                 }}
-                className="mx-3 mb-3 grid shrink-0 grid-cols-4 gap-1 rounded-2xl bg-background-secondary p-1.5"
+                className="settings-module-nav"
               >
                 {MODULES.map((m) => (
                   <ListBox.Item key={m.key} id={m.key} textValue={m.label}
-                    className="flex min-h-12 flex-col justify-center gap-1 rounded-xl py-2 text-xs text-muted data-[selected=true]:bg-background data-[selected=true]:text-foreground data-[selected=true]:shadow-sm"
+                    className="settings-module-nav__item"
                     data-testid={`settings-nav-${m.key}`}>
                     <Sym name={m.icon} /><span>{m.label}</span>
                   </ListBox.Item>
@@ -150,15 +149,14 @@ export default function SettingsModal() {
 
             {/* 顶部 52px 是给关闭按钮（右上角 ×）预留的：CloseTrigger 绝对定位在容器右上角，
                 不预留的话第一个模块的图标会压在 × 底下。 */}
-            <div className="flex min-h-0 flex-1 pt-[52px] max-[760px]:flex-col max-[760px]:pt-12">
-              {/* 模块列。窄屏变成顶部的横向标签条 —— 六列并排在 390px 上会挤成
-                  「模 / 外 / 内 / 实 / 播 / 数」的单字。
-                  用 ListBox 而不是一堆 <button>：选中态、键盘上下键、aria-selected
-                  都由 React Aria 处理，和左侧导航栏是同一套语义与代码。 */}
+            <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-[52px]">
+              {/* 横向单行分类；选中态、左右方向键与焦点滚动交给 React Aria。 */}
               <ListBox
-                className="min-h-0 shrink-0 grow-0 basis-[13.5rem] overflow-y-auto border-r border-border bg-background-secondary px-2.5 py-3.5 max-[760px]:basis-auto max-[760px]:flex-row max-[760px]:gap-1 max-[760px]:overflow-x-auto max-[760px]:overflow-y-hidden max-[760px]:border-r-0 max-[760px]:border-b max-[760px]:px-2.5 max-[760px]:py-2.5"
+                className="settings-module-nav"
                 aria-label="设置模块"
+                orientation="horizontal"
                 selectionMode="single"
+                disallowEmptySelection
                 selectedKeys={[localModule]}
                 onSelectionChange={(keys) => {
                   const next = [...keys][0];
@@ -170,13 +168,11 @@ export default function SettingsModal() {
                     key={m.key}
                     id={m.key}
                     textValue={m.label}
-                    /* 选中态用「白底 + 极淡投影」与左侧灰画布拉开，而不是染主色：
-                       一屏只有一处该有主色，而设置弹窗里的主色属于内容区。 */
-                    className="group flex min-h-[38px] cursor-pointer items-center gap-[11px] rounded-lg px-2.5 text-sm font-medium text-foreground data-[hovered=true]:bg-foreground/6 data-[selected=true]:bg-background data-[selected=true]:shadow-surface data-[focus-visible=true]:outline-2 data-[focus-visible=true]:-outline-offset-2 data-[focus-visible=true]:outline-focus max-[760px]:min-h-[34px] max-[760px]:shrink-0 max-[760px]:gap-1.5 max-[760px]:px-3 max-[760px]:text-[0.8125rem]"
+                    className="settings-module-nav__item"
                     data-testid={`settings-nav-${m.key}`}
                   >
                     <span
-                      className="grid size-5 shrink-0 place-items-center text-muted group-data-[selected=true]:text-accent max-[760px]:size-4"
+                      className="grid size-5 shrink-0 place-items-center"
                       aria-hidden="true"
                     >
                       <Sym name={m.icon} />

@@ -260,6 +260,7 @@ export const SYNC_SETTINGS_KEYS = [
   'customRates',
   'theme',
   'accentColor',
+  'fontScale',
   'dynamicColor',
   'studyTrackingEnabled',
   'studyIdleMinutes',

@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Tooltip } from '@heroui/react';
+import { Button, Popover } from '@heroui/react';
 import { IconSwap, SuccessCheck } from './motion';
 import { Sym } from '../ui';
 import type { CompressionState } from '../store/contextCompression';
@@ -10,6 +10,7 @@ export interface ContextUsageButtonProps {
   tokens: number;
   /** 上下文窗口（输入 + 输出的总容量），取设置里的 `contextWindow` */
   windowTokens: number;
+  breakdown?: { system: number; history: number; current: number };
   testId?: string;
   compression?: CompressionState;
   onCompress?: () => void;
@@ -27,17 +28,16 @@ function compact(n: number): string {
  * ## 为什么是环而不是文字
  * 工具行的宽度是稀缺资源（模型 chip / 技能 / 发送键都在抢），常驻的
  * 「≈32.5k / 128k」会把这一行撑到换行。环把「还剩多少」压进一颗图标的大小：
- * 抬眼一看填充比例就够了，精确数字悬停才报出来 —— 需要它的人自然会悬停。
+ * 抬眼一看填充比例就够了，点击后再查看具体估值与用量构成。
  *
  * ## 三档口径与 ChatPanel 对齐
  * >70% 变 `--warning`、>90% 变 `--danger`，与视频问答面板底部那行用量文字
  * （`chat-ctx--warn` / `chat-ctx--bad`）用同一组阈值与同一组语义令牌 ——
- * 两处告警各说各话的话，用户会以为其中一个在骗人。tooltip 给出精确估值与压缩状态。
+ * 两处告警各说各话的话，用户会以为其中一个在骗人。详情给出估值与压缩状态。
  *
- * 按下立即筛选旧上下文；图标使用 transitions.dev 的 Icon swap / Success check，
- * 与发送管线共享状态。忙碌时防重复点击，完成后环形用量按真实保留文本下降。
+ * 按下先查看详细用量，再在详情中主动压缩；忙碌时仍可查看，只有压缩动作禁用。
  */
-export default function ContextUsageButton({ tokens, windowTokens, testId, compression, onCompress, isDisabled }: ContextUsageButtonProps) {
+export default function ContextUsageButton({ tokens, windowTokens, breakdown, testId, compression, onCompress, isDisabled }: ContextUsageButtonProps) {
   const compressing = compression?.phase === 'compressing';
   const [showResult, setShowResult] = useState(false);
   useEffect(() => {
@@ -56,7 +56,6 @@ export default function ContextUsageButton({ tokens, windowTokens, testId, compr
   const offset = circumference * (1 - filled);
   const detail = `上下文用量 ≈${compact(tokens)} / ${compact(windowTokens)}（${pct}%）`;
   const message = compression?.message ?? '';
-  const label = `${detail} · ${compressing ? '正在压缩上下文…' : message || '点击立即压缩上下文（保留聊天记录）'}`;
   const ring = (
     <svg className="ctx-usage__ring" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
       <circle className="ctx-usage__track" cx="10" cy="10" r="8" />
@@ -66,8 +65,7 @@ export default function ContextUsageButton({ tokens, windowTokens, testId, compr
   );
 
   return (
-    <Tooltip>
-      <Tooltip.Trigger>
+    <Popover>
         <Button
           isIconOnly
           variant="tertiary"
@@ -75,11 +73,9 @@ export default function ContextUsageButton({ tokens, windowTokens, testId, compr
           className="ctx-usage"
           data-level={level}
           data-testid={testId}
-          aria-label={`${detail} · ${compressing ? '正在压缩上下文' : '立即压缩上下文'}`}
+          aria-label={`${detail} · 查看上下文详情`}
           aria-busy={compressing}
           data-compression={compressing ? 'compressing' : showResult ? 'success' : compression?.phase === 'error' ? 'error' : 'idle'}
-          isDisabled={isDisabled || compressing || !onCompress}
-          onPress={onCompress}
         >
           <IconSwap active={compressing || showResult ? 'b' : 'a'} a={ring} b={
             <IconSwap active={showResult ? 'b' : 'a'}
@@ -88,11 +84,29 @@ export default function ContextUsageButton({ tokens, windowTokens, testId, compr
             />
           } />
         </Button>
-      </Tooltip.Trigger>
-      <Tooltip.Content>
-        <p>{label}</p>
-      </Tooltip.Content>
+      <Popover.Content placement="top end" className="ctx-usage-details">
+        <Popover.Dialog className="flex flex-col gap-3 p-4">
+          <Popover.Heading>上下文详情</Popover.Heading>
+          <dl className="ctx-usage-details__data">
+            <div><dt>已用（估算）</dt><dd>≈{Math.round(tokens).toLocaleString()} tokens · {pct}%</dd></div>
+            <div><dt>上下文窗口</dt><dd>{Math.round(windowTokens).toLocaleString()} tokens</dd></div>
+            <div><dt>剩余容量</dt><dd>≈{Math.max(0, Math.round(windowTokens - tokens)).toLocaleString()} tokens</dd></div>
+            {breakdown && <>
+              <div><dt>系统提示词</dt><dd>≈{Math.round(breakdown.system).toLocaleString()}</dd></div>
+              <div><dt>历史消息</dt><dd>≈{Math.round(breakdown.history).toLocaleString()}</dd></div>
+              <div><dt>当前输入 / 附件</dt><dd>≈{Math.round(breakdown.current).toLocaleString()}</dd></div>
+            </>}
+          </dl>
+          <p className="text-xs text-muted">用量为估算值，剩余容量还需容纳模型回复。压缩仅筛选旧上下文，完整聊天记录会保留。</p>
+          {message && <p className="text-xs" role="status" data-error={compression?.phase === 'error'}>{message}</p>}
+          <Button size="sm" variant="secondary" isDisabled={isDisabled || compressing || !onCompress}
+            onPress={onCompress} data-testid={testId ? `${testId}-compress` : undefined}>
+            {compressing ? '正在压缩…' : '压缩上下文'}
+          </Button>
+          {isDisabled && !compressing && <p className="text-xs text-muted">当前暂不可压缩，请在会话就绪且回复结束后重试。</p>}
+        </Popover.Dialog>
+      </Popover.Content>
       <span className="sr-only" role="status" aria-live="polite">{message}</span>
-    </Tooltip>
+    </Popover>
   );
 }

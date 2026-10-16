@@ -165,6 +165,7 @@ export default function ReasoningChain({
         aria-controls={bodyId}
         onClick={() => setOpen((v) => !v)}
       >
+        <span className="reasoning-chain__title">{title}</span>
         {open ? (
           active ? (
             <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />
@@ -174,7 +175,6 @@ export default function ReasoningChain({
         ) : (
           <Sym name="chevron-right" className="reasoning-chain__icon" />
         )}
-        <span className="reasoning-chain__title">{title}</span>
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
         {live && <LiveElapsed from={since ?? mountedAt.current} />}
       </button>

@@ -14,7 +14,7 @@
  */
 import { useEffect, useState } from 'react';
 import { getColorFromImage, removeColorScheme, setColorScheme } from './dynamicColor';
-import type { AccentColor, AppTheme } from '../store/settings';
+import type { AccentColor, AppTheme, FontScale } from '../store/settings';
 
 /** HeroUI 的语义色预设：覆盖 accent 令牌后，soft / hover 等令牌会自动跟随。 */
 export const ACCENT_COLOR_OPTIONS = [
@@ -25,6 +25,26 @@ export const ACCENT_COLOR_OPTIONS = [
   { id: 'green', label: '绿色', value: '#15803d' },
   { id: 'amber', label: '琥珀色', value: '#a16207' },
 ] as const satisfies readonly { id: AccentColor; label: string; value: string }[];
+
+/**
+ * 界面字号档位 → 根字号倍率。
+ *
+ * `standard` 是 1（即 16px 根字号）—— 这是浏览器与所有主流前端框架的默认值，
+ * 也是绝大多数用户「什么都不改」时的观感，所以它就是「适合大多数人」的默认档。
+ * 其余三档在原值上下各留一档，覆盖「看着有点小 / 有点大」的大多数诉求；
+ * 再往上（>1.25）在窄屏上会把固定列宽撑破，宁可不提供。
+ */
+export const FONT_SCALE_OPTIONS = [
+  { id: 'small', label: '小', value: 0.875 },
+  { id: 'standard', label: '标准', value: 1 },
+  { id: 'large', label: '大', value: 1.125 },
+  { id: 'xlarge', label: '特大', value: 1.25 },
+] as const satisfies readonly { id: FontScale; label: string; value: number }[];
+
+/** 浏览器默认根字号。缩放倍率乘在它上面。 */
+const BASE_ROOT_FONT_SIZE = 16;
+
+const STANDARD_FONT_SCALE = FONT_SCALE_OPTIONS.find(({ id }) => id === 'standard')!;
 
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
@@ -67,6 +87,22 @@ export function applyAccentColor(accentColor: AccentColor): void {
   root.style.setProperty('--accent', option.value);
   // 所有预设都足够深，使用白色前景可确保强调按钮的文字对比度。
   root.style.setProperty('--accent-foreground', '#fff');
+}
+
+/**
+ * 把界面字号档位落到 `<html>` 的基准字号上。
+ *
+ * 为什么改根字号而不是逐个组件调 `font-size`：
+ *   - HeroUI / Tailwind 的字号（`--text-sm` 等）与间距（`--spacing`）全是 `rem`，
+ *     根字号一动，整套界面按比例缩放，不需要维护一张「每个元素各放大多少」的表；
+ *   - 固定 `px` 的少数尺寸（如 `theme.css` 里防 iOS 聚焦缩放的输入框 16px）故意不跟随 ——
+ *     那个 16px 是 Safari 的硬性下限，跟着缩小反而会触发自动放大。
+ *
+ * 与 `applyTheme` 一样做成命令式函数：首帧前就要调用一次，避免字号「先标准再跳变」。
+ */
+export function applyFontScale(fontScale: FontScale): void {
+  const option = FONT_SCALE_OPTIONS.find(({ id }) => id === fontScale) ?? STANDARD_FONT_SCALE;
+  document.documentElement.style.fontSize = `${BASE_ROOT_FONT_SIZE * option.value}px`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

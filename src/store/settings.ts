@@ -119,6 +119,15 @@ export function sameRef(a: ModelRef, b: ModelRef): boolean {
 export type AppTheme = 'auto' | 'light' | 'dark';
 export type AccentColor = 'blue' | 'violet' | 'rose' | 'orange' | 'green' | 'amber';
 
+/**
+ * 界面字号档位（全局，缩放根节点基准字号）。
+ *
+ * 写成档位名而不是裸倍率，理由与 `theme` / `accentColor` 相同：倍率是「怎么实现的」，
+ * 档位名才是「用户选择了什么」—— 以后要微调某一档的数值（比如「大」从 1.125 改成 1.15）
+ * 时，用户已有的选择不会失效，也不需要写一次数据迁移。
+ */
+export type FontScale = 'small' | 'standard' | 'large' | 'xlarge';
+
 export interface Settings {
   jev: JevSettings;
   /** 模型供应商注册表（凭据在这里，不在顶层） */
@@ -154,6 +163,12 @@ export interface Settings {
   theme: AppTheme;
   /** HeroUI 强调色预设 */
   accentColor: AccentColor;
+  /**
+   * 界面字号档位。经 `applyFontScale` 缩放 `<html>` 的基准字号实现 —— 界面里
+   * HeroUI 的 `--text-*` 与 `--spacing` 都是 `rem`，跟着一起放大，所以是「整体缩放」
+   * 而不是只放大文字。默认 `standard`（16px 根字号，浏览器默认值）。
+   */
+  fontScale: FontScale;
   /** Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化 */
   dynamicColor: boolean;
   /** 学习时长自动记录（关掉后不再累计，已有记录保留） */
@@ -252,6 +267,7 @@ function initialSettings(): Settings {
     customRates: [],
     theme: 'auto',
     accentColor: 'blue',
+    fontScale: 'standard',
     dynamicColor: true,
     studyTrackingEnabled: true,
     studyIdleMinutes: 5,
@@ -350,6 +366,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
     current.accentColor = isAccentColor(current.accentColor) ? current.accentColor : initialSettings().accentColor;
+    current.fontScale = isFontScale(current.fontScale) ? current.fontScale : initialSettings().fontScale;
     return current;
   }
   const s = persisted as unknown as LegacySettings;
@@ -392,6 +409,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     customRates: Array.isArray(s.customRates) ? s.customRates : base.customRates,
     theme: s.theme ?? base.theme,
     accentColor: isAccentColor(s.accentColor) ? s.accentColor : base.accentColor,
+    fontScale: isFontScale(s.fontScale) ? s.fontScale : base.fontScale,
     dynamicColor: s.dynamicColor ?? base.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled ?? base.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes ?? base.studyIdleMinutes,
@@ -411,6 +429,10 @@ function isAccentColor(value: unknown): value is AccentColor {
     value === 'green' ||
     value === 'amber'
   );
+}
+
+function isFontScale(value: unknown): value is FontScale {
+  return value === 'small' || value === 'standard' || value === 'large' || value === 'xlarge';
 }
 
 // ── 读取 ─────────────────────────────────────────────────────────────────────
@@ -441,6 +463,7 @@ export function getSettings(): Settings {
     customRates: [...s.customRates],
     theme: s.theme,
     accentColor: s.accentColor,
+    fontScale: s.fontScale,
     dynamicColor: s.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes,

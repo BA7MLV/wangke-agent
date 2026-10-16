@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import App from './App';
 import { useSettings } from './store/settings';
-import { applyAccentColor, applyTheme } from './ui/theme';
+import { applyAccentColor, applyFontScale, applyTheme } from './ui/theme';
 // MD3 的参考字体是 Roboto。只自托管**拉丁/数字子集**（latin，约 15KB/字重，离线可用）：
 // 中文交给系统字体（PingFang SC / 微软雅黑），因为思源黑体全量要好几 MB，中文应用引 Web 字体不划算，
 // 且平台自带的中文字形更符合各系统习惯。字重只用 400（正文）+ 500（标题）。
@@ -30,6 +30,7 @@ navigator.storage?.persist?.().catch(() => {});
 // zustand 的 persist 是同步读 localStorage 的，所以这里能直接拿到用户设置。
 applyTheme(useSettings.getState().theme);
 applyAccentColor(useSettings.getState().accentColor);
+applyFontScale(useSettings.getState().fontScale);
 
 /**
  * 关闭浏览器自己的滚动恢复。
@@ -49,12 +50,16 @@ const root = ReactDOM.createRoot(document.getElementById('root')!);
 function Root() {
   const theme = useSettings((s) => s.theme);
   const accentColor = useSettings((s) => s.accentColor);
+  const fontScale = useSettings((s) => s.fontScale);
   React.useEffect(() => {
     applyTheme(theme);
   }, [theme]);
   React.useEffect(() => {
     applyAccentColor(accentColor);
   }, [accentColor]);
+  React.useEffect(() => {
+    applyFontScale(fontScale);
+  }, [fontScale]);
   return <App />;
 }
 

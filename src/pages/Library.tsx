@@ -1115,22 +1115,15 @@ export default function Library() {
   // ---------- 拖拽：移入文件夹 / 置顶 / 删除 ----------
 
   /**
-   * 拖拽的统一起点。两个入口都汇到这里：
-   * - 手柄按下：立即开始（桌面精确操作，无需等待）；
-   * - 整卡长按：计时器到点后开始（触屏无 hover，长按是「拿起」的自然手势）。
+   * 整卡起拖：鼠标移动超过阈值或触屏长按后汇到这里。
    *
-   * 捕获指针：后续的 move/up 都派发到 `el`（手柄或整张卡片），React 合成事件照常触发。
+   * 捕获指针：后续的 move/up 都派发到整张卡片，React 合成事件照常触发。
    */
   const beginDrag = (el: HTMLElement, pointerId: number, v: VideoRow, x: number, y: number) => {
     el.setPointerCapture(pointerId);
     const d: DragState = { video: v, x, y, overKey: null, zone: null };
     dragRef.current = d;
     setDrag(d);
-  };
-
-  const startDrag = (e: React.PointerEvent<HTMLElement>, v: VideoRow) => {
-    e.preventDefault();
-    beginDrag(e.currentTarget, e.pointerId, v, e.clientX, e.clientY);
   };
 
   const moveDrag = (e: React.PointerEvent<HTMLElement>) => {
@@ -1317,7 +1310,6 @@ export default function Library() {
       onTogglePin={() => void togglePin(v)}
       onDelete={() => askDeleteVideo(v)}
       onReparse={v.kind === 'material' ? () => reparseMaterial(v) : undefined}
-      onDragStart={(e) => startDrag(e, v)}
       onBeginDrag={(el, pointerId, x, y) => beginDrag(el, pointerId, v, x, y)}
       onDragMove={moveDrag}
       onDragEnd={() => void endDrag()}
@@ -1627,9 +1619,10 @@ export default function Library() {
 
       {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
       {drag && (
-        <div className="drag-ghost fixed z-[1000] flex max-w-[240px] items-center gap-2 rounded-xl bg-default-soft px-3 py-2 text-sm text-foreground shadow-lg pointer-events-none -translate-x-1/2" style={{ left: drag.x, top: drag.y - 48 }}>
-          <Sym name="drag_indicator" className="shrink-0 text-lg text-muted" />
-          <span className="truncate">{drag.video.name}</span>
+        <div className="drag-ghost pointer-events-none fixed z-50 flex w-56 max-w-[70vw] flex-col gap-2 rounded-2xl border border-accent bg-surface p-4 text-sm text-foreground shadow-lg -translate-x-1/2" style={{ left: drag.x, top: drag.y + 20 }} aria-hidden="true">
+          <Sym name={drag.zone === 'delete' ? 'delete' : 'drag_indicator'} className={`text-2xl ${drag.zone === 'delete' ? 'text-danger' : 'text-accent'}`} />
+          <span className="line-clamp-2 font-medium">{drag.video.name}</span>
+          <span className="text-xs text-muted">{drag.zone === 'delete' ? '松手后确认删除' : drag.zone === 'pin' ? '松手完成置顶操作' : drag.overKey ? '松手移入此文件夹' : '拖到上方操作区或文件夹'}</span>
         </div>
       )}
 
@@ -1638,22 +1631,22 @@ export default function Library() {
           pointerEvents:none —— 命中检测走 getBoundingClientRect，不需要它们接事件，
           也就不会挡住悬浮卡片或误触。 */}
       {drag && (
-        <div className="drag-zones pointer-events-none fixed top-0 right-0 left-0 z-[1001] flex justify-between p-3" aria-hidden="true">
+        <div className="drag-zones pointer-events-none fixed top-0 right-0 left-0 z-50 flex justify-between gap-4 p-3" role="status" aria-live="polite" aria-atomic="true">
           <div
             ref={pinZoneRef}
-            className={`drag-zone flex items-center gap-2 rounded-full border-2 border-dashed border-border-secondary bg-surface px-[18px] py-2.5 text-sm font-medium text-foreground shadow-lg transition-transform ${drag.zone === 'pin' ? 'scale-105 border-accent bg-accent-soft text-accent-soft-foreground' : ''}`}
+            className={`drag-zone flex min-h-24 w-56 max-w-[45%] items-center justify-center gap-2 rounded-2xl border-2 border-dashed bg-surface p-4 text-sm font-medium shadow-lg ${drag.zone === 'pin' ? 'border-solid border-accent bg-accent-soft text-accent-soft-foreground' : 'border-border-secondary text-foreground'}`}
             data-testid="drag-zone-pin"
           >
             <Sym name={drag.video.pinned === 1 ? 'pin_off' : 'pin'} className="drag-zone__icon" />
-            <span>{drag.video.pinned === 1 ? '取消置顶' : '置顶'}</span>
+            <span>{drag.zone === 'pin' ? '松手即可' : '拖到这里'}{drag.video.pinned === 1 ? '取消置顶' : '置顶'}</span>
           </div>
           <div
             ref={deleteZoneRef}
-            className={`drag-zone flex items-center gap-2 rounded-full border-2 border-dashed border-border-secondary bg-surface px-[18px] py-2.5 text-sm font-medium text-foreground shadow-lg transition-transform ${drag.zone === 'delete' ? 'scale-105 border-danger bg-danger-soft text-danger-soft-foreground' : ''}`}
+            className={`drag-zone flex min-h-24 w-56 max-w-[45%] items-center justify-center gap-2 rounded-2xl border-2 border-dashed bg-surface p-4 text-sm font-medium shadow-lg ${drag.zone === 'delete' ? 'border-solid border-danger bg-danger-soft text-danger-soft-foreground' : 'border-border-secondary text-foreground'}`}
             data-testid="drag-zone-delete"
           >
             <Sym name="delete" className="drag-zone__icon" />
-            <span>删除</span>
+            <span className="flex flex-col gap-1"><span>{drag.zone === 'delete' ? '松手删除' : '拖到这里删除'}</span><span className="text-xs font-normal">松手后仍需确认</span></span>
           </div>
         </div>
       )}
@@ -2076,7 +2069,6 @@ function VideoRow({
   onTogglePin,
   onDelete,
   onReparse,
-  onDragStart,
   onBeginDrag,
   onDragMove,
   onDragEnd,
@@ -2092,8 +2084,6 @@ function VideoRow({
   onDelete: () => void;
   /** 只有阅读材料有：重新解析 + 重建索引 */
   onReparse?: () => void;
-  /** 手柄按下：立即开始拖拽 */
-  onDragStart: (e: React.PointerEvent<HTMLElement>) => void;
   /** 整卡长按到点：以卡片元素为指针捕获目标开始拖拽 */
   onBeginDrag: (el: HTMLElement, pointerId: number, x: number, y: number) => void;
   onDragMove: (e: React.PointerEvent<HTMLElement>) => void;
@@ -2145,13 +2135,17 @@ function VideoRow({
    * 若按下就进入拖拽这两件事都会被抢走。长按（按住不动约 400ms）是触屏里表达「拿起」的
    * 通用手势，且与「点一下 = 进入」互不冲突。
    *
-   * 手柄那条路径不受影响：它按下即拖，长按逻辑遇到手柄直接让位。
+    * 鼠标按住移动超过阈值即可起拖，不需要等长按。
    */
   const articleRef = useRef<HTMLElement>(null);
   const pressTimer = useRef<number | null>(null);
-  const pressOrigin = useRef<{ x: number; y: number; pointerId: number } | null>(null);
+  const pressOrigin = useRef<{ x: number; y: number; pointerId: number; pointerType: string } | null>(null);
   /** 长按起拖后要吃掉落点那次 click（否则松手会顺手点进播放页 / 弹出菜单） */
   const swallowClick = useRef(false);
+
+  useEffect(() => () => {
+    if (pressTimer.current != null) window.clearTimeout(pressTimer.current);
+  }, []);
 
   const clearPress = () => {
     if (pressTimer.current != null) {
@@ -2163,19 +2157,17 @@ function VideoRow({
 
   const onCardPointerDown = (e: React.PointerEvent<HTMLElement>) => {
     // 长按只认主指针（触屏 / 鼠标左键）
-    if (e.pointerType === 'mouse' && e.button !== 0) return;
+    if (!e.isPrimary || e.button !== 0) return;
     const target = e.target as HTMLElement;
-    // 手柄自己按下即拖，别和长按抢
-    if (target.closest('[data-testid="drag-handle"]')) return;
-    // 卡片里的按钮 / 输入 / 下拉触发器保持各自的原生行为，长按不接管
-    if (target.closest('button, a, input, textarea, select, [data-slot="dropdown-trigger"]')) return;
+    // 缩略图也是起拖区域；操作按钮仍保持原生点击行为。
+    if (target.closest('button, a, input, textarea, select, [data-slot="dropdown-trigger"]') && !target.closest('[data-testid="video-thumb"]')) return;
     const el = articleRef.current;
     if (!el) return;
     // 新一次按下：清掉上一轮可能残留的「吃掉 click」（正常情况那一下已经被消耗）
     swallowClick.current = false;
     const x = e.clientX;
     const y = e.clientY;
-    pressOrigin.current = { x, y, pointerId: e.pointerId };
+    pressOrigin.current = { x, y, pointerId: e.pointerId, pointerType: e.pointerType };
     pressTimer.current = window.setTimeout(() => {
       pressTimer.current = null;
       const origin = pressOrigin.current;
@@ -2190,8 +2182,14 @@ function VideoRow({
   const onCardPointerMove = (e: React.PointerEvent<HTMLElement>) => {
     const origin = pressOrigin.current;
     if (!origin || pressTimer.current == null) return;
-    // 还没到点就移动超过阈值 → 判定为滚动，取消长按（此时页面照常滚）
-    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) > LONG_PRESS_SLOP) clearPress();
+    if (Math.hypot(e.clientX - origin.x, e.clientY - origin.y) <= LONG_PRESS_SLOP) return;
+    clearPress();
+    // 鼠标整卡按住拖动即可拿起；触屏移动则交还页面滚动。
+    if (origin.pointerType === 'mouse' && articleRef.current) {
+      swallowClick.current = true;
+      onBeginDrag(articleRef.current, origin.pointerId, e.clientX, e.clientY);
+      e.preventDefault();
+    }
   };
 
   return (
@@ -2201,6 +2199,7 @@ function VideoRow({
       data-testid="video-item"
       data-video-id={v.id}
       data-pinned={v.pinned === 1 ? '1' : undefined}
+      aria-describedby={`library-drag-hint-${v.id}`}
       aria-labelledby={`library-title-${v.id}`}
       onPointerDown={onCardPointerDown}
       onPointerMove={(e) => {
@@ -2228,23 +2227,6 @@ function VideoRow({
         if (dragging || pressTimer.current != null) e.preventDefault();
       }}
     >
-      <div
-        className="video-row__handle absolute top-2.5 left-2.5 z-[2] flex min-h-8 min-w-8 cursor-grab touch-none items-center justify-center rounded-full bg-black/45 text-xl text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 max-[900px]:opacity-75 pointer-coarse:opacity-75"
-        role="button"
-        tabIndex={0}
-        aria-label={`移动 ${v.name} 到文件夹`}
-        title="拖拽移动，或按 Enter 选择文件夹"
-        data-testid="drag-handle"
-        onKeyDown={(e) => {
-          if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            onMove();
-          }
-        }}
-        onPointerDown={onDragStart}
-      >
-        <Sym name="drag_indicator" />
-      </div>
       {/* 缩略图：16:9 通栏，右下角压时长徽标（YouTube 卡片的两件套）。
           点缩略图直接进播放页，与卡片式的「整张可点」一致 */}
       <button
@@ -2253,6 +2235,7 @@ function VideoRow({
         data-testid="video-thumb"
         aria-label={`${isMaterial ? '阅读' : '学习'} ${v.name}${ratio == null ? '' : v.finished === 1 ? '，已看完' : `，已观看 ${Math.round(ratio * 100)}%`}`}
         onClick={onPlay}
+        onDragStart={(e) => e.preventDefault()}
       >
         {cover ? (
           // 视频与 PDF 共用同一条封面链路，所以这里不再按类型分叉
@@ -2337,6 +2320,7 @@ function VideoRow({
           {jobCopy ? jobCopy.tag : status.text}
         </Chip>
       </div>
+      <p id={`library-drag-hint-${v.id}`} className="m-0 flex items-center gap-1 text-xs text-muted" data-testid="card-drag-hint"><Sym name="drag_indicator" />按住整张卡片拖动 · 触屏长按</p>
       <div className={ACTIONS_CLS}>
         <Button data-testid="btn-play" variant="secondary" onPress={onPlay}>
           <Sym name="play_circle" />

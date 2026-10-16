@@ -25,13 +25,7 @@
   min-height: 40px;
   padding: 0 8px;
   margin-left: -8px;
-  /*
-   * 撑满整列，别让按钮按内容收缩。
-   *
-   * button 即使写了 `display: flex` 也仍是 fit-content 宽度的表单控件，于是展开态下
-   * 吸顶标题的不透明底色只盖住文字那一小块，正文会从它**旁边**穿过去 —— 看着像渲染错位。
-   * 宽度补上 -8px 的负边距，抵消左移，底色才能严丝合缝盖住整列。
-   */
+  /* 负边距抵消按钮内边距，让标题文字直接落在内容列左缘。 */
   width: calc(100% + 8px);
   display: flex;
   align-items: center;
@@ -41,6 +35,7 @@
   border-radius: var(--radius-sm);
   background: transparent;
   font: inherit;
+  font-size: 1rem;
   text-align: left;
   user-select: none;
   color: var(--muted);
@@ -49,24 +44,20 @@
 /**
  * 展开态的吸顶标题。
  *
- * 背景色**不能**写死在组件里：思考链既住在有底色的 AI 气泡里（问答面板），
- * 也住在透明气泡上（课程助手页），两边要盖住的底色不一样。
- * 所以由宿主在气泡上声明 `--reasoning-sticky-bg`，缺省才是 transparent。
- *
  * `top` 为什么是负的：黏性定位的参照线是滚动容器的**内容盒**顶边，而滚动容器的
  * 上 `padding` 属于内容区 —— 于是标题钉在 `top: 0` 时，它头顶那一截（正好等于容器的
  * 上内边距）会露出正在滚过去的上一行字。实测课程助手页能露出整整一行（内边距 28px），
  * 看着压根不像「挂顶」，倒像是没钉住。把偏移取负 = 钉到容器**可见顶端**，
- * 内边距那一条被标题自己的不透明底色盖住。
+ * 标题始终透明，不额外铺设底色。
  *
  * 数值由宿主给（`--reasoning-sticky-gap` = 它自己滚动容器的上内边距），
- * 与 `--reasoning-sticky-bg` 同一个套路：组件不知道宿主的内边距是多少。
+ * 组件不知道宿主的内边距是多少。
  */
 .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
   position: sticky;
   top: calc(-1 * var(--reasoning-sticky-gap, 0px));
   z-index: 1;
-  background: var(--reasoning-sticky-bg, transparent);
+  background: transparent;
 }
 
 .reasoning-chain__toggle:hover {
@@ -76,9 +67,10 @@
   background: color-mix(in oklch, var(--foreground) 8%, transparent);
 }
 
-/* 吸顶时的 hover 需要盖住下层正文，否则高亮是半透明的、看着像没生效 */
+/* 展开吸顶后，悬停也不铺底色，用文字颜色提供反馈。 */
 .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle:hover {
-  background: color-mix(in srgb, var(--reasoning-sticky-bg, transparent) 90%, var(--foreground));
+  background: transparent;
+  color: var(--foreground);
 }
 
 .reasoning-chain__toggle:focus-visible {

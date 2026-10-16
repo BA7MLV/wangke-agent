@@ -335,6 +335,7 @@ await test('v1 迁移后没丢用户改过的其它设置', () => {
       thinkingEffort: 'max',
       agentRounds: 20,
       customRates: [1.25, 3.5],
+      fontScale: 'large',
       studyIdleMinutes: 12,
       contextWindow: 262144,
       captionScale: 1.7,
@@ -348,6 +349,7 @@ await test('v1 迁移后没丢用户改过的其它设置', () => {
   assert.equal(out.thinkingEffort, 'max');
   assert.equal(out.agentRounds, 20);
   assert.deepEqual(out.customRates, [1.25, 3.5]);
+  assert.equal(out.fontScale, 'large');
   assert.equal(out.studyIdleMinutes, 12);
   assert.equal(out.contextWindow, 262144);
   assert.equal(out.captionScale, 1.7);
@@ -364,6 +366,7 @@ await test('v1 迁移：旧包缺字段时拿到默认值，而不是 undefined'
     'agentRounds',
     'customRates',
     'theme',
+    'fontScale',
     'studyIdleMinutes',
     'syncEndpoint',
     'syncToken',

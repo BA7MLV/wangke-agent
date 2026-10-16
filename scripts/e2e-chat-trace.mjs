@@ -355,10 +355,31 @@ await check('展开：已思考用时 x 秒 + 吸顶 + 正文不限高', async (
   assert.match((await chain.locator('.reasoning-chain__title').innerText()).trim(), /^已思考用时 /);
   const box = await chain.locator('.reasoning-chain__toggle').evaluate((el) => {
     const cs = getComputedStyle(el);
-    return { position: cs.position, top: cs.top };
+    const title = el.querySelector('.reasoning-chain__title');
+    const icon = el.querySelector('.reasoning-chain__icon');
+    const bubble = el.closest('.course-chat__bubble');
+    return {
+      position: cs.position,
+      top: cs.top,
+      gap: cs.getPropertyValue('--reasoning-sticky-gap').trim() || '0px',
+      background: cs.backgroundColor,
+      fontSize: parseFloat(cs.fontSize),
+      bodyFontSize: parseFloat(getComputedStyle(bubble).fontSize),
+      titleLeft: title.getBoundingClientRect().left,
+      bubbleLeft: bubble.getBoundingClientRect().left,
+      titleRight: title.getBoundingClientRect().right,
+      iconLeft: icon.getBoundingClientRect().left,
+    };
   });
   assert.equal(box.position, 'sticky');
-  assert.equal(box.top, '0px');
+  assert.equal(parseFloat(box.top), -parseFloat(box.gap));
+  assert.equal(box.background, 'rgba(0, 0, 0, 0)', '吸顶标题不应有底色');
+  assert.ok(box.fontSize > box.bodyFontSize, '标题字号应略大于正文');
+  assert.ok(Math.abs(box.titleLeft - box.bubbleLeft) < 1, '标题应与内容列左缘对齐');
+  assert.ok(box.iconLeft >= box.titleRight, '图标应位于标题文字右侧');
+  await chain.locator('.reasoning-chain__toggle').hover();
+  assert.equal(await chain.locator('.reasoning-chain__toggle').evaluate((el) => getComputedStyle(el).backgroundColor),
+    'rgba(0, 0, 0, 0)', '吸顶标题悬停时也不应有底色');
   const body = await chain.locator('.reasoning-chain__body').evaluate((el) => ({
     maxHeight: getComputedStyle(el).maxHeight,
   }));

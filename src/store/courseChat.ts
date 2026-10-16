@@ -114,6 +114,7 @@ export interface CourseChatMessage {
   rowId?: number;
   role: 'user' | 'ai';
   content: string;
+  createdAt?: number;
   reasoning?: string;
   /** 思考耗时（毫秒）：首个思考 token → 末个。落库，历史消息也显示 */
   reasoningMs?: number;
@@ -1277,15 +1278,16 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         suspendWrite = persistSuspension('propose_folder_plan').catch(() => {});
       });
 
+    const userCreatedAt = Date.now();
     writeView(turnKey, {
       messages: [
         ...readView(turnKey).messages,
         // 续跑：用户那句「回答」由 resume.userContent 给出（方案确认没有）；
         // 普通一轮：就是这次发的 text。
         ...(resume == null
-          ? [{ key: userKey, role: 'user' as const, content: text }]
+          ? [{ key: userKey, role: 'user' as const, content: text, createdAt: userCreatedAt }]
           : resume.userContent != null
-            ? [{ key: userKey, role: 'user' as const, content: resume.userContent }]
+            ? [{ key: userKey, role: 'user' as const, content: resume.userContent, createdAt: userCreatedAt }]
             : []),
         { key: aiKey, role: 'ai', content: '', streaming: true },
       ],
@@ -1304,7 +1306,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           sessionId: turnKey,
           role: 'user',
           content: userRowContent,
-          createdAt: Date.now(),
+          createdAt: userCreatedAt,
         });
       }
 
@@ -1900,15 +1902,16 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     // 只有卡上那一句选中项而没有对话行，读起来会像凭空冒出来的。
     // 同时要**插进内存里的消息列表**：只落库不插列表的话当前这一屏看不到「你回答了什么」，
     // 要刷新才冒出来 —— 卡片与对话行当场对不上。
+    const createdAt = Date.now();
     const rowId = (await db.chats.add({
       videoId: LIBRARY_ASSISTANT_ID,
       sessionId: activeId,
       role: 'user',
       content: picked,
-      createdAt: Date.now(),
+      createdAt,
     })) as number;
     set((s) => ({
-      messages: [...s.messages, { key: `stored-${rowId}`, rowId, role: 'user', content: picked }],
+      messages: [...s.messages, { key: `stored-${rowId}`, rowId, role: 'user', content: picked, createdAt }],
       pendingAsk: null,
     }));
     pendingAsk.resolve(picked);
@@ -2312,6 +2315,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
     rowId: row.id!,
     role: row.role === 'assistant' ? 'ai' : 'user',
     content: row.content,
+    createdAt: row.createdAt,
     reasoning: row.reasoning,
     reasoningMs: row.reasoningMs,
     tools: row.tools,

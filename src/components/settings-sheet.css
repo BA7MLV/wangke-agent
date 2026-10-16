@@ -2,6 +2,58 @@
   width: 100%;
 }
 
+.settings-module-nav {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  flex: 0 0 auto;
+  min-width: 0;
+  width: auto;
+  gap: 4px;
+  margin: 0 12px 12px;
+  padding: 6px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  overscroll-behavior-x: contain;
+  border-radius: var(--radius-2xl);
+  background: var(--background-secondary);
+  scrollbar-width: thin;
+}
+
+.settings-module-nav .settings-module-nav__item {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: auto;
+  margin: 0;
+  gap: 8px;
+  min-height: 44px;
+  padding: 8px 16px;
+  border-radius: var(--radius-xl);
+  color: var(--muted);
+  font-size: 0.875rem;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.settings-module-nav__item[data-hovered='true'] {
+  background: var(--default-soft);
+}
+
+.settings-module-nav__item[data-selected='true'] {
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+}
+
+.settings-module-nav__item[data-focus-visible='true'] {
+  outline: 2px solid var(--focus);
+  outline-offset: -2px;
+}
+
 .settings-sheet__dialog[data-placement='bottom'] {
   display: flex;
   flex-direction: column;

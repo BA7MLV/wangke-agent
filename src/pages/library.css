@@ -9,52 +9,25 @@
   --page-content-max: 1360px;
 }
 
-/* 拖卡片时，屏幕顶部的左右两块是大面积投放区：左侧置顶，右侧删除。
-   触屏长按时不必精确瞄准小按钮；两个区域各占半屏宽，覆盖顶部 22vh。 */
+/* 投放区的视觉状态由 Library.tsx 中的语义工具类提供。 */
 .drag-zones {
-  position: fixed;
-  z-index: 1000;
-  inset: 0 0 auto;
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  height: max(160px, 22vh);
-  pointer-events: none;
-}
-
-.drag-zone {
-  display: flex;
-  align-items: flex-start;
-  justify-content: center;
-  gap: 0.6rem;
-  padding: max(1rem, env(safe-area-inset-top)) 1rem 0.75rem;
-  color: var(--color-foreground, currentColor);
-  background: color-mix(in srgb, var(--color-surface, white) 88%, transparent);
-  border: 2px dashed color-mix(in srgb, currentColor 28%, transparent);
-  border-radius: 0 0 1.25rem 1.25rem;
-  font-size: 1rem;
-  font-weight: 600;
-  transition: background-color 120ms ease, border-color 120ms ease;
-}
-
-.drag-zone--pin {
-  color: var(--color-accent, #2563eb);
-}
-
-.drag-zone--delete {
-  color: var(--color-danger, #dc2626);
-}
-
-.drag-zone--over {
-  background: color-mix(in srgb, currentColor 18%, white);
-  border-color: currentColor;
+  padding-top: max(12px, env(safe-area-inset-top));
+  padding-left: max(12px, env(safe-area-inset-left));
+  padding-right: max(12px, env(safe-area-inset-right));
 }
 
 .drag-zone__icon {
   font-size: 1.4rem;
 }
 
-.drag-ghost {
-  position: fixed;
-  z-index: 1001;
-  pointer-events: none;
+.video-row,
+.video-row [data-testid='video-thumb'] {
+  cursor: grab;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.video-row--dragging,
+.video-row--dragging [data-testid='video-thumb'] {
+  cursor: grabbing;
 }

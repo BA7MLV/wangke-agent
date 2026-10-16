@@ -19,3 +19,12 @@
   text-wrap: pretty;
 }
 .voice-input__status[data-error='true'] { color: var(--danger); }
+.voice-input__finish {
+  margin-inline-start: 8px;
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
