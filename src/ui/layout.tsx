@@ -14,6 +14,8 @@ import {
 import { Sym } from './icons';
 import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
+import { IconSwap } from '../components/motion';
+import { useSettingsDialog } from '../components/settingsDialogStore';
 import './layout.css';
 
 /**
@@ -215,6 +217,13 @@ function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   return (
     <>
+      {rail.items.filter((it) => it.isAction).map((it) => (
+        <Button key={it.value} variant="secondary" data-testid={it.testId}
+          className="mb-3 min-h-11 w-full justify-start gap-3 rounded-xl border border-border bg-background px-3 text-sm font-medium shadow-sm"
+          onPress={() => { it.onClick(); onNavigate?.(); }}>
+          {it.icon}<span>{it.label}</span>
+        </Button>
+      ))}
       {/* 这里曾经有一块「身份块」（头像 + 网课学习助手 + 本机课程库 · N 门课程），
           是照着 showcase 截图加的，落地当天被用户否掉、连 `railIdentity` prop 一起删了。
           侧栏第一屏该是导航，不是一句自我介绍 —— 一句话说清的东西不值得占一行。
@@ -247,7 +256,7 @@ function Sidebar({
         }}
         className="gap-0.5"
       >
-        {rail.items.map((it) => (
+        {rail.items.filter((it) => !it.isAction).map((it) => (
           <ListBox.Item
             key={it.value}
             id={it.value}
@@ -257,7 +266,7 @@ function Sidebar({
                试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
                ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
                留着只会让后来的人以为它在生效。 */
-            className="min-h-9 gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-accent-soft data-[selected=true]:font-medium data-[selected=true]:text-accent-soft-foreground"
+            className="min-h-11 gap-2.5 rounded-xl px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-accent-soft data-[selected=true]:font-medium data-[selected=true]:text-accent-soft-foreground"
           >
             <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
               {it.icon}
@@ -266,6 +275,10 @@ function Sidebar({
           </ListBox.Item>
         ))}
       </ListBox>
+
+      {recent && recent.items.length === 0 && (
+        <div className="mt-4 px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
+      )}
 
       {recent && recent.items.length > 0 && (
         <>
@@ -488,6 +501,10 @@ export function PageShell({
 }: PageShellProps) {
   /** 窄屏抽屉开合。宽屏不渲染抽屉，所以不需要额外判宽度。 */
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const { open: settingsOpen } = useSettingsDialog();
+  useEffect(() => {
+    if (settingsOpen) setDrawerOpen(false);
+  }, [settingsOpen]);
   const isNarrow = useIsNarrow();
   /** 宽屏侧栏收起。全局一份（ui/rail.ts），所以跨页面切过去时侧栏状态不会跳。 */
   const [railCollapsed, toggleRail] = useRailCollapsed();
@@ -570,7 +587,7 @@ export function PageShell({
       <div className="flex min-h-0 flex-1 items-stretch">
         {/* 收起时**整块不渲染**，而不是留着 display:none —— 侧栏里是会话列表，
             一屏几十条，留一棵看不见的 DOM 只会让 Tab 顺序凭空多出几十站。 */}
-        {rail && !railCollapsed && (
+        {rail && !isNarrow && !railCollapsed && (
           <nav
             className="hidden w-[16.5rem] shrink-0 flex-col gap-1 bg-background-secondary p-3 text-foreground min-[901px]:flex"
             data-testid="nav-rail"
@@ -661,7 +678,7 @@ export function PageShell({
                 aria-pressed={railCollapsed}
                 onPress={toggleRail}
               >
-                <Sym name="panel_left" />
+                <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
               </Button>
             )}
             {onBack && (
@@ -710,31 +727,17 @@ export function PageShell({
         </div>
       </div>
 
-      {/* 窄屏导航抽屉：与宽屏共用同一份 <Sidebar>，点导航项后自动收起。
-          宽屏不渲染（而不是渲染后用 CSS 藏起来）—— 少一棵永远不可见的 DOM 树。
-
-          ⚠️ 条件里**多一个 `drawerOpen`**：`drawerOpen` 为 false 时整棵 Drawer 直接卸载，
-          而不是留着等退出动画播完。这是刻意的取舍，代价是**关抽屉没有淡出动画**
-          （打开时的淡入还在）。
-
-          不这么做的话，关闭后遮罩会永远留在 DOM 里：
-          HeroUI Drawer → RAC `ModalOverlay` 的退场是靠 Web Animations API
-          （`getAnimations()` + `animation.finished`）判定完成的，一旦那条 promise
-          没兑现，`data-exiting="true"` 就一直挂着 —— 一个 `position: fixed; inset: 0`
-          的透明遮罩留在页面上，**整个页面点不动**。
-          实测：Esc 关闭抽屉后 1.5s，遮罩仍在，`新建对话` 按钮点 4s 超时；
-          `prefers-reduced-motion` 开与关都复现（reduced-motion 只是把
-          `transition` 关掉让 bug 看起来更干脆，不是触发条件）。
-
-          对一个「关掉菜单后整页失灵」的问题，少一段 200ms 的淡出是划算的交换。
-          等上游修好退出动画（RAC 吞掉了 `Promise.all(...).catch(() => {})` 的 rejection）
-          再把 `drawerOpen` 从这个条件里去掉。 */}
-      {rail && isNarrow && drawerOpen && (
+      {/* Backdrop 必须包住 Content：共用关闭生命周期与遮罩层级，保留正常退场。 */}
+      {rail && isNarrow && (
         <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
-          <Drawer.Backdrop variant="blur" />
+          <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
           <Drawer.Content placement="left">
-            <Drawer.Dialog className="flex">
-              <nav className="flex h-full w-[17rem] flex-col gap-1 bg-background p-3 text-foreground" aria-label="主导航">
+            <Drawer.Dialog className="app-nav-drawer" aria-label="导航与会话">
+              <Drawer.Header className="mb-4 flex items-center justify-between p-0">
+                <Drawer.Heading className="text-sm text-muted">导航与会话</Drawer.Heading>
+                <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
+              </Drawer.Header>
+              <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">
                 <Sidebar
                   rail={rail}
                   recent={recent}
@@ -745,6 +748,7 @@ export function PageShell({
               </nav>
             </Drawer.Dialog>
           </Drawer.Content>
+          </Drawer.Backdrop>
         </Drawer.Root>
       )}
     </div>

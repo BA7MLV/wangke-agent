@@ -1,5 +1,7 @@
 import { useEffect, useState, type ComponentType } from 'react';
-import { Button, ListBox, Modal } from '@heroui/react';
+import { Button, Drawer, ListBox, Modal } from '@heroui/react';
+import { useMediaQuery } from '../utils/useMobile';
+import './settings-sheet.css';
 import { Sym } from '../ui/icons';
 import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { closeSettingsAndClearHash, openSettings, useSettingsDialog, type SettingsModule } from './settingsDialogStore';
@@ -66,6 +68,7 @@ export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
  */
 export default function SettingsModal() {
   const { open, module } = useSettingsDialog();
+  const mobile = useMediaQuery('(max-width: 760px)');
   /** 本地副本：模块切换不应该走全局 store（那会让别的订阅者无谓地重渲染） */
   const [localModule, setLocalModule] = useState<SettingsModule>(module);
 
@@ -76,6 +79,46 @@ export default function SettingsModal() {
 
   const active = MODULES.find((m) => m.key === localModule) ?? MODULES[0];
   const ActiveContent = active.Component;
+
+  if (mobile) {
+    return (
+      <Drawer.Root isOpen={open} onOpenChange={(next) => !next && closeSettingsAndClearHash()}>
+        <Drawer.Backdrop variant="opaque" className="settings-sheet__backdrop">
+          <Drawer.Content placement="bottom" className="settings-sheet__content">
+            <Drawer.Dialog className="settings-sheet__dialog" data-testid="settings-modal">
+              <Drawer.Handle />
+              <Drawer.Header className="px-5 pt-1 pb-3">
+                <Drawer.Heading>设置</Drawer.Heading>
+                <Drawer.CloseTrigger aria-label="关闭设置"><Sym name="close" /></Drawer.CloseTrigger>
+              </Drawer.Header>
+              <ListBox
+                aria-label="设置模块"
+                selectionMode="single"
+                disallowEmptySelection
+                selectedKeys={[localModule]}
+                onSelectionChange={(keys) => {
+                  const next = [...keys][0];
+                  if (next) setLocalModule(next as SettingsModule);
+                }}
+                className="mx-3 mb-3 grid shrink-0 grid-cols-4 gap-1 rounded-2xl bg-background-secondary p-1.5"
+              >
+                {MODULES.map((m) => (
+                  <ListBox.Item key={m.key} id={m.key} textValue={m.label}
+                    className="flex min-h-12 flex-col justify-center gap-1 rounded-xl py-2 text-xs text-muted data-[selected=true]:bg-background data-[selected=true]:text-foreground data-[selected=true]:shadow-sm"
+                    data-testid={`settings-nav-${m.key}`}>
+                    <Sym name={m.icon} /><span>{m.label}</span>
+                  </ListBox.Item>
+                ))}
+              </ListBox>
+              <Drawer.Body className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4" data-testid={`settings-module-${localModule}`}>
+                <ActiveContent />
+              </Drawer.Body>
+            </Drawer.Dialog>
+          </Drawer.Content>
+        </Drawer.Backdrop>
+      </Drawer.Root>
+    );
+  }
 
   return (
     <Modal.Root isOpen={open} onOpenChange={(next) => !next && closeSettingsAndClearHash()}>

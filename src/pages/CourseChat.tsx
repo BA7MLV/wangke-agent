@@ -18,6 +18,7 @@ import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
+import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, ThinkLine } from '../components/motion';
 import ReasoningChain from '../components/ReasoningChain';
 import ToolTrace from '../components/ToolTrace';
@@ -347,7 +348,19 @@ function CourseCountSkeleton() {
  * 在默认浅色主题下正是这个 token 的值。
  */
 function StreamTailCircle() {
-  return <span className="course-chat__stream-dot" data-testid="chat-stream-dot" aria-hidden="true" />;
+  const ref = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const dot = ref.current;
+    if (!dot) return;
+    let visible = true;
+    const sync = () => { dot.style.animationPlayState = visible && !document.hidden ? 'running' : 'paused'; };
+    const observer = new IntersectionObserver(([entry]) => { visible = entry.isIntersecting; sync(); });
+    observer.observe(dot);
+    document.addEventListener('visibilitychange', sync);
+    sync();
+    return () => { observer.disconnect(); document.removeEventListener('visibilitychange', sync); };
+  }, []);
+  return <span ref={ref} className="course-chat__stream-dot" data-testid="chat-stream-dot" aria-hidden="true" />;
 }
 
 /**
@@ -534,9 +547,7 @@ export default function CourseChat() {
   const bootstrap = useCourseChat((s) => s.bootstrap);
   const refreshCourseCount = useCourseChat((s) => s.refreshCourseCount);
   const loadSession = useCourseChat((s) => s.loadSession);
-  // 「新建会话」的入口不在本组件里：它落在侧栏导航项「新会话」（见 appNav.tsx），
-  // 由那一项直接调 store 的 `createSession` —— 这里订阅了也只是个没人读的变量。
-  // 顶栏那颗「新建对话」2026-10-15 随「设置 / 搜索 / 新建对话」整组被否掉。理由见 railFooter 那段注释。
+  const createSession = useCourseChat((s) => s.createSession);
   // 「删当前会话」的 `deleteSession` 也已不再订阅：入口收进 Recent 行尾菜单后走 `deleteSessionById`。
   const deleteSessionById = useCourseChat((s) => s.deleteSessionById);
   const renameSession = useCourseChat((s) => s.renameSession);
@@ -1044,15 +1055,21 @@ export default function CourseChat() {
         })),
       }}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
-      /* 顶栏右侧**一个控件都不留**（2026-10-15 修订）：原来的「设置 / 搜索 / 新建对话」
-         被用户整组否掉，所以这里连 `actions` 都不传（`PageShell` 不渲染那一栏，
-         标题右侧就是留白）。
-         「新建会话」2026-10-15 二轮在**侧栏导航项**上回来了（首项「新会话」，
-         见 components/appNav.tsx）：懒创建之后它是零成本动作 —— 切草稿态既不落库
-         也不产生垃圾，所以不必再挤进顶栏。侧栏 Recent 里那个伪项仍然不恢复：
-         它是**动作**不是历史记录，混进列表会让每一行的语义都不一样，而 ListBox
-         的选中态也表达不了它。
-         设置入口没丢：侧栏底部的 `railFooter`（窄屏在抽屉里）仍然是入口。 */
+      actions={
+        <Button
+          variant="tertiary"
+          className="course-chat__new-chat"
+          aria-label="新建对话"
+          data-testid="chat-new-session"
+          onPress={() => {
+            if (useCourseChat.getState().activeId == null) toast.info('已在新会话');
+            else void createSession();
+          }}
+        >
+          <Sym name="edit" />
+          <span className="course-chat__new-chat-label">新建对话</span>
+        </Button>
+      }
     >
       <div
         className={`course-chat${messages.length === 0 ? ' course-chat--empty' : ''}`}
@@ -1098,12 +1115,6 @@ export default function CourseChat() {
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
                     <h2>{hasCourses ? libraryHeadline : '有什么想聊的？'}</h2>
-                    {/* 有课程时**不写解释句**（2026-10-16 用户口径）：
-                        原来那句「我会先判断问题对应哪些课程……」被整句去掉，
-                        空态直接是标题 + 快捷提问。无课程时才留一句兜底说明。 */}
-                    {!hasCourses && (
-                      <p>我可以直接回答任何问题。导入课程之后，我还能结合你课程里的字幕、讲义和进度作答。</p>
-                    )}
                     <div className="course-chat__starters" aria-label="快捷提问">
                       <div className="course-chat__starters-heading">试试这样问</div>
                       <div className="course-chat__starter-list">
@@ -1295,7 +1306,7 @@ export default function CourseChat() {
             })}
           </div>
 
-          {/* 单条输入栏：技能入口在左，正文居中，模型与发送操作在右。
+          {/* 正文独占上行；底部技能入口固定在左，发送操作固定在右。
               队列只在有待发消息时出现；长问题仍可自动增高。 */}
           <div className="course-chat__composer-wrap">
             {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
@@ -1323,6 +1334,28 @@ export default function CourseChat() {
               onSendNow={(id) => void sendQueuedNow(id)}
               onClear={clearQueue}
             />
+            {loading && !pendingAsk && (
+              <div className="course-chat__delivery-bar">
+                <ToggleButtonGroup
+                  className="course-chat__send-mode"
+                  selectionMode="single"
+                  disallowEmptySelection
+                  size="sm"
+                  aria-label="流式期间的投递方式"
+                  selectedKeys={[sendMode]}
+                  onSelectionChange={(keys) => {
+                    const next = [...keys][0];
+                    if (next) setSendMode(next as SendMode);
+                  }}
+                >
+                  <ToggleButton id="queue" data-testid="chat-send-mode-queue">排队</ToggleButton>
+                  <ToggleButton id="steer" data-testid="chat-send-mode-steer">插入</ToggleButton>
+                </ToggleButtonGroup>
+                <p className="course-chat__send-hint" role="status">
+                  {sendMode === 'queue' ? '这轮答完后自动发送' : '发送后立即打断，插入新消息'}
+                </p>
+              </div>
+            )}
             <div className="course-chat__composer">
               <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
@@ -1390,11 +1423,7 @@ export default function CourseChat() {
                   void send(draft, override);
                 }}
               />
-              {/* Toolbar 负责方向键在工具间循环 —— 键盘用户按 Tab 进输入框后，
-                  一次方向键就能落到工具行，不必再Tab 十几次穿过整条消息流。
-                  ⚠️ 里面的 ToggleButtonGroup 自己也是 Toolbar（RAC 的 useToolbar），
-                  但它的 onKeyDown 会 stopPropagation，所以方向键在档位里换档、
-                  不会同时把焦点甩出这一行 —— 嵌套是安全的，别拆。 */}
+               {/* Toolbar 负责方向键在输入区工具间循环。投递切换独立挂在输入卡上方。 */}
               <Toolbar
                 className="course-chat__composer-tools"
                 aria-label="输入区工具"
@@ -1405,48 +1434,31 @@ export default function CourseChat() {
                     但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——
                     同一件事两个入口，用户得先想「思考深度是不是归模型管」才找得到。
                     `showThinking` 把它们收进同一个面板，工具行因此只剩四个控件。 */}
-                <ModelPicker
+                {!draft && <ModelPicker
                   slot="chat"
                   field="llmModel"
                   variant="chip"
                   showThinking
                   thinkingDepthDisabled={loading}
-                />
-                {/*
-                  生成中才出现的「排队 / 插入」切换：回答的是**这一轮答完之前，
-                  Enter 与发送键怎么投递**。它算回答设置（改的是「这话怎么发」），
-                  所以留在设置组里、紧挨破坏性动作之前 —— 离发送键最近的一颗设置。
-                  不生成时它没有意义（那时发出去就是立刻发），藏起来免得常驻占一行。
-                */}
-                {loading && !pendingAsk && (
-                  <ToggleButtonGroup
-                    className="course-chat__send-mode"
-                    selectionMode="single"
-                    disallowEmptySelection
-                    size="sm"
-                    aria-label="流式期间的投递方式"
-                    selectedKeys={[sendMode]}
-                    onSelectionChange={(keys) => {
-                      const next = [...keys][0];
-                      if (next) setSendMode(next as SendMode);
-                    }}
-                  >
-                    <ToggleButton id="queue" data-testid="chat-send-mode-queue">
-                      排队
-                    </ToggleButton>
-                    <ToggleButton id="steer" data-testid="chat-send-mode-steer">
-                      插入
-                    </ToggleButton>
-                  </ToggleButtonGroup>
-                )}
-                {/* 用量环同时是立即压缩入口，手机端也保留。 */}
-                <span className="course-chat__context-usage-slot">
+                />}
+                <VoiceInput key={activeId ?? 'draft'} disabled={!sessionReady} onText={(text) => {
+                  const current = useCourseChat.getState().draft;
+                  setDraft(current ? `${current} ${text}` : text);
+                }} />
+                {/* 无输入文字时展示模型与上下文；输入期间让出操作区。 */}
+                {!draft && <span className="course-chat__context-usage-slot">
                   <ContextUsageButton
                     tokens={ctxEst} windowTokens={ctxWin} testId="chat-context-usage"
                     compression={contextCompression.state} onCompress={contextCompression.compress}
                     isDisabled={loading || !loaded || activeId == null || pendingAsk != null || pendingPlan != null}
                   />
-                </span>
+                </span>}
+                {/* 停止键放在发送键前，发送始终固定在最右侧。 */}
+                {loading && !pendingAsk &&
+                  iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
+                    className: 'course-chat__stop',
+                    testId: 'chat-stop',
+                  })}
                 {/*
                   发送键**常驻**（2026-10-16 修订，旧逻辑是「生成中变成停止键」）。
 
@@ -1475,14 +1487,6 @@ export default function CourseChat() {
                     testId: 'chat-send',
                   },
                 )}
-                {/* 停止键与发送键并存：只断 LLM 请求与循环，已流出的内容保留
-                    （见 store 的 `stop`）。有提问卡悬着时隐藏 —— 那时循环在等用户
-                    答卡，没有「正在生成」可停。 */}
-                {loading && !pendingAsk &&
-                  iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
-                    className: 'course-chat__stop',
-                    testId: 'chat-stop',
-                  })}
               </Toolbar>
             </div>
           </div>

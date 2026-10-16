@@ -618,7 +618,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 单条输入栏：入口、文本、模型与发送键共用一个圆角外框 ─────────────── */
+/* ── 输入卡：上行正文，下行固定技能入口与发送键 ─────────────────────── */
 .course-chat__composer-wrap {
   /* 「回到底部」按钮的定位锚点：它用 `bottom: calc(100% + …)` 停在整块输入区
      正上方，所以锚点必须是一块**高度会跟着内容变**的容器 —— 锚在 main 上的话，
@@ -702,10 +702,11 @@
   width: min(100%, var(--course-chat-column));
   margin: 0 auto;
   padding: 8px 12px;
-  display: flex;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
   align-items: center;
   gap: 8px;
-  border-radius: 32px;
+  border-radius: 24px;
   background: var(--background);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
@@ -723,8 +724,10 @@
 /* TextArea：外框与底色由卡片提供，这里把它彻底摊平 —— 一个自带边框的
    输入框套在一张卡片里，会出现「框中框」，两层圆角也对不齐。 */
 .course-chat__input {
+  grid-column: 1 / -1;
+  grid-row: 1;
   flex: 1 1 0;
-  width: 0;
+  width: 100%;
   min-width: 0;
   min-height: 34px;
   max-height: 180px;
@@ -767,13 +770,17 @@
   opacity: 0.6;
 }
 
-/* 工具不另占一行；窄屏缩短模型触发器，为输入文字留出空间。 */
+/* 工具占底部右侧；显隐中间控件不改变最右侧发送键的位置。 */
 .course-chat__composer-tools {
+  grid-column: 2;
+  grid-row: 2;
+  width: 100%;
+  min-width: 0;
   flex: 0 0 auto;
   display: flex;
   flex-wrap: nowrap;
   align-items: center;
-  justify-content: flex-start;
+  justify-content: flex-end;
   gap: 4px 6px;
 }
 
@@ -784,7 +791,54 @@
 }
 
 .course-chat__composer > [data-testid='skill-picker'] {
+  grid-column: 1;
+  grid-row: 2;
   flex: none;
+}
+
+.course-chat__delivery-bar {
+  box-sizing: border-box;
+  width: min(100%, var(--course-chat-column));
+  margin: 0 auto 8px;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  padding-inline: 8px;
+}
+
+.course-chat__send-hint {
+  flex: 1 1 120px;
+  min-width: 0;
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.course-chat__new-chat {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.course-chat__new-chat:hover,
+.course-chat__new-chat:active {
+  background: var(--surface-secondary);
+  color: var(--foreground);
+}
+
+@media (max-width: 900px) {
+  .course-chat__new-chat {
+    width: 44px;
+    height: 44px;
+    min-width: 44px;
+    padding: 0;
+  }
+
+  .course-chat__new-chat-label {
+    display: none;
+  }
 }
 
 .course-chat__send {
@@ -807,10 +861,7 @@
   flex: none;
 }
 
-/* ── 排队 / 插入切换 ─────────────────────────────────────────────────────
-   生成中才出现在工具行的设置组末尾（见 CourseChat.tsx 的 Toolbar）。
-   ToggleButtonGroup 自带分段控件外观，这里只保证它不参与 flex 伸缩：
-   避免分段控件被压扁、两颗字挤成一团。 */
+/* 生成期间独立挂在输入卡上方，不挤占技能、模型与发送工具的位置。 */
 .course-chat__send-mode {
   flex: none;
 }
@@ -912,28 +963,30 @@
    XMarkdown 把它插在最后一个文本 token 之后，圆点因此落在**下一个字符
    将出现的位置**，跟着文字一起长。
 
-   尺寸跟着字号（0.5em）而不是定值：回答里字号随上下文变（标题、引用块），
+   尺寸跟着字号（0.75em）而不是定值：回答里字号随上下文变（标题、引用块），
    定值圆点在 22px 的 h2 旁边会小到看不见。
-   `prefers-reduced-motion` 下停闪 —— 闪烁是唯一的动效，不闪也完全看得懂
+   `prefers-reduced-motion` 下停止呼吸 —— 静态也完全看得懂
    （圆点本身就在），而前庭敏感用户值得这一个静态版本。 */
 .course-chat__stream-dot {
   display: inline-block;
-  width: 0.5em;
-  height: 0.5em;
+  width: 0.75em;
+  height: 0.75em;
   margin-left: 0.12em;
   border-radius: 50%;
   background: var(--foreground);
-  vertical-align: 0.08em;
-  animation: course-chat-dot-blink 1.1s ease-in-out infinite;
+  vertical-align: 0;
+  animation: course-chat-dot-breathe 1.8s var(--ease-in-out) infinite;
 }
 
-@keyframes course-chat-dot-blink {
+@keyframes course-chat-dot-breathe {
   0%,
   100% {
-    opacity: 1;
+    opacity: 0.9;
+    transform: scale(1);
   }
   50% {
-    opacity: 0.2;
+    opacity: 0.4;
+    transform: scale(0.76);
   }
 }
 
@@ -997,15 +1050,16 @@
   }
 
   .course-chat--empty .course-chat__composer-wrap {
-    top: 31%;
+    position: relative;
+    top: auto;
   }
 
   .course-chat__empty {
-    padding-top: 12vh;
+    padding-top: clamp(24px, 8dvh, 80px);
   }
 
   .course-chat__starters {
-    margin-top: 92px;
+    margin-top: 24px;
   }
 
   .course-chat__starter-list {
@@ -1025,11 +1079,21 @@
   }
 
   .course-chat__composer {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    border-radius: 24px;
     padding: 8px;
     gap: 4px;
   }
 
+  .course-chat__input {
+    width: 100%;
+  }
+
   .course-chat__composer-tools {
+    grid-column: 2;
+    width: 100%;
+    justify-content: flex-end;
     gap: 4px;
   }
 

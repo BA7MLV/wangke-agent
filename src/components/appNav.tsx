@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Sym, type NavConfig, type NavItem } from '../ui';
+import { Sym, toast, type NavConfig, type NavItem } from '../ui';
 import { useCourseChat } from '../store/courseChat';
 
 /**
@@ -25,8 +25,7 @@ export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
        * 首项是**动作**（`isAction`）而不是页面：它回答的不是「你在哪」而是
        * 「想不想从头开始」。所以它没有选中态（见 layout.tsx 的 `NavItem.isAction`）。
        *
-       * 这也是「新建会话」在本页的**唯一入口** —— 顶栏那一组（设置 / 搜索 / 新建对话）
-       * 2026-10-15 被整组否掉之后它一直缺席，直到懒创建把这件事故意做成了零成本：
+        * 对话页顶栏也提供相同动作。懒创建让新会话成为零成本：
        * 切草稿态既不落库也不产生垃圾，所以放在侧栏第一格（ChatGPT 的「新对话」位置）
        * 不必付任何代价。见 docs/plans/2026-10-15-懒创建会话-design.md §七。
        */
@@ -35,7 +34,7 @@ export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
       isAction: true,
       // 图标仍是「聊天」而不是「加号」：这一格的去处还是对话页，
       // 新会话只是它默认落到的那条（草稿态）会话。
-      icon: <Sym name="forum" />,
+      icon: <Sym name="edit" />,
       /**
        * 先切草稿态、再跳转 —— 顺序无所谓（`createSession` 是同步的 store 方法，
        * 跳转也不会重挂对话页），但两件事缺一不可：
@@ -48,7 +47,8 @@ export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
        * 等于在课程库页也灰掉一个无关的动作。
        */
       onClick: () => {
-        void createSession();
+        if (active === 'chat' && useCourseChat.getState().activeId == null) toast.info('已在新会话');
+        else void createSession();
         navigate('/');
       },
       testId: 'nav-rail-chat',

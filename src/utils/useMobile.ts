@@ -20,7 +20,7 @@ const SHORT_LANDSCAPE_QUERY =
 const MOBILE_QUERY = `${SHORT_PORTRAIT_QUERY}, ${SHORT_LANDSCAPE_QUERY}`;
 
 /** 通用媒体查询订阅（query 变化时重新订阅） */
-function useMediaQuery(query: string): boolean {
+export function useMediaQuery(query: string): boolean {
   const [matches, setMatches] = useState(() => window.matchMedia(query).matches);
   useEffect(() => {
     const mq = window.matchMedia(query);

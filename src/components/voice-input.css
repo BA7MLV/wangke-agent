@@ -1,0 +1,21 @@
+.voice-input { display: inline-flex; flex: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.voice-input__button { min-width: 36px; min-height: 36px; }
+.voice-input__button[aria-pressed='true'] { color: var(--accent); background: var(--accent-soft); }
+.voice-input__status {
+  position: absolute;
+  bottom: calc(100% + 8px);
+  left: 16px;
+  right: 16px;
+  width: fit-content;
+  max-width: calc(100% - 32px);
+  margin: auto;
+  padding: 10px 14px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: var(--background);
+  color: var(--foreground);
+  box-shadow: var(--shadow-sm);
+  font-size: 13px;
+  text-wrap: pretty;
+}
+.voice-input__status[data-error='true'] { color: var(--danger); }
