@@ -78,8 +78,9 @@
    2. `.page-app-bar__blur`：垫在顶栏内容之下（z-index:-1）的一层渐进模糊。
 
    渐进模糊怎么叠：单层 `backdrop-filter` 的半径是均匀的，没有「渐变」这回事。
-   这里用三层、半径递增、竖直 mask 覆盖带递减，叠出「越靠上越糊、到栏底衰减到 0」
-   的曲线 —— 所以栏底**没有硬边**，内容从栏下钻出来是连续的。
+   这里用四层、半径 1 / 2 / 4 / 8px 递增、mask 衰减区间逐层缩短，叠出「越靠上越糊、
+   越靠下越清楚、栏底衰减到 0」的曲线 —— 所以栏底**没有硬边**，内容从栏下钻出来是连续的。
+   模糊只限制在 60px 顶栏本身，避免对整页做昂贵的 filter；尺寸固定且不跟滚动做 JS 更新。
    颜色一律读语义令牌（`--background-secondary` 画布色作淡色遮罩），昼夜两套自动成立。 */
 .page-shell__content {
   padding-top: calc(var(--app-bar-h, 60px) + 8px);
@@ -101,20 +102,28 @@
   backdrop-filter: blur(var(--app-bar-blur, 4px));
 }
 
-/* 三层：半径 2 / 4 / 8px，覆盖带 100% / 70% / 42%（都衰减到 0，所以栏底无缝） */
+/* 四层叠加：每层都从顶部开始，但高半径层更早衰减，低半径层拖得更远。
+   结果是模糊强度从顶端向下连续递减，而不是把一条硬线从 60px 高处切开。
+   只用 mask 渐变，不对每帧读取滚动位置、不做 JS 动画（滚动与合成由浏览器处理）。 */
 .page-app-bar__blur > span:nth-child(1) {
-  --app-bar-blur: 2px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
-  mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
+  --app-bar-blur: 1px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 28%, transparent 100%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 28%, transparent 100%);
 }
 
 .page-app-bar__blur > span:nth-child(2) {
-  --app-bar-blur: 4px;
-  -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 70%);
-  mask-image: linear-gradient(to bottom, #000 0%, transparent 70%);
+  --app-bar-blur: 2px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 82%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 20%, transparent 82%);
 }
 
 .page-app-bar__blur > span:nth-child(3) {
+  --app-bar-blur: 4px;
+  -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 12%, transparent 62%);
+  mask-image: linear-gradient(to bottom, #000 0%, #000 12%, transparent 62%);
+}
+
+.page-app-bar__blur > span:nth-child(4) {
   --app-bar-blur: 8px;
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, transparent 42%);
   mask-image: linear-gradient(to bottom, #000 0%, transparent 42%);
@@ -144,6 +153,18 @@
   }
 }
 
+/* 不支持 mask 渐变时，别让各层以全高 blur 的形式叠在一起；退回干净的不透明顶栏。 */
+@supports not (mask-image: linear-gradient(to bottom, #000, transparent)) {
+  .page-app-bar__blur > span {
+    display: none;
+  }
+  .page-app-bar__blur::after {
+    background: var(--background-secondary);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+}
+
 @media (prefers-reduced-transparency: reduce) {
   .page-app-bar__blur > span {
     display: none;
@@ -157,569 +178,7 @@
 
 /* ── 库页：导入投放区（自建；HeroUI 没有拖拽上传组件） ─────────────────────
    MD3 里没有 dropzone 这种组件，用 dashed outline 表达「可投放」是通行做法。 */
-.drop-zone {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 28px 20px;
-  border: 1px dashed var(--border);
-  border-radius: var(--radius);
-  background: var(--background-secondary);
-  text-align: center;
-  cursor: pointer;
-  transition:
-    background-color var(--duration-slow) linear,
-    border-color var(--duration-slow) linear;
-}
-
-/* 拖拽悬停：MD3 用 primary-container 表示「可以放这里」 */
-.drop-zone--over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.drop-zone__icon {
-  font-size: 40px;
-  line-height: 1;
-  color: var(--accent);
-}
-
-.drop-zone__title {
-  margin-top: 8px;
-  font-size: 0.875rem;
-  font-weight: 500;
-  color: var(--foreground);
-}
-
-/* 说明文案 + 问号按钮：一行，问号紧跟在句子后面（不换行）。
-   窄屏纵向布局时整行居中，宽屏横排时靠左——见下面 .page-library 那档。 */
-.drop-zone__hint {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 2px;
-  max-width: 520px;
-  font-size: 12px;
-  line-height: 1.6;
-  color: var(--muted);
-}
-
-/* 文案可换行收缩（flex 项默认 min-width:auto 会顶住不缩） */
-.drop-zone__hint > span {
-  min-width: 0;
-}
-
-.drop-zone__actions {
-  display: flex;
-  flex-wrap: wrap;
-  justify-content: center;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-/* ── 库页：导入任务行 ─────────────────────────────────────────────────────
-   文件名和状态同一行，进度条单独占下一行。完成项会很快从队列里消失，
-   真正的视频已经出现在下方列表里，不必把「已导入」一直钉在投放区下面。 */
-.import-tasks {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-  margin-top: 12px;
-}
-
-.import-task {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-  min-width: 0;
-}
-
-.import-task__head {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-}
-
-.import-task-name {
-  flex: 1 1 auto;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-  color: var(--foreground);
-}
-
-.import-task .progress-bar {
-  display: block; /* 宿主默认不是 block，不铺开的话进度条只有内容宽 */
-  width: 100%;
-}
-
-.import-task__status {
-  flex: none;
-  max-width: 42%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-}
-
-.import-task__status--error {
-  color: var(--danger);
-}
-
-.import-task__head svg {
-  flex: none;
-}
-
-/* ── 库页：工具条 / 分组头 / 视频行 ─────────────────────────────────────── */
-.library-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin: 24px 0 4px;
-}
-
-.library-toolbar__spacer {
-  flex: 1 1 auto;
-}
-
-.group-header {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 12px 0 2px;
-  padding: 4px 8px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-sm);
-  cursor: pointer;
-  user-select: none;
-}
-
-/* 拖拽时组头是可投放目标：虚线提示 + 悬停高亮 */
-.group-header--dragging {
-  border-style: dashed;
-  border-color: var(--border);
-}
-
-.group-header--over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.group-header__name {
-  font-weight: 600;
-  color: var(--foreground);
-}
-
-.group-header__count {
-  font-size: 13px;
-  color: var(--muted);
-}
-
-.group-header__icon {
-  font-size: 20px;
-  color: var(--accent);
-}
-
-/* ── 库页：视频网格卡片（YouTube 风格） ─────────────────────────────────── */
-/* 从行式列表改为网格卡片：16:9 缩略图（取 db.frames 的首帧）+ 标题两行截断 + 元信息 + 操作行。
-   四组内容（拖拽手柄 / 标题元信息 / 标签 / 按钮）一个都不少 —— 手柄浮到缩略图左上角，
-   标签与按钮落到卡片底部的两行；**DOM 顺序不变**（e2e 的 data-testid 全部照旧），只靠 CSS 排布。 */
-
-/* 网格卡片要更宽的容器：PageShell 默认的 `--page-content-max` 是 100%（内容列吃满），
-   narrow / wide 两档分别给 720px / 960px，在 1440 视口下都只排得下 3 列；
-   而 YouTube 的网格是吃满内容区的。库页把这一档放宽到 1360px。
-   注意它**只管内容列宽度**：顶栏标题不再跟着避让（见 layout.tsx 里 <header> 的注释），
-   所以放宽这里不会把标题往右推。 */
-.page-library {
-  --page-content-max: 1360px;
-}
-
-.video-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 20px 16px;
-  margin: 8px 0 4px;
-}
-
-@media (max-width: 640px) {
-  /* 手机竖屏单列大卡（YouTube 移动端也是单列） */
-  .video-grid {
-    grid-template-columns: 1fr;
-    gap: 16px;
-    margin: 6px 0 2px;
-  }
-}
-
-.video-row {
-  position: relative;
-  display: grid;
-  grid-template-columns: minmax(0, 1fr);
-  gap: 2px;
-  padding: 6px 6px 8px;
-  border-radius: 14px;
-  transition: background-color var(--duration-slow) var(--ease-out);
-  /* 整卡长按起拖：关掉 iOS 的长按呼出（选中/复制菜单）与文本选中，
-     否则按住那 400ms 里系统会先把卡片内容当文本弹菜单。
-     卡片上没有需要用户复制的内容，这条没有副作用。 */
-  -webkit-touch-callout: none;
-  -webkit-user-select: none;
-  user-select: none;
-}
-
-.video-row:hover {
-  background: var(--background-secondary);
-}
-
-.video-row--dragging {
-  opacity: 0.4;
-}
-
-/* 缩略图：16:9；有帧就用真图，没有则主题色底 + 图标占位 */
-.video-row__thumb {
-  position: relative;
-  order: 1;
-  aspect-ratio: 16 / 9;
-  margin-bottom: 8px;
-  overflow: hidden;
-  border-radius: 12px;
-  background: var(--default-soft);
-}
-
-.video-row__thumb img {
-  display: block;
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  transition: transform var(--duration-slow) var(--ease-out);
-}
-
-.video-row:hover .video-row__thumb img {
-  transform: scale(1.03);
-}
-
-.video-row__thumb-empty {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 100%;
-  height: 100%;
-  color: var(--accent);
-  font-size: 44px;
-  opacity: 0.45;
-}
-
-/* 右下角时长徽标（YouTube 卡片同款位置） */
-.video-row__duration {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  padding: 1px 5px;
-  border-radius: 6px;
-  background: rgb(0 0 0 / 0.78);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 500;
-  font-variant-numeric: tabular-nums;
-}
-
-/* 置顶徽标：缩略图右上角（时长徽标在右下角，互不遮挡）。
-   用一块主色药丸，与卡片里其它「状态」标签的观感区分开。 */
-.video-row__pin {
-  position: absolute;
-  top: 6px;
-  right: 6px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  width: 24px;
-  height: 24px;
-  border-radius: var(--radius-full);
-  background: var(--accent);
-  color: var(--accent-foreground);
-  font-size: 15px;
-  box-shadow: 0 1px 4px rgb(0 0 0 / 0.3);
-}
-
-/* 播放进度条：贴缩略图底边（YouTube 卡片同款位置）。
-   圆角不用自己算 —— 缩略图容器是 overflow: hidden + border-radius: 12px，裁切是白送的。
-   轨道用半透明黑而不是主题令牌：它要压在**任意**缩略图（课件画面、纯色 LQIP 占位）上都看得见。
-   没有进度可言时（没看过 / 比例不足 1%）这个元素根本不渲染，见 utils/videoProgress.ts。 */
-.video-row__progress {
-  position: absolute;
-  right: 0;
-  bottom: 0;
-  left: 0;
-  height: 4px;
-  background: rgb(0 0 0 / 0.32);
-}
-
-.video-row__progress-fill {
-  height: 100%;
-  background: var(--accent);
-}
-
-/* 拖拽手柄：浮在缩略图左上角，桌面端悬停卡片才显形（脱离文档流，不挡点缩略图） */
-.video-row__handle {
-  position: absolute;
-  top: 10px;
-  left: 10px;
-  z-index: 2;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  min-width: 32px;
-  min-height: 32px;
-  border-radius: var(--radius-full);
-  background: rgb(0 0 0 / 0.45);
-  color: #fff;
-  font-size: 20px;
-  opacity: 0;
-  cursor: grab;
-  transition: opacity var(--duration-slow) var(--ease-out);
-  /* 触屏从手柄起手拖动时不触发页面滚动 */
-  touch-action: none;
-  -webkit-tap-highlight-color: transparent;
-}
-
-.video-row:hover .video-row__handle,
-.video-row__handle:focus-visible {
-  opacity: 1;
-}
-
-@media (hover: none) {
-  /* 触屏没有 hover：手柄常驻，否则无从拖拽 */
-  .video-row__handle {
-    opacity: 0.75;
-  }
-}
-
-.video-row__main {
-  order: 2;
-  min-width: 0;
-}
-
-.video-row__name {
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 500;
-  line-height: 1.35;
-  color: var(--foreground);
-}
-
-.video-row__meta {
-  margin-top: 3px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-/* 后台转写的进度：任务跑在全局队列里，不在当前播放页也要看得见 */
-.video-row__job {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  font-size: 12px;
-  color: var(--accent);
-}
-
-.video-row__job .progress-bar {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.video-row__tags {
-  order: 3;
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-}
-
-.video-row__actions {
-  order: 4;
-  display: flex;
-  flex: none;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 2px;
-  margin-top: 6px;
-}
-
-/* 卡片里的次要操作（重命名 / 移动 / 删除）压一档对比度，悬停卡片才全亮 ——
-   YouTube 的卡片对次要操作就是这个处理。注意只降 opacity 不加 pointer-events，
-   否则 e2e 里直接点 btn-rename 会因「元素不接收事件」而超时。 */
-.video-row__actions svg {
-  color: var(--muted);
-  opacity: 0.7;
-  transition: opacity var(--duration-slow) var(--ease-out);
-}
-
-.video-row:hover .video-row__actions svg,
-.video-row__actions svg:focus-visible {
-  opacity: 1;
-}
-
-/* 卡片底部：主操作「学习」靠左、三个次要操作靠右（YouTube 卡片的操作分布） */
-.page-library .video-row__actions > .button {
-  margin-right: auto;
-}
-
-/* 导入区：原来的纵向大虚线块在放宽后的容器里很占地方，收成一条横排提示条
-   （图标 + 文案 + 按钮一行），仍是同一个 drop-zone（testid 与整页拖拽投放都不动）。
-   ⚠️ 横排只在宽屏成立。手机上这一条挤不下：图标 + 标题 + 文案 + 两个按钮横向相加远超
-   390px，文案会被压成每行一两个字的竖排（见 e2e-shots/mobile-library.png 的旧版），
-   读不成句。所以窄屏回落到 .drop-zone 基类的纵向居中布局。 */
-@media (min-width: 641px) {
-  .page-library .drop-zone {
-    flex-direction: row;
-    align-items: center;
-    gap: 14px;
-    max-width: none;
-    padding: 14px 18px;
-    text-align: left;
-  }
-
-  .page-library .drop-zone__icon {
-    font-size: 28px;
-  }
-
-  .page-library .drop-zone__title {
-    flex: none;
-    margin-top: 0;
-    font-size: 14px;
-  }
-
-  .page-library .drop-zone__hint {
-    flex: 1 1 auto;
-    justify-content: flex-start;
-    max-width: none;
-  }
-
-  .page-library .drop-zone__actions {
-    flex: none;
-    margin-top: 0;
-  }
-}
-
-/* 静态语义标记：刻意不用 HeroUI Chip —— 它带可交互语义，
-   且标签文字颜色在 shadow DOM 里，无法按状态分别上色（同 SkillsCard 的 .tag-mini 注释）。
-   配色沿用 MD3 的语义色板：primary / error。 */
-.tag-mini--primary {
-  color: var(--accent);
-}
-
-.tag-mini--error {
-  color: var(--danger);
-}
-
-/* ── 库页：拖拽悬浮卡片 ─────────────────────────────────────────────────── */
-.drag-ghost {
-  position: fixed;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  max-width: 240px;
-  padding: 8px 12px;
-  border-radius: var(--radius-sm);
-  background: var(--default-soft);
-  color: var(--foreground);
-  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.18);
-  font-size: 14px;
-  /* 跟随指针，且不参与命中检测（否则会挡住组头的 getBoundingClientRect 判定） */
-  transform: translateX(-50%);
-  pointer-events: none;
-}
-
-.drag-ghost__name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.drag-ghost__icon {
-  flex: none;
-  font-size: 18px;
-  color: var(--muted);
-}
-
-/* ── 库页：拖拽到顶栏的卡片级投放区（左置顶 / 右删除） ────────────────────
-   拖拽进行中才挂载，钉在视口顶部两角。`pointer-events: none` 是刻意的：
-   命中检测走 `getBoundingClientRect`（见 Library.tsx 的 moveDrag），
-   它们不需要接事件 —— 接了反而会挡住跟随指针的悬浮卡片。 */
-.drag-zones {
-  position: fixed;
-  top: 0;
-  right: 0;
-  left: 0;
-  z-index: 1001;
-  display: flex;
-  justify-content: space-between;
-  padding: 12px 16px;
-  pointer-events: none;
-}
-
-.drag-zone {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 10px 18px;
-  border: 2px dashed var(--border-secondary);
-  border-radius: var(--radius-full);
-  background: var(--surface);
-  color: var(--foreground);
-  box-shadow: 0 6px 18px rgb(0 0 0 / 0.18);
-  font-size: 14px;
-  font-weight: 500;
-  transition:
-    background-color var(--duration-slow) var(--ease-out),
-    border-color var(--duration-slow) var(--ease-out),
-    color var(--duration-slow) var(--ease-out),
-    transform var(--duration-slow) var(--ease-out);
-}
-
-.drag-zone__icon {
-  flex: none;
-  font-size: 20px;
-}
-
-.drag-zone--pin.drag-zone--over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-  color: var(--accent-soft-foreground);
-  transform: scale(1.04);
-}
-
-.drag-zone--delete.drag-zone--over {
-  border-color: var(--danger);
-  background: var(--danger-soft);
-  color: var(--danger-soft-foreground);
-  transform: scale(1.04);
-}
-
-
-/* 窄屏：投放区收一点，别把列表挤到首屏之外 */
-@media (max-width: 640px) {
-  .drop-zone {
-    padding: 20px 16px;
-  }
-  .drop-zone__icon {
-    font-size: 32px;
-  }
-}
-
+/* 库页组件已由 HeroUI 原语与 Tailwind 工具类负责版式，见 pages/Library.tsx。 */
 
 /* ============================================================================
    播放页骨架
@@ -1021,23 +480,7 @@
   }
 }
 
-/* ── 侧栏 Recent 行标题 ─────────────────────────────────────────────────────
-   平时省略号；鼠标停在**整行**上（`data-hovered` 是 React Aria 的悬停态，
-   比 CSS `:hover` 准 —— 它已经处理了「触屏按下时的假 hover」）或键盘焦点进来时，
-   标题像**跑马灯**那样自己滚开：先停一下让人看清开头，再匀速滑到末尾，
-   到末尾又停一下，然后原路滑回来，如此往复。
-
-   滑动距离取决于内容宽度，CSS 算不出来，由 `layout.tsx` 在挂载 / 改标题 / 尺寸变化时
-   量好，写进 `--recent-shift`（负的溢出像素）与 `--recent-duration`（按距离换算成时长，
-   长标题才不会滚得飞快）。没量到溢出时 `--recent-shift` 缺省为 0，动画原地不动 ——
-   于是只有超长标题会滚，正常标题纹丝不动。
-
-   为什么不用 `title` 属性：iOS Safari 不显示原生 tooltip，而 iPad 是主力平台 ——
-   触屏上的兜底是「重命名对话框里能看到全文」（已有能力）。
-
-   内层 `span` 必须 `inline-block`：`text-overflow: ellipsis` 只对**块级/行内块**
-   的文本溢出生效，直接放在 flex 子项上时它在某些浏览器里不画省略号。
-   见 docs/plans/2026-10-15-流式续传与分支-design.md §5。 */
+/* ── 侧栏 Recent 行标题：超出可用宽度时始终显示省略号。 ─────────────── */
 .recent-title {
   display: block;
   min-width: 0;
@@ -1049,38 +492,4 @@
 .recent-title > span {
   display: inline-block;
   white-space: nowrap;
-}
-
-/* 悬停（或键盘焦点）时才跑。`clip` 让滑动过程中不再画省略号 ——
-   省略号是画在容器右缘的，不关掉的话会盖在正在滑过的字上。 */
-.recent-item[data-hovered='true'] .recent-title,
-.recent-item:focus-within .recent-title {
-  text-overflow: clip;
-}
-
-.recent-item[data-hovered='true'] .recent-title > span,
-.recent-item:focus-within .recent-title > span {
-  /* 只在这一层将要动时才提合成，别给每一行常态留一间空层 */
-  will-change: transform;
-  animation: recent-title-marquee var(--recent-duration, 5s) ease-in-out infinite alternate;
-}
-
-/* 两端各留一段停顿（10%）：一进来不立刻动、冲到底也不立刻折返 */
-@keyframes recent-title-marquee {
-  0%,
-  10% {
-    transform: translateX(0);
-  }
-  90%,
-  100% {
-    transform: translateX(var(--recent-shift, 0px));
-  }
-}
-
-/* 前庭敏感的用户：不动，退回「省略号 + 重命名对话框看全文」 */
-@media (prefers-reduced-motion: reduce) {
-  .recent-item[data-hovered='true'] .recent-title > span,
-  .recent-item:focus-within .recent-title > span {
-    animation: none;
-  }
 }

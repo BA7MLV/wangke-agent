@@ -35,7 +35,7 @@ execSync(
 const DB_NAME = 'wangke';
 const DROPPED = ['embeddings', 'materialEmbeddings'];
 /** 抽样几个必须活下来的表：一张核心表、一张 v9 的表、以及最晚建的 v12 表 */
-const KEPT = ['videos', 'segments', 'materialBlocks', 'covers', 'studyDays', 'comments'];
+const KEPT = ['videos', 'segments', 'materialBlocks', 'covers', 'studyDays', 'comments', 'materialInk'];
 
 let passed = 0;
 const failures = [];
@@ -106,12 +106,12 @@ function rawStoreNames(name) {
   });
 }
 
-console.log('全新安装（v1→v13）');
+console.log('全新安装（v1→v14）');
 await dropDatabase(DB_NAME);
-await test('库能正常打开，版本号是 13', async () => {
+await test('库能正常打开，版本号是 14', async () => {
   const { db } = await import(`${tmp}?fresh`);
   await db.open();
-  assert.equal(db.verno, 13);
+  assert.equal(db.verno, 14);
   await db.close();
 });
 
@@ -121,7 +121,7 @@ await test('最终 schema 里没有两张向量表，但其他表都在', async 
   for (const t of KEPT) assert.ok(stores.includes(t), `缺少 ${t}`);
 });
 
-console.log('老库升级（v12 带向量数据 → v13）');
+console.log('老库升级（v12 带向量数据 → v14）');
 await dropDatabase(DB_NAME);
 await seedV12WithVectors();
 await test('升级前：v12 库里确实有这两张表且有数据', async () => {
@@ -132,7 +132,7 @@ await test('升级前：v12 库里确实有这两张表且有数据', async () =
 await test('Dexie 打开老库后表被删掉（不抛错、不卡住）', async () => {
   const { db } = await import(`${tmp}?legacy`);
   await db.open();
-  assert.equal(db.verno, 13);
+  assert.equal(db.verno, 14);
   assert.ok(!db.tables.map((t) => t.name).includes('embeddings'));
   await db.close();
 });
@@ -157,6 +157,30 @@ await test('升级后新库仍可正常读写（不是「能打开但坏了」�
   const row = await db.segments.get(id);
   assert.equal(row?.text, '你好');
   await db.close();
+});
+
+await dropDatabase(DB_NAME);
+await test('v13 → v14：原有课程原样保留，新增笔迹表可持久化', async () => {
+  const { default: Dexie } = await import('dexie');
+  const { db: template } = await import(`${tmp}?schema`);
+  const schema = Object.fromEntries(template.tables
+    .filter((table) => table.name !== 'materialInk')
+    .map((table) => [table.name, [table.schema.primKey.src, ...table.schema.indexes.map((i) => i.src)].join(', ')]));
+  const old = new Dexie(DB_NAME);
+  old.version(13).stores(schema);
+  await old.open();
+  const material = { id: 'existing-pdf', name: '旧材料', kind: 'material', lastUnit: 7 };
+  await old.table('videos').put(material);
+  old.close();
+  const { db } = await import(`${tmp}?upgrade14`);
+  await db.open();
+  assert.deepEqual(await db.videos.get(material.id), material);
+  const stroke = { id: 'stroke-1', materialId: material.id, surface: 'pdf:7', tool: 'pen', color: '#dc2626', width: 3, height: 1400, points: [{ x: 10, y: 20, pressure: .7 }], createdAt: 1 };
+  await db.materialInk.put(stroke);
+  db.close();
+  await db.open();
+  assert.deepEqual(await db.materialInk.get(stroke.id), stroke);
+  db.close();
 });
 
 unlinkSync(tmp);

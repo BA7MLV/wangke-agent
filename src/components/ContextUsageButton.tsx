@@ -1,4 +1,8 @@
+import { useEffect, useState } from 'react';
 import { Button, Tooltip } from '@heroui/react';
+import { IconSwap, SuccessCheck } from './motion';
+import { Sym } from '../ui';
+import type { CompressionState } from '../store/contextCompression';
 import './context-usage.css';
 
 export interface ContextUsageButtonProps {
@@ -7,6 +11,9 @@ export interface ContextUsageButtonProps {
   /** 上下文窗口（输入 + 输出的总容量），取设置里的 `contextWindow` */
   windowTokens: number;
   testId?: string;
+  compression?: CompressionState;
+  onCompress?: () => void;
+  isDisabled?: boolean;
 }
 
 /** `12.3k` / `980`：小数值不拖一串没意义的小数位，k 之后留一位就够看趋势 */
@@ -25,17 +32,21 @@ function compact(n: number): string {
  * ## 三档口径与 ChatPanel 对齐
  * >70% 变 `--warning`、>90% 变 `--danger`，与视频问答面板底部那行用量文字
  * （`chat-ctx--warn` / `chat-ctx--bad`）用同一组阈值与同一组语义令牌 ——
- * 两处告警各说各话的话，用户会以为其中一个在骗人。>90% 时 tooltip 补一句
- * 「建议开启新话题」，把「该怎么办」也一并给到。
+ * 两处告警各说各话的话，用户会以为其中一个在骗人。tooltip 给出精确估值与压缩状态。
  *
- * ## 它是只读的
- * 环只**展示**进度，按下去不该发生任何事 —— 所以这里刻意不挂 `onPress`。
- * 用 Button 而不是裸 `<span>` 是顺着 HeroUI 的 Tooltip：它的 Trigger 固定渲染
- * 一层 `role="button"` 的包装元素，孩子换成可按键的 Button 才与该包装的语义相符
- * （裸元素会与包装的 role 打架，也会漏出「无法聚焦」的边框）。删除会话已经不在
- * 这一行，所以工具行里再没有破坏性动作，这颗只读控件放在最右端也不会被误触。
+ * 按下立即筛选旧上下文；图标使用 transitions.dev 的 Icon swap / Success check，
+ * 与发送管线共享状态。忙碌时防重复点击，完成后环形用量按真实保留文本下降。
  */
-export default function ContextUsageButton({ tokens, windowTokens, testId }: ContextUsageButtonProps) {
+export default function ContextUsageButton({ tokens, windowTokens, testId, compression, onCompress, isDisabled }: ContextUsageButtonProps) {
+  const compressing = compression?.phase === 'compressing';
+  const [showResult, setShowResult] = useState(false);
+  useEffect(() => {
+    setShowResult(compression?.phase === 'success');
+    if (compression?.phase !== 'success') return;
+    // 完成反馈停留时间，不是动画时长；动效仍由 transitions.dev CSS 令牌控制。
+    const timer = setTimeout(() => setShowResult(false), 1800);
+    return () => clearTimeout(timer);
+  }, [compression?.phase, compression?.revision]);
   const ratio = windowTokens > 0 ? tokens / windowTokens : 0;
   const filled = Math.min(1, Math.max(0, ratio));
   const pct = Math.round(ratio * 100);
@@ -44,7 +55,15 @@ export default function ContextUsageButton({ tokens, windowTokens, testId }: Con
   const circumference = 2 * Math.PI * 8;
   const offset = circumference * (1 - filled);
   const detail = `上下文用量 ≈${compact(tokens)} / ${compact(windowTokens)}（${pct}%）`;
-  const label = level === 'bad' ? `${detail} · 建议开启新话题` : detail;
+  const message = compression?.message ?? '';
+  const label = `${detail} · ${compressing ? '正在压缩上下文…' : message || '点击立即压缩上下文（保留聊天记录）'}`;
+  const ring = (
+    <svg className="ctx-usage__ring" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
+      <circle className="ctx-usage__track" cx="10" cy="10" r="8" />
+      <circle className="ctx-usage__fill" cx="10" cy="10" r="8"
+        strokeDasharray={circumference.toFixed(2)} strokeDashoffset={offset.toFixed(2)} transform="rotate(-90 10 10)" />
+    </svg>
+  );
 
   return (
     <Tooltip>
@@ -56,25 +75,24 @@ export default function ContextUsageButton({ tokens, windowTokens, testId }: Con
           className="ctx-usage"
           data-level={level}
           data-testid={testId}
-          aria-label={detail}
+          aria-label={`${detail} · ${compressing ? '正在压缩上下文' : '立即压缩上下文'}`}
+          aria-busy={compressing}
+          data-compression={compressing ? 'compressing' : showResult ? 'success' : compression?.phase === 'error' ? 'error' : 'idle'}
+          isDisabled={isDisabled || compressing || !onCompress}
+          onPress={onCompress}
         >
-          <svg className="ctx-usage__ring" viewBox="0 0 20 20" aria-hidden="true" focusable="false">
-            <circle className="ctx-usage__track" cx="10" cy="10" r="8" />
-            <circle
-              className="ctx-usage__fill"
-              cx="10"
-              cy="10"
-              r="8"
-              strokeDasharray={circumference.toFixed(2)}
-              strokeDashoffset={offset.toFixed(2)}
-              transform="rotate(-90 10 10)"
+          <IconSwap active={compressing || showResult ? 'b' : 'a'} a={ring} b={
+            <IconSwap active={showResult ? 'b' : 'a'}
+              a={<span className="ctx-usage__spinner"><Sym name="refresh" size={18} /></span>}
+              b={showResult ? <SuccessCheck key={compression?.revision} size={18} color="currentColor" /> : <span />}
             />
-          </svg>
+          } />
         </Button>
       </Tooltip.Trigger>
       <Tooltip.Content>
         <p>{label}</p>
       </Tooltip.Content>
+      <span className="sr-only" role="status" aria-live="polite">{message}</span>
     </Tooltip>
   );
 }

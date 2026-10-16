@@ -1,477 +1,60 @@
-/* Material You supplies the color and shape roles; the library keeps the
-   content-first thumbnail, search, and filter hierarchy used by YouTube. */
-.page-library .drop-zone {
+/*
+ * 资料页的视觉原语由 HeroUI（Card / Chip / SearchField / ToggleButtonGroup）与
+ * Library.tsx 中的 Tailwind 工具类表达；配色只读 HeroUI 语义令牌。
+ *
+ * 此文件只保留 PageShell 的页面级内容宽度契约。`video-row`、`drop-zone` 等 class
+ * 仍作为 e2e / 骨架量测的稳定钩子使用，不再承载自写样式。
+ */
+.page-library {
+  --page-content-max: 1360px;
+}
+
+/* 拖卡片时，屏幕顶部的左右两块是大面积投放区：左侧置顶，右侧删除。
+   触屏长按时不必精确瞄准小按钮；两个区域各占半屏宽，覆盖顶部 22vh。 */
+.drag-zones {
+  position: fixed;
+  z-index: 1000;
+  inset: 0 0 auto;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  height: max(160px, 22vh);
+  pointer-events: none;
+}
+
+.drag-zone {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 16px;
-  max-width: none;
-  padding: 16px 20px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-lg);
-  background: var(--background-secondary);
-  text-align: left;
-}
-
-.page-library .drop-zone--over {
-  border-color: var(--accent);
-  background: var(--accent-soft);
-}
-
-.page-library .drop-zone__icon {
-  flex: none;
-  font-size: 28px;
-}
-
-.page-library .drop-zone__copy {
-  flex: 1 1 auto;
-  min-width: 0;
-}
-
-.page-library .drop-zone__title {
-  margin: 0;
-  font-size: 15px;
-  font-weight: 500;
-}
-
-.page-library .drop-zone__hint {
-  justify-content: flex-start;
-  max-width: none;
-  margin-top: 2px;
-  font-size: 12px;
-}
-
-.page-library .drop-zone__actions {
-  flex: none;
-  gap: 8px;
-  margin: 0;
-}
-
-.page-library .library-browse {
-  margin-top: 28px;
-}
-
-.page-library .library-toolbar {
-  flex-wrap: wrap;
-  gap: 16px;
-  margin: 0;
-}
-
-.page-library .library-toolbar__summary {
-  flex: 1 1 auto;
-  min-width: 160px;
-}
-
-.page-library .library-toolbar__summary h2 {
-  margin: 0;
-  font-size: 1.375rem;
-  font-weight: 400;
-  line-height: 1.4;
-}
-
-.page-library .library-toolbar__summary p {
-  margin: 4px 0 0;
-  color: var(--muted);
-  font-size: 13px;
-}
-
-.page-library .library-search {
-  display: flex;
-  flex: 0 1 380px;
-  align-items: center;
-  gap: 12px;
-  box-sizing: border-box;
-  min-width: 220px;
-  height: 48px;
-  padding: 0 8px 0 16px;
-  border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-full);
-  background: var(--background-secondary);
-  color: var(--muted);
-}
-
-.page-library .library-search:focus-within {
-  border-color: var(--accent);
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-/* HeroUI 迁移后 <Sym> 渲染的是内联 <svg>，尺寸默认 1em（跟随所在处字号），
-   所以这里继续用 font-size 控大小，图标本身是 <Sym> 渲染的内联 svg。 */
-.page-library .library-search__icon {
-  flex: none;
-  font-size: 22px;
-}
-
-.page-library .library-search input {
-  width: 100%;
-  min-width: 0;
-  padding: 10px 0;
-  border: 0;
-  outline: 0;
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 14px;
-  appearance: none;
-}
-
-.page-library .library-search input::placeholder {
-  color: var(--muted);
-  opacity: 1;
-}
-
-.page-library .library-search input::-webkit-search-cancel-button {
-  appearance: none;
-}
-
-.page-library .library-search__clear {
-  flex: none;
-}
-
-.page-library .library-filter-row {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 8px 16px;
-  margin-top: 20px;
-}
-
-.page-library .library-filters {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.page-library .library-filter {
-  display: inline-flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
-  gap: 6px;
-  min-height: 40px;
-  padding: 8px 14px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: var(--background-tertiary);
-  color: var(--foreground);
-  font: inherit;
-  font-size: 14px;
-  font-weight: 500;
-  cursor: pointer;
-  transition: background-color var(--duration-slow) var(--ease-out);
+  gap: 0.6rem;
+  padding: max(1rem, env(safe-area-inset-top)) 1rem 0.75rem;
+  color: var(--color-foreground, currentColor);
+  background: color-mix(in srgb, var(--color-surface, white) 88%, transparent);
+  border: 2px dashed color-mix(in srgb, currentColor 28%, transparent);
+  border-radius: 0 0 1.25rem 1.25rem;
+  font-size: 1rem;
+  font-weight: 600;
+  transition: background-color 120ms ease, border-color 120ms ease;
 }
 
-.page-library .library-filter:hover {
-  background: var(--default);
+.drag-zone--pin {
+  color: var(--color-accent, #2563eb);
 }
 
-.page-library .library-filter[aria-pressed='true'] {
-  background: var(--default-soft);
-  color: var(--default-soft-foreground);
+.drag-zone--delete {
+  color: var(--color-danger, #dc2626);
 }
 
-.page-library .library-filter__check {
-  font-size: 18px;
+.drag-zone--over {
+  background: color-mix(in srgb, currentColor 18%, white);
+  border-color: currentColor;
 }
 
-.page-library .library-results {
-  margin-left: auto;
-  color: var(--muted);
-  font-size: 12px;
+.drag-zone__icon {
+  font-size: 1.4rem;
 }
 
-.page-library .group-header {
-  gap: 0;
-  margin: 24px 0 6px;
-  padding: 0 4px;
-}
-
-.page-library .group-header__toggle {
-  display: flex;
-  flex: 1 1 auto;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  min-height: 48px;
-  padding: 8px 4px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
-
-.page-library .group-header__toggle:disabled {
-  opacity: 1;
-  cursor: default;
-}
-
-.page-library .group-header__name {
-  overflow: hidden;
-  font-size: 15px;
-  font-weight: 500;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.page-library .group-header__count {
-  font-variant-numeric: tabular-nums;
-}
-
-.page-library .group-header__icon {
-  display: inline-flex;
-  flex: none;
-  color: var(--muted);
-}
-
-.page-library .video-row__thumb {
-  display: block;
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0;
-  border: 0;
-  font: inherit;
-  cursor: pointer;
-}
-
-.page-library .video-row:focus-within {
-  background: var(--background-secondary);
-}
-
-/* 悬停/聚焦时把卡片的次要操作按钮与拖拽手柄一起显形。
-   HeroUI Button 渲染成 <button data-slot="button">，用 data-slot 定位比写死标签名稳。 */
-.page-library .video-row:focus-within .video-row__handle,
-.page-library .video-row:focus-within .video-row__actions [data-slot='button'] {
-  opacity: 1;
-}
-
-.page-library .video-row__name {
-  margin: 0;
-  line-height: 1.5;
-}
-
-.page-library .video-row__progress-fill {
-  display: block;
-}
-
-.page-library .video-row__tags {
-  flex-wrap: wrap;
-}
-
-/* ── 首屏骨架 ──────────────────────────────────────────────────────────────
-   一条原则：**几何靠继承，不靠手写**。
-   凡是真页面里存在的包裹层（`.library-toolbar` / `.library-filter-row` /
-   `.group-header` / `.video-row__main` / `.video-row__tags` / `.video-row__actions`）
-   骨架都原样复用真类 —— 间距、外边距、圆角全部来自真内容那套规则。
-   骨架不需要抄一遍像素，也就不会因为真卡片改了间距而悄悄错位。
-
-   这里只负责一件事：**真内容里是「文字 / 按钮」而骨架里是一条灰的那些块的宽高。**
-
-   ⚠️ 上一版是靠手写高度「凑」对齐的，结果并不齐：真卡片 308px、骨架 259px（每张矮 49px，
-   少的是操作按钮行），列表起点还高了 144px（工具栏那一段在加载中整段不渲染）。
-   现在这两个数由回归断言守着，见 scripts/probe-loading-latency.mjs 的 H 组。
-   ──────────────────────────────────────────────────────────────────────────── */
-
-/* 骨架里的灰条有的嵌在文字容器里（如 h3），而 `height` 对**行内**元素无效 ——
-   统一改成块级，下面每个宽高才真的生效。 */
-.page-library .skel-library .skel-bar {
-  display: block;
-}
-
-/* 工具栏三块占位。横排布局直接沿用 `.library-toolbar` 的 flex / gap。
-   高度取真元素的**实测值**（h2 那一行 31px、下面那行 20px + 4px 间距），
-   不是拍脑袋的整数 —— H 组断言按 ±4px 比对，写错会被抓出来。 */
-.page-library .skel-library .skel-library__h2 {
-  width: 150px;
-  height: 31px;
-}
-
-.page-library .skel-library .skel-library__sub {
-  width: 180px;
-  height: 20px;
-  margin-top: 4px;
-}
-
-/* 对齐 `.library-search` 的 flex 基准与 48px 高度 */
-.page-library .skel-library .skel-library__search {
-  flex: 0 1 380px;
-  min-width: 220px;
-  height: 48px;
-  border-radius: var(--radius-full);
-}
-
-.page-library .skel-library .skel-library__newfolder {
-  width: 104px;
-  height: 40px;
-}
-
-/* 筛选 chip：个数跟真的一模一样（都来自 LIBRARY_FILTERS）。
-   几何直接照抄 `.library-filter` —— 40px 高、`--radius-sm`、`--background-tertiary`。
-   注意它**不是药丸**（真实现用的是小圆角 chip），照抄才不会看着像另一种控件。 */
-.page-library .skel-library .skel-library__filter {
-  width: 72px;
-  height: 40px;
-  border-radius: var(--radius-sm);
-  background: var(--background-tertiary);
-}
-
-/* 分组头：真高度来自 `.group-header__toggle` 的 min-height + padding，
-   所以占位也照抄这两条，而不是去猜一个数字。 */
-.page-library .skel-library .skel-library__group-toggle {
-  display: flex;
-  align-items: center;
-  min-height: 48px;
-  padding: 8px 4px;
-}
-
-.page-library .skel-library .skel-library__group-name {
-  width: 96px;
-  height: 18px;
-}
-
-/* 缩略图右下角的时长徽标占位（真卡片是 .video-row__duration，right/bottom 都是 6px） */
-.page-library .skel-library .skel-library__badge {
-  position: absolute;
-  right: 6px;
-  bottom: 6px;
-  width: 38px;
-  height: 16px;
-  border-radius: 4px;
-  background: color-mix(in oklch, var(--foreground) 14%, transparent);
-}
-
-.page-library .skel-library .skel-library__name {
-  height: 23px;
-}
-
-.page-library .skel-library .skel-library__meta {
-  width: 62%;
-  height: 18px;
-}
-
-/* 标签行占位。`tag-mini` 自己的底色是 oklch(94%) —— 真卡片里那块药丸靠**文字**才立得住，
-   只留一块色板就几乎看不见，所以照本屏统一的三级面给色。 */
-.page-library .skel-library .skel-library__tag {
-  width: 56px;
-  height: 18px;
-  background: var(--background-tertiary);
-}
-
-/* 缩略图：真类给的是 `--default-soft`（那就是真卡片「还没出封面」时的样子，忠实，
-   但在骨架这一屏里太淡 —— 换成本屏统一的三级面），形状不变，H 组量的仍是同一套几何。 */
-.page-library .skel-library .video-row__thumb {
-  background: var(--background-tertiary);
-}
-
-/* 操作行：一个带文字的按钮 + 一个图标按钮（真卡片是「学习 / 阅读」+「更多」） */
-.page-library .skel-library .skel-library__action {
-  width: 36px;
-  height: 36px;
-  border-radius: var(--radius-sm);
-  background: var(--background-tertiary);
-}
-
-.page-library .skel-library .skel-library__action--pill {
-  width: 84px;
-}
-
-.page-library .library-filter:focus-visible,
-.page-library .group-header__toggle:focus-visible,
-.page-library .video-row__thumb:focus-visible,
-.page-library .video-row__handle:focus-visible {
-  outline: 3px solid var(--accent);
-  outline-offset: 3px;
-}
-
-@media (max-width: 900px) {
-  .page-library .drop-zone {
-    flex-wrap: wrap;
-  }
-
-  .page-library .drop-zone__copy {
-    flex-basis: calc(100% - 48px);
-  }
-
-  .page-library .drop-zone__actions {
-    justify-content: flex-start;
-    margin-left: 44px;
-  }
-
-  .page-library .library-search {
-    flex: 1 1 280px;
-  }
-}
-
-@media (max-width: 640px) {
-  .page-library .drop-zone {
-    gap: 12px;
-    padding: 16px;
-  }
-
-  .page-library .drop-zone__actions {
-    width: 100%;
-    margin-left: 0;
-  }
-
-  .page-library .drop-zone__actions > [data-slot='button'] {
-    flex: 1 1 auto;
-  }
-
-  .page-library .library-browse {
-    margin-top: 24px;
-  }
-
-  .page-library .library-toolbar {
-    gap: 12px;
-  }
-
-  .page-library .library-toolbar__summary {
-    min-width: 0;
-  }
-
-  .page-library .library-toolbar__summary h2 {
-    font-size: 20px;
-  }
-
-  .page-library .library-search {
-    order: 3;
-    flex-basis: 100%;
-    min-width: 0;
-  }
-
-  .page-library .library-search input {
-    font-size: 16px;
-  }
-
-  .page-library .library-filter-row {
-    margin-top: 16px;
-  }
-
-  .page-library .library-filters {
-    flex-wrap: nowrap;
-    gap: 6px;
-  }
-
-  .page-library .library-filter {
-    min-height: 48px;
-    padding: 8px 10px;
-    font-size: 13px;
-    white-space: nowrap;
-  }
-
-  .page-library .library-results {
-    margin-left: 0;
-  }
-
-  .page-library .group-header {
-    margin-top: 16px;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .page-library .library-filter {
-    transition: none;
-  }
+.drag-ghost {
+  position: fixed;
+  z-index: 1001;
+  pointer-events: none;
 }

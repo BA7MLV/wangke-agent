@@ -4,6 +4,39 @@ import type { ReasoningEffort } from '../api/siliconflow';
 import { normalizeThinkingEffort } from '../api/modelCaps';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
+export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
+
+/** 独立的决策模型连接。含凭据与出网授权，整项仅保存在本机。 */
+export interface JevSettings {
+  baseUrl: string;
+  apiKey: string;
+  model: string;
+  skillRouting: boolean;
+  contextCompression: boolean;
+}
+
+export function defaultJevSettings(): JevSettings {
+  return {
+    baseUrl: 'https://api.typesafe.ai/v1',
+    apiKey: '',
+    model: 'jev-1.13.0',
+    skillRouting: false,
+    contextCompression: false,
+  };
+}
+
+function normalizeJevSettings(value: unknown): JevSettings {
+  const defaults = defaultJevSettings();
+  if (value == null || typeof value !== 'object') return defaults;
+  const raw = value as Record<string, unknown>;
+  return {
+    baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : defaults.baseUrl,
+    apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : defaults.apiKey,
+    model: typeof raw.model === 'string' ? raw.model : defaults.model,
+    skillRouting: raw.skillRouting === true,
+    contextCompression: raw.contextCompression === true,
+  };
+}
 
 /** 槽位在设置里的字段名。`chat` 对应的字段叫 `llmModel`（历史命名），映射集中在这里。 */
 const SLOT_FIELD = {
@@ -35,6 +68,8 @@ export interface Provider {
   name: string;
   /** OpenAI 兼容根地址，如 `https://api.siliconflow.cn/v1` */
   baseUrl: string;
+  /** 对话 API 协议。ASR 端点仍要求 OpenAI 兼容格式。 */
+  protocol: ApiProtocol;
   /** 凭据。**永不参与同步**（见 `sync/units.ts`），也不参与迁移包导出 */
   apiKey: string;
   /** 这家能填哪些槽位（= 实现了哪些端点）。用户手动声明 */
@@ -69,6 +104,7 @@ export interface ModelTarget {
   apiKey: string;
   model: string;
   catalogId: string;
+  protocol: ApiProtocol;
 }
 
 /** 两个模型引用是否同一个（收藏夹去重、选中态判定） */
@@ -81,8 +117,10 @@ export function sameRef(a: ModelRef, b: ModelRef): boolean {
  * 取值直接对应 mdui `setTheme()` 的参数，见 `src/ui/theme.ts`。
  */
 export type AppTheme = 'auto' | 'light' | 'dark';
+export type AccentColor = 'blue' | 'violet' | 'rose' | 'orange' | 'green' | 'amber';
 
 export interface Settings {
+  jev: JevSettings;
   /** 模型供应商注册表（凭据在这里，不在顶层） */
   providers: Provider[];
   asrModel: ModelRef;
@@ -114,6 +152,8 @@ export interface Settings {
   customRates: number[];
   /** 界面主题：跟随系统 / 强制浅色 / 强制深色（MD3 令牌体系下深浅两套色板都已就位） */
   theme: AppTheme;
+  /** HeroUI 强调色预设 */
+  accentColor: AccentColor;
   /** Material You 动态取色：从课程封面提取主色，让播放页配色随课程变化 */
   dynamicColor: boolean;
   /** 学习时长自动记录（关掉后不再累计，已有记录保留） */
@@ -168,6 +208,7 @@ function defaultProvider(apiKey = ''): Provider {
     id: DEFAULT_PROVIDER_ID,
     name: '硅基流动',
     baseUrl: DEFAULT_SF_BASE_URL,
+    protocol: 'openai-chat',
     apiKey,
     serves: ['chat', 'vision', 'asr'],
     // 国内站：与旧实现取能力数据时的合并顺序一致（cn 覆盖 intl）
@@ -194,6 +235,7 @@ function defaultModels(): Record<ModelFieldName, ModelRef> {
  */
 function initialSettings(): Settings {
   return {
+    jev: defaultJevSettings(),
     providers: [defaultProvider()],
     ...defaultModels(),
     favorites: { chat: [], vision: [], asr: [] },
@@ -209,6 +251,7 @@ function initialSettings(): Settings {
     danmakuEnabled: true,
     customRates: [],
     theme: 'auto',
+    accentColor: 'blue',
     dynamicColor: true,
     studyTrackingEnabled: true,
     studyIdleMinutes: 5,
@@ -248,6 +291,12 @@ export const useSettings = create<SettingsStore>()(
     }),
     {
       name: 'wangke-settings',
+      // 新字段可加性升级：旧版或不完整的连接配置也要补齐默认值，且不自动开启出网。
+      merge: (persisted, current) => ({
+        ...current,
+        ...(persisted as Partial<Settings>),
+        jev: normalizeJevSettings((persisted as Partial<Settings> | undefined)?.jev),
+      }),
       /**
        * v2 → v3：思考档位从 3 档（low / high / max）扩成 6 档
        * （不思考 + minimal / low / medium / high / xhigh），`max` 改名 `xhigh`。
@@ -296,9 +345,11 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   // 也不能凭一个数字字段销毁用户数据。
   if (Array.isArray(persisted.providers)) {
     const current = { ...initialSettings(), ...(persisted as unknown as Settings) };
+    current.jev = normalizeJevSettings(persisted.jev);
     // v2 → v3：档位从 3 档扩成 6 档，`max` 改名 `xhigh`。hydrate **不经过 store 的
     // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
+    current.accentColor = isAccentColor(current.accentColor) ? current.accentColor : initialSettings().accentColor;
     return current;
   }
   const s = persisted as unknown as LegacySettings;
@@ -323,6 +374,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   const base = initialSettings();
   return {
     providers: [provider],
+    jev: base.jev,
     asrModel: { providerId: provider.id, model: s.asrModel ?? base.asrModel.model },
     llmModel: { providerId: provider.id, model: s.llmModel ?? base.llmModel.model },
     visionModel: { providerId: provider.id, model: visionModel ?? base.visionModel.model },
@@ -339,6 +391,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     danmakuEnabled: s.danmakuEnabled ?? base.danmakuEnabled,
     customRates: Array.isArray(s.customRates) ? s.customRates : base.customRates,
     theme: s.theme ?? base.theme,
+    accentColor: isAccentColor(s.accentColor) ? s.accentColor : base.accentColor,
     dynamicColor: s.dynamicColor ?? base.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled ?? base.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes ?? base.studyIdleMinutes,
@@ -349,11 +402,23 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   };
 }
 
+function isAccentColor(value: unknown): value is AccentColor {
+  return (
+    value === 'blue' ||
+    value === 'violet' ||
+    value === 'rose' ||
+    value === 'orange' ||
+    value === 'green' ||
+    value === 'amber'
+  );
+}
+
 // ── 读取 ─────────────────────────────────────────────────────────────────────
 
 export function getSettings(): Settings {
   const s = useSettings.getState();
   return {
+    jev: { ...s.jev },
     providers: s.providers.map((p) => ({ ...p, serves: [...p.serves] })),
     asrModel: { ...s.asrModel },
     llmModel: { ...s.llmModel },
@@ -375,6 +440,7 @@ export function getSettings(): Settings {
     danmakuEnabled: s.danmakuEnabled,
     customRates: [...s.customRates],
     theme: s.theme,
+    accentColor: s.accentColor,
     dynamicColor: s.dynamicColor,
     studyTrackingEnabled: s.studyTrackingEnabled,
     studyIdleMinutes: s.studyIdleMinutes,
@@ -419,6 +485,7 @@ export function targetOfSlot(s: Settings, slot: ModelSlot): ModelTarget {
     apiKey: p.apiKey.trim(),
     model: ref.model,
     catalogId: p.catalogId,
+    protocol: p.protocol ?? 'openai-chat',
   };
 }
 
@@ -435,6 +502,7 @@ export function targetOrNull(s: Settings, ref: ModelRef): ModelTarget | null {
     apiKey: p.apiKey,
     model: ref.model,
     catalogId: p.catalogId,
+    protocol: p.protocol ?? 'openai-chat',
   };
 }
 
@@ -465,6 +533,7 @@ export function mergeImportedProviders(
       id: inc.id,
       name: inc.name || cur?.name || inc.id,
       baseUrl: (inc.baseUrl || cur?.baseUrl || '').replace(/\/+$/, ''),
+      protocol: isApiProtocol(inc.protocol) ? inc.protocol : (cur?.protocol ?? 'openai-chat'),
       // 凭据只从本机取；载荷里带的 apiKey 一律忽略（老包里可能有）
       apiKey: cur?.apiKey ?? '',
       serves: Array.isArray(inc.serves) ? inc.serves.filter(isModelSlot) : (cur?.serves ?? []),
@@ -485,6 +554,11 @@ interface ImportedProvider {
   apiKey?: string;
   serves?: string[];
   catalogId?: string;
+  protocol?: string;
+}
+
+function isApiProtocol(value: unknown): value is ApiProtocol {
+  return value === 'openai-chat' || value === 'openai-responses' || value === 'anthropic-messages';
 }
 
 function isModelSlot(v: unknown): v is ModelSlot {

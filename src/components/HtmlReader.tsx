@@ -14,6 +14,8 @@ import { useSettings } from '../store/settings';
 import { Sym } from '../ui';
 import ReaderProgress from './ReaderProgress';
 import DocSkeleton from './DocSkeleton';
+import { InkLayer, InkToolbar, useMaterialInk } from './MaterialInk';
+import { inkTextKey } from '../materials/ink';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -80,6 +82,7 @@ export default function HtmlReader({
   handleRef,
   onUnitChange,
 }: Props) {
+  const ink = useMaterialInk();
   /**
    * 视图**由本组件持有**，而不是受控于 `videos.htmlView`。
    *
@@ -104,10 +107,11 @@ export default function HtmlReader({
 
   const changeView = useCallback(
     (next: HtmlView) => {
+      if (next === 'raw') ink.setTool('read');
       setView(next);
       onViewChange(next);
     },
-    [onViewChange],
+    [onViewChange, ink.setTool],
   );
 
   const remoteSetting = useSettings((s) => s.htmlRemoteAssets);
@@ -485,6 +489,8 @@ const src = await readHtmlText(blob);
             与上面那句「第 N / M 段」同源（换视图时不会有一条线突然跳回 0）。 */}
         <ReaderProgress current={current} total={total} />
       </div>
+      <InkToolbar disabled={!ready || !!error} onActivate={() => { if (view === 'raw') changeView('blocks'); }} />
+      {view === 'raw' && <div className="mr-hint">手写批注使用分段视图；选择画笔会自动切换。</div>}
 
       {error && (
         <div className="mr-hint" data-testid="reader-error">
@@ -535,6 +541,7 @@ const src = await readHtmlText(blob);
               >
                 <span className="mr-html__badge">第 {block.unit} 段</span>
                 <div dangerouslySetInnerHTML={{ __html: block.html }} />
+                <InkLayer surface={`html:${block.unit}:${inkTextKey(block.html)}`} />
               </section>
             ))}
           </article>

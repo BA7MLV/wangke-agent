@@ -259,6 +259,7 @@ export const SYNC_SETTINGS_KEYS = [
   'danmakuEnabled',
   'customRates',
   'theme',
+  'accentColor',
   'dynamicColor',
   'studyTrackingEnabled',
   'studyIdleMinutes',
@@ -284,6 +285,8 @@ export const SYNC_SETTINGS_KEYS = [
  * 不能因为白名单里没有 apiKey 就以为凭据安全了。
  */
 export const NON_SYNC_SETTINGS_KEYS = [
+  // Jev 包含 API Key 与向第三方发送历史的授权；两者都必须在每台设备单独配置。
+  'jev',
   'bilibiliCookie',
   'bilibiliProxy',
   'liveRelay',
@@ -314,15 +317,16 @@ export type SyncedProvider = Omit<Provider, 'apiKey'>;
  *
  * 这是「凭据永不同步」的唯一执行点，而它**不是**靠白名单实现的 —— 白名单是按顶层字段名
  * 过滤的，管不到 `providers[i].apiKey` 这种嵌套字段。所以这里显式重建每个供应商对象，
- * 只保留 id / name / baseUrl / serves / catalogId。
+ * 只保留 id / name / baseUrl / protocol / serves / catalogId。
  *
  * **返回的对象是新引用**：调用方（同步层）若就地改它，不会污染本机设置里的真身。
  */
 function stripProviderKeys(s: Settings): SyncedProvider[] {
-  return s.providers.map(({ id, name, baseUrl, serves, catalogId }) => ({
+  return s.providers.map(({ id, name, baseUrl, protocol, serves, catalogId }) => ({
     id,
     name,
     baseUrl,
+    protocol,
     serves: [...serves],
     catalogId,
   }));

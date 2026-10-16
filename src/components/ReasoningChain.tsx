@@ -1,4 +1,5 @@
 import { useEffect, useId, useRef, useState } from 'react';
+import { Spinner } from '@heroui/react';
 import { Sym } from '../ui';
 import { Collapse } from './motion';
 import './reasoning-chain.css';
@@ -166,8 +167,7 @@ export default function ReasoningChain({
       >
         {open ? (
           active ? (
-            // 展开/收起此刻都点得动，所以用一个不偏不倚的上下箭头，而不是倒向某一侧
-            <Sym name="unfold-more" className="reasoning-chain__icon" />
+            <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />
           ) : (
             <Sym name="keyboard-arrow-down" className="reasoning-chain__icon" />
           )

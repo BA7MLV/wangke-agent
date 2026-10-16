@@ -35,6 +35,7 @@ import {
   useSkeletonGate,
 } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { useCourseChat } from '../store/courseChat';
 import { SettingsButton } from '../components/SettingsModal';
 import { IconSwap, NumberPop } from '../components/motion';
 import { db, type FolderRow, type VideoRow } from '../store/db';
@@ -58,6 +59,7 @@ import { enqueueCover } from '../pipelines/coverQueue';
 import { useCoverRevision } from '../store/covers';
 import { detectMaterialFormat, isLegacyDocFile, isMaterialFile } from '../materials/parse';
 import { formatCaughtError } from '../utils/errorText';
+import { uuid } from '../utils/uuid';
 import './library.css';
 
 function formatDuration(sec: number): string {
@@ -93,21 +95,6 @@ function isVideoFile(file: File): boolean {
  */
 function isImportable(file: File): boolean {
   return isVideoFile(file) || isMaterialFile(file);
-}
-
-/**
- * crypto.randomUUID 仅在安全上下文（HTTPS / localhost）可用。
- * iPad 通过局域网 http://IP 访问时它是 undefined，直接调用会同步抛异常
- * （表现为选完文件毫无反应）。getRandomValues 在所有上下文都可用，用它降级。
- */
-function uuid(): string {
-  if (typeof crypto.randomUUID === 'function') return crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  crypto.getRandomValues(bytes);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
-  bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
-  const h = Array.from(bytes, (b) => b.toString(16).padStart(2, '0')).join('');
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
 }
 
 /** iOS/iPadOS 检测（含 iPadOS 13+ 伪装成 MacIntel 的情况） */
@@ -154,7 +141,7 @@ async function probeDuration(file: Blob): Promise<number> {
  *
  * 原先用 antd `Tag`，颜色是 `default / processing / success / error`；
  * mdui 的 `mdui-chip` 不带语义色变体、标签文字颜色还在 shadow DOM 里，按状态分别上色做不到，
- * 因此改用页面自己的静态标记 `.tag-mini`（与 SkillsCard 同一取舍），配色走 MD3 语义色板。
+ * 现在用 HeroUI Chip 的静态语义色变体表达状态，不再依赖页面专属 tag 样式。
  */
 const STATUS_TAG: Record<VideoRow['status'], { variant: '' | 'primary' | 'error'; text: string }> = {
   new: { variant: '', text: '未转写' },
@@ -238,16 +225,16 @@ type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['value'];
 const GRID_CLS =
   'video-grid mt-2 mb-1 grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-5 max-[640px]:grid-cols-1 max-[640px]:gap-4';
 /** 卡片根：表面 / 圆角 / 阴影由 HeroUI `Card` 自带，这里只补内边距与纵向排布 */
-const CARD_CLS = 'video-row group relative gap-0 p-1.5 pb-2';
+const CARD_CLS = 'video-row group relative gap-0 p-1.5 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]';
 const THUMB_CLS =
   'video-row__thumb relative block aspect-video w-full cursor-pointer overflow-hidden rounded-2xl bg-default-soft';
 const MAIN_CLS = 'video-row__main mt-2 min-w-0 px-0.5';
 const NAME_CLS = 'video-row__name line-clamp-2 text-[15px] font-medium leading-snug text-foreground';
 const META_CLS = 'video-row__meta mt-0.5 truncate text-xs text-muted';
 const TAGS_CLS = 'video-row__tags mt-1.5 flex items-center gap-1.5 px-0.5';
-const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap-1 px-0.5';
+const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap-1 px-0.5 [&>[data-slot=button]:first-child]:mr-auto';
 /** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
-const SKEL_CLS = 'skel-bar block';
+const SKEL_CLS = 'skel-breathe block rounded-md bg-background-tertiary';
 
 function loadCollapsed(): Set<string> {
   try {
@@ -296,57 +283,57 @@ function LibrarySkeleton({ count }: { count: number }) {
        */}
       {/* 外面这层 `<section className="library-browse">` 不能省：它的 `margin-top: 28px`
           就是真页面里工具栏与上方投放区之间的距离（窄屏是 24px）。少了它整条链路会高 28px。 */}
-      <section className="library-browse">
-        <div className="library-toolbar">
-          <div className="library-toolbar__summary">
-            <div className="skel-bar skel-library__h2" />
-            <div className="skel-bar skel-library__sub" />
+      <section className="library-browse mt-7 max-[640px]:mt-6">
+        <div className="library-toolbar mb-1 flex flex-wrap items-center gap-4 max-[640px]:gap-3">
+          <div className="library-toolbar__summary min-w-40 flex-1">
+            <div className={`${SKEL_CLS} h-[31px] w-[150px]`} />
+            <div className={`${SKEL_CLS} mt-1 h-5 w-[180px]`} />
           </div>
-          <div className="skel-bar skel-library__search" />
-          <div className="skel-bar skel-library__newfolder" />
+          <div className={`${SKEL_CLS} h-12 w-[380px] rounded-field max-[900px]:flex-1 max-[640px]:order-3 max-[640px]:w-full`} />
+          <div className={`${SKEL_CLS} h-10 w-[104px] rounded-3xl`} />
         </div>
-        <div className="library-filter-row">
-          <div className="library-filters">
+        <div className="library-filter-row mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 max-[640px]:mt-4">
+          <div className="library-filters flex flex-wrap gap-2 max-[640px]:flex-nowrap max-[640px]:gap-1.5">
             {LIBRARY_FILTERS.map((item) => (
-              <div key={item.value} className="skel-bar skel-library__filter" />
+              <div key={item.value} className={`${SKEL_CLS} h-10 w-[72px] rounded-3xl max-[640px]:h-12`} />
             ))}
           </div>
         </div>
       </section>
-      <div className="group-header">
+      <div className="group-header mt-6 mb-1 flex min-h-12 items-center gap-2 px-1">
         {/* 真高度来自 `.group-header__toggle` 的 min-height + padding，
             所以占位照抄那两条，而不是猜一个数字 */}
-        <div className="skel-library__group-toggle">
-          <div className="skel-bar skel-library__group-name" />
+        <div className="skel-library__group-toggle flex min-h-12 items-center px-1">
+          <div className={`${SKEL_CLS} h-[18px] w-24`} />
         </div>
       </div>
 
-      <div className="video-grid">
+      <div className={GRID_CLS}>
         {Array.from({ length: count }, (_, i) => (
-          <div className="video-row" key={i}>
+          <Card.Root className={`${CARD_CLS} skel-library`} key={i}>
             {/* 缩略图 + 右下角时长徽标：真卡片上最显眼的两个块 */}
-            <div className="video-row__thumb skel-breathe">
-              <span className="skel-library__badge" />
+            <div className={`${THUMB_CLS} mb-2 skel-breathe`}>
+              <span className="absolute right-1.5 bottom-1.5 h-4 w-10 rounded bg-foreground/15" />
             </div>
             {/* 卡内三层沿用真类的包裹（__main / __tags / __actions）——
                 它们各自的 margin / gap 就是真卡片的间距，骨架不需要自己再抄一遍像素。
                 「同形」因此是结构上成立的，而不是靠一堆手写的 height 恰好凑对。 */}
-            <div className="video-row__main">
-              <h3 className="video-row__name">
-                <span className="skel-bar skel-library__name" />
+            <div className={MAIN_CLS}>
+              <h3 className={NAME_CLS}>
+                <span className={`${SKEL_CLS} h-[21px] w-full`} />
               </h3>
-              <div className="video-row__meta">
-                <span className="skel-bar skel-library__meta" />
+              <div className={META_CLS}>
+                <span className={`${SKEL_CLS} h-4 w-3/5`} />
               </div>
             </div>
-            <div className="video-row__tags">
-              <span className="tag-mini skel-breathe skel-library__tag" />
+            <div className={TAGS_CLS}>
+              <span className="skel-breathe h-5 w-14 rounded bg-background-tertiary" />
             </div>
-            <div className="video-row__actions">
-              <span className="skel-library__action skel-library__action--pill" />
-              <span className="skel-library__action" />
+            <div className={ACTIONS_CLS}>
+              <span className="h-9 w-[84px] rounded-3xl bg-background-tertiary" />
+              <span className="h-9 w-9 rounded-3xl bg-background-tertiary" />
             </div>
-          </div>
+          </Card.Root>
         ))}
       </div>
     </div>
@@ -356,6 +343,19 @@ function LibrarySkeleton({ count }: { count: number }) {
 export default function Library() {
   const navigate = useNavigate();
   const nav = useAppNav('home');
+  const sessions = useCourseChat((s) => s.sessions);
+  const activeSessionId = useCourseChat((s) => s.activeId);
+  const bootstrapChat = useCourseChat((s) => s.bootstrap);
+  const loadChatSession = useCourseChat((s) => s.loadSession);
+  useEffect(() => {
+    void bootstrapChat();
+  }, [bootstrapChat]);
+  const recentSessions = useMemo(
+    () => (sessions.some((session) => session.pinned)
+      ? [...sessions].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
+      : sessions),
+    [sessions],
+  );
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -940,6 +940,7 @@ export default function Library() {
         // v9：材料的文本块。不一起清会留下孤儿数据占空间
         // （向量表已随稠密检索移除，见 2026-09-23-context-engineering-design.md §1.6）
         db.materialBlocks,
+        db.materialInk,
         // v10：封面（主键就是 videoId）
         db.covers,
         // v12：评论区
@@ -959,6 +960,7 @@ export default function Library() {
         await db.chats.where('videoId').equals(row.id).delete();
         await db.chatSessions.where('videoId').equals(row.id).delete();
         await db.materialBlocks.where('materialId').equals(row.id).delete();
+        await db.materialInk.where('materialId').equals(row.id).delete();
         await db.covers.delete(row.id);
         await db.comments.where('videoId').equals(row.id).delete();
         await db.danmakus.where('videoId').equals(row.id).delete();
@@ -1219,13 +1221,7 @@ export default function Library() {
   const renderGroupHeader = (g: (typeof groups)[number]) => {
     const isCollapsed = collapsed.has(g.key) && !hasFilters;
     const isDropTarget = drag?.overKey === g.key;
-    const headerClass = [
-      'group-header',
-      drag ? 'group-header--dragging' : '',
-      isDropTarget ? 'group-header--over' : '',
-    ]
-      .filter(Boolean)
-      .join(' ');
+    const headerClass = `group-header mt-6 mb-1 flex min-h-12 items-center gap-1.5 rounded-2xl border border-transparent px-1 transition-colors max-[640px]:mt-4 ${drag ? 'group-header--dragging border-dashed border-border' : ''} ${isDropTarget ? 'group-header--over border-accent bg-accent-soft' : ''}`;
     return (
       <div
         key={g.key}
@@ -1245,7 +1241,7 @@ export default function Library() {
       >
         <button
           type="button"
-          className="group-header__toggle"
+          className="group-header__toggle flex min-h-12 min-w-0 flex-1 items-center gap-2 rounded-2xl px-1 text-left text-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
           aria-expanded={!isCollapsed}
           aria-controls={`library-group-${g.key}`}
           aria-label={`${g.name}，${g.videos.length} 项`}
@@ -1255,7 +1251,7 @@ export default function Library() {
           }}
           disabled={hasFilters}
         >
-          <span className="group-header__icon" aria-hidden="true">
+          <span className="group-header__icon inline-flex shrink-0 text-muted" aria-hidden="true">
             {/* icon-swap：两个箭头同时在 DOM 里叠在同一格，交叉淡入淡出。
                 之前是条件渲染，展开 / 收起时箭头是硬跳的。 */}
             <IconSwap
@@ -1264,9 +1260,9 @@ export default function Library() {
               b={<Sym name="keyboard_arrow_down" />}
             />
           </span>
-          <span className="group-header__icon" aria-hidden="true"><Sym name="folder" /></span>
-          <span className="group-header__name">{g.name}</span>
-          <span className="group-header__count">
+          <span className="group-header__icon inline-flex shrink-0 text-muted" aria-hidden="true"><Sym name="folder" /></span>
+          <span className="group-header__name min-w-0 truncate text-sm font-medium">{g.name}</span>
+          <span className="group-header__count text-xs tabular-nums text-muted">
             {/* number-pop-in：导入 / 删除后数量变化时逐位重新入场 */}
             <NumberPop text={g.videos.length} />
           </span>
@@ -1335,6 +1331,21 @@ export default function Library() {
       wide
       rootClassName="page-library"
       rail={nav}
+      recent={{
+        label: '最近',
+        items: recentSessions.map((session) => ({
+          id: String(session.id),
+          label: session.title,
+          active: session.id === activeSessionId,
+          onClick: () => {
+            if (session.id != null) {
+              void loadChatSession(session.id);
+              navigate('/');
+            }
+          },
+          testId: `chat-recent-${session.id}`,
+        })),
+      }}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
       /* 顶栏右上角那颗设置图标撤掉（2026-10-15，与 AI 助手页同一口径）：
          设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
@@ -1361,8 +1372,8 @@ export default function Library() {
 
       {/* 导入投放区：替 antd Upload.Dragger（mdui 没有上传组件，自己搭）。
           整块是可投放目标，点击任意空白处打开系统文件选择器。 */}
-      <div
-        className={dropActive ? 'drop-zone drop-zone--over' : 'drop-zone'}
+      <Card.Root
+        className={`drop-zone relative mt-3 flex cursor-pointer flex-row items-center gap-4 border border-dashed border-border bg-surface-secondary p-4 text-left transition-colors hover:bg-surface-tertiary max-[640px]:flex-col max-[640px]:items-center max-[640px]:gap-3 max-[640px]:p-4 max-[640px]:text-center ${dropActive ? 'border-accent bg-accent-soft' : ''}`}
         data-testid="drop-zone"
         onClick={() => nativeInputRef.current?.click()}
         onDragOver={(e) => {
@@ -1375,11 +1386,11 @@ export default function Library() {
         }}
         onDrop={handleDrop}
       >
-        <Sym name="cloud_upload" className="drop-zone__icon" />
-        <div className="drop-zone__copy">
-          <div className="drop-zone__title">导入课程与资料</div>
+        <Sym name="cloud_upload" className="drop-zone__icon shrink-0 text-[28px] text-accent max-[640px]:text-[32px]" />
+        <div className="drop-zone__copy min-w-0 flex-1 max-[640px]:w-full">
+          <div className="drop-zone__title text-sm font-medium text-foreground">导入课程与资料</div>
           {/* 格式与存储位置留在正文；系统选择器和空间管理细节收进说明。 */}
-          <div className="drop-zone__hint">
+          <div className="drop-zone__hint mt-0.5 flex items-center gap-1 text-xs leading-relaxed text-muted max-[640px]:justify-center">
             <span>拖入视频、PDF、Word、Markdown、HTML，只存本机</span>
             {/* HelpTip 内部已经 stopPropagation —— 这里整块是可点击的投放区，
                 不拦住会顺手弹出文件选择器。 */}
@@ -1395,7 +1406,7 @@ export default function Library() {
             </HelpTip>
           </div>
         </div>
-        <div className="drop-zone__actions">
+        <div className="drop-zone__actions flex shrink-0 flex-wrap justify-center gap-2 max-[640px]:w-full [&>[data-slot=button]]:max-[640px]:flex-1">
           {/* onClick 保留：投放区整块可点，按钮要拦住冒泡才不会顺手弹出文件选择器
               （RAC 的 usePress 会把 onClick 接到真实 click 上，stopPropagation 有效）。 */}
           <Button
@@ -1431,21 +1442,21 @@ export default function Library() {
           onChange={handleNativePick}
           style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}
         />
-      </div>
+      </Card.Root>
 
       {tasks.length > 0 && (
-        <div className="import-tasks" data-testid="import-tasks">
+        <Card.Root variant="secondary" className="import-tasks mt-3 flex flex-col gap-2 p-3" data-testid="import-tasks">
           {tasks.map((t) => (
-            <div key={t.key} className="import-task" data-testid="import-task">
-              <div className="import-task__head">
-                <span className="import-task-name" title={t.name}>
+            <div key={t.key} className="import-task flex min-w-0 flex-col gap-1" data-testid="import-task">
+              <div className="import-task__head flex min-w-0 items-center gap-2">
+                <span className="import-task-name min-w-0 flex-1 truncate text-[13px] text-foreground" title={t.name}>
                   {t.name}
                 </span>
                 <span
                   className={
                     t.status === 'error'
-                      ? 'import-task__status import-task__status--error'
-                      : 'import-task__status'
+                      ? 'import-task__status max-w-[42%] truncate text-xs text-danger'
+                      : 'import-task__status max-w-[42%] truncate text-xs tabular-nums text-muted'
                   }
                   data-testid="import-task-status"
                   title={t.status === 'error' ? t.error : undefined}
@@ -1482,50 +1493,41 @@ export default function Library() {
               )}
             </div>
           ))}
-        </div>
+        </Card.Root>
       )}
 
       {(videos.length > 0 || folders.length > 0) && (
-        <section className="library-browse" aria-label="浏览资料">
-          <div className="library-toolbar">
-            <div className="library-toolbar__summary">
-              <h2>你的课程与资料</h2>
-              <p>{videos.length - materialCount} 个视频 · {materialCount} 份阅读材料</p>
+        <section className="library-browse mt-7 max-[640px]:mt-6" aria-label="浏览资料">
+          <div className="library-toolbar mb-1 flex flex-wrap items-center gap-4 max-[640px]:gap-3">
+            <div className="library-toolbar__summary min-w-40 flex-1 max-[640px]:min-w-0">
+              <h2 className="m-0 text-[22px] font-medium leading-8 text-foreground max-[640px]:text-xl">你的课程与资料</h2>
+              <p className="mt-1 text-[13px] text-muted">{videos.length - materialCount} 个视频 · {materialCount} 份阅读材料</p>
             </div>
-            <div className="library-search" role="search">
-              <Sym name="search" className="library-search__icon" />
-              <input
-                ref={searchInputRef}
-                type="search"
-                data-testid="library-search"
-                aria-label="搜索课程或资料名称"
-                placeholder="搜索课程或资料"
-                value={searchText}
-                onChange={(e) => setSearchText(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === 'Escape' && searchText) {
-                    e.preventDefault();
-                    setSearchText('');
-                  }
-                }}
-              />
-              {searchText && (
-                <Button
-                  isIconOnly
-                  variant="tertiary"
-                  size="sm"
-                  className="library-search__clear"
-                  data-testid="library-search-clear"
-                  aria-label="清除搜索"
-                  onPress={() => {
-                    setSearchText('');
-                    searchInputRef.current?.focus();
-                  }}
-                >
-                  <Sym name="close" />
-                </Button>
-              )}
-            </div>
+            <SearchField
+              className="library-search order-none w-[380px] max-[900px]:flex-1 max-[640px]:order-3 max-[640px]:w-full"
+              variant="secondary"
+              fullWidth
+              data-testid="library-search-field"
+              aria-label="搜索课程或资料名称"
+              value={searchText}
+              onChange={(value) => setSearchText(value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Escape' && searchText) {
+                  e.preventDefault();
+                  setSearchText('');
+                }
+              }}
+            >
+              <SearchField.Group className="h-12 rounded-3xl border border-border bg-surface px-2 shadow-sm focus-within:border-accent">
+                <SearchField.SearchIcon className="ms-2 size-5" />
+                <SearchField.Input
+                  ref={searchInputRef}
+                  data-testid="library-search"
+                  placeholder="搜索课程或资料"
+                />
+                <SearchField.ClearButton data-testid="library-search-clear" />
+              </SearchField.Group>
+            </SearchField>
             <Button
               data-testid="btn-new-folder"
               variant="tertiary"
@@ -1535,23 +1537,32 @@ export default function Library() {
               新建文件夹
             </Button>
           </div>
-          <div className="library-filter-row">
-            <div className="library-filters" role="group" aria-label="按内容筛选">
+          <div className="library-filter-row mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 max-[640px]:mt-4">
+            <ToggleButtonGroup
+              className="library-filters flex-wrap gap-1.5 max-[640px]:flex-nowrap"
+              isDetached
+              selectionMode="single"
+              disallowEmptySelection
+              selectedKeys={[filter]}
+              onSelectionChange={(keys) => {
+                const selected = [...keys][0] as LibraryFilter | undefined;
+                if (selected) setFilter(selected);
+              }}
+              aria-label="按内容筛选"
+            >
               {LIBRARY_FILTERS.map((item) => (
-                <button
+                <ToggleButton
                   key={item.value}
-                  type="button"
-                  className="library-filter"
+                  id={item.value}
+                  className="library-filter min-h-10 px-3 max-[640px]:min-h-12 max-[640px]:px-2.5 max-[640px]:text-[13px]"
                   data-testid={`library-filter-${item.value}`}
-                  aria-pressed={filter === item.value}
-                  onClick={() => setFilter(item.value)}
                 >
-                  {filter === item.value && <Sym name="check" className="library-filter__check" />}
+                  {filter === item.value && <Sym name="check" className="size-4" />}
                   {item.label}
-                </button>
+                </ToggleButton>
               ))}
-            </div>
-            <span className="library-results" role="status" aria-live="polite">
+            </ToggleButtonGroup>
+            <span className="library-results ml-auto text-xs text-muted max-[640px]:ml-0" role="status" aria-live="polite">
               {hasFilters ? `${visibleCount} 项结果` : '最近导入优先'}
             </span>
           </div>
@@ -1605,7 +1616,7 @@ export default function Library() {
                 {renderGroupHeader(g)}
                 <div id={`library-group-${g.key}`} hidden={collapsed.has(g.key) && !hasFilters}>
                   {(!collapsed.has(g.key) || hasFilters) && (
-                    <div className="video-grid">{g.videos.map(renderVideoItem)}</div>
+                    <div className={GRID_CLS}>{g.videos.map(renderVideoItem)}</div>
                   )}
                 </div>
               </div>
@@ -1616,9 +1627,9 @@ export default function Library() {
 
       {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
       {drag && (
-        <div className="drag-ghost" style={{ left: drag.x, top: drag.y - 48 }}>
-          <Sym name="drag_indicator" className="drag-ghost__icon" />
-          <span className="drag-ghost__name">{drag.video.name}</span>
+        <div className="drag-ghost fixed z-[1000] flex max-w-[240px] items-center gap-2 rounded-xl bg-default-soft px-3 py-2 text-sm text-foreground shadow-lg pointer-events-none -translate-x-1/2" style={{ left: drag.x, top: drag.y - 48 }}>
+          <Sym name="drag_indicator" className="shrink-0 text-lg text-muted" />
+          <span className="truncate">{drag.video.name}</span>
         </div>
       )}
 
@@ -1627,10 +1638,10 @@ export default function Library() {
           pointerEvents:none —— 命中检测走 getBoundingClientRect，不需要它们接事件，
           也就不会挡住悬浮卡片或误触。 */}
       {drag && (
-        <div className="drag-zones" aria-hidden="true">
+        <div className="drag-zones pointer-events-none fixed top-0 right-0 left-0 z-[1001] flex justify-between p-3" aria-hidden="true">
           <div
             ref={pinZoneRef}
-            className={drag.zone === 'pin' ? 'drag-zone drag-zone--pin drag-zone--over' : 'drag-zone drag-zone--pin'}
+            className={`drag-zone flex items-center gap-2 rounded-full border-2 border-dashed border-border-secondary bg-surface px-[18px] py-2.5 text-sm font-medium text-foreground shadow-lg transition-transform ${drag.zone === 'pin' ? 'scale-105 border-accent bg-accent-soft text-accent-soft-foreground' : ''}`}
             data-testid="drag-zone-pin"
           >
             <Sym name={drag.video.pinned === 1 ? 'pin_off' : 'pin'} className="drag-zone__icon" />
@@ -1638,7 +1649,7 @@ export default function Library() {
           </div>
           <div
             ref={deleteZoneRef}
-            className={drag.zone === 'delete' ? 'drag-zone drag-zone--delete drag-zone--over' : 'drag-zone drag-zone--delete'}
+            className={`drag-zone flex items-center gap-2 rounded-full border-2 border-dashed border-border-secondary bg-surface px-[18px] py-2.5 text-sm font-medium text-foreground shadow-lg transition-transform ${drag.zone === 'delete' ? 'scale-105 border-danger bg-danger-soft text-danger-soft-foreground' : ''}`}
             data-testid="drag-zone-delete"
           >
             <Sym name="delete" className="drag-zone__icon" />
@@ -2184,9 +2195,9 @@ function VideoRow({
   };
 
   return (
-    <article
-      ref={articleRef}
-      className={dragging ? 'video-row video-row--dragging' : 'video-row'}
+    <Card.Root<'article'>
+        ref={articleRef}
+      className={`${CARD_CLS} ${dragging ? 'video-row--dragging opacity-40' : ''}`}
       data-testid="video-item"
       data-video-id={v.id}
       data-pinned={v.pinned === 1 ? '1' : undefined}
@@ -2218,7 +2229,7 @@ function VideoRow({
       }}
     >
       <div
-        className="video-row__handle"
+        className="video-row__handle absolute top-2.5 left-2.5 z-[2] flex min-h-8 min-w-8 cursor-grab touch-none items-center justify-center rounded-full bg-black/45 text-xl text-white opacity-0 transition-opacity group-hover:opacity-100 focus-visible:opacity-100 max-[900px]:opacity-75 pointer-coarse:opacity-75"
         role="button"
         tabIndex={0}
         aria-label={`移动 ${v.name} 到文件夹`}
@@ -2238,18 +2249,18 @@ function VideoRow({
           点缩略图直接进播放页，与卡片式的「整张可点」一致 */}
       <button
         type="button"
-        className="video-row__thumb"
+        className={`${THUMB_CLS} mb-2 overflow-hidden transition-shadow hover:shadow-md`}
         data-testid="video-thumb"
         aria-label={`${isMaterial ? '阅读' : '学习'} ${v.name}${ratio == null ? '' : v.finished === 1 ? '，已看完' : `，已观看 ${Math.round(ratio * 100)}%`}`}
         onClick={onPlay}
       >
         {cover ? (
           // 视频与 PDF 共用同一条封面链路，所以这里不再按类型分叉
-          <img src={cover} alt="" loading="lazy" decoding="async" />
+          <img className="block h-full w-full object-cover transition-transform duration-300 ease-out group-hover:scale-[1.03] motion-reduce:transition-none" src={cover} alt="" loading="lazy" decoding="async" />
         ) : (
           // 没有画面时：先用主色铺底（LQIP），连主色都没有才落到主题色底
           <span
-            className="video-row__thumb-empty"
+            className="video-row__thumb-empty flex h-full w-full items-center justify-center text-[44px] text-accent opacity-50"
             style={v.dominantColor ? { background: v.dominantColor } : undefined}
           >
             {isMaterial ? (
@@ -2259,13 +2270,13 @@ function VideoRow({
             )}
           </span>
         )}
-        <span className="video-row__duration">
+        <span className="video-row__duration absolute right-1.5 bottom-1.5 rounded-md bg-black/80 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
           {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
         </span>
         {/* 置顶徽标：压在缩略图右上角。标签行里也有一条「已置顶」，
             但缩略图是卡片最显眼的位置，一眼就能看出哪些排在了前面。 */}
         {v.pinned === 1 && (
-          <span className="video-row__pin" data-testid="video-pin" aria-hidden="true">
+          <span className="video-row__pin absolute top-1.5 right-1.5 flex size-6 items-center justify-center rounded-full bg-accent text-accent-foreground shadow-sm" data-testid="video-pin" aria-hidden="true">
             <Sym name="pin" filled />
           </span>
         )}
@@ -2275,29 +2286,29 @@ function VideoRow({
             位置和颜色都不同，别混。 */}
         {ratio != null && (
           <span
-            className="video-row__progress"
+            className="video-row__progress absolute right-0 bottom-0 left-0 h-1 bg-black/30"
             data-testid="video-progress"
             data-ratio={ratio.toFixed(3)}
             data-finished={v.finished === 1 ? '1' : undefined}
             aria-hidden="true"
           >
             <span
-              className="video-row__progress-fill"
+              className="video-row__progress-fill block h-full bg-accent"
               data-testid="video-progress-fill"
               style={{ width: `${ratio * 100}%` }}
             />
           </span>
         )}
       </button>
-      <div className="video-row__main">
-        <h3 className="video-row__name" id={`library-title-${v.id}`} title={v.name}>
+      <div className={MAIN_CLS}>
+        <h3 className={NAME_CLS} id={`library-title-${v.id}`} title={v.name}>
           {v.name}
         </h3>
-        <div className="video-row__meta" title={meta}>
+        <div className={META_CLS} title={meta}>
           {meta}
         </div>
         {activeJob && (
-          <div className="video-row__job" data-testid="video-job">
+          <div className="video-row__job mt-1.5 flex items-center gap-1.5 text-xs text-accent" data-testid="video-job">
             {/* 与导入进度条同一套映射：算得出百分比就定量显示，算不出走不确定态。 */}
             <ProgressBar
               maxValue={100}
@@ -2319,14 +2330,14 @@ function VideoRow({
           </div>
         )}
       </div>
-      <div className="video-row__tags">
-        {v.pinned === 1 && <span className="tag-mini tag-mini--primary">已置顶</span>}
-        {v.fileDeleted === 1 && <span className="tag-mini">文件已删</span>}
-        <span className={status.variant ? `tag-mini tag-mini--${status.variant}` : 'tag-mini'}>
+      <div className={TAGS_CLS}>
+        {v.pinned === 1 && <Chip size="sm" color="accent" variant="soft">已置顶</Chip>}
+        {v.fileDeleted === 1 && <Chip size="sm" color="default" variant="soft">文件已删</Chip>}
+        <Chip size="sm" color={status.variant === 'error' ? 'danger' : status.variant ? 'accent' : 'default'} variant="soft">
           {jobCopy ? jobCopy.tag : status.text}
-        </span>
+        </Chip>
       </div>
-      <div className="video-row__actions">
+      <div className={ACTIONS_CLS}>
         <Button data-testid="btn-play" variant="secondary" onPress={onPlay}>
           <Sym name="play_circle" />
           {isMaterial ? '阅读' : '学习'}
@@ -2443,6 +2454,6 @@ function VideoRow({
           </>
         )}
       </div>
-    </article>
+    </Card.Root>
   );
 }

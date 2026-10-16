@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
-import { useNavigate } from 'react-router-dom';
 import { Button, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
-import { SectionCard, Field, Sym, confirmDialog, toast } from '../ui';
+import { SectionCard, Field, confirmDialog, toast } from '../ui';
 import { useSettings } from '../store/settings';
 import { clearStudyDays, loadStudyDays, useStudyTime } from '../store/studyTime';
 import { computeStats, dateKey, formatStudyDuration } from '../utils/studyLog';
@@ -12,7 +11,6 @@ const IDLE_OPTIONS = [2, 5, 10, 15];
 
 /** 设置页「学习时长」卡片：开关 / 空闲判定 / 清空记录 + 一眼看得到的总账 */
 export default function StudyTimeCard() {
-  const navigate = useNavigate();
   const settings = useSettings();
   const flushCount = useStudyTime((s) => s.flushCount);
   const [summary, setSummary] = useState<{ days: number; total: number } | null>(null);
@@ -46,12 +44,6 @@ export default function StudyTimeCard() {
       title="学习时长"
       testId="card-study-time"
       subtitle="打开应用就会自动计时：只算「页面在前台」且「没长时间离开」的时间；正在播放视频时不判空闲"
-      actions={
-        <Button variant="secondary" data-testid="study-open-page" onPress={() => navigate('/study')}>
-          <Sym name="calendar_month" />
-          查看热力图
-        </Button>
-      }
     >
       <Field
         label="自动记录"

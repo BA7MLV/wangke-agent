@@ -3,6 +3,7 @@ import { getSettings, targetOfSlot } from '../store/settings';
 import { db } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
 import { loadEnabledSkillMeta, loadSkillBodies, skillMetaBlock, type SkillMeta } from './store';
+import { routeSkillsWithJev } from './jevRoute';
 
 export interface RoutedSkills {
   /** 最终选用的技能（路由结果 + 手动覆盖） */
@@ -41,13 +42,19 @@ export async function routeHandoutSkills(
   let autoIds: Set<number>;
   try {
     // 解析失败会掉进下面的兜底（全部启用），所以这里不让凭据问题炸掉整条讲义流水线
-    const target = targetOfSlot(getSettings(), 'chat');
-    const msg = await chatOnce(target, {
-      max_tokens: 300,
-      messages: [{ role: 'user', content: PROMPTS.routeSkills(videoName, sample, skillMetaBlock(metas)) }],
-    });
-    const names = new Set(parseRoutedNames(textOf(msg)));
-    autoIds = new Set(metas.filter((m) => names.has(m.name)).map((m) => m.id));
+    const settings = getSettings();
+    const decision = await routeSkillsWithJev(settings.jev, metas, videoName, sample);
+    if (decision !== null) {
+      autoIds = decision;
+    } else {
+      const target = targetOfSlot(settings, 'chat');
+      const msg = await chatOnce(target, {
+        max_tokens: 300,
+        messages: [{ role: 'user', content: PROMPTS.routeSkills(videoName, sample, skillMetaBlock(metas)) }],
+      });
+      const names = new Set(parseRoutedNames(textOf(msg)));
+      autoIds = new Set(metas.filter((m) => names.has(m.name)).map((m) => m.id));
+    }
   } catch {
     autoIds = new Set(metas.map((m) => m.id));
   }

@@ -165,9 +165,18 @@
 }
 
 /* ── 输入区 ─────────────────────────────────────────────────────────────── */
+/* 底部安全区：viewport-fit=cover 下布局视口是要盖住 iPhone 手势条的，
+   不垫一刀，最底下的 ctx 用量行就压在 home 指示条上。键盘弹出时页面已缩到
+   键盘上沿（--vvh，见 utils/useMobile.ts），手势条被键盘盖住，再垫就是
+   输入区与键盘之间的一条缝 —— 由 <html data-keyboard> 收回。 */
 .chat-composer {
   flex: none;
   padding-top: 8px;
+  padding-bottom: max(8px, env(safe-area-inset-bottom));
+}
+
+html[data-keyboard='open'] .chat-composer {
+  padding-bottom: 8px;
 }
 
 .chat-composer__row {
@@ -189,6 +198,10 @@
 
 /* 上下文用量提示（≈x.xk / yk）：三档告警色走 MD3 语义令牌 */
 .chat-ctx {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px;
   padding-top: 2px;
   text-align: right;
   font-size: 11px;

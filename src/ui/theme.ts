@@ -14,7 +14,17 @@
  */
 import { useEffect, useState } from 'react';
 import { getColorFromImage, removeColorScheme, setColorScheme } from './dynamicColor';
-import type { AppTheme } from '../store/settings';
+import type { AccentColor, AppTheme } from '../store/settings';
+
+/** HeroUI 的语义色预设：覆盖 accent 令牌后，soft / hover 等令牌会自动跟随。 */
+export const ACCENT_COLOR_OPTIONS = [
+  { id: 'blue', label: '蓝色', value: '#2563eb' },
+  { id: 'violet', label: '紫色', value: '#7c3aed' },
+  { id: 'rose', label: '玫红色', value: '#e11d48' },
+  { id: 'orange', label: '橙色', value: '#c2410c' },
+  { id: 'green', label: '绿色', value: '#15803d' },
+  { id: 'amber', label: '琥珀色', value: '#a16207' },
+] as const satisfies readonly { id: AccentColor; label: string; value: string }[];
 
 const DARK_QUERY = '(prefers-color-scheme: dark)';
 
@@ -48,6 +58,15 @@ export function applyTheme(theme: AppTheme): void {
   const dark = theme === 'dark' || (theme === 'auto' && systemPrefersDark());
   root.classList.toggle('dark', dark);
   root.style.colorScheme = dark ? 'dark' : 'light';
+}
+
+/** 将选择的 HeroUI 强调色写入根元素，所有 accent 语义令牌随之更新。 */
+export function applyAccentColor(accentColor: AccentColor): void {
+  const option = ACCENT_COLOR_OPTIONS.find(({ id }) => id === accentColor) ?? ACCENT_COLOR_OPTIONS[0];
+  const root = document.documentElement;
+  root.style.setProperty('--accent', option.value);
+  // 所有预设都足够深，使用白色前景可确保强调按钮的文字对比度。
+  root.style.setProperty('--accent-foreground', '#fff');
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

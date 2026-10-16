@@ -77,7 +77,7 @@ export interface NavItem {
    * 「你现在在哪」，而动作不是一个地方。所以它被排除在 `selectedKeys` 之外：
    * 点它不留下高亮，草稿态下侧栏也不会出现「好像选中了新会话」的假象。
    *
-   * 换句话说，侧栏里回答「你在哪」的只有两处：其余导航项（课程库 / 学习）与
+   * 换句话说，侧栏里回答「你在哪」的只有两处：课程库导航项与
    * Recent 里那条当前会话。见 docs/plans/2026-10-15-懒创建会话-design.md §七。
    */
   isAction?: boolean;
@@ -177,28 +177,6 @@ export interface PageShellProps {
   children: ReactNode;
 }
 
-/**
- * 量出每一行标题的溢出宽度，写进 `--recent-shift` / `--recent-duration`，
- * 供 `.recent-title > span` 的跑马灯动画使用（见 layout.css）。
- *
- * 位移量取决于内容宽度，CSS 自己算不出来，只能量一遍。量在 `.recent-title`
- * 的 **inline style** 上：它是裁剪容器，`scrollWidth - clientWidth` 就是要滑的距离。
- * 超宽才写（负值），没超宽就清掉 —— 缺省 0 时动画原地不动，于是只有超长标题会滚。
- */
-function measureRecentTitles(wrap: HTMLElement | null) {
-  wrap?.querySelectorAll<HTMLElement>('.recent-title').forEach((title) => {
-    const distance = title.scrollWidth - title.clientWidth;
-    if (distance > 1) {
-      title.style.setProperty('--recent-shift', `-${distance}px`);
-      // 按距离定速（约 40px/s），长标题才不会滚得飞快；夹在 2.5~8s 之间
-      title.style.setProperty('--recent-duration', `${Math.min(8, Math.max(2.5, distance / 40)).toFixed(2)}s`);
-    } else {
-      title.style.removeProperty('--recent-shift');
-      title.style.removeProperty('--recent-duration');
-    }
-  });
-}
-
 /** 侧栏内部：主导航 / Recent / 底部入口。宽屏就地渲染，窄屏进 Drawer。 */
 function Sidebar({
   rail,
@@ -235,25 +213,6 @@ function Sidebar({
    * 于是自己收一个 id：右键时 `setMenuId(item.id)`，菜单照样锚在那颗「更多」上。
    */
   const [menuId, setMenuId] = useState<string | null>(null);
-  /**
-   * 承载 Recent 列表的那层 div，用来量标题的溢出宽度（跑马灯要滑多远）。
-   *
-   * 量测依赖「标题指纹」而不是 `recent.items` 本身：后者每次 render 都是新数组，
-   * 拿它当 `useEffect` 依赖等于**每次 render 都重排一遍**（`scrollWidth` 会强制同步布局）。
-   */
-  const recentWrapRef = useRef<HTMLDivElement | null>(null);
-  const recentTitleKey = recent ? recent.items.map((item) => `${item.id}\u0000${item.label}`).join('\u0001') : '';
-  useEffect(() => {
-    const wrap = recentWrapRef.current;
-    if (!wrap) return;
-    measureRecentTitles(wrap);
-    // 宽度会变：侧栏收起 / 展开、窗口缩放、字体晚到 —— 尺寸一变就要重算滑动距离
-    const observer = new ResizeObserver(() => measureRecentTitles(wrap));
-    observer.observe(wrap);
-    document.fonts?.ready.then(() => measureRecentTitles(wrap)).catch(() => {});
-    return () => observer.disconnect();
-  }, [recentTitleKey]);
-
   return (
     <>
       {/* 这里曾经有一块「身份块」（头像 + 网课学习助手 + 本机课程库 · N 门课程），
@@ -341,7 +300,6 @@ function Sidebar({
                   的 `.course-chat__bubble--user`）。`--surface` 浅色是纯白、深色是
                   oklch(0.21)，两套主题下都与侧栏分得开。 */}
               <div
-                ref={recentWrapRef}
                 /**
                  * Delete / Backspace = 删掉键盘当前停着的这一行。
                  * ContextMenu / Shift+F10 = 打开这一行的动作菜单（ARIA 规定的
@@ -408,12 +366,7 @@ function Sidebar({
                       <span className="grid size-4 shrink-0 place-items-center text-sm" aria-hidden="true">
                         <Sym name="chat_bubble" />
                       </span>
-                      {/* 标题：平时省略号；鼠标停在**整行**上（或键盘焦点进来）时像跑马灯那样
-                          自己滚开，看全了来回滑 —— 不用手动去拨。滑动距离由外层 effect 量好后
-                          写进 `--recent-shift`（见 layout.css 与 `measureRecentTitles`）。
-                          为什么不用 title 属性：iOS Safari 不显示原生 tooltip，而 iPad 是主力平台 ——
-                          触屏上的兜底是「重命名对话框里能看到全文」。
-                          见 docs/plans/2026-10-15-流式续传与分支-design.md §5。 */}
+                      {/* 长标题始终用省略号收尾，完整内容可在重命名对话框中查看。 */}
                       <span className="recent-title min-w-0">
                         <span>{item.label}</span>
                       </span>
@@ -507,7 +460,7 @@ function Sidebar({
       )}
 
       {railFooter && (
-        <div className="mt-2.5 shrink-0 border-t border-border pt-2">
+        <div className="mt-auto shrink-0 border-t border-border pt-2">
           {/* 导航项由 ListBox 自带的 `p-1`（`.list-box { padding: var(--spacing) }`）
               往内缩了 4px，底部的设置项也在同一列里，得跟着缩同样的距离，
               否则它的图标会比上面每一项都多探出 4px。分隔线仍铺满，只缩内容。 */}
@@ -550,8 +503,8 @@ export function PageShell({
    * 必然在某档上对不齐。所以量一遍 `offsetHeight` 写进主列的 `--app-bar-h`，
    * 由 `.page-shell__content` 与各 fill 页面消费；量到之前用 CSS 里的 60px 兜底。
    *
-   * 直接写 DOM 内联样式而不是挂 state：顶栏高度在一次会话里几乎不变，
-   * 为它重渲整棵页面树不值当（同 `measureRecentTitles` 的取舍）。
+    * 直接写 DOM 内联样式而不是挂 state：顶栏高度变化只需更新消费它的 CSS 变量，
+    * 不必为此重渲整棵页面树。
    */
   const barRef = useRef<HTMLElement | null>(null);
   const mainColRef = useRef<HTMLDivElement | null>(null);
@@ -676,6 +629,7 @@ export function PageShell({
                 顶栏自己 `z-[5]` 已建层叠上下文，所以负 z 不会溜到 `<main>` 背后，只落在
                 标题 / 按钮下面 —— 否则模糊会把标题自己也糊掉。样式见 layout.css。 */}
             <div className="page-app-bar__blur" aria-hidden="true">
+              <span />
               <span />
               <span />
               <span />

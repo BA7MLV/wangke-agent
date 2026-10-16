@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
-import { Tabs } from '@heroui/react';
 import { MediaPlayer, MediaProvider, Track, type MediaPlayerInstance, type MediaStorage } from '@vidstack/react';
 import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default';
 import '@vidstack/react/player/styles/default/theme.css';
@@ -12,7 +11,7 @@ import { useSettings } from '../store/settings';
 import { setStudyMediaPlaying } from '../store/studyTime';
 import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
-import { PageShell, EmptyState, Sym, CueSkeleton, useDynamicColor, toast } from '../ui';
+import { PageShell, EmptyState, Sym, useDynamicColor, toast } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { SettingsButton } from '../components/SettingsModal';
 import type { MaterialReaderHandle } from '../materials/types';
@@ -33,6 +32,7 @@ import PlayerBigPlayButton from '../components/PlayerBigPlayButton';
 import TimeSliderWithPreview from '../components/TimeSliderWithPreview';
 import TheaterModeButton from '../components/TheaterModeButton';
 import { createYoutubeKeyShortcuts } from '../utils/playerKeys';
+import StudyAssistant, { STUDY_PANEL_KEYS, type StudyPanelKey } from '../components/StudyAssistant';
 
 /** 常驻字幕轨的固定 id：vidstack 的 NativeTextRenderer 会把轨的 id 写到它创建的原生 <track> 上，
  *  而 MediaProvider 的 Tracks 观察器会把「没登记的 <track> 元素」当成新轨补进列表（id 为空时用
@@ -56,9 +56,8 @@ function toPlayerMime(mime: string): 'video/mp4' | 'video/webm' | 'video/ogg' | 
   return (known as readonly string[]).includes(mime) ? (mime as (typeof known)[number]) : 'video/mp4';
 }
 
-type PanelKey = 'subs' | 'handout' | 'chat' | 'dm' | 'cards';
-
-const PANEL_KEYS: readonly PanelKey[] = ['subs', 'handout', 'chat', 'dm', 'cards'];
+type PanelKey = StudyPanelKey;
+const PANEL_KEYS = STUDY_PANEL_KEYS;
 
 /**
  * 阅读材料只保留「问答」面板。
@@ -69,28 +68,14 @@ const PANEL_KEYS: readonly PanelKey[] = ['subs', 'handout', 'chat', 'dm', 'cards
  */
 const MATERIAL_PANEL_KEYS: readonly PanelKey[] = ['chat'];
 
-/**
- * 五个面板的切换项。桌面（`Tabs`）用 label，窄屏（底部导航）用图标 + label。
- *
- * 两组图标刻意准备**描边 / 实心**两态（Material Symbols 的 fill 轴）：
- * MD3 的导航栏一律「未选中描边、选中实心」，这也是 Material Icons（MD2 那套，一个图标只有
- * 一种形态）根本表达不了的状态 —— 见 src/ui/symbols.ts 的说明。
- *
- * 两档共用一个 `data-testid="panel-tab-<key>"`：迁移期同一功能的标签在桌面与窄屏曾经不同
- * （`.ant-tabs-tab` vs `.mobile-tabbar button`），e2e 只能分支处理；现在一个选择器通吃。
- */
-const PANEL_TABS: { key: PanelKey; label: string; icon: ReactNode; activeIcon: ReactNode }[] = [
-  { key: 'subs', label: '字幕', icon: <Sym name="subtitles" />, activeIcon: <Sym name="subtitles" filled /> },
-  { key: 'handout', label: '讲义', icon: <Sym name="article" />, activeIcon: <Sym name="article" filled /> },
-  { key: 'chat', label: '问答', icon: <Sym name="chat" />, activeIcon: <Sym name="chat" filled /> },
-  { key: 'dm', label: '弹幕', icon: <Sym name="comment" />, activeIcon: <Sym name="comment" filled /> },
-  { key: 'cards', label: '卡片', icon: <Sym name="style" />, activeIcon: <Sym name="style" filled /> },
-];
-
 export default function Player() {
   const { id } = useParams<{ id: string }>();
+  return <PlayerResource key={id} id={id} />;
+}
+
+function PlayerResource({ id }: { id: string | undefined }) {
   const navigate = useNavigate();
-  // 播放页是课程库的下级页面：宽屏 rail 里高亮「课程库」（底部导航的位置让给面板切换）
+  // 播放页是资料库的下级页面：宽屏 rail 里高亮资料入口。
   const nav = useAppNav('home');
   const [video, setVideo] = useState<VideoRow | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
@@ -104,8 +89,9 @@ export default function Player() {
   const dynamicColor = useSettings((s) => s.dynamicColor);
   /** 当前面板。宽屏与窄屏共用同一套 Tabs，横竖屏不再分叉。 */
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
+  const [assistantOpen, setAssistantOpen] = useState(false);
   const [keyboardControls, setKeyboardControls] = useState(false);
-  // 桌面影院模式：只改变页面布局，右侧面板继续挂载以保留草稿、滚动位置与生成状态。
+  // 桌面影院模式：只改变页面布局，学习助手继续挂载以保留草稿、滚动位置与生成状态。
   const [theaterMode, setTheaterMode] = useState(false);
   const toggleTheaterMode = useCallback(() => setTheaterMode((active) => !active), []);
   /**
@@ -118,7 +104,10 @@ export default function Player() {
   // 选区提问投递：浮层点完必须让用户看到问答面板（窄屏下面板可能是隐藏的）
   const pendingAsk = useSelectionAsk((s) => s.pending);
   useEffect(() => {
-    if (pendingAsk) setActiveTab('chat');
+    if (pendingAsk) {
+      setActiveTab('chat');
+      setAssistantOpen(true);
+    }
   }, [pendingAsk]);
 
   /**
@@ -418,18 +407,12 @@ export default function Player() {
            同一个入口在一条顶栏里露两次没有必要。 */
       >
         <div
-          className="player-layout player-layout--loading"
+          className="player-layout player-layout--assistant player-layout--loading"
           data-testid="player-skeleton"
           aria-busy="true"
         >
           <div className="video-pane">
             <div className="player-skel__stage skel-breathe" />
-          </div>
-          <div className="side-pane">
-            <div className="player-skel__panel">
-              <span className="skel-bar player-skel__tab" />
-              <CueSkeleton rows={7} />
-            </div>
           </div>
         </div>
       </PageShell>
@@ -447,7 +430,6 @@ export default function Player() {
   // 阅读材料：面板只剩问答，左侧渲染阅读器而不是播放器
   const isMaterial = video.kind === 'material';
   const panelKeys = isMaterial ? MATERIAL_PANEL_KEYS : PANEL_KEYS;
-  const panelTabs = isMaterial ? PANEL_TABS.filter((t) => t.key === 'chat') : PANEL_TABS;
   /**
    * 实际生效的面板。不直接把 activeTab 塞进 Tabs 的 selectedKey：
    * 材料页的 activeTab 初值仍是 'subs'（面板里没有这一项），直接传会让 Tabs 处于
@@ -455,7 +437,7 @@ export default function Player() {
    */
   const effTab: PanelKey = panelKeys.includes(activeTab) ? activeTab : panelKeys[0];
 
-  // 五个面板只实例化一份：桌面挂进 Tabs.Panel，窄屏挂进 panel-host（hidden 保活切换）。
+  // 五个面板只实例化一份，在所有尺寸下都由学习助手的 Tabs 保活切换。
   // 材料只实例化问答：其余面板都以字幕为输入，挂上去只会给出「先生成字幕」的错误入口。
   const panels: Partial<Record<PanelKey, ReactNode>> = isMaterial
     ? {
@@ -516,7 +498,7 @@ export default function Player() {
          设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
          同一个入口在一条顶栏里露两次没有必要。 */
     >
-      <div className={`player-layout${theaterMode ? ' player-layout--theater' : ''}`}>
+      <div className={`player-layout player-layout--assistant${theaterMode ? ' player-layout--theater' : ''}`}>
         {/* 字幕字号变量设在普通容器上（不 media-player host：它 upgrade 时会重写内联样式），
             经继承传递给内部的 .vds-captions */}
         <div
@@ -524,7 +506,7 @@ export default function Player() {
           style={{ '--media-user-font-size': captionScale } as CSSProperties}
         >
           {isMaterial ? (
-            <MaterialReader material={video} handleRef={readerRef} />
+            <MaterialReader key={id} material={video} handleRef={readerRef} />
           ) : fileMissing ? (
             <div className="video-pane__missing">
               <EmptyState
@@ -600,55 +582,10 @@ export default function Player() {
           )}
         </div>
 
-        {/* 面板切换在所有尺寸下都用同一套 Tabs。
-            迁移期窄屏曾用底部导航切换面板，那条路已经随应用级底部 tab 栏一起移除 ——
-            面板切换属于**页内**动作，不该占用应用外壳的导航位；窄屏下 Tabs 横向排在
-            面板区顶部（见 layout.css 的 ≤900px 堆叠档），位置与横屏一致。 */}
-        <div className="side-pane">
-          {/* variant=secondary 是 MD3 里「切换一组相关内容」的用法（primary 留给顶层导航）；
-              align=start 对应标签靠左而不是居中。
-
-              选中变化走 onSelectionChange，方向键 / Home / End 的漫游与 roving tabindex
-              由 RAC 的 TabList 原生实现。 */}
-          <Tabs
-            className="panel-tabs"
-            variant="secondary"
-            align="start"
-            selectedKey={effTab}
-            onSelectionChange={(key) => {
-              if (PANEL_KEYS.includes(key as PanelKey)) setActiveTab(key as PanelKey);
-            }}
-            data-testid="panel-tabs"
-          >
-            {/* ListContainer 不是可选装饰：HeroUI 的 .tabs--secondary 规则全部挂在
-                `> .tabs__list-container` 下面，少了它 variant="secondary" 会静默失效。
-                它顺带把标签条包进 ScrollShadow，标签多时横向可滚。 */}
-            <Tabs.ListContainer>
-              <Tabs.List aria-label="学习面板">
-                {panelTabs.map((t) => (
-                  <Tabs.Tab key={t.key} id={t.key} data-testid={`panel-tab-${t.key}`}>
-                    {t.label}
-                  </Tabs.Tab>
-                ))}
-              </Tabs.List>
-            </Tabs.ListContainer>
-            {/* shouldForceMount + hidden：与迁移前 mdui-tab-panel 的 display:none 等价 ——
-                面板始终留在 DOM 里（草稿、滚动位置、生成状态不因切换而丢），
-                但未选中的那个既不可见（hidden）也不可交互（RAC 额外打上 inert）。 */}
-            {panelKeys.map((key) => (
-              <Tabs.Panel
-                key={key}
-                id={key}
-                shouldForceMount
-                hidden={effTab !== key}
-                data-testid={`panel-slot-${key}`}
-              >
-                {panels[key]}
-              </Tabs.Panel>
-            ))}
-          </Tabs>
-        </div>
       </div>
+
+      <StudyAssistant open={assistantOpen} onOpenChange={setAssistantOpen}
+        activeTab={effTab} onTabChange={setActiveTab} panelKeys={panelKeys} panels={panels} />
 
       {/* 全局选区浮层：挂在播放页根上，跨越阅读器与面板两棵子树 */}
       <SelectionAsk />

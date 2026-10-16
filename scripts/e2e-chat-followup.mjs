@@ -295,9 +295,8 @@ await check('① 生成中输入框可打、发送键可用、停止键并存（
   // 空草稿时发送键仍禁用（没话可发）
   await field.fill('');
   assert.equal(await page.locator('[data-testid="chat-send"]').isDisabled(), true, '空草稿发送键应当禁用');
-  // 提示行改说当前模式
-  const note = await page.locator('[data-testid="chat-composer-note"]').innerText();
-  assert.ok(note.includes('Enter 排队'), `提示行该说明当前模式，实际：${note}`);
+  // 按键提示不再占用输入区底部
+  assert.equal(await page.locator('[data-testid="chat-composer-note"]').count(), 0, '输入区底部不应显示提示行');
 });
 
 await check('② 流式尾巴是黑色圆点：圆形、深色、闪烁、跟着正文', async () => {

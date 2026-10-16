@@ -13,6 +13,8 @@ import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { MarkdownTable } from './MdTable';
 import ReaderProgress from './ReaderProgress';
 import DocSkeleton from './DocSkeleton';
+import { InkLayer, InkToolbar, useMaterialInk } from './MaterialInk';
+import { inkTextKey } from '../materials/ink';
 import '../materials/material-reader.css';
 
 /**
@@ -57,6 +59,7 @@ interface Props {
  * 不用分块后的文本拼回去：归一化会吃掉围栏和换行。
  */
 export default function MdReader({ blob, materialId, initialUnit, handleRef, onUnitChange }: Props) {
+  const ink = useMaterialInk();
   /**
    * 阅读态当前渲染的原文。`null` = 还没读出来（首屏骨架 / 换材料）。
    *
@@ -240,9 +243,10 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
    */
   const enterEdit = useCallback(() => {
     if (text === null) return;
+    ink.setTool('read');
     draftRef.current = text;
     setEditing(true);
-  }, [text]);
+  }, [text, ink.setTool]);
 
   /**
    * 「编辑 → 阅读」：**先存再退**。
@@ -346,6 +350,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
             与上面那句「编辑中」同一个理由 —— 报一个看不见的数比不报更糟。 */}
         <ReaderProgress current={current} total={total} hidden={editing} />
       </div>
+      {!editing && <InkToolbar disabled={!ready} />}
       {error && (
         <div className="mr-hint" data-testid="reader-error">
           <Sym name="error" />
@@ -400,6 +405,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
               >
                 <span className="mr-md__badge">第 {b.unit} 段</span>
                 <XMarkdown components={MD_COMPONENTS} content={b.text} />
+                <InkLayer surface={`md:${b.unit}:${inkTextKey(b.text)}`} />
               </div>
             ))}
           </div>

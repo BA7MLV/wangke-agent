@@ -6,6 +6,7 @@ import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
 import type { HtmlView } from '../materials/types';
 import type { ChatMessage } from '../api/siliconflow';
+import type { InkStroke } from '../materials/ink';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
@@ -488,6 +489,7 @@ class WangkeDB extends Dexie {
   cards!: Table<CardRow, number>;
   subtitleTracks!: Table<SubtitleTrackRow, number>;
   materialBlocks!: Table<MaterialBlockRow, number>;
+  materialInk!: Table<InkStroke, string>;
   covers!: Table<CoverRow, string>;
   studyDays!: Table<StudyDayRow, string>;
   comments!: Table<CommentRow, number>;
@@ -582,6 +584,8 @@ class WangkeDB extends Dexie {
       embeddings: null,
       materialEmbeddings: null,
     });
+    // 用户手写笔迹独立保存，不进入每次都会整表读取的课程元数据。
+    this.version(14).stores({ materialInk: 'id, materialId' });
   }
 }
 

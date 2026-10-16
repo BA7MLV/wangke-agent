@@ -66,7 +66,7 @@ export function diagnose400(serverMessage: string, messages: readonly ChatMessag
 }
 
 async function request(
-  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'>,
+  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
   path: string,
   init: RequestInit = {},
   /** 出错时用来定位的消息历史（只有对话请求才有） */
@@ -77,7 +77,9 @@ async function request(
     headers: {
       // apiKey 为空时**不发** Authorization 头：发一个空 Bearer 会让「忘了填 key」
       // 表现为 401 认证失败，而不是「你没填 key」—— 两件事的排查方向完全不同。
-      ...(s.apiKey ? { Authorization: `Bearer ${s.apiKey}` } : {}),
+      ...(s.apiKey && s.protocol === 'anthropic-messages' ? { 'x-api-key': s.apiKey, 'anthropic-version': '2023-06-01' } : {}),
+      ...(s.protocol === 'anthropic-messages' ? { 'anthropic-dangerous-direct-browser-access': 'true' } : {}),
+      ...(s.apiKey && s.protocol !== 'anthropic-messages' ? { Authorization: `Bearer ${s.apiKey}` } : {}),
       ...(init.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       ...init.headers,
     },
@@ -101,10 +103,11 @@ async function request(
 }
 
 /** 拉某家供应商在架的模型 id 列表（用于设置页的候选与「检查模型可用性」） */
-export async function listModels(s: Pick<ModelTarget, 'apiKey' | 'baseUrl'>): Promise<string[]> {
+export async function listModels(s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>): Promise<string[]> {
   const res = await request(s, '/models');
   const data = await res.json();
-  return (data.data as { id: string }[]).map((m) => m.id);
+  const models = data.data ?? data.models ?? [];
+  return (models as { id?: string; name?: string }[]).map((m) => m.id ?? m.name).filter((id): id is string => Boolean(id));
 }
 
 export interface TranscriptionSegment {
@@ -139,6 +142,9 @@ export async function transcribe(
   audio: Blob,
   filename = 'chunk.wav',
 ): Promise<TranscriptionResult> {
+  if (s.protocol === 'anthropic-messages') {
+    throw new Error('Anthropic Messages 协议不提供 OpenAI 兼容的音频转写接口，请为语音识别槽位选择 OpenAI Chat 供应商');
+  }
   const submit = (verbose: boolean) => {
     const form = new FormData();
     form.append('file', audio, filename);
@@ -251,6 +257,84 @@ export interface ChatOptions {
   thinking_budget?: number;
 }
 
+function chatPath(t: ModelTarget): string {
+  return t.protocol === 'anthropic-messages' ? '/messages' : t.protocol === 'openai-responses' ? '/responses' : '/chat/completions';
+}
+
+function anthropicContent(content: ChatMessage['content']): unknown {
+  if (!Array.isArray(content)) return content ?? '';
+  return content.map((part) => {
+    if (part.type === 'text') return { type: 'text', text: part.text };
+    const url = part.image_url.url;
+    const data = url.match(/^data:(image\/[\w.+-]+);base64,(.+)$/);
+    return data
+      ? { type: 'image', source: { type: 'base64', media_type: data[1], data: data[2] } }
+      : { type: 'image', source: { type: 'url', url } };
+  });
+}
+
+function responsesContent(content: ChatMessage['content']): unknown {
+  if (!Array.isArray(content)) return content ?? '';
+  return content.map((part) => part.type === 'text'
+    ? { type: 'input_text', text: part.text }
+    : { type: 'input_image', image_url: part.image_url.url });
+}
+
+function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[], stream: boolean): Record<string, unknown> {
+  if (t.protocol === 'anthropic-messages') {
+    const system = messages.filter((m) => m.role === 'system').map((m) => typeof m.content === 'string' ? m.content : '').join('\n\n');
+    const turns = messages.filter((m) => m.role !== 'system').map((m) => {
+      if (m.role === 'tool') return { role: 'user', content: [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: typeof m.content === 'string' ? m.content : '' }] };
+      if (m.role === 'assistant' && m.tool_calls?.length) return { role: 'assistant', content: [
+        ...(typeof m.content === 'string' && m.content ? [{ type: 'text', text: m.content }] : []),
+        ...m.tool_calls.map((tc) => ({ type: 'tool_use', id: tc.id, name: tc.function.name, input: parseArgs(tc.function.arguments) })),
+      ] };
+      return { role: m.role, content: anthropicContent(m.content) };
+    });
+    return {
+      model: t.model, messages: turns, ...(system ? { system } : {}), max_tokens: opts.max_tokens ?? 4096,
+      ...(opts.temperature == null ? {} : { temperature: opts.temperature }),
+      ...(opts.tools?.length ? { tools: opts.tools.map((tool) => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters })) } : {}),
+      ...(stream ? { stream: true } : {}),
+    };
+  }
+  if (t.protocol === 'openai-responses') {
+    const input = messages.map((m) => {
+      if (m.role === 'tool') return { type: 'function_call_output', call_id: m.tool_call_id, output: typeof m.content === 'string' ? m.content : '' };
+      if (m.role === 'assistant' && m.tool_calls?.length) return m.tool_calls.map((tc) => ({ type: 'function_call', call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
+      return { role: m.role, content: responsesContent(m.content) };
+    }).flat();
+    return {
+      model: t.model, input, ...(opts.max_tokens == null ? {} : { max_output_tokens: opts.max_tokens }),
+      ...(opts.temperature == null ? {} : { temperature: opts.temperature }),
+      ...(opts.tools?.length ? { tools: opts.tools.map((tool) => ({ type: 'function', name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters, strict: false })) } : {}),
+      ...(stream ? { stream: true } : {}),
+    };
+  }
+  return { model: t.model, messages, tools: opts.tools, temperature: opts.temperature, max_tokens: opts.max_tokens,
+    enable_thinking: opts.enable_thinking, reasoning_effort: opts.reasoning_effort, thinking_budget: opts.thinking_budget, stream };
+}
+
+function parseArgs(value: string): Record<string, unknown> {
+  try { return JSON.parse(value); } catch { return {}; }
+}
+
+function normalizeResponse(data: any, protocol: ModelTarget['protocol']): ChatMessage {
+  if (protocol === 'anthropic-messages') {
+    const blocks = data.content ?? [];
+    const text = blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
+    const calls = blocks.filter((b: any) => b.type === 'tool_use').map((b: any) => ({ id: b.id, type: 'function' as const, function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
+    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: data.stop_reason === 'tool_use' ? 'tool_calls' : data.stop_reason === 'max_tokens' ? 'length' : 'stop' };
+  }
+  if (protocol === 'openai-responses') {
+    const output = data.output ?? [];
+    const text = output.flatMap((item: any) => item.content ?? []).filter((b: any) => b.type === 'output_text').map((b: any) => b.text).join('');
+    const calls = output.filter((item: any) => item.type === 'function_call').map((item: any) => ({ id: item.call_id ?? item.id, type: 'function' as const, function: { name: item.name, arguments: item.arguments ?? '{}' } }));
+    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: calls.length ? 'tool_calls' : data.status === 'incomplete' ? 'length' : 'stop' };
+  }
+  return data.choices[0].message as ChatMessage;
+}
+
 /**
  * 非流式对话（用于工具调用循环中的决策）。
  *
@@ -258,23 +342,13 @@ export interface ChatOptions {
  */
 export async function chatOnce(t: ModelTarget, opts: ChatOptions): Promise<ChatMessage> {
   const messages = wire(opts.messages);
-  const res = await request(t, '/chat/completions', {
+  const res = await request(t, chatPath(t), {
     method: 'POST',
     signal: opts.signal,
-    body: JSON.stringify({
-      model: t.model,
-      messages,
-      tools: opts.tools,
-      temperature: opts.temperature,
-      max_tokens: opts.max_tokens,
-      enable_thinking: opts.enable_thinking,
-      reasoning_effort: opts.reasoning_effort,
-      thinking_budget: opts.thinking_budget,
-      stream: false,
-    }),
+    body: JSON.stringify(requestBody(t, opts, messages, false)),
   }, messages);
   const data = await res.json();
-  const msg = data.choices[0].message as ChatMessage;
+  const msg = normalizeResponse(data, t.protocol);
   // 只有声明了工具才需要 DSML 兜底：没给工具时模型没有理由吐 DSML 标记，
   // 那时的尖括号更可能是正文（讲义片段、HTML），吞掉就是毁内容。
   if (!opts.tools?.length || typeof msg.content !== 'string') return msg;
@@ -317,20 +391,10 @@ export async function chatStream(
   onReasoning?: (text: string) => void,
 ): Promise<ChatMessage> {
   const messages = wire(opts.messages);
-  const res = await request(t, '/chat/completions', {
+  const res = await request(t, chatPath(t), {
     method: 'POST',
     signal: opts.signal,
-    body: JSON.stringify({
-      model: t.model,
-      messages,
-      tools: opts.tools,
-      temperature: opts.temperature,
-      max_tokens: opts.max_tokens,
-      enable_thinking: opts.enable_thinking,
-      reasoning_effort: opts.reasoning_effort,
-      thinking_budget: opts.thinking_budget,
-      stream: true,
-    }),
+    body: JSON.stringify(requestBody(t, opts, messages, true)),
   }, messages);
 
   const reader = res.body!.getReader();
@@ -382,6 +446,33 @@ export async function chatStream(
         if (payload === '[DONE]') continue;
         try {
           const chunk = JSON.parse(payload);
+          if (t.protocol === 'anthropic-messages') {
+            const delta = chunk.delta;
+            if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
+              const i = chunk.index ?? Object.keys(toolCalls).length;
+              toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
+            }
+            if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) { content += delta.text; onDelta?.(delta.text); }
+            if (chunk.type === 'content_block_delta' && delta?.type === 'thinking_delta' && delta.thinking) { reasoning += delta.thinking; onReasoning?.(delta.thinking); }
+            if (chunk.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json) {
+              const call = toolCalls[chunk.index ?? 0]; if (call) call.function.arguments += delta.partial_json;
+            }
+            if (chunk.type === 'message_delta') finish = chunk.delta?.stop_reason === 'tool_use' ? 'tool_calls' : chunk.delta?.stop_reason === 'max_tokens' ? 'length' : 'stop';
+            continue;
+          }
+          if (t.protocol === 'openai-responses') {
+            if (chunk.type === 'response.output_text.delta' && chunk.delta) { content += chunk.delta; onDelta?.(chunk.delta); }
+            if (chunk.type === 'response.reasoning_summary_text.delta' && chunk.delta) { reasoning += chunk.delta; onReasoning?.(chunk.delta); }
+            if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
+              const i = chunk.output_index ?? Object.keys(toolCalls).length;
+              toolCalls[i] = { id: chunk.item.call_id ?? chunk.item.id, type: 'function', function: { name: chunk.item.name, arguments: '' } };
+            }
+            if (chunk.type === 'response.function_call_arguments.delta') {
+              const call = toolCalls[chunk.output_index ?? 0]; if (call) call.function.arguments += chunk.delta ?? '';
+            }
+            if (chunk.type === 'response.completed') finish = Object.values(toolCalls).length ? 'tool_calls' : chunk.response?.status === 'incomplete' ? 'length' : 'stop';
+            continue;
+          }
           const choice = chunk.choices?.[0];
           // finish_reason 只在最后一个 chunk 上出现一次：判断这一轮是否完整全靠它
           if (choice?.finish_reason) finish = choice.finish_reason as FinishReason;

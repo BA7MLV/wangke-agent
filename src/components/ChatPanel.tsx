@@ -15,7 +15,10 @@ import {
   createToolExecutor,
 } from '../harness/tools';
 import { PROMPTS } from '../harness/prompts';
-import { estimateTokens, fitHistoryToBudget, subtitleWindow } from '../harness/context';
+import { estimateTokens, subtitleWindow } from '../harness/context';
+import { EMPTY_COMPRESSION, prepareSessionHistory, retainedContext, useContextCompressionStore } from '../store/contextCompression';
+import ContextUsageButton from './ContextUsageButton';
+import { useContextCompression } from './useContextCompression';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
@@ -29,7 +32,7 @@ import type { MaterialReaderHandle } from '../materials/types';
 import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citation } from '../store/selectionAsk';
 import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
-import { useIsMobile } from '../utils/useMobile';
+import { useIsMobile, useViewportResize } from '../utils/useMobile';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import {
   Panel,
@@ -260,6 +263,7 @@ export default function ChatPanel({
   const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const [loadedSessionId, setLoadedSessionId] = useState<number | null>(null);
   /**
    * 当前会话的技能白名单（`undefined` = 不限定，见 `ChatSessionRow.skillIds`）。
    *
@@ -286,6 +290,15 @@ export default function ChatPanel({
   // 声明放在这里（而不是靠近 JSX）是因为那个 effect 在组件体上方就要用到 ——
   // 常量声明在使用之后会被 TS 判为 use-before-declaration。
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  /**
+   * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
+   *
+   * `e.nativeEvent.isComposing` 覆盖多数浏览器，但部分 Android 输入法在
+   * compositionend **之前**就派发 keydown 且不带 isComposing —— 那条 Enter
+   * 是「确认候选词」，不是「发送」。用 composition 事件自己记一份状态兜底，
+   * 是业界处理 IME 回车的双保险写法（ChatPanel 与 CourseChat 同款）。
+   */
+  const composingRef = useRef(false);
   // 讲义抽帧元数据：决定 list_frames 工具/提示词注入，也供 AI 气泡里的画面引用渲染
   const [framesMeta, setFramesMeta] = useState<FrameMeta[]>([]);
   const llmModel = useSettings((s) => s.llmModel);
@@ -294,6 +307,8 @@ export default function ChatPanel({
   const thinking = useSettings((s) => s.thinkingEnabled);
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
+  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
+  const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   const updateSettings = useSettings((s) => s.update);
   /**
    * 思考能力分两层，工具行上给什么控件就看这两层：
@@ -315,6 +330,22 @@ export default function ChatPanel({
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
   // 消息流滚动容器（原 Bubble.List 的 ref 只暴露 scrollTo，现在自己持有真实元素）
   const listRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 消息流吸底。新消息 / 流式追加 / 键盘弹收 / 聚焦输入框都走它 ——
+   * 键盘弹出时面板被顶矮一截，停在原 scrollTop 的最新消息会掉出可视区，
+   * 而那是用户正盯着要看的地方（刚发出去的问题、正在流的回答）。
+   */
+  const pinRafRef = useRef(0);
+  const pinList = useCallback(() => {
+    cancelAnimationFrame(pinRafRef.current);
+    pinRafRef.current = requestAnimationFrame(() => {
+      const el = listRef.current;
+      if (el) el.scrollTop = el.scrollHeight;
+    });
+  }, []);
+  useEffect(() => () => cancelAnimationFrame(pinRafRef.current), []);
+  // 键盘弹收 / 横竖旋转：重新吸底（没聚焦输入框时也会响，那时吸底同样正确）
+  useViewportResize(pinList);
   // 手机端：思考开关上移到会话行，第二行只留 ModelPicker（+思考深度），省一行高度
   const isMobile = useIsMobile();
   // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
@@ -405,12 +436,17 @@ export default function ChatPanel({
       : PROMPTS.qaSystem(videoName, undefined, undefined, shots.length, refs.length);
     const sys = estimateTokens(sysText);
     // 历史只发送 content，reasoning 不计入
-    const hist = msgs.reduce((s, m) => s + estimateTokens(m.content), 0);
+    const historyRows = compressionEnabled ? retainedContext(msgs, contextPlan) : msgs;
+    const hist = historyRows.reduce((s, m) => s + estimateTokens(m.content), 0);
     // 引用块会随本轮一起发出去，得算进去（一段 1200 字上限 ≈ 1.2k tokens），否则用量条会低估
     const refTokens = refs.reduce((n, c) => n + estimateTokens(c.text) + 12, 0);
     const cur = estimateTokens(input) + shots.length * 1200 + refTokens; // 每张图约 1.2k tokens
     return sys + hist + cur;
-  }, [msgs, input, shots, refs, videoName, isMaterial, materialKind]);
+  }, [msgs, input, shots, refs, videoName, isMaterial, materialKind, contextPlan, compressionEnabled]);
+  const contextCompression = useContextCompression({
+    sessionId: activeId, tokens: ctxEst, windowTokens: ctxWin, query: input,
+    busy: loading || !indexReady || activeId !== loadedSessionId,
+  });
   const ratio = ctxEst / ctxWin;
   // 用量告警分三档（>90% 危险 / >70% 注意），色走 MD3 语义令牌
   const ctxLevel = ratio > 0.9 ? 'bad' : ratio > 0.7 ? 'warn' : '';
@@ -560,6 +596,7 @@ export default function ChatPanel({
           widget: r.widget,
           rowId: r.id,
         })));
+        setLoadedSessionId(activeId);
       }
     })();
     return () => {
@@ -774,7 +811,7 @@ export default function ChatPanel({
       ]);
 
       // 用户消息立即落库：tier 2 描述可能耗时数秒，避免期间关页丢失已上屏消息
-      await db.chats.add({
+      const userRowId = await db.chats.add({
         videoId,
         sessionId,
         role: 'user',
@@ -782,6 +819,7 @@ export default function ChatPanel({
         createdAt: Date.now(),
         ...(userImages.length > 0 ? { images: userImages } : {}),
       });
+      setMsgs((prev) => prev.map((m) => m.key === userKey ? { ...m, rowId: userRowId } : m));
 
       // 首条提问自动作为会话标题（纯截图提问用时间戳标记兜底）
       if (isFirstMsg) {
@@ -924,13 +962,18 @@ export default function ChatPanel({
         (shotLead ? `${shotLead}\n` : '') +
         q +
         (descBlock ? `\n${descBlock}` : '') +
-        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');      const budget =
+        (subBlock ? `\n截图时刻前后字幕：\n${subBlock}` : '');
+      const budget =
         settings.contextWindow -
         estimateTokens(systemPrompt) -
         estimateTokens(currentText) -
         (imageParts ? curShots.length * 1200 : 0) - // 多模态图片每张约 1.2k tokens
         4096; // 输出预留
-      const recent = fitHistoryToBudget(history.slice(0, -1), Math.max(2000, budget));
+      const recent = await prepareSessionHistory(sessionId, history.slice(0, -1), Math.max(2000, budget), currentText, settings.jev, {
+        signal: abort.signal,
+        onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
+        onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),
+      });
       const messages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
         ...recent.map((r) => ({ role: r.role, content: r.content }) as ChatMessage),
@@ -1160,12 +1203,8 @@ export default function ChatPanel({
     lastMsg?.widget ? 1 : 0,
   ].join('|');
   useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      const el = listRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [scrollSignal]);
+    pinList();
+  }, [scrollSignal, pinList]);
 
   if (!hasSubtitles) {
     return (
@@ -1520,9 +1559,29 @@ export default function ChatPanel({
               value={input}
               ref={composerInput}
               onChange={(e) => setInput(e.target.value)}
+              /**
+               * 移动端键盘的回车键改成「发送」：Android Chrome 认 enterkeyhint，
+               * 会把按键的文案与语义从「换行」换成「发送」（iOS Safari 暂不认，
+               * 但加上没有副作用）。没有它，手机上要找一颗小小的发送图标，
+               * 而回车键就在拇指底下。
+               */
+              enterKeyHint="send"
+              /**
+               * 中文输入法选词期间不要发送：nativeEvent.isComposing 覆盖多数
+               * 浏览器，部分 Android 输入法则要靠 composition 事件兜底
+               * （见 composingRef 的注释）。
+               */
+              onCompositionStart={() => {
+                composingRef.current = true;
+              }}
+              onCompositionEnd={() => {
+                composingRef.current = false;
+              }}
+              /** 聚焦即吸底：键盘弹出会顶矮面板，先一步把最新消息留在可视区里 */
+              onFocus={pinList}
               onKeyDown={(e) => {
                 if (e.key !== 'Enter' || e.shiftKey) return;
-                if (e.nativeEvent.isComposing) return;
+                if (e.nativeEvent.isComposing || composingRef.current) return;
                 e.preventDefault();
                 void send(input);
               }}
@@ -1572,8 +1631,13 @@ export default function ChatPanel({
           )}
         </div>
         <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
+          <ContextUsageButton
+            tokens={ctxEst} windowTokens={ctxWin} testId="panel-context-usage"
+            compression={contextCompression.state} onCompress={contextCompression.compress}
+            isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
+          />
           ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
-          {ratio > 0.9 && ' · 建议开启新话题'}
+          {ratio > 0.9 && ' · 点击用量环压缩'}
         </div>
       </div>
     </Panel>

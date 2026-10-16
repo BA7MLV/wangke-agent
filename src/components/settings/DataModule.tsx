@@ -1,4 +1,3 @@
-import StudyTimeCard from '../StudyTimeCard';
 import StorageCard from '../StorageCard';
 import MigrationCard from '../MigrationCard';
 import SkillsCard from '../SkillsCard';
@@ -6,7 +5,7 @@ import ArchivedSessionsCard from './ArchivedSessionsCard';
 import { buildInfoLabel } from '../../utils/buildInfo';
 
 /**
- * 「数据」模块：学习时长、存储占用、迁移包、写作技能、已归档会话。
+ * 「数据」模块：存储占用、迁移包、写作技能、已归档会话。
  *
  * 这几件事的共同点是**都关于「已积累的东西」** —— 用户进这一屏的动机是
  * 「看看我攒了多少 / 搬个家 / 改一下技能 / 把收起来的对话找回来」，而不是「调一个开关」。
@@ -15,7 +14,6 @@ import { buildInfoLabel } from '../../utils/buildInfo';
 export default function DataModule() {
   return (
     <>
-      <StudyTimeCard />
       <StorageCard />
       <MigrationCard />
       <SkillsCard />

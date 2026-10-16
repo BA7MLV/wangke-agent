@@ -154,6 +154,7 @@ test('设置白名单与排除项逐项吻合', () => {
   // 这是一条**故意的变更探测器**：改动白名单就必须同步改这里。
   // 它连同下面的「无交集」「必排除项」一起，把「谁能跟着数据走」钉成可审阅的清单。
   assert.deepEqual([...SYNC_SETTINGS_KEYS].sort(), [
+    'accentColor',
     'agentRounds',
     'asrConcurrency',
     'asrModel',
@@ -176,6 +177,7 @@ test('设置白名单与排除项逐项吻合', () => {
   assert.deepEqual([...NON_SYNC_SETTINGS_KEYS].sort(), [
     'bilibiliCookie',
     'bilibiliProxy',
+    'jev',
     'liveRelay',
     'syncEnabled',
     'syncEndpoint',
@@ -195,6 +197,7 @@ test('B 站 Cookie 必须在排除项里', () => {
 
 /** 一份「所有字段都填了值」的设置，含敏感值，用于验证白名单真的在拦 */
 const FULL_SETTINGS = {
+  jev: { baseUrl: 'https://api.typesafe.ai/v1', apiKey: 'JEV-SECRET', model: 'jev-1.13.0', skillRouting: true, contextCompression: true },
   providers: [
     {
       id: 'sf',

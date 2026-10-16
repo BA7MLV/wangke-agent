@@ -24,6 +24,8 @@ import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import ContextUsageButton from '../components/ContextUsageButton';
+import { useContextCompression } from '../components/useContextCompression';
+import { EMPTY_COMPRESSION, retainedContext, useContextCompressionStore } from '../store/contextCompression';
 import { useCourseChat, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
 import { useSettings } from '../store/settings';
 import { estimateTokens } from '../harness/context';
@@ -33,6 +35,7 @@ import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../ut
 import { copyText } from '../utils/clipboard';
 import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { prefersReducedMotion } from '../utils/motion';
+import { useViewportResize } from '../utils/useMobile';
 import { confirmDialog, PageShell, promptDialog, Sym, toast, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
@@ -63,6 +66,14 @@ const LIBRARY_STARTERS = [
     label: '整理资料目录',
     prompt: '帮我把资料目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
   },
+] as const;
+
+const LIBRARY_HEADLINES = [
+  '问你的全部资料',
+  '从你的资料里找答案',
+  '一起探索你的课程库',
+  '你的学习资料，随时可问',
+  '想从哪份资料开始？',
 ] as const;
 
 /**
@@ -460,9 +471,28 @@ function QueueBar({
 const NEAR_BOTTOM_PX = 24;
 
 export default function CourseChat() {
+  const [libraryHeadline] = useState(
+    () => LIBRARY_HEADLINES[Math.floor(Math.random() * LIBRARY_HEADLINES.length)],
+  );
   const navigate = useNavigate();
   const nav = useAppNav('chat');
   const listRef = useRef<HTMLDivElement | null>(null);
+  /**
+   * 输入框元素。两件事要用它：
+   * ① 随内容自动长高（手机上键盘一弹，可视高度只剩一半，单行的输入框
+   *    打三行字就见不着自己写了什么）；
+   * ② 聚焦时把消息流吸底（键盘弹出会顶矮面板）。
+   */
+  const composerRef = useRef<HTMLTextAreaElement>(null);
+  /**
+   * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
+   *
+   * `e.nativeEvent.isComposing` 覆盖多数浏览器，但部分 Android 输入法在
+   * compositionend **之前**就派发 keydown 且不带 isComposing —— 那条 Enter
+   * 是「确认候选词」，不是「发送」。用 composition 事件自己记一份状态兜底，
+   * 是业界处理 IME 回车的双保险写法（ChatPanel 与 CourseChat 同款）。
+   */
+  const composingRef = useRef(false);
   /**
    * 消息流是否**粘**在底部：粘着时新内容自动跟到底，用户一旦自己往上滚就松开。
    *
@@ -474,6 +504,15 @@ export default function CourseChat() {
   const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
   /** 上一次见到的 scrollTop：用来判断这次到底是**用户往上滚**，还是我们自己在吸底 */
   const lastTopRef = useRef(0);
+  /**
+   * 粘底时才吸底。聚焦输入框 / 键盘弹收（面板被顶矮一截，停在原 scrollTop 的
+   * 最新消息会掉出可视区）都走它。
+   */
+  const pinIfSticking = useCallback(() => {
+    const element = listRef.current;
+    if (element && stickRef.current) element.scrollTop = element.scrollHeight;
+  }, []);
+  useViewportResize(pinIfSticking);
   const ready = useCourseChat((s) => s.ready);
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
@@ -525,6 +564,8 @@ export default function CourseChat() {
   const forkSession = useCourseChat((s) => s.forkSession);
   /** 上下文窗口（输入 + 输出的总容量）：用量环的分母，也是历史裁剪的预算来源 */
   const ctxWin = useSettings((s) => s.contextWindow);
+  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
+  const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   /**
    * 本轮技能元数据清单（`- 名称：用途` 的单行块）。
    *
@@ -548,6 +589,21 @@ export default function CourseChat() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
+
+  /**
+   * 输入框随内容自动长高（最多到 CSS 的 max-height，之后框内自己滚）。
+   *
+   * 手机上键盘一弹，整页高度少掉小一半，单行的输入框打三行字就见不着自己
+   * 写了什么；而 `rows={1}` 的 textarea 默认不会长。先塌回 `auto` 再量
+   * `scrollHeight`，否则每次只增不减。内联高度会被 CSS 的 max-height 夹住，
+   * 超长文本在框内滚动，不会把输入卡顶出屏幕。
+   */
+  useEffect(() => {
+    const el = composerRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [draft]);
 
   // 每次挂载都重新数一次课程：`courseCount` 是 bootstrap 时的快照，
   // 而「去课程库导入 → 切回对话页」是这里的常规动线，刷新晚了空状态会一直停在
@@ -792,9 +848,14 @@ export default function CourseChat() {
    */
   const ctxEst = useMemo(() => {
     const system = estimateTokens(libraryAssistantSystemPrompt(skillBlock, contextCourses, hasCourses));
-    const history = messages.reduce((sum, message) => sum + estimateTokens(message.content), 0);
+    const historyRows = compressionEnabled ? retainedContext(messages, contextPlan) : messages;
+    const history = historyRows.reduce((sum, message) => sum + estimateTokens(message.content), 0);
     return system + history + estimateTokens(draft);
-  }, [skillBlock, contextCourses, hasCourses, messages, draft]);
+  }, [skillBlock, contextCourses, hasCourses, messages, draft, contextPlan, compressionEnabled]);
+  const contextCompression = useContextCompression({
+    sessionId: activeId, tokens: ctxEst, windowTokens: ctxWin, query: draft,
+    busy: loading || !loaded || pendingAsk != null || pendingPlan != null,
+  });
   /**
    * 课程库还在数的期间要不要出骨架。
    *
@@ -899,28 +960,6 @@ export default function CourseChat() {
     </>
   );
 
-  /**
-   * 输入卡下面的提示行。
-   *
-   * 生成中它改说**当前模式**：Enter 与 Ctrl/⌘+Enter 各走到哪条路，是这一时期
-   * 用户唯一需要记住的按键知识，而 tooltip 要 hover 才看得见。其余时候保持原来的
-   * 免责声明（别在非生成期占着这行说按键）。
-   */
-  const composerNote = (() => {
-    if (loading && !pendingAsk) {
-      const queueHint = queued.length > 0 ? ` · 已排 ${queued.length} 条` : '';
-      return sendMode === 'queue'
-        ? `Enter 排队，答完这轮自动发下一条 · Ctrl/⌘+Enter 立刻插入并打断${queueHint}`
-        : `Enter 立刻插入，打断这轮换个问法 · Ctrl/⌘+Enter 改成排队${queueHint}`;
-    }
-    // 提问卡悬着时队列发不出去（drainQueue 让位给 pendingAsk，见 store 第 2 条不变量），
-    // 这时也要说清队列还在，否则用户以为话已经排上了却半天没动静
-    if (queued.length > 0) return `已排 ${queued.length} 条，这一轮结束后接着发`;
-    return hasCourses
-      ? 'AI 会结合课程数据与所选技能回答，请核对引用来源。'
-      : 'AI 可能答错，重要信息请自行核对。导入课程后回答会更贴合你的学习内容。';
-  })();
-
   return (
     <PageShell
       title={activeTitle}
@@ -931,7 +970,7 @@ export default function CourseChat() {
          「网课学习助手 / 本机课程库 · N 门课程」，被用户当场否掉（2026-10-14 同日修订）。
          这块位置现在直接是主导航 —— 见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */
       recent={{
-        label: 'Recent',
+        label: '最近',
         // 「新建对话」不再混在 Recent 里当伪项：它是**动作**不是历史记录，
         // 混在一起的代价是 Recent 列表的每一行语义都不一样（点标题切会话、点最后一行新建），
         // 而 ListBox 的选中态也没法表达它。它现在的家是侧栏首项「新会话」
@@ -1015,7 +1054,10 @@ export default function CourseChat() {
          的选中态也表达不了它。
          设置入口没丢：侧栏底部的 `railFooter`（窄屏在抽屉里）仍然是入口。 */
     >
-      <div className="course-chat" data-testid="course-chat-page">
+      <div
+        className={`course-chat${messages.length === 0 ? ' course-chat--empty' : ''}`}
+        data-testid="course-chat-page"
+      >
         <section className="course-chat__main" aria-label="AI 助手聊天">
           {/* 只在助手**真的选定**了课程时才出现这条信息栏：没有选中时一行字都是废话
               （曾经那里写着「助手自动选择」，说的就是「这里本来是空的」）。 */}
@@ -1055,7 +1097,7 @@ export default function CourseChat() {
                   <CourseCountSkeleton />
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
-                    <h2>{hasCourses ? '问你的全部资料' : '有什么想聊的？'}</h2>
+                    <h2>{hasCourses ? libraryHeadline : '有什么想聊的？'}</h2>
                     {/* 有课程时**不写解释句**（2026-10-16 用户口径）：
                         原来那句「我会先判断问题对应哪些课程……」被整句去掉，
                         空态直接是标题 + 快捷提问。无课程时才留一句兜底说明。 */}
@@ -1063,22 +1105,25 @@ export default function CourseChat() {
                       <p>我可以直接回答任何问题。导入课程之后，我还能结合你课程里的字幕、讲义和进度作答。</p>
                     )}
                     <div className="course-chat__starters" aria-label="快捷提问">
-                      {(hasCourses ? LIBRARY_STARTERS : GENERAL_STARTERS).map((starter) => (
-                        <Button
-                          key={starter.label}
-                          variant="secondary"
-                          className="course-chat__starter"
-                          data-testid={`chat-starter-${starter.label}`}
-                          onPress={() => void send(starter.prompt)}
-                          isDisabled={loading || !sessionReady}
-                        >
-                          <span className="course-chat__starter-icon" aria-hidden="true">
-                            {starter.icon}
-                          </span>
-                          <span className="course-chat__starter-label">{starter.label}</span>
-                          <Sym name="chevron_right" aria-hidden="true" />
-                        </Button>
-                      ))}
+                      <div className="course-chat__starters-heading">试试这样问</div>
+                      <div className="course-chat__starter-list">
+                        {(hasCourses ? LIBRARY_STARTERS : GENERAL_STARTERS).map((starter) => (
+                          <Button
+                            key={starter.label}
+                            variant="secondary"
+                            className="course-chat__starter"
+                            data-testid={`chat-starter-${starter.label}`}
+                            onPress={() => void send(starter.prompt)}
+                            isDisabled={loading || !sessionReady}
+                          >
+                            <span className="course-chat__starter-icon" aria-hidden="true">
+                              {starter.icon}
+                            </span>
+                            <span className="course-chat__starter-label">{starter.label}</span>
+                            <Sym name="chevron_right" aria-hidden="true" />
+                          </Button>
+                        ))}
+                      </div>
                     </div>
                     {/* 导入入口从「唯一的出路」降级成「可选的增强」。空库时它是主按钮
                         （那时库里确实没东西），有库时它只是标题下的一行小字。 */}
@@ -1250,28 +1295,8 @@ export default function CourseChat() {
             })}
           </div>
 
-          {/* 悬浮输入区：排队条（有队列时才出现）+ HeroUI 的 TextArea + Toolbar 组合。
-              showcase 之所以把工具收在框内右下，是因为「正在写什么」和「能做什么」
-              必须始终在同一块里 —— 分成两条横栏会让人来回找发送键在哪。
-
-              **回答设置全在这一行里**（模型 chip / 技能范围）：它们改的都是
-              「这条问题怎么答」，与输入框同框才不用来回找。思考开关与思考深度
-              也算回答设置，只是收在模型 chip 弹出的面板里（见 Toolbar 上方那段注释）。
-              它们原先在消息区上方单独一条浮条里，那条横栏把「设置」和「消息」切成两段，
-              而设置既不属于某条消息，也不该占着消息区顶部最贵的一行 —— 见
-              docs/plans/2026-10-14-对话页改版-design.md §2.4。
-
-              顺序有讲究：设置靠左、动作靠右。右端是**发送键**；它左边那颗是
-              **上下文用量环**（只读），靠 `margin-left: auto` 把两者一起顶到最右端。
-              删除会话原在这条环的位置（破坏性动作，离设置越远越好认），
-              2026-10-16 起收进侧栏 Recent 的行尾菜单 —— 那里「切哪条」与「删哪条」
-              落在同一行，比挤在发送键旁边更好认，也去掉了这颗键的误触风险。
-
-              这一行平时是三组控件（模型 / 技能 / 发送）+ 一枚用量环，比原先少三组：
-              思考开关与思考深度收进了模型 chip 的弹层、删除会话移去了侧栏（同上）。
-              **生成中再多出两组**：设置组末尾长出「排队 / 插入」切换，动作组里
-              停止键与发送键并存（2026-10-16 流式期间输入，见 store 文件头与
-              docs/plans/2026-10-16-流式期间输入-design.md）。*/}
+          {/* 单条输入栏：技能入口在左，正文居中，模型与发送操作在右。
+              队列只在有待发消息时出现；长问题仍可自动增高。 */}
           <div className="course-chat__composer-wrap">
             {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
                 默认隐藏，显隐由消息流的 scroll 监听直接写 `data-show`（见组件里的
@@ -1299,13 +1324,35 @@ export default function CourseChat() {
               onClear={clearQueue}
             />
             <div className="course-chat__composer">
+              <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
+                ref={composerRef}
                 className="course-chat__input"
                 aria-label="给 AI 助手发送消息"
                 rows={1}
                 fullWidth
                 value={draft}
                 onChange={(event) => setDraft(event.target.value)}
+                /**
+                 * 移动端键盘的回车键改成「发送」：Android Chrome 认 enterkeyhint，
+                 * 会把按键的文案与语义从「换行」换成「发送」（iOS Safari 暂不认，
+                 * 但加上没有副作用）。没有它，手机上要找一颗小小的发送键，
+                 * 而回车键就在拇指底下。
+                 */
+                enterKeyHint="send"
+                /**
+                 * 中文输入法选词期间不要发送：nativeEvent.isComposing 覆盖多数
+                 * 浏览器，部分 Android 输入法则要靠 composition 事件兜底
+                 * （见 composingRef 的注释）。
+                 */
+                onCompositionStart={() => {
+                  composingRef.current = true;
+                }}
+                onCompositionEnd={() => {
+                  composingRef.current = false;
+                }}
+                /** 聚焦即吸底：键盘弹出会顶矮面板，先一步把最新消息留在可视区里 */
+                onFocus={pinIfSticking}
                 /**
                  * **生成中不再禁用**（2026-10-16 修订）。
                  *
@@ -1324,12 +1371,11 @@ export default function CourseChat() {
                       ? sendMode === 'queue'
                         ? '说一句排队，答完这轮自动接着问…'
                         : '说一句立刻插入，打断这轮换个问法…'
-                      : hasCourses
-                        ? '问课程，或直接说点别的…'
-                        : '想问点什么？'
+                      : '随便问点什么'
                 }
                 onKeyDown={(event) => {
-                  if (event.key !== 'Enter' || event.shiftKey || event.nativeEvent.isComposing) return;
+                  if (event.key !== 'Enter' || event.shiftKey) return;
+                  if (event.nativeEvent.isComposing || composingRef.current) return;
                   event.preventDefault();
                   /**
                    * Enter = 当前模式（默认排队）；Ctrl/⌘+Enter = **另一种**。
@@ -1366,7 +1412,6 @@ export default function CourseChat() {
                   showThinking
                   thinkingDepthDisabled={loading}
                 />
-                <SkillPicker value={skillIds} onChange={setSkillIds} />
                 {/*
                   生成中才出现的「排队 / 插入」切换：回答的是**这一轮答完之前，
                   Enter 与发送键怎么投递**。它算回答设置（改的是「这话怎么发」），
@@ -1394,11 +1439,13 @@ export default function CourseChat() {
                     </ToggleButton>
                   </ToggleButtonGroup>
                 )}
-                {/* 外面这层 span 不只是分组：`margin-left: auto` 得挂在**工具行的直接
-                    子节点**上才生效（它把用量环与发送键一起顶到右端）。
-                    环本身只读、不可点，删除会话已收进侧栏 Recent 的行尾菜单。 */}
+                {/* 用量环同时是立即压缩入口，手机端也保留。 */}
                 <span className="course-chat__context-usage-slot">
-                  <ContextUsageButton tokens={ctxEst} windowTokens={ctxWin} testId="chat-context-usage" />
+                  <ContextUsageButton
+                    tokens={ctxEst} windowTokens={ctxWin} testId="chat-context-usage"
+                    compression={contextCompression.state} onCompress={contextCompression.compress}
+                    isDisabled={loading || !loaded || activeId == null || pendingAsk != null || pendingPlan != null}
+                  />
                 </span>
                 {/*
                   发送键**常驻**（2026-10-16 修订，旧逻辑是「生成中变成停止键」）。
@@ -1437,9 +1484,6 @@ export default function CourseChat() {
                     testId: 'chat-stop',
                   })}
               </Toolbar>
-            </div>
-            <div className="course-chat__composer-note" data-testid="chat-composer-note">
-              {composerNote}
             </div>
           </div>
         </section>

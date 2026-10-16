@@ -20,6 +20,7 @@ import {
   providersForSlot,
   sameRef,
   useSettings,
+  type ApiProtocol,
   type ModelSlot,
   type Provider,
   type Settings,
@@ -42,6 +43,7 @@ import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from 
 import { ms } from '../motion';
 import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
+import JevCard from './JevCard';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -780,6 +782,27 @@ function ProviderRow({
               onChange={(e) => onChange({ baseUrl: e.target.value.trim() })}
             />
           </Field>
+          <Field label="API 协议" hint="选择这家供应商的对话请求格式；模型列表会按所选协议查询">
+            <Select
+              aria-label={`${provider.name || '供应商'} API 协议`}
+              selectedKey={provider.protocol ?? 'openai-chat'}
+              onSelectionChange={(key) => {
+                if (key != null) onChange({ protocol: String(key) as ApiProtocol });
+              }}
+            >
+              <Select.Trigger>
+                <Select.Value />
+                <Select.Indicator />
+              </Select.Trigger>
+              <Select.Popover isNonModal>
+                <ListBox>
+                  <ListBox.Item id="openai-chat" textValue="OpenAI Chat">OpenAI Chat</ListBox.Item>
+                  <ListBox.Item id="openai-responses" textValue="OpenAI Responses">OpenAI Responses</ListBox.Item>
+                  <ListBox.Item id="anthropic-messages" textValue="Anthropic Messages">Anthropic Messages</ListBox.Item>
+                </ListBox>
+              </Select.Popover>
+            </Select>
+          </Field>
           <Field
             label="API Key"
             hint="仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它"
@@ -919,7 +942,7 @@ export default function ModelsModule() {
    * 用它而不是 `settings.providers` 本身当依赖：那个数组每次 `update` 都是新引用，
    * 直接依赖会让这个 effect 在「改个上下文窗口」这种无关操作上白跑一遍。
    */
-  const providersKey = settings.providers.map((p) => `${p.id}\0${p.baseUrl}\0${p.apiKey}`).join('\n');
+  const providersKey = settings.providers.map((p) => `${p.id}\0${p.baseUrl}\0${p.apiKey}\0${p.protocol ?? 'openai-chat'}`).join('\n');
 
   /**
    * 打开设置就把模型候选填上：**先用缓存**（同步，不等网络），再对「没缓存或已过期」
@@ -971,7 +994,7 @@ export default function ModelsModule() {
     void (async () => {
       for (const p of needFetch) {
         try {
-          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim() });
+          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim(), protocol: p.protocol });
           if (cancelled) return;
           writeModelList(p.baseUrl, ids);
           setModelOptions((prev) => (prev[p.id]?.length ? prev : { ...prev, [p.id]: ids }));
@@ -1063,7 +1086,7 @@ export default function ModelsModule() {
           return;
         }
         try {
-          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim() });
+          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim(), protocol: p.protocol });
           opts[p.id] = ids;
           notes[p.id] = `${ids.length} 个模型在架`;
           // 手动刷新是最权威的一次结果，写回缓存 —— 下次开设置就不必再等网络
@@ -1097,7 +1120,7 @@ export default function ModelsModule() {
     settings.update({
       providers: [
         ...settings.providers,
-        { id, name: '', baseUrl: '', apiKey: '', serves: ['chat'], catalogId: '' },
+        { id, name: '', baseUrl: '', apiKey: '', protocol: 'openai-chat', serves: ['chat'], catalogId: '' },
       ],
     });
     // 新加的那家没有地址没有 Key，不摊开就是一行没用的空壳
@@ -1249,6 +1272,8 @@ export default function ModelsModule() {
         </Field>
       </SectionCard>
 
+      <JevCard />
+
       <SectionCard
         title="模型供应商"
         subtitle="每家一个连接：地址 + Key + 它能做的活。槽位的供应商下拉只列勾选了该能力的那些家，ASR 可以和文本模型不在同一家"
@@ -1283,11 +1308,15 @@ export default function ModelsModule() {
               shaking={keyError === p.id}
               removable={settings.providers.length > 1 || i > 0}
               onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
-              onChange={(patch) =>
+              onChange={(patch) => {
+                if (patch.protocol && patch.protocol !== p.protocol) {
+                  setModelOptions(({ [p.id]: _old, ...rest }) => rest);
+                  setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
+                }
                 settings.update({
                   providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)),
-                })
-              }
+                });
+              }}
               onRemove={() => removeProvider(p)}
             />
           ))}

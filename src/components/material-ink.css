@@ -1,0 +1,16 @@
+.ink-toolbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.ink-toolbar__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
+.ink-toolbar__tools :is(button, select, input) { min-height: 44px; }
+.ink-toolbar__tools button { gap: 6px; }
+.ink-toolbar__hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; margin-top: 4px; font-size: 12px; color: var(--muted); text-wrap: pretty; }
+.ink-color { display: flex; align-items: center; padding: 0 4px; }
+.ink-color input { width: 36px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }
+.ink-width select { border: 1px solid var(--border); border-radius: 8px; padding: 4px 8px; background: var(--surface); color: var(--foreground); }
+.ink-layer { position: absolute; inset: 0; z-index: 10; pointer-events: none; overflow: hidden; }
+.ink-layer[data-active] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
+.ink-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.mr-md__block, .mr-html__block, .mr-docx .docx-wrapper > section.docx { position: relative; }
+@media (max-width: 480px) {
+  .ink-toolbar { padding: 8px; }
+  .ink-toolbar__tools button span { display: none; }
+}

@@ -21,9 +21,9 @@ const countCards = async (expected) => {
 };
 
 try {
-  await page.goto(base, { waitUntil: 'networkidle' });
+  await page.goto(`${base.replace(/\/$/, '')}/#/library`, { waitUntil: 'networkidle' });
   await page.locator('[data-testid="empty-state"]').waitFor();
-  assert.equal(await page.locator('[data-testid="btn-native-pick"]').getAttribute('variant'), 'filled');
+  assert.match(await page.locator('[data-testid="btn-native-pick"]').getAttribute('class'), /button--primary/);
   assert.match(await page.locator('[data-testid="btn-native-pick"]').innerText(), /导入文件/);
 
   const now = Date.now();
@@ -75,15 +75,15 @@ try {
   await page.locator('[data-testid="library-filter-material"]').click();
   await countCards(1);
   assert.equal(await card('design-material').count(), 1);
-  assert.equal(await page.locator('[data-testid="library-filter-material"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-testid="library-filter-material"]').getAttribute('aria-checked'), 'true');
 
   await search.fill('不会存在的合成课程名');
   await page.locator('[data-testid="library-no-results"]').waitFor();
-  await page.locator('[data-testid="library-no-results"] mdui-button').click();
+  await page.locator('[data-testid="library-no-results"] button').click();
   await countCards(2);
   assert.equal(await search.inputValue(), '');
   assert.equal(await search.evaluate((element) => element === document.activeElement), true);
-  assert.equal(await page.locator('[data-testid="library-filter-all"]').getAttribute('aria-pressed'), 'true');
+  assert.equal(await page.locator('[data-testid="library-filter-all"]').getAttribute('aria-checked'), 'true');
 
   const groupHeader = page.locator('[data-group-key="100"]');
   const groupToggle = groupHeader.locator('.group-header__toggle');
@@ -100,17 +100,16 @@ try {
   await page.keyboard.press('Escape');
 
   await card('design-started').locator('[data-testid="drag-handle"]').press('Enter');
-  await page.waitForFunction(() => document.querySelector('[data-testid="move-dialog"]')?.hasAttribute('open'));
+  await page.locator('[data-testid="move-dialog"]').waitFor({ state: 'visible' });
   await page.keyboard.press('Escape');
-  await page.waitForFunction(() => !document.querySelector('[data-testid="move-dialog"]')?.hasAttribute('open'));
+  await page.locator('[data-testid="move-dialog"]').waitFor({ state: 'hidden' });
   const thumbnail = card('design-started').locator('[data-testid="video-thumb"]');
   assert.equal(await thumbnail.evaluate((element) => element.tagName), 'BUTTON');
   assert.equal(await thumbnail.evaluate((element) => element.tabIndex), 0);
 
   for (const theme of ['light', 'dark']) {
     await page.evaluate((value) => {
-      document.documentElement.classList.remove('mdui-theme-auto', 'mdui-theme-light', 'mdui-theme-dark');
-      document.documentElement.classList.add(`mdui-theme-${value}`);
+      document.documentElement.classList.toggle('dark', value === 'dark');
     }, theme);
     for (const width of [320, 390, 820, 1440]) {
       await page.setViewportSize({ width, height: 1000 });

@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { db, type MaterialBlockRow } from '../store/db';
 import { Sym } from '../ui';
 import ReaderProgress from './ReaderProgress';
 import DocSkeleton from './DocSkeleton';
+import { InkLayer, InkToolbar } from './MaterialInk';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -41,6 +43,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
   const [error, setError] = useState<string | null>(null);
   const [total, setTotal] = useState(0);
   const [current, setCurrent] = useState(1);
+  const [pages, setPages] = useState<HTMLElement[]>([]);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -75,6 +78,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
   useEffect(() => {
     let cancelled = false;
     setReady(false);
+    setPages([]);
     setError(null);
     unitEls.current.clear();
 
@@ -135,6 +139,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
       });
 
       setTotal(units.length || domBlocks.length);
+      setPages([...body.querySelectorAll<HTMLElement>('section.docx')]);
       setReady(true);
     })().catch((e) => {
       if (!cancelled) setError(e instanceof Error ? e.message : String(e));
@@ -184,6 +189,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
         <div className="mr-bar__spacer" />
         <ReaderProgress current={current} total={total} />
       </div>
+      <InkToolbar disabled={!ready || !!error} />
       {error && (
         <div className="mr-hint" data-testid="reader-error">
           <Sym name="error" />
@@ -192,6 +198,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
       )}
       <div className="mr-scroll" ref={scrollRef}>
         <div className="mr-docx" ref={bodyRef} />
+        {pages.map((page, index) => createPortal(<InkLayer surface={`docx:${index + 1}`} />, page, `ink-${index}`))}
         {!ready && !error && <DocSkeleton variant="page" />}
       </div>
     </div>

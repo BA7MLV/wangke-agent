@@ -9,6 +9,7 @@ import DocxReader from './DocxReader';
 import DocSkeleton from './DocSkeleton';
 import MdReader from './MdReader';
 import HtmlReader from './HtmlReader';
+import { MaterialInkProvider } from './MaterialInk';
 import '../materials/material-reader.css';
 
 /**
@@ -113,6 +114,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
   }
 
   return (
+    <MaterialInkProvider key={materialId} materialId={materialId}>
     <div className="mr-shell">
       {/*
         「不能检索」必须显式说明：否则用户会以为「问答坏了」，而真实原因在材料自己身上。
@@ -181,5 +183,6 @@ export default function MaterialReader({ material, handleRef }: Props) {
         )
       )}
     </div>
+    </MaterialInkProvider>
   );
 }

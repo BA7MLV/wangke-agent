@@ -8,6 +8,7 @@ import AppearanceModule from './settings/AppearanceModule';
 import SourcesModule from './settings/SourcesModule';
 import LiveModule from './settings/LiveModule';
 import PlaybackModule from './settings/PlaybackModule';
+import StudyModule from './settings/StudyModule';
 import DataModule from './settings/DataModule';
 
 /**
@@ -25,6 +26,7 @@ const MODULES: { key: SettingsModule; label: string; icon: string; Component: Co
   { key: 'sources', label: '内容源', icon: 'cloud_upload', Component: SourcesModule },
   { key: 'live', label: '实时', icon: 'link', Component: LiveModule },
   { key: 'playback', label: '播放', icon: 'play_circle', Component: PlaybackModule },
+  { key: 'study', label: '学习', icon: 'calendar_month', Component: StudyModule },
   { key: 'data', label: '数据', icon: 'folder', Component: DataModule },
 ];
 
@@ -184,7 +186,7 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
     return (
       <Button
         variant="ghost"
-        className="h-auto min-h-9 w-full justify-start gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background"
+        className="min-h-9 w-full justify-start gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background"
         data-testid={testId}
         aria-label="设置"
         onPress={open}
@@ -192,7 +194,7 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
         <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
           <Sym name="settings" />
         </span>
-        <span>设置</span>
+        <span className="min-w-0 truncate">设置</span>
       </Button>
     );
   }

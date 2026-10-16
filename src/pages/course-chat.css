@@ -21,8 +21,6 @@
 
 .page-course-chat {
   --course-chat-column: 820px;
-  /* 输入卡的内边距：文本区靠这个 padding 起手，工具行贴着它的下边缘 */
-  --chat-composer-pad: 14px;
 }
 
 .course-chat {
@@ -33,6 +31,24 @@
   display: flex;
   overflow: hidden;
   background: transparent;
+}
+
+/* 空会话首屏：标题在上，输入栏居中，推荐提问跟在输入栏下方。
+   有消息后恢复常规消息流和贴底输入区。 */
+.course-chat--empty {
+  position: relative;
+}
+
+.course-chat--empty .course-chat__messages {
+  padding-bottom: 24px;
+}
+
+.course-chat--empty .course-chat__composer-wrap {
+  position: absolute;
+  z-index: 1;
+  top: 33%;
+  right: 0;
+  left: 0;
 }
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
@@ -160,10 +176,10 @@
   min-height: 100%;
   box-sizing: border-box;
   margin: 0 auto;
-  padding: 40px 0 32px;
+  padding: 14vh 0 32px;
   display: flex;
   flex-direction: column;
-  justify-content: center;
+  justify-content: flex-start;
   align-items: center;
   text-align: center;
 }
@@ -190,10 +206,22 @@
    居中：与上方居中的问句、以及下方居中的输入卡对齐成一条竖轴。 */
 .course-chat__starters {
   width: 100%;
-  margin-top: 26px;
+  /* 留出单条输入栏的位置；输入栏本身由主区定位，保持与消息态一致的 DOM。 */
+  margin-top: 96px;
+}
+
+.course-chat__starters-heading {
+  margin: 0 0 10px 2px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  text-align: left;
+}
+
+.course-chat__starter-list {
   display: flex;
   flex-wrap: wrap;
-  justify-content: center;
+  justify-content: flex-start;
   gap: 8px;
 }
 
@@ -201,25 +229,47 @@
    之前把圆角、底色、hover 全手写一遍，结果和组件的 [data-hovered] 打架 ——
    组件特异性更高，自绘那套静默失效，看着却像「hover 没反应」。 */
 .course-chat__starter {
-  min-height: 40px;
+  box-sizing: border-box;
+  flex: 0 0 auto;
+  min-height: 42px;
   height: auto;
-  padding: 0 14px;
-  gap: 8px;
+  justify-content: flex-start;
+  padding: 8px 12px;
+  gap: 10px;
   border-radius: var(--radius-full);
+  border-color: var(--border);
+  background: color-mix(in oklch, var(--background) 88%, var(--default));
   color: var(--foreground);
-  font-size: 0.875rem;
+  font-size: 0.8125rem;
   font-weight: 400;
   text-align: left;
   white-space: nowrap;
 }
 
+.course-chat__starter:hover {
+  border-color: color-mix(in oklch, var(--accent) 50%, var(--border));
+  background: color-mix(in oklch, var(--accent) 5%, var(--background));
+}
+
 .course-chat__starter-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
   display: grid;
   place-items: center;
-  color: var(--muted);
+  border-radius: var(--radius-sm);
+  background: var(--default-soft);
+  color: var(--accent);
+}
+
+.course-chat__starter-label {
+  flex: 1 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .course-chat__starter > svg:last-child {
+  flex: none;
   color: color-mix(in oklch, var(--muted) 70%, transparent);
 }
 
@@ -568,11 +618,7 @@
   font-variant-numeric: tabular-nums;
 }
 
-/* ── 悬浮输入卡 ───────────────────────────────────────────────────────────
-   一张卡浮在灰画布上：输入文字在上，工具行在下（左端模型 chip、右端发送键）。
-   卡片外观只用 HeroUI 的 Card 语义令牌（--background / --border），
-   浮起感由一道极淡的投影负责 —— 阴影重一档就会变成「浏览器上的浮层」，
-   而输入框不是浮层，它是页面的一部分。 */
+/* ── 单条输入栏：入口、文本、模型与发送键共用一个圆角外框 ─────────────── */
 .course-chat__composer-wrap {
   /* 「回到底部」按钮的定位锚点：它用 `bottom: calc(100% + …)` 停在整块输入区
      正上方，所以锚点必须是一块**高度会跟着内容变**的容器 —— 锚在 main 上的话，
@@ -589,14 +635,12 @@
    只在**没有贴底**时出现：贴底时它没有意义，常驻只会白占一块最容易读到的位置。
    外观走「卡片层」——与输入卡同一档底色 + 描边 + 淡投影，从灰画布上浮起来；
    全圆是这类浮动动作键唯一的正确答案（同 `.course-chat__action` 的圆底）。
-   `left/right: 0 + margin: auto` 居中（而不是 transform）：把 transform 留给入场动效，
-   两者都要用 transform 会互相打架。 */
+   右边缘与输入卡对齐；把 transform 留给入场动效。 */
 .course-chat__scroll-bottom {
   position: absolute;
-  left: 0;
-  right: 0;
+  right: max(20px, calc((100% - var(--course-chat-column)) / 2));
   bottom: calc(100% + 10px);
-  margin: 0 auto;
+  margin: 0;
   width: 40px;
   height: 40px;
   display: grid;
@@ -657,19 +701,14 @@
   box-sizing: border-box;
   width: min(100%, var(--course-chat-column));
   margin: 0 auto;
-  padding: var(--chat-composer-pad) var(--chat-composer-pad) 10px;
+  padding: 8px 12px;
   display: flex;
-  flex-direction: column;
-  gap: 4px;
-  border-radius: var(--radius-2xl);
+  align-items: center;
+  gap: 8px;
+  border-radius: 32px;
   background: var(--background);
   border: 1px solid var(--border);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.04),
-    0 8px 24px rgb(0 0 0 / 0.05);
-  transition:
-    border-color 180ms ease,
-    box-shadow 180ms ease;
+  box-shadow: var(--shadow-sm);
 }
 
 /* 聚焦时整卡换主色细描边：焦点状态做在卡片上，
@@ -684,10 +723,12 @@
 /* TextArea：外框与底色由卡片提供，这里把它彻底摊平 —— 一个自带边框的
    输入框套在一张卡片里，会出现「框中框」，两层圆角也对不齐。 */
 .course-chat__input {
-  width: 100%;
+  flex: 1 1 0;
+  width: 0;
+  min-width: 0;
   min-height: 34px;
   max-height: 180px;
-  padding: 6px 8px;
+  padding: 5px 0;
   overflow-y: auto;
   resize: none;
   border: 0;
@@ -726,26 +767,24 @@
   opacity: 0.6;
 }
 
-/* 工具行：左端是模型 chip + 回答设置，右端是上下文用量环与发送键。
-   HeroUI 的 Toolbar 自带 [data-focus-visible] 的方向键焦点环，不用另画。
-   `width: 100%` 必需：Toolbar 默认 flex: 0 1 auto，会收缩到内容宽度，
-   于是右端那两颗控件的 auto margin 没有可推的空间、全挤到左边。
-
-   推右端用的是 `.course-chat__context-usage-slot` 的 `margin-left: auto`，
-   **不是** `justify-content: space-between`：工具行会换行（见下），
-   而 space-between 在换行后会把每一行都拉满两端 —— 控件一多，第一行就成了
-   图标散开的三列，看着像版式坏了。
-
-   `flex-wrap: wrap` 必需：这一行从「1 个 chip + 发送键」变成 5 组控件之后，
-   360–390px 的手机上一定放不下。换行的代价是发送键有时落到第二行（仍在右下角），
-   比横向溢出、把输入卡撑出屏幕外好得多。 */
+/* 工具不另占一行；窄屏缩短模型触发器，为输入文字留出空间。 */
 .course-chat__composer-tools {
-  width: 100%;
+  flex: 0 0 auto;
   display: flex;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
   align-items: center;
   justify-content: flex-start;
   gap: 4px 6px;
+}
+
+.course-chat__composer-tools .model-picker__trigger {
+  max-width: 180px;
+  border: 0;
+  background: transparent;
+}
+
+.course-chat__composer > [data-testid='skill-picker'] {
+  flex: none;
 }
 
 .course-chat__send {
@@ -753,6 +792,9 @@
   height: 34px;
   min-width: 34px;
   flex: none;
+  border-radius: var(--radius-full);
+  background: var(--foreground);
+  color: var(--background);
 }
 
 /* 停止键与发送键并存（2026-10-16）：尺寸与发送键一致，两颗并排在右下角。
@@ -768,8 +810,7 @@
 /* ── 排队 / 插入切换 ─────────────────────────────────────────────────────
    生成中才出现在工具行的设置组末尾（见 CourseChat.tsx 的 Toolbar）。
    ToggleButtonGroup 自带分段控件外观，这里只保证它不参与 flex 伸缩：
-   工具行会换行（见 .course-chat__composer-tools），被压扁的分段控件
-   两颗字会挤成一团。 */
+   避免分段控件被压扁、两颗字挤成一团。 */
 .course-chat__send-mode {
   flex: none;
 }
@@ -902,15 +943,6 @@
   }
 }
 
-.course-chat__composer-note {
-  width: min(100%, var(--course-chat-column));
-  margin: 7px auto 0;
-  text-align: center;
-  color: color-mix(in oklch, var(--muted) 80%, transparent);
-  font-size: 0.6875rem;
-  line-height: 1.4;
-}
-
 /* 顶栏副标题的状态行 `.course-chat__status` 已随副标题整行去掉（2026-10-16）：
    用户口径是「本次对话 N 条 · 结合课程库回答 / 通用问答」这行不要显示。
    样式不留下当墓碑 —— git 里有历史，留着只会让下一个人以为还有东西在用这个类名。 */
@@ -926,7 +958,9 @@
   }
 
   .course-chat__messages {
-    padding: 20px 14px 6px;
+    /* 保留手机原来的 20px 呼吸感，同时叠加动态顶栏高度：不能让窄屏覆盖桌面规则，
+       否则消息第一行会钻进顶栏后面。 */
+    padding: calc(var(--app-bar-h, 60px) + 20px) 14px 6px;
     scrollbar-gutter: auto;
   }
 
@@ -954,7 +988,89 @@
     padding: 6px 10px max(10px, env(safe-area-inset-bottom));
   }
 
+  .course-chat__scroll-bottom {
+    right: 10px;
+  }
+
+  .course-chat--empty .course-chat__messages {
+    padding-bottom: 20px;
+  }
+
+  .course-chat--empty .course-chat__composer-wrap {
+    top: 31%;
+  }
+
+  .course-chat__empty {
+    padding-top: 12vh;
+  }
+
+  .course-chat__starters {
+    margin-top: 92px;
+  }
+
+  .course-chat__starter-list {
+    gap: 6px;
+  }
+
+  .course-chat__starter {
+    min-width: 0;
+    padding: 7px 8px;
+    gap: 7px;
+    white-space: normal;
+  }
+
+  .course-chat__starter-icon {
+    width: 26px;
+    height: 26px;
+  }
+
   .course-chat__composer {
-    border-radius: 22px;
+    padding: 8px;
+    gap: 4px;
+  }
+
+  .course-chat__composer-tools {
+    gap: 4px;
+  }
+
+  .course-chat__composer-tools .model-picker__chip-name {
+    display: none;
+  }
+
+  .course-chat__composer-tools .model-picker__trigger {
+    padding-inline: 4px;
+    gap: 2px;
+  }
+
+  .course-chat__send-mode [role='radio'],
+  .course-chat__send-mode button {
+    padding-inline: 6px;
+  }
+}
+
+/* 触屏设备输入框字号给到 16px：iOS Safari（iPhone 与 iPad 一视同仁）聚焦字号
+   <16px 的输入框会**整页放大**，--vvh 跟着抖、版式全乱，还得用户双手捏回去。
+   业界通行做法就是输入控件不小于 16px（纯桌面指针没有这个自动缩放，
+   继续用 15px 的设计字号）。排队条里的输入框同属输入区，一并跟上。
+   用 pointer:coarse 而不是断在 760px：iPad 竖屏（810px+）走的是桌面版式，
+   但 Safari 的聚焦缩放照跳，按宽度判会漏掉一整类设备。 */
+@media (pointer: coarse) {
+  .course-chat__input,
+  .course-chat__queue-input {
+    font-size: 1rem;
+  }
+}
+
+/* 键盘弹出时收回底部安全区内边距：页面已缩到键盘上沿（--vvh，见 utils/useMobile.ts），
+   手势条被键盘盖住，再垫 max(…, env(safe-area-inset-bottom)) 就是输入卡与键盘之间
+   的一条缝。桌面聚焦输入框时也会置位 data-keyboard，但桌面安全区为 0，
+   两边取值相同、无观感差异；窄屏那档 10px 与收起态的 10px 对齐。 */
+html[data-keyboard='open'] .course-chat__composer-wrap {
+  padding-bottom: 12px;
+}
+
+@media (max-width: 760px) {
+  html[data-keyboard='open'] .course-chat__composer-wrap {
+    padding-bottom: 10px;
   }
 }

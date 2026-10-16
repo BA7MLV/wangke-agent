@@ -36,6 +36,7 @@ const TABLES = [
   'chats',
   'danmakus',
   'cards',
+  'materialInk',
   // 评论区（v12）。**注意它不能走下面的 simpleTables 快路径** —— parentId 是同表内的
   // 自增 id 引用，导入侧必须重挂，见 importMigrationZip 的 3b) 段。
   'comments',
@@ -306,6 +307,13 @@ export async function importMigrationZip(
       await db.table(t).bulkAdd(batch);
       bump(t, batch.length);
     }
+  }
+
+  // 手写笔迹使用全局 UUID 主键，保留 id，并按材料归属随新资源导入。
+  const ink = (data.materialInk ?? []).map(decodeRow).filter((row) => newVideoIds.has(row.materialId as string));
+  if (ink.length) {
+    await db.materialInk.bulkAdd(ink as never[]);
+    bump('materialInk', ink.length);
   }
 
   // 3b) 评论区（comments）：**刻意不走 simpleTables**。

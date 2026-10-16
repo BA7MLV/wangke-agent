@@ -33,6 +33,7 @@ export async function getStorageStats(): Promise<StorageStats> {
   let frames = 0;
   let textBytes = 0;
   let handouts = 0;
+  let ink = 0;
 
   // 视频与阅读材料按 kind 分流：不分开的话材料体积会被算进「视频文件」，
   // 用户看着「视频占 800MB」却找不到对应的大视频，只会以为统计坏了。
@@ -61,8 +62,9 @@ export async function getStorageStats(): Promise<StorageStats> {
   await db.handouts.each((h) => {
     handouts += h.blob.size;
   });
+  await db.materialInk.each((stroke) => { ink += JSON.stringify(stroke).length * 2; });
 
-  const known = videos + materials + frames + textBytes + handouts;
+  const known = videos + materials + frames + textBytes + handouts + ink;
 
   let usage = 0;
   let quota = 0;
@@ -90,6 +92,7 @@ export async function getStorageStats(): Promise<StorageStats> {
       { key: 'frames', label: '抽帧图片', bytes: frames },
       { key: 'text', label: '字幕与文本', bytes: textBytes },
       { key: 'handouts', label: '讲义文档', bytes: handouts },
+      { key: 'ink', label: '手写批注', bytes: ink },
       { key: 'overhead', label: '浏览器存储开销', bytes: overhead },
     ],
   };

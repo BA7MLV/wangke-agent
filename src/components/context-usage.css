@@ -1,17 +1,10 @@
-/* 上下文用量环：输入卡工具行右端的一枚只读指示器（见 ContextUsageButton.tsx）。
+/* 上下文用量环 / 立即压缩入口（见 ContextUsageButton.tsx）。
    它顶替了原先「删除当前会话」那颗按钮的位置（删除仍可在侧栏 Recent 的行尾菜单里做）。 */
 
 /* 环的填充色跟随按钮文字色，默认取 `--muted`（比正文淡一档，不与发送键抢眼）。 */
 .ctx-usage {
   flex: none;
   color: var(--muted);
-}
-
-/* 点上去不该有「按下了」的反馈：它只读，没有 onPress。去掉 HeroUI Button 的
-   按下缩放，免得暗示「点一下有反应」。 */
-.ctx-usage[data-pressed],
-.ctx-usage:active {
-  transform: none;
 }
 
 /* 环本体固定 18px，不随按钮尺寸或字号变形 */
@@ -37,7 +30,7 @@
   stroke-width: 2.5;
   stroke-linecap: round;
   /* 用量随流式增长时平滑推进；减少动态效果时直接跳（见下） */
-  transition: stroke-dashoffset 240ms ease;
+  transition: stroke-dashoffset var(--icon-swap-dur) var(--icon-swap-ease);
 }
 
 /* 三档配色与视频问答面板的用量文字同源（>70% 注意、>90% 危险） */
@@ -49,8 +42,16 @@
   color: var(--danger);
 }
 
+.ctx-usage[data-compression='compressing'] { color: var(--accent); }
+.ctx-usage[data-compression='success'] { color: var(--success); }
+.ctx-usage .t-icon { display: inline-grid; place-items: center; }
+.ctx-usage__spinner { display: inline-flex; animation: ctx-compress-spin 1s linear infinite; }
+.ctx-usage:not([data-compression='compressing']) .ctx-usage__spinner { animation: none; }
+@keyframes ctx-compress-spin { to { transform: rotate(360deg); } }
+
 @media (prefers-reduced-motion: reduce) {
   .ctx-usage__fill {
     transition: none;
   }
+  .ctx-usage__spinner { animation: none !important; }
 }

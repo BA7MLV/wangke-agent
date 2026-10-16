@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { catalogOf, getSettings } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
+import { prepareSessionHistory } from './contextCompression';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
 import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
@@ -1358,7 +1359,14 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         : { role: 'user', content: text };
       const tailText = resume ? resume.toolResult : text;
       const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(tailText) - 4096;
-      const recent = fitHistoryToBudget(baseRows, Math.max(2000, budget));
+      // 挂起续跑保持原有历史与工具链，不重新做语义筛选。
+      const recent = resume
+        ? fitHistoryToBudget(baseRows, Math.max(2000, budget))
+        : await prepareSessionHistory(turnKey, baseRows, Math.max(2000, budget), text, settings.jev, {
+            signal: abort.signal,
+            onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
+            onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),
+          });
       const chatMessages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
         ...recent.map((row) => ({ role: row.role, content: row.content }) as ChatMessage),

@@ -20,6 +20,7 @@ import { useSelectionAsk } from '../store/selectionAsk';
 import { Sym, useSkeletonGate } from '../ui';
 import ReaderProgress from './ReaderProgress';
 import DocSkeleton from './DocSkeleton';
+import { InkLayer, InkToolbar, useMaterialInk } from './MaterialInk';
 import type { MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -52,6 +53,7 @@ interface Props {
 }
 
 export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChange }: Props) {
+  const ink = useMaterialInk();
   const [doc, setDoc] = useState<PDFDocumentProxy | null>(null);
   const [outline, setOutline] = useState<OutlineEntry[]>([]);
   const [numPages, setNumPages] = useState(0);
@@ -352,13 +354,14 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
           variant={areaMode ? 'primary' : 'secondary'}
           data-testid="reader-tool-areaselect"
           aria-label="框选一块区域当图片提问"
-          onPress={() => setAreaMode((v) => !v)}
+          onPress={() => { ink.setTool('read'); setAreaMode((v) => !v); }}
         >
           <Sym name="crop_free" />
           {areaMode ? '框选中…' : '框选'}
         </Button>
         <ReaderProgress current={current} total={numPages} />
       </div>
+      <InkToolbar disabled={!doc} onActivate={() => setAreaMode(false)} />
 
       {areaMode && (
         <div className="mr-hint" data-testid="reader-area-hint">
@@ -395,6 +398,7 @@ export default function PdfReader({ fileUrl, initialUnit, handleRef, onUnitChang
                 onRegion={onRegion}
               />
             )}
+            {visible.has(n) && <InkLayer surface={`pdf:${n}`} disabled={areaMode} />}
           </div>
         ))}
       </div>

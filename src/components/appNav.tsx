@@ -3,7 +3,7 @@ import { Sym, type NavConfig, type NavItem } from '../ui';
 import { useCourseChat } from '../store/courseChat';
 
 /**
- * 应用级导航（新会话 / 课程库 / 学习）的唯一来源。
+ * 应用级导航（新会话 / 课程库）的唯一来源。
  *
  * 只有左侧栏一份：宽屏常驻在内容行左边，窄屏由顶栏汉堡按钮弹成 Drawer
  * （见 ui/layout.tsx 的 Sidebar）。**没有底部 tab 栏** —— 它把同一组目的地
@@ -59,13 +59,6 @@ export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
       icon: <Sym name="video_library" />,
       onClick: () => navigate('/library'),
       testId: 'nav-rail-home',
-    },
-    {
-      value: 'study',
-      label: '学习',
-      icon: <Sym name="calendar_month" />,
-      onClick: () => navigate('/study'),
-      testId: 'nav-rail-study',
     },
   ];
   return { value: active, items };

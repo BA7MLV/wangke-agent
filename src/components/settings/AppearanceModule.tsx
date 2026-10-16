@@ -1,6 +1,8 @@
-import { Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
+import { ColorSwatchPicker, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
+import { Check } from 'lucide-react';
 import { useSettings, type AppTheme } from '../../store/settings';
 import { Field, SectionCard } from '../../ui';
+import { ACCENT_COLOR_OPTIONS } from '../../ui/theme';
 
 /**
  * 「外观」模块：主题与阅读时是否联网。
@@ -15,7 +17,7 @@ export default function AppearanceModule() {
     <>
       <SectionCard
         title="外观"
-        subtitle="深浅两套色板都来自设计令牌，「跟随系统」会随系统的深浅色实时切换"
+        subtitle="深浅色可跟随系统或手动切换，主题色也可在下方选择"
         testId="card-appearance"
       >
         <Field label="主题" layout="row" testId="field-theme">
@@ -34,6 +36,35 @@ export default function AppearanceModule() {
             <ToggleButton id="light">浅色</ToggleButton>
             <ToggleButton id="dark">深色</ToggleButton>
           </ToggleButtonGroup>
+        </Field>
+        <Field
+          label="主题色"
+          layout="row"
+          hint="更改按钮、选中项和焦点提示的强调色"
+          testId="field-accent-color"
+        >
+          <ColorSwatchPicker
+            aria-label="主题色"
+            data-testid="accent-color-picker"
+            value={
+              ACCENT_COLOR_OPTIONS.find(({ id }) => id === settings.accentColor)?.value ??
+              ACCENT_COLOR_OPTIONS[0].value
+            }
+            onChange={(color) => {
+              const value = color.toString('hex').toLowerCase();
+              const next = ACCENT_COLOR_OPTIONS.find((option) => option.value === value);
+              if (next) settings.update({ accentColor: next.id });
+            }}
+          >
+            {ACCENT_COLOR_OPTIONS.map(({ id, label, value }) => (
+              <ColorSwatchPicker.Item key={id} color={value} aria-label={label}>
+                <ColorSwatchPicker.Swatch />
+                <ColorSwatchPicker.Indicator>
+                  <Check aria-hidden="true" />
+                </ColorSwatchPicker.Indicator>
+              </ColorSwatchPicker.Item>
+            ))}
+          </ColorSwatchPicker>
         </Field>
         <Field
           label="动态取色"

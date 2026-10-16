@@ -94,6 +94,11 @@ await db.segments.bulkAdd([
   { videoId: VID_A, idx: 1, start: 5, end: 10, text: '今天讲增长率', status: 1 },
   { videoId: VID_B, idx: 0, start: 0, end: 3, text: 'B 课字幕', status: 1 },
 ]);
+const INK = {
+  id: 'ink-roundtrip', materialId: VID_A, surface: 'pdf:1', tool: 'pen', color: '#dc2626',
+  width: 3, height: 1400, points: [{ x: 40, y: 30, pressure: .4 }, { x: 70, y: 45, pressure: .8 }], createdAt: 1,
+};
+await db.materialInk.add(INK);
 // B 站多语言字幕（只喂显示层，随视频一起迁移）
 await db.subtitleTracks.add({
   videoId: VID_A, lang: 'ai-en', lanDoc: '英语（自动翻译）', primary: 0,
@@ -187,6 +192,10 @@ await test('全新导入：多语言字幕轨跟随新视频', async () => {
   assert.equal(tracks[0].cues[1].text, 'Today we cover growth rate');
 });
 
+await test('手写批注迁移保留 UUID、材料归属、笔压与坐标', async () => {
+  assert.deepEqual(await db.materialInk.get(INK.id), INK);
+});
+
 await test('全新导入：帧 Blob 字节级一致', async () => {
   const f = await db.frames.where('videoId').equals(VID_A).first();
   assert.equal(f.blob.type, 'image/png');
@@ -243,6 +252,7 @@ await test('二次导入：视频全部跳过，无重复写入', async () => {
   assert.equal(r2.videosSkipped, 2);
   assert.equal(await db.segments.count(), 3);
   assert.equal(await db.subtitleTracks.count(), 1);
+  assert.equal(await db.materialInk.count(), 1);
   assert.equal(await db.chats.count(), 2);
   assert.equal(await db.folders.count(), 1); // 同名 folder 合并
   assert.equal(await db.skills.count(), 1); // 同名 skill 跳过
@@ -275,6 +285,7 @@ await test('部分冲突：已有视频整条跳过（含子表），新视频�
   assert.equal(await db.segments.where('videoId').equals(VID_A).count(), 1); // 本机字幕保留
   assert.equal(await db.segments.where('videoId').equals(VID_B).count(), 1); // B 字幕迁入
   assert.equal(await db.frames.count(), 0); // A 被跳过 → A 的帧不导入
+  assert.equal(await db.materialInk.count(), 0); // A 被跳过 → 它的批注不导入
   assert.equal(await db.subtitleTracks.count(), 0); // 字幕轨只跟着迁入的 B 走（A 被跳过 → 它的轨也不导入）
   const b = await db.videos.get(VID_B);
   assert.equal(b.fileDeleted, 1);
