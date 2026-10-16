@@ -47,7 +47,7 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     <div ref={hostRef} style={{ height: virtualizer.getTotalSize(), position: 'relative', overflowAnchor: 'none' }}>
       {virtualizer.getVirtualItems().map((item) => (
         <div key={item.key} data-index={item.index} ref={virtualizer.measureElement}
-          style={{ position: 'absolute', top: 0, left: 0, width: '100%', transform: `translateY(${item.start - margin}px)`, display: 'flow-root' }}>
+          style={{ position: 'absolute', top: item.start - margin, left: 0, width: '100%', display: 'flow-root' }}>
           {children(items[item.index], item.index)}
         </div>
       ))}

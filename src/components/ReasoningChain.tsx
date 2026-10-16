@@ -1,7 +1,5 @@
-import { useEffect, useId, useRef, useState } from 'react';
-import { Spinner } from '@heroui/react';
-import { Sym } from '../ui';
-import { Collapse } from './motion';
+import { useEffect, useRef, useState } from 'react';
+import { Disclosure, Spinner } from '@heroui/react';
 import './reasoning-chain.css';
 
 /**
@@ -45,9 +43,9 @@ function LiveElapsed({ from }: { from: number }) {
  *
  * | 形态     | 图标 | 标题                   | 正文                       |
  * | -------- | ---- | ---------------------- | -------------------------- |
- * | 思考中   | 上下 | 正在思考 · 已用时 x 秒 | 固定区域 + 上下渐隐 + 自动滚 |
+ * | 思考中   | 加载 | 正在思考 · 已用时 x 秒 | 固定区域 + 上下渐隐 + 自动滚 |
  * | 思考中·折 | 右  | 正在思考               | 收起                        |
- * | 已完成·展 | 下  | 已思考用时 x 秒         | 固定区域，手动回看           |
+ * | 已完成·展 | 下  | 已思考用时 x 秒（吸顶） | 全文展开，随消息列表滚动     |
  * | 已完成·折 | 右  | 思考过程               | 收起                        |
  *
  * 为什么要拆出「思考中」这个**中间态**：流式期间思考链是唯一在动的东西，
@@ -55,8 +53,7 @@ function LiveElapsed({ from }: { from: number }) {
  * 中间态被硬塞进「已完成」的样式里 —— 于是限制高度的滚动框在**正文一个字都还没出**时就占住了位置，
  * 气泡迟迟不长高，用户盯着一个不动的框也不知道模型是在想还是在卡住。
  *
- * 中间态的图标是**上下**双箭头而不是下箭头：那一刻展开 / 收起都点得动，
- * 箭头不该倒向某一侧（倒向下就成了「点击展开」的承诺，而它其实也能收起）。
+ * 展开交互统一交给 HeroUI Disclosure；加载状态与展开指示器分别表达生成进度和折叠状态。
  *
  * 实时用时（`LiveElapsed`）只在**思考中且展开**时出现，两个条件缺一不可：
  *
@@ -65,7 +62,7 @@ function LiveElapsed({ from }: { from: number }) {
  * - **收起不挂**：收起是「别占我地方」，而一个每 250ms 跳一下的数字恰恰最占注意力 ——
  *   既然用户已经把它折叠了，就别再让那行小字继续动。收起态留一个稳定的「正在思考」就够。
  *
- * 实时计时与自动跟随仅在 `live` 启用；历史回看也使用固定区域与边缘渐隐。
+ * 实时计时、固定视口与自动跟随仅在 `live` 启用；历史回看完整展开。
  *
  * 固定区域 + 渐隐 + 自动滚动是**成对**的：框只有 240px 高，思考链动辄上千字，
  * 不自动滚就永远只能看到最早那几行；不用渐隐收尾则看得出「下面还有」，用户才知道可以滚。
@@ -99,7 +96,6 @@ export default function ReasoningChain({
   elapsedMs?: number;
 }) {
   const [open, setOpen] = useState(active);
-  const bodyId = useId();
   const innerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const lastTop = useRef(0);
@@ -174,40 +170,27 @@ export default function ReasoningChain({
       : '思考过程';
 
   return (
-    <div className="reasoning-chain" data-mode={expanded ? 'expanded' : live ? 'live' : 'closed'}>
-      <button
-        type="button"
-        className="reasoning-chain__toggle"
-        aria-expanded={open}
-        aria-controls={bodyId}
-        onClick={() => setOpen((v) => !v)}
-      >
+    <Disclosure className="reasoning-chain" data-mode={expanded ? 'expanded' : live ? 'live' : 'closed'}
+      isExpanded={open} onExpandedChange={setOpen}>
+      <Disclosure.Heading className="reasoning-chain__heading">
+      <Disclosure.Trigger className="reasoning-chain__toggle">
         <span className="reasoning-chain__title">{title}</span>
-        {open ? (
-          active ? (
-            <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />
-          ) : (
-            <Sym name="keyboard-arrow-down" className="reasoning-chain__icon" />
-          )
-        ) : (
-          <Sym name="chevron-right" className="reasoning-chain__icon" />
-        )}
+        {active && <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />}
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
         {live && <LiveElapsed from={since ?? mountedAt.current} />}
-      </button>
-      <Collapse
-        open={open}
-        id={bodyId}
-      >
+        <Disclosure.Indicator className="reasoning-chain__indicator" />
+      </Disclosure.Trigger>
+      </Disclosure.Heading>
+      <Disclosure.Content className="reasoning-chain__content">
+        <Disclosure.Body className="reasoning-chain__panel">
         <div className="reasoning-chain__viewport" ref={viewportRef}>
-          <div ref={innerRef} className="reasoning-chain__body reasoning-chain__body--live"
+          <div ref={innerRef} className={live ? 'reasoning-chain__body reasoning-chain__body--live' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
             {reasoning}
           </div>
-          <span className="reasoning-chain__blur reasoning-chain__blur--top" aria-hidden="true" />
-          <span className="reasoning-chain__blur reasoning-chain__blur--bottom" aria-hidden="true" />
         </div>
-      </Collapse>
-    </div>
+        </Disclosure.Body>
+      </Disclosure.Content>
+    </Disclosure>
   );
 }

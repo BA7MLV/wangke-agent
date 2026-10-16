@@ -249,7 +249,7 @@ function MessageActions({
   );
 }
 
-/** 触屏只在长按时展开时间与动作；键盘仍可通过组件库的菜单快捷键打开。 */
+/** 长消息默认展示六行；触屏长按仍可查看时间、复制完整提问与操作。 */
 function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
   message: CourseChatMessage;
   busy: boolean;
@@ -258,12 +258,27 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
   onFork: () => void;
 }) {
   const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
-  if (!touchMenu) return <div className="course-chat__bubble course-chat__bubble--user">{message.content}</div>;
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const text = textRef.current;
+    if (!text) return;
+    const measure = () => setOverflows(text.scrollHeight > parseFloat(getComputedStyle(text).lineHeight) * 6 + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [message.content, touchMenu]);
+  const content = <span ref={textRef} id={`user-text-${message.key}`} className="course-chat__user-text"
+    data-collapsed={overflows && !expanded}>{message.content}</span>;
   return (
+    <div className="course-chat__user-content">
+    {!touchMenu ? <div className="course-chat__bubble course-chat__bubble--user">{content}</div> : (
     <Dropdown trigger="longPress">
       <Dropdown.Trigger className="course-chat__bubble course-chat__bubble--user course-chat__user-trigger"
-        aria-label={`${message.content}，长按查看时间和操作`} data-testid="chat-user-message-trigger">
-        {message.content}
+        aria-label="用户消息，长按查看时间和操作" data-testid="chat-user-message-trigger">
+        {content}
       </Dropdown.Trigger>
       <Dropdown.Popover placement="bottom end" className="course-chat__message-menu">
         {message.createdAt != null && (
@@ -286,6 +301,13 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
         </Dropdown.Menu>
       </Dropdown.Popover>
     </Dropdown>
+    )}
+    {overflows && <Button size="sm" variant="tertiary" className="course-chat__user-expand"
+      aria-expanded={expanded} aria-controls={`user-text-${message.key}`}
+      data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
+      {expanded ? '收起' : '展开全文'}<Sym name="keyboard_arrow_down" />
+    </Button>}
+    </div>
   );
 }
 
@@ -592,6 +614,7 @@ export default function CourseChat() {
   const contextCourses = useCourseChat((s) => s.contextCourses);
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
+  const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
   const bootstrap = useCourseChat((s) => s.bootstrap);
   const refreshCourseCount = useCourseChat((s) => s.refreshCourseCount);
@@ -1402,8 +1425,8 @@ export default function CourseChat() {
               onSendNow={(id) => void sendQueuedNow(id)}
               onClear={clearQueue}
             />
-            {loading && !pendingAsk && (
-              <div className="course-chat__delivery-bar">
+            {generating && (
+              <div className="course-chat__delivery-bar" data-testid="chat-delivery-bar" data-mode={sendMode}>
                 <ToggleButtonGroup
                   className="course-chat__send-mode"
                   selectionMode="single"
@@ -1416,11 +1439,11 @@ export default function CourseChat() {
                     if (next) setSendMode(next as SendMode);
                   }}
                 >
-                  <ToggleButton id="queue" data-testid="chat-send-mode-queue">排队</ToggleButton>
-                  <ToggleButton id="steer" data-testid="chat-send-mode-steer">插入</ToggleButton>
+                  <ToggleButton id="queue" data-testid="chat-send-mode-queue" aria-describedby="chat-delivery-hint"><Sym name="schedule" />排队</ToggleButton>
+                  <ToggleButton id="steer" data-testid="chat-send-mode-steer" aria-describedby="chat-delivery-hint"><Sym name="arrow_upward" />插入</ToggleButton>
                 </ToggleButtonGroup>
-                <p className="course-chat__send-hint" role="status">
-                  {sendMode === 'queue' ? '这轮答完后自动发送' : '发送后立即打断，插入新消息'}
+                <p id="chat-delivery-hint" className="course-chat__send-hint" role="status">
+                  {sendMode === 'queue' ? '发送后排队，本轮结束自动发出' : '发送后停止当前回复，立即回答新消息'}
                 </p>
               </div>
             )}
@@ -1472,7 +1495,7 @@ export default function CourseChat() {
                 placeholder={
                   pendingAsk
                     ? '直接输入就是你的回答，回车确认'
-                    : loading
+                    : generating
                       ? sendMode === 'queue'
                         ? '说一句排队，答完这轮自动接着问…'
                         : '说一句立刻插入，打断这轮换个问法…'
@@ -1522,12 +1545,15 @@ export default function CourseChat() {
                   />
                 </span>
                 {/* 停止键放在发送键前，发送始终固定在最右侧。 */}
-                {loading && !pendingAsk &&
+                {generating &&
                   iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
                     className: 'course-chat__stop',
                     testId: 'chat-stop',
                   })}
-                <VoiceInput
+                {generating ? (
+                  iconButton(sendMode === 'queue' ? '排队发送' : '插入发送', <Sym name="arrow_upward" />,
+                    () => void send(draft), { className: 'course-chat__send', testId: 'chat-send', disabled: !sessionReady || !draft.trim() })
+                ) : <VoiceInput
                   key={activeId ?? 'draft'}
                   holdTargetRef={composerHoldRef}
                   disabled={!sessionReady}
@@ -1546,7 +1572,7 @@ export default function CourseChat() {
                     : pendingAsk
                       ? '确认这个回答'
                       : '发送'}
-                />
+                />}
               </Toolbar>
             </div>
           </div>

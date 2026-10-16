@@ -208,17 +208,19 @@
    用消息容器的宽度计算列缩进，避免按钮自身的百分比参照导致宽屏错位。
    不改正文列；标题顶部也不再由 40px 点击区域的垂直居中额外撑开。 */
 .course-chat__messages .reasoning-chain[data-mode='expanded'] {
-  width: 100%;
+  /* sticky 包含消息区的 padding 起点，减掉阅读间距后恰好落在顶栏下沿。 */
+  --reasoning-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
+  width: calc(100% + var(--course-chat-message-inset) - 29px);
+  margin-left: calc(29px - var(--course-chat-message-inset));
 }
 
 .course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
-  /* sticky 的 top 相对滚动视口，不是 padding 后的内容起点；紧贴浮动顶栏下沿。 */
-  top: auto;
-  align-items: flex-start;
+  align-items: center;
+  padding-top: 0;
 }
 
-.course-chat__messages .reasoning-chain[data-mode='expanded'] > .t-acc-panel {
-  margin-left: 0;
+.course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__content {
+  margin-left: calc(var(--course-chat-message-inset) - 29px);
 }
 
 /* 有「课程上下文」条时：它固定在消息区上方、自己让出顶栏高度，
@@ -227,8 +229,8 @@
   padding-top: var(--reasoning-sticky-gap);
 }
 
-.course-chat__main:has(.course-chat__context) .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
-  top: 0;
+.course-chat__main:has(.course-chat__context) .reasoning-chain[data-mode='expanded'] {
+  --reasoning-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
 }
 
 /* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，
@@ -437,6 +439,40 @@
   background: var(--surface);
   color: var(--foreground);
   white-space: pre-wrap;
+}
+
+.course-chat__user-content {
+  max-width: min(76%, 560px);
+  min-width: 0;
+}
+
+.course-chat__user-content .course-chat__bubble--user {
+  max-width: 100%;
+}
+
+.course-chat__user-text {
+  display: block;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.course-chat__user-text[data-collapsed='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+
+.course-chat__user-expand {
+  display: flex;
+  margin: 4px 0 0 auto;
+  gap: 4px;
+  color: var(--muted);
+  border-radius: var(--radius-full);
+}
+
+.course-chat__user-expand[aria-expanded='true'] svg {
+  transform: rotate(180deg);
 }
 
 /* 错误态：唯一还给助手气泡的场景 —— 出错时需要把这一条从正文流里「拎出来」 */
@@ -905,8 +941,11 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px 12px;
-  padding-inline: 8px;
+  gap: 8px 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  background: var(--background);
 }
 
 .course-chat__send-hint {
@@ -923,6 +962,18 @@
   min-width: 44px;
   padding: 0;
   flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.page-course-chat [data-testid='nav-rail-toggle'],
+.page-course-chat [data-testid='nav-rail-open'] {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
   border: 1px solid var(--border);
   border-radius: var(--radius-full);
   background: var(--background);
@@ -958,6 +1009,26 @@
 /* 生成期间独立挂在输入卡上方，不挤占技能、模型与发送工具的位置。 */
 .course-chat__send-mode {
   flex: none;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-full);
+  background: var(--surface-secondary);
+}
+
+.course-chat__send-mode button {
+  gap: 4px;
+  border-radius: var(--radius-full);
+}
+
+.course-chat__send-mode button[aria-pressed='true'],
+.course-chat__send-mode button[data-selected='true'] {
+  background: var(--foreground);
+  color: var(--background);
+}
+
+.course-chat__send-mode svg {
+  width: 14px;
+  height: 14px;
 }
 
 /* ── 排队条 ─────────────────────────────────────────────────────────────
@@ -1127,7 +1198,7 @@
     margin-bottom: 22px;
   }
 
-  .course-chat__bubble--user {
+  .course-chat__user-content {
     max-width: 86%;
   }
 

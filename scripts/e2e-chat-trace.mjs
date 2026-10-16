@@ -214,13 +214,13 @@ await send('我有哪些课还没开始？');
 // ── 1. 中间态 ────────────────────────────────────────────────────────────────
 await page.waitForSelector('[data-testid="reasoning-elapsed"]', { timeout: 15000 });
 
-await check('中间态：live + 标题「正在思考」+ 上下双箭头', async () => {
+await check('中间态：live + 标题「正在思考」+ HeroUI 加载状态和展开指示器', async () => {
   assert.equal(await chain.getAttribute('data-mode'), 'live');
   assert.equal((await chain.locator('.reasoning-chain__title').innerText()).trim(), '正在思考');
   assert.equal(
-    await chain.locator('.reasoning-chain__toggle svg path').count(),
-    2,
-    '中间态的图标该是上下双箭头（两条 chevron），不是单条下箭头',
+    await chain.locator('.reasoning-chain__indicator').count(),
+    1,
+    '应使用 HeroUI 展开指示器',
   );
 });
 
@@ -255,6 +255,7 @@ await check('中间态收起：向右箭头、标题无用时；再展开恢复 
 });
 
 await check('中间态：固定区域 240px + 溢出 + 自动滚到底 + 顶部渐隐', async () => {
+  await page.waitForTimeout(300);
   const box = await chain.locator('.reasoning-chain__body').evaluate((el) => {
     const cs = getComputedStyle(el);
     return {
@@ -355,29 +356,30 @@ await check('展开：已思考用时 x 秒 + 吸顶 + 正文不限高', async (
   assert.match((await chain.locator('.reasoning-chain__title').innerText()).trim(), /^已思考用时 /);
   const box = await chain.locator('.reasoning-chain__toggle').evaluate((el) => {
     const cs = getComputedStyle(el);
+    const headingStyle = getComputedStyle(el.closest('.reasoning-chain__heading'));
     const title = el.querySelector('.reasoning-chain__title');
-    const icon = el.querySelector('.reasoning-chain__icon');
+    const icon = el.querySelector('.reasoning-chain__indicator');
     const bubble = el.closest('.course-chat__bubble');
     return {
-      position: cs.position,
-      top: cs.top,
+      position: headingStyle.position,
+      top: headingStyle.top,
       headerHeight: cs.getPropertyValue('--app-bar-h').trim() || '60px',
       background: cs.backgroundColor,
       fontSize: parseFloat(cs.fontSize),
       bodyFontSize: parseFloat(getComputedStyle(bubble).fontSize),
       titleLeft: title.getBoundingClientRect().left,
-      menuLeft: document.querySelector('[data-testid="nav-rail-toggle"] svg').getBoundingClientRect().left,
+      menuLeft: document.querySelector('[data-testid="nav-rail-toggle"]').getBoundingClientRect().left + 9,
       alignItems: cs.alignItems,
       titleRight: title.getBoundingClientRect().right,
       iconLeft: icon.getBoundingClientRect().left,
     };
   });
   assert.equal(box.position, 'sticky');
-  assert.equal(parseFloat(box.top), parseFloat(box.headerHeight), '吸顶位置应紧贴顶栏下沿');
+  assert.equal(parseFloat(box.top), -28, '吸顶偏移应抵消消息区顶部阅读间距');
   assert.equal(box.background, 'rgba(0, 0, 0, 0)', '吸顶标题不应有底色');
-  assert.ok(box.fontSize > box.bodyFontSize, '标题字号应略大于正文');
-  assert.ok(Math.abs(box.titleLeft - box.menuLeft) < 1, '标题应与顶栏菜单图标左缘对齐');
-  assert.equal(box.alignItems, 'flex-start', '标题应贴顶，不在点击区域内垂直居中');
+  assert.equal(box.fontSize, 14, '标题采用 HeroUI 紧凑字号');
+  assert.ok(Math.abs(box.titleLeft - box.menuLeft) < 1, `标题应与顶栏菜单图标左缘对齐：${JSON.stringify(box)}`);
+  assert.equal(box.alignItems, 'center', '标题和 HeroUI 指示器应居中对齐');
   assert.ok(box.iconLeft >= box.titleRight, '图标应位于标题文字右侧');
   await chain.locator('.reasoning-chain__toggle').hover();
   assert.equal(await chain.locator('.reasoning-chain__toggle').evaluate((el) => getComputedStyle(el).backgroundColor),
@@ -386,6 +388,19 @@ await check('展开：已思考用时 x 秒 + 吸顶 + 正文不限高', async (
     maxHeight: getComputedStyle(el).maxHeight,
   }));
   assert.equal(body.maxHeight, 'none', '展开态该全部铺开，不再限高');
+  await page.waitForTimeout(300);
+  await chain.evaluate((el) => {
+    const messages = el.closest('.course-chat__messages');
+    messages.scrollTo({ top: messages.scrollTop + el.getBoundingClientRect().top - messages.getBoundingClientRect().top + 120, behavior: 'instant' });
+  });
+  await page.waitForTimeout(300);
+  const sticky = await chain.evaluate((el) => {
+    const messages = el.closest('.course-chat__messages');
+    const heading = el.querySelector('.reasoning-chain__heading');
+    return { actual: heading.getBoundingClientRect().top, scroll: messages.scrollTop, scrollHeight: messages.scrollHeight, chainHeight: el.clientHeight,
+      expected: messages.getBoundingClientRect().top + parseFloat(getComputedStyle(messages).paddingTop) + parseFloat(getComputedStyle(heading).top) };
+  });
+  assert.ok(Math.abs(sticky.actual - sticky.expected) < 2, `滚动后标题必须真正停在吸顶位置：${JSON.stringify(sticky)}`);
   await bubble.screenshot({ path: `${SHOTS}/chat-trace-4-expanded.png` });
 });
 
