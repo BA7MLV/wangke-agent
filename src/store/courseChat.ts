@@ -1,18 +1,18 @@
 import { create } from 'zustand';
+import { readChatPage } from './chatHistory';
+import { framePatch } from '../utils/framePatch';
 import { catalogOf, getSettings } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
 import { prepareSessionHistory } from './contextCompression';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
-import { createToolExecutor, SKILL_TOOLS } from '../harness/tools';
+import { createResourceExecutor, libraryResourceTools } from '../harness/resources';
 import {
   type CourseContextItem,
-  createLibraryAssistantExecutor,
   folderPlanToolResult,
   LIBRARY_ASSISTANT_ID,
   libraryAssistantSystemPrompt,
-  libraryAssistantTools,
 } from '../harness/libraryAssistant';
 import { applyFolderPlan, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
@@ -238,6 +238,10 @@ export interface CourseChatStore {
    */
   loaded: boolean;
   messages: CourseChatMessage[];
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  historyError: string | null;
+  loadOlder: () => Promise<void>;
   /**
    * 当前视图对应的那条会话**正在生成**。
    *
@@ -452,7 +456,7 @@ const DRAFT_STATE: Partial<CourseChatStore> = {
  *
  * 空课程库时整套课程工具都不注册（见 `libraryAssistantTools`），技能工具始终并入。
  */
-const toolsForLibrary = (hasCourses: boolean) => [...libraryAssistantTools(hasCourses), ...SKILL_TOOLS];
+const toolsForLibrary = libraryResourceTools;
 
 let keySeq = 0;
 const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
@@ -547,6 +551,9 @@ function rekeyInflight(from: number, to: number): void {
  */
 interface SessionView {
   messages: CourseChatMessage[];
+  hasOlder: boolean;
+  loadingOlder: boolean;
+  historyError: string | null;
   loaded: boolean;
   loading: boolean;
   queued: QueuedMessage[];
@@ -562,6 +569,9 @@ type ViewKey = number;
 
 const EMPTY_VIEW: SessionView = {
   messages: [],
+  hasOlder: false,
+  loadingOlder: false,
+  historyError: null,
   loaded: false,
   loading: false,
   queued: [],
@@ -590,6 +600,9 @@ const awaiting = new Set<number>();
 function topLevelView(s: CourseChatStore): SessionView {
   return {
     messages: s.messages,
+    hasOlder: s.hasOlder,
+    loadingOlder: s.loadingOlder,
+    historyError: s.historyError,
     loaded: s.loaded,
     loading: s.loading,
     queued: s.queued,
@@ -688,6 +701,9 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   activeId: null,
   loaded: false,
   messages: [],
+  hasOlder: false,
+  loadingOlder: false,
+  historyError: null,
   loading: false,
   runningIds: [],
   awaitingIds: [],
@@ -723,6 +739,30 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     set({ courseCount: await db.videos.count() });
   },
 
+  loadOlder: async () => {
+    const id = get().activeId;
+    if (id == null) return;
+    const view = readView(id);
+    const first = view.messages[0];
+    if (!view.hasOlder || view.loadingOlder || first?.rowId == null || first.createdAt == null) return;
+    writeView(id, { loadingOlder: true, historyError: null });
+    try {
+      const page = await readChatPage(id, { id: first.rowId, createdAt: first.createdAt });
+      const latest = readView(id);
+      if (latest.messages[0]?.key !== first.key) return;
+      const keys = new Set(latest.messages.map((message) => message.rowId));
+      writeView(id, {
+        messages: [...page.rows.filter((row) => !keys.has(row.id)).map(toMessage), ...latest.messages],
+        hasOlder: page.hasOlder,
+        loadingOlder: false,
+      });
+    } catch {
+      if (readView(id).messages[0]?.key === first.key) {
+        writeView(id, { loadingOlder: false, historyError: '历史消息加载失败，点击重试' });
+      }
+    }
+  },
+
   loadSession: async (id) => {
     /**
      * 生成中**可以**切会话（2026-10-16）：正在跑的那一轮绑在它自己的会话上，切走 = `park`
@@ -743,10 +783,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     }
     // 没有缓存：先把视图置成「读取中」，再读库
     set({ activeId: id, ...EMPTY_VIEW, loaded: false });
-    const [session, rows] = await Promise.all([
+    const [session, page] = await Promise.all([
       db.chatSessions.get(id),
-      db.chats.where('sessionId').equals(id).sortBy('createdAt'),
+      readChatPage(id),
     ]);
+    const rows = page.rows;
     const contextIds = session?.contextCourseIds ?? [];
     const contextRows = contextIds.length > 0
       ? await db.videos.where('id').anyOf(contextIds).toArray()
@@ -754,6 +795,9 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     const byId = new Map(contextRows.map((course) => [course.id, course.name]));
     const view: SessionView = {
       messages: rows.map(toMessage),
+      hasOlder: page.hasOlder,
+      loadingOlder: false,
+      historyError: null,
       loaded: true,
       loading: false,
       queued: [],
@@ -1139,13 +1183,14 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * ⚠️ 走 `writeView(turnKey, …)` 而不是 `set`：用户切走后这一轮还在跑，`set` 会把内容
      * 写进「当前在看的那条会话」的视图里 —— 那正是这次要修的串台。
      */
-    const patchAi = (patch: Partial<CourseChatMessage>) => {
+    const updates = framePatch<CourseChatMessage>((patch) => {
       writeView(turnKey, {
         messages: readView(turnKey).messages.map((m) =>
           m.key === currentKey ? { ...m, ...patch } : m,
         ),
       });
-    };
+    });
+    const patchAi = updates.write;
     /**
      * 标题按首条消息生成，判据是「这条会话还没有标题」。
      *
@@ -1204,6 +1249,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 「问完就关掉浏览器」也不会把卡弄丢。
      */
     const rotateAi = async () => {
+      updates.flush();
       const message = readView(turnKey).messages.find((m) => m.key === currentKey);
       if (!message) return;
       let rowId = message.rowId;
@@ -1380,23 +1426,21 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       // 记录初始长度，供 onCheckpoint 截出「本回合新增的部分」（midTurn）
       baseLen = chatMessages.length;
 
-      const libraryExecutor = createLibraryAssistantExecutor({
-        contextCourseIds: contextCourses.map((course) => course.id),
-        onContextChange: async (courses) => {
-          writeView(turnKey, { contextCourses: courses });
-          await db.chatSessions.where('id').equals(turnKey).modify((row) => {
-            if (courses.length === 0) delete row.contextCourseIds;
-            else row.contextCourseIds = courses.map((course) => course.id);
-          });
+      const executeTool = createResourceExecutor({
+        allowedSkillIds: view.skillIds,
+        library: {
+          contextCourseIds: contextCourses.map((course) => course.id),
+          onContextChange: async (courses) => {
+            writeView(turnKey, { contextCourses: courses });
+            await db.chatSessions.where('id').equals(turnKey).modify((row) => {
+              if (courses.length === 0) delete row.contextCourseIds;
+              else row.contextCourseIds = courses.map((course) => course.id);
+            });
+          },
+          onAskUser: holdAsk,
+          onPlanFolders: holdPlan,
         },
-        onAskUser: holdAsk,
-        onPlanFolders: holdPlan,
       });
-      const skillExecutor = createToolExecutor(LIBRARY_ASSISTANT_ID, { allowedSkillIds: view.skillIds });
-      const executeTool = (name: string, args: Record<string, unknown>) =>
-        name === 'use_skill' || name === 'read_skill_reference'
-          ? skillExecutor(name, args)
-          : libraryExecutor(name, args);
 
       await runAgentLoop(
         chatMessages,
@@ -1420,11 +1464,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             if (first) reasoningFrom = now;
             reasoningTo = now;
             // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算（不落库，见字段注释）
-            patchAi(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
+            updates.stream(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
           },
           onDelta: (delta) => {
             answer += delta;
-            patchAi({ content: answer, hint: undefined });
+            updates.stream({ content: answer, hint: undefined });
           },
           onRoundStart: () => {
             // 上一轮流出的只是检索旁白，答案要等后面的轮次 —— 但**存一份**：

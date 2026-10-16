@@ -5,7 +5,7 @@
  * 是互相冲突的，所以样式按 mode 分流而不是靠 JS 换 class：
  *
  * - `live`     正文限高 + 内部滚动 + 上下渐隐，随流式续写自动滚到底
- * - `expanded` 正文**不限高**，整块随页面滚；标题吸顶，滚过长链条时仍看得见耗时
+ * - `expanded` 同样固定高度，用户在区域内回看历史思考
  * - `closed`   正文收起（0fr 轨道，见 Collapse）
  *
  * 颜色一律走 HeroUI 语义令牌（--foreground / --muted / --accent），深浅两套自动成立。
@@ -54,8 +54,7 @@
  * 组件不知道宿主的内边距是多少。
  */
 .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
-  position: sticky;
-  top: calc(-1 * var(--reasoning-sticky-gap, 0px));
+  position: relative;
   z-index: 1;
   background: transparent;
 }
@@ -115,9 +114,7 @@
 /**
  * 思考中：固定区域 + 上下渐隐 + 自动滚动（粘底由 JS 写在 data-fade-* 上）。
  *
- * 展开态**故意不给** max-height / overflow：那时思考链已经想完了，
- * 它就是一段普通正文，该有多长就多长，和页面一起滚即可 ——
- * 留个内部滚动框只会让「读完了却还有东西在框里」变得不明显。
+ * 生成和历史回看共用滚动视口，长思考不会把答案挤出页面。
  *
  * ⚠️ 选择器**必须**带 `.reasoning-chain` 这个祖先（0,2,0），不能只写
  * `.reasoning-chain__body--live`（0,1,0）：正文身上还挂着 `motion.tsx` 的
@@ -130,11 +127,36 @@
  */
 .reasoning-chain .reasoning-chain__body--live {
   --reasoning-fade: 20px;
-  max-height: 240px;
+  height: 240px;
+  max-height: 35dvh;
   overflow: auto;
   /* 滚到底时别把外层消息列表也带着滚（触摸板/触屏上尤其明显） */
   overscroll-behavior: contain;
 }
+
+.reasoning-chain__viewport { position: relative; }
+.reasoning-chain__blur {
+  position: absolute;
+  left: 0;
+  right: 12px;
+  height: 24px;
+  pointer-events: none;
+  opacity: 0;
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+.reasoning-chain__blur--top {
+  top: 0;
+  mask-image: linear-gradient(#000, transparent);
+  -webkit-mask-image: linear-gradient(#000, transparent);
+}
+.reasoning-chain__blur--bottom {
+  bottom: 0;
+  mask-image: linear-gradient(transparent, #000);
+  -webkit-mask-image: linear-gradient(transparent, #000);
+}
+.reasoning-chain__viewport[data-fade-top='true'] .reasoning-chain__blur--top,
+.reasoning-chain__viewport[data-fade-bottom='true'] .reasoning-chain__blur--bottom { opacity: 1; }
 
 /**
  * 上下渐隐各自独立开关（data-fade-top / data-fade-bottom 由 ReasoningChain 写）。

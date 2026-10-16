@@ -6,14 +6,8 @@ import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizSt
 import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
-import {
-  QA_TOOLS,
-  MATERIAL_QA_TOOLS,
-  LIST_FRAMES_TOOL,
-  EDIT_MARKDOWN_TOOL,
-  mdEditorOpen,
-  createToolExecutor,
-} from '../harness/tools';
+import { mdEditorOpen } from '../harness/tools';
+import { courseResourceTools, createResourceExecutor } from '../harness/resources';
 import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, subtitleWindow } from '../harness/context';
 import { EMPTY_COMPRESSION, prepareSessionHistory, retainedContext, useContextCompressionStore } from '../store/contextCompression';
@@ -46,6 +40,10 @@ import {
 } from '../ui';
 import { ThinkLine, StreamParagraph } from './motion';
 import ReasoningChain from './ReasoningChain';
+import VirtualMessages from './VirtualMessages';
+import ChatHistorySkeleton from './ChatHistorySkeleton';
+import { readChatPage } from '../store/chatHistory';
+import { framePatch } from '../utils/framePatch';
 import ToolTrace from './ToolTrace';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { MarkdownTable } from './MdTable';
@@ -252,6 +250,10 @@ export default function ChatPanel({
   /** 材料课程（PDF / Word / Markdown / HTML）：没有字幕、没有播放器，检索与引用都走材料那一套 */
   const isMaterial = materialKind !== undefined;
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
+  const [hasOlder, setHasOlder] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [historyError, setHistoryError] = useState(false);
+  const historyRequest = useRef(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [hasSubtitles, setHasSubtitles] = useState(isMaterial);
@@ -263,6 +265,8 @@ export default function ChatPanel({
   const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  const historySession = useRef(activeId);
+  historySession.current = activeId;
   const [loadedSessionId, setLoadedSessionId] = useState<number | null>(null);
   /**
    * 当前会话的技能白名单（`undefined` = 不限定，见 `ChatSessionRow.skillIds`）。
@@ -336,11 +340,12 @@ export default function ChatPanel({
    * 而那是用户正盯着要看的地方（刚发出去的问题、正在流的回答）。
    */
   const pinRafRef = useRef(0);
+  const stickRef = useRef(true);
   const pinList = useCallback(() => {
     cancelAnimationFrame(pinRafRef.current);
     pinRafRef.current = requestAnimationFrame(() => {
       const el = listRef.current;
-      if (el) el.scrollTop = el.scrollHeight;
+      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
   }, []);
   useEffect(() => () => cancelAnimationFrame(pinRafRef.current), []);
@@ -578,13 +583,21 @@ export default function ChatPanel({
       return;
     }
     let cancelled = false;
+    stickRef.current = true;
+    setMsgs([]);
+    setHasOlder(false);
+    setLoadingOlder(false);
+    setHistoryError(false);
+    historyRequest.current = false;
     (async () => {
       // 技能范围从库里现查而不是读 sessions state：会话行可能刚被别处改过，
       // 且这样 effect 只依赖 activeId，不会因为 sessions 数组变化而重载整个历史。
       const row = await db.chatSessions.get(activeId);
-      const history = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+      const page = await readChatPage(activeId);
+      const history = page.rows;
       if (!cancelled) setSkillIds(row?.skillIds);
       if (!cancelled) {
+        setHasOlder(page.hasOlder);
         setMsgs(history.map((r) => ({
           key: `h-${r.id}`,
           role: r.role === 'user' ? 'user' : 'ai',
@@ -605,33 +618,76 @@ export default function ChatPanel({
     };
   }, [activeId]);
 
+  const loadOlder = useCallback(async () => {
+    const first = msgs[0];
+    if (activeId == null || !hasOlder || historyRequest.current || first?.rowId == null) return;
+    historyRequest.current = true;
+    setLoadingOlder(true);
+    setHistoryError(false);
+    try {
+      const cursor = await db.chats.get(first.rowId);
+      if (!cursor) return;
+      const page = await readChatPage(activeId, cursor);
+      if (historySession.current !== activeId) return;
+      setMsgs((current) => [...page.rows.map((row): ChatMsg => ({
+        ...row, key: `h-${row.id}`, rowId: row.id, role: row.role === 'user' ? 'user' : 'ai',
+      })), ...current]);
+      setHasOlder(page.hasOlder);
+    } catch {
+      if (historySession.current === activeId) setHistoryError(true);
+    } finally {
+      if (historySession.current === activeId) {
+        historyRequest.current = false;
+        setLoadingOlder(false);
+      }
+    }
+  }, [activeId, hasOlder, msgs]);
+
+  useEffect(() => {
+    const el = listRef.current;
+    if (!el) return;
+    let lastTop = el.scrollTop;
+    const onScroll = () => {
+      if (el.scrollHeight - el.clientHeight - el.scrollTop < 80) stickRef.current = true;
+      else if (el.scrollTop < lastTop - 1) stickRef.current = false;
+      lastTop = el.scrollTop;
+      if (el.scrollTop < 40 && !stickRef.current && !historyError) void loadOlder();
+    };
+    el.addEventListener('scroll', onScroll, { passive: true });
+    return () => el.removeEventListener('scroll', onScroll);
+  }, [loadOlder, historyError]);
+
   const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? '新会话';
 
   /** 当前会话 → Markdown 全文（复制与导出共用） */
-  const sessionMarkdown = () =>
-    buildSessionMarkdown({
+  const sessionMarkdown = async () => {
+    const rows = activeId == null ? [] : await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const ids = new Set(rows.map((row) => row.id));
+    const all = [...rows.map((row) => ({ ...row, role: row.role === 'user' ? 'user' : 'ai' })), ...msgs.filter((m) => !ids.has(m.rowId))];
+    return buildSessionMarkdown({
       title: activeTitle,
       videoName,
-      messages: msgs.map((m) => ({
+      messages: all.map((m) => ({
         role: m.role === 'user' ? ('user' as const) : ('assistant' as const),
         content: m.content,
         reasoning: m.reasoning,
         quiz: m.quiz,
       })),
     });
+  };
 
   /** 一键复制整个会话（Markdown 源码；流式进行中禁用，避免复制到半截回答） */
   const copySession = async () => {
     if (msgs.length === 0) return void toast.info('当前会话还没有内容');
-    const ok = await copyText(sessionMarkdown());
-    if (ok) toast.success(`已复制整个会话（Markdown，${msgs.length} 条消息）`);
+    const ok = await copyText(await sessionMarkdown());
+    if (ok) toast.success('已复制整个会话（Markdown）');
     else toast.error('复制失败：剪贴板不可用，可改用「导出 .md」');
   };
 
   /** 导出整个会话为 .md 文件（归档/跨设备带走） */
-  const downloadSession = () => {
+  const downloadSession = async () => {
     if (msgs.length === 0) return void toast.info('当前会话还没有内容');
-    const url = URL.createObjectURL(new Blob([sessionMarkdown()], { type: 'text/markdown;charset=utf-8' }));
+    const url = URL.createObjectURL(new Blob([await sessionMarkdown()], { type: 'text/markdown;charset=utf-8' }));
     const a = document.createElement('a');
     a.href = url;
     a.download = exportFileName(videoName, activeTitle);
@@ -779,8 +835,9 @@ export default function ChatPanel({
     const stopped: AgentStopInfo[] = [];
     const abort = new AbortController();
     inflightAbort = abort;
-    const patchAi = (patch: Partial<ChatMsg>) =>
-      setMsgs((prev) => prev.map((m) => (m.key === aiKey ? { ...m, ...patch } : m)));
+    const updates = framePatch<ChatMsg>((patch) =>
+      setMsgs((prev) => prev.map((m) => (m.key === aiKey ? { ...m, ...patch } : m))));
+    const patchAi = updates.write;
 
     try {
       // 先上屏用户气泡与 AI 占位，此后描述/落库/问答任何一步抛错都能落到占位气泡上
@@ -993,7 +1050,11 @@ export default function ChatPanel({
       // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
       // 与「一段回答最多一张图」的出图规范一致。
       let widgetState: WidgetPayload | undefined;
-      const executeTool = createToolExecutor(videoId, {
+      const executeTool = createResourceExecutor({
+        courseId: videoId,
+        editable: canEditMd,
+        hasFrames,
+        allowedSkillIds: skillIds,
         // 材料：kind 决定走 search_material；视频：undefined 走 search_transcript
         kind: materialKind,
         onQuiz: (data) => {
@@ -1009,13 +1070,7 @@ export default function ChatPanel({
        * 本轮工具集：只给**当下真的能用**的能力。
        * 材料没有字幕、没有画面（工具集本身就少两样），md 且编辑面开着才多一个 edit_markdown。
        */
-      const tools = isMaterial
-        ? canEditMd
-          ? [...MATERIAL_QA_TOOLS, EDIT_MARKDOWN_TOOL]
-          : MATERIAL_QA_TOOLS
-        : hasFrames
-          ? [...QA_TOOLS, LIST_FRAMES_TOOL]
-          : QA_TOOLS;
+      const tools = courseResourceTools(canEditMd);
       await runAgentLoop(
         messages,
         tools,
@@ -1034,11 +1089,11 @@ export default function ChatPanel({
             reasoningTo = now;
             // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算，
             // 落库用不到（历史用终值 reasoningMs），所以不写进 ChatRow
-            patchAi(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
+            updates.stream(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
           },
           onDelta: (text) => {
             answer += text;
-            patchAi({ content: answer, hint: undefined });
+            updates.stream({ content: answer, hint: undefined });
           },
           onRoundStart: () => {
             // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
@@ -1336,10 +1391,16 @@ export default function ChatPanel({
       {/* 消息流：AI 靠左、用户靠右。两种气泡的形状差是 MD3 聊天的标志 ——
           靠对话侧收小圆角、另一侧全圆角。流式 markdown / 思考块 / 题卡都留在 AI 气泡内。 */}
       <PanelBody bodyRef={listRef} className="chat-list-wrap" testId="chat-list">
-        {msgs.length === 0 && (
+        {activeId != null && loadedSessionId !== activeId && <ChatHistorySkeleton />}
+        {msgs.length === 0 && (activeId == null || loadedSessionId === activeId) && (
           <PanelPlaceholder testId="chat-empty">针对课程内容提问，回答中的时间戳可点击跳转</PanelPlaceholder>
         )}
-        {msgs.map((m) => {
+        {msgs.length > 0 && <div className="chat-panel-history" aria-live="polite">
+          {hasOlder && <button type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>
+            {loadingOlder ? '正在加载历史消息…' : historyError ? '加载失败，点击重试' : '加载更早消息'}
+          </button>}
+        </div>}
+        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef}>{(m) => {
           const isUser = m.role === 'user';
           return (
             <div
@@ -1433,7 +1494,7 @@ export default function ChatPanel({
               )}
             </div>
           );
-        })}
+        }}</VirtualMessages>}
       </PanelBody>
 
       {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}

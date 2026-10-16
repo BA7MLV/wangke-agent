@@ -401,13 +401,13 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (name === 'search_transcript') {
       const query = String(args.query ?? '');
-      const hits = await searchTranscript(courseId, query);
+      const hits = await searchTranscript(courseId, query, Math.min(15, Math.max(1, Number(args.limit) || 6)));
       if (hits.length === 0) return '未检索到相关字幕内容。';
       return hits.map((h) => `[${fmtTime(h.segment.start)}] ${h.segment.text}`).join('\n');
     }
     if (name === 'get_transcript_range') {
       const start = Number(args.start) || 0;
-      const end = Number(args.end) || start + 60;
+      const end = args.end == null ? start + 60 : Number(args.end);
       const rows = await db.segments
         .where('videoId')
         .equals(courseId)
@@ -419,7 +419,7 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
     if (name === 'search_material') {
       if (!kind) return '这份课程没有可检索的阅读材料。';
       const query = String(args.query ?? '');
-      const hits = await searchMaterial(courseId, query);
+      const hits = await searchMaterial(courseId, query, Math.min(15, Math.max(1, Number(args.limit) || 6)));
       if (hits.length === 0) return '未检索到相关材料内容。';
       return formatMaterialHits(hits, kind);
     }
@@ -458,7 +458,7 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const refs = await db.skillRefs.where('skillId').equals(skill.id!).toArray();
       const refList =
         refs.length > 0
-          ? `\n\n该技能附带的参考文档（用 read_skill_reference 读取）：\n${refs.map((r) => `- ${r.path}`).join('\n')}`
+          ? `\n\n该技能附带的参考文档（用 read 读取以下完整路径）：\n${refs.map((r) => `- /skills/${encodeURIComponent(skillName)}/references/${r.path.split('/').map(encodeURIComponent).join('/')}`).join('\n')}`
           : '';
       return skill.body + refList;
     }
@@ -466,7 +466,7 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const skillName = String(args.name ?? '');
       const path = String(args.path ?? '');
       const skill = await db.skills.where('name').equals(skillName).first();
-      if (!skill) return `未找到技能：${skillName}`;
+      if (!skill || !skill.enabled) return `未找到已启用的技能：${skillName}`;
       // 边界与 use_skill 保持一致：它是 use_skill 的后续步骤，理论上不会绕过，
       // 但两处判定不一致就是一个可利用的漏洞口子。
       if (!skillAllowed(skill.id)) {

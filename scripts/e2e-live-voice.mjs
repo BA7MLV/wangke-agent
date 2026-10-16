@@ -4,7 +4,7 @@ import { chromium } from 'playwright';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   for (const viewport of [{ width: 1440, height: 900 }, { width: 390, height: 844 }]) {
-    const context = await browser.newContext({ viewport, reducedMotion: 'reduce' });
+    const context = await browser.newContext({ viewport, reducedMotion: 'reduce', hasTouch: viewport.width < 640 });
     await context.addInitScript(() => {
       class Recognition {
         constructor() { window.testRecognition = this; }
@@ -99,8 +99,77 @@ try {
       window.testRecognition.onend();
     });
     await page.waitForFunction(() => document.querySelector('.voice-input__status[data-error="true"]')?.textContent.includes('权限'));
+    // The input area, not just the microphone, supports hold-to-talk.
+    await input.fill('已有草稿');
+    const box = await input.boundingBox();
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.getByTestId('chat-voice-hold').waitFor();
+    await page.evaluate(() => window.testRecognition.emit('补充语音'));
+    assert.equal(await input.inputValue(), '已有草稿', 'held results stay provisional until release');
+    await page.mouse.up();
+    await page.waitForFunction(() => document.querySelector('textarea').value === '已有草稿 补充语音');
+    assert.deepEqual(await page.evaluate(() => window.sentTexts), ['发送这一句'], 'release must not send');
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.getByTestId('chat-voice-hold').waitFor();
+    await page.evaluate(() => window.testRecognition.emit('应当丢弃'));
+    await page.mouse.move(x, y - 90);
+    assert.equal(await page.getByTestId('chat-voice-hold').getAttribute('data-cancel'), 'true');
+    await page.mouse.up();
+    await page.evaluate(() => window.testRecognition.emit('取消后的迟到结果'));
+    assert.equal(await input.inputValue(), '已有草稿 补充语音', 'cancel preserves the original draft');
+    assert.equal(await page.evaluate(() => window.testRecognition.aborted), true);
+    // Move back down before release to resume the same recording.
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.getByTestId('chat-voice-hold').waitFor();
+    await page.evaluate(() => window.testRecognition.emit('继续说话'));
+    await page.mouse.move(x, y - 90);
+    await page.mouse.move(x, y);
+    assert.equal(await page.getByTestId('chat-voice-hold').getAttribute('data-cancel'), 'false');
+    await page.mouse.up();
+    await page.waitForFunction(() => document.querySelector('textarea').value.endsWith('继续说话'));
+    // Let go before permission resolves: abort, ignore any late onstart/results.
+    await page.evaluate(() => {
+      window.SpeechRecognition.prototype.start = function () {};
+    });
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.getByTestId('chat-voice-hold').waitFor();
+    const saved = await input.inputValue();
+    await page.mouse.up();
+    await page.evaluate(() => {
+      window.testRecognition.onstart?.();
+      window.testRecognition.emit('权限晚到');
+    });
+    assert.equal(await input.inputValue(), saved);
+    assert.equal(await page.evaluate(() => window.testRecognition.aborted), true);
+    assert.equal(await page.getByTestId('chat-voice-hold').count(), 0);
+    if (viewport.width < 640) {
+      await page.evaluate(() => {
+        window.SpeechRecognition.prototype.start = function () { this.onstart?.(); };
+      });
+      const cdp = await context.newCDPSession(page);
+      const touch = (type, points) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: points });
+      await touch('touchStart', [{ x, y }]);
+      await page.getByTestId('chat-voice-hold').waitFor();
+      await page.evaluate(() => window.testRecognition.emit('触屏取消'));
+      await touch('touchMove', [{ x, y: y - 90 }]);
+      assert.equal(await page.getByTestId('chat-voice-hold').getAttribute('data-cancel'), 'true');
+      await touch('touchEnd', []);
+      assert.equal(await input.inputValue(), saved, 'real touch slide cancels without changing the draft');
+      await touch('touchStart', [{ x, y }]);
+      await page.getByTestId('chat-voice-hold').waitFor();
+      await page.evaluate(() => window.testRecognition.emit('触屏完成'));
+      await touch('touchEnd', []);
+      await page.waitForFunction(() => document.querySelector('textarea').value.endsWith('触屏完成'));
+      await cdp.detach();
+    }
     assert.deepEqual(errors, []);
-    console.log(`PASS ${viewport.width}px: stable composer, interim revisions, stop, edits, send, late results, permissions`);
+    console.log(`PASS ${viewport.width}px: stable composer, live dictation, whole-composer hold, release, slide cancel/resume, draft preservation, late permissions`);
     await context.close();
   }
 } finally {

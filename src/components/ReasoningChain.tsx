@@ -47,7 +47,7 @@ function LiveElapsed({ from }: { from: number }) {
  * | -------- | ---- | ---------------------- | -------------------------- |
  * | 思考中   | 上下 | 正在思考 · 已用时 x 秒 | 固定区域 + 上下渐隐 + 自动滚 |
  * | 思考中·折 | 右  | 正在思考               | 收起                        |
- * | 已完成·展 | 下  | 已思考用时 x 秒（吸顶） | **不限高**，全部铺开随页面滚 |
+ * | 已完成·展 | 下  | 已思考用时 x 秒         | 固定区域，手动回看           |
  * | 已完成·折 | 右  | 思考过程               | 收起                        |
  *
  * 为什么要拆出「思考中」这个**中间态**：流式期间思考链是唯一在动的东西，
@@ -65,8 +65,7 @@ function LiveElapsed({ from }: { from: number }) {
  * - **收起不挂**：收起是「别占我地方」，而一个每 250ms 跳一下的数字恰恰最占注意力 ——
  *   既然用户已经把它折叠了，就别再让那行小字继续动。收起态留一个稳定的「正在思考」就够。
  *
- * 也就是说，实时用时与「固定区域、上下渐隐、自动滚」是同一段生命期（都是 `live`）：
- * 这几样共同属于**展开着的思考中**这一形态，不是分散在三个开关上。
+ * 实时计时与自动跟随仅在 `live` 启用；历史回看也使用固定区域与边缘渐隐。
  *
  * 固定区域 + 渐隐 + 自动滚动是**成对**的：框只有 240px 高，思考链动辄上千字，
  * 不自动滚就永远只能看到最早那几行；不用渐隐收尾则看得出「下面还有」，用户才知道可以滚。
@@ -102,6 +101,8 @@ export default function ReasoningChain({
   const [open, setOpen] = useState(active);
   const bodyId = useId();
   const innerRef = useRef<HTMLDivElement>(null);
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const lastTop = useRef(0);
   /** `since` 缺失时的兜底起点（见 prop 注释） */
   const mountedAt = useRef(Date.now());
   /**
@@ -115,7 +116,7 @@ export default function ReasoningChain({
     setOpen(active);
   }, [active]);
 
-  /** 思考中且展开着：固定区域、渐隐、自动滚、实时用时都归这一段 */
+  /** 思考中且展开着：自动跟随与实时计时。 */
   const live = active && open;
   const expanded = !active && open;
 
@@ -127,27 +128,43 @@ export default function ReasoningChain({
   const syncFade = (el: HTMLDivElement) => {
     el.dataset.fadeTop = String(el.scrollTop > 4);
     el.dataset.fadeBottom = String(el.scrollHeight - el.clientHeight - el.scrollTop > 4);
+    if (viewportRef.current) {
+      viewportRef.current.dataset.fadeTop = el.dataset.fadeTop;
+      viewportRef.current.dataset.fadeBottom = el.dataset.fadeBottom;
+    }
   };
 
   // 流式续写时把视口按到底部
   useEffect(() => {
     const el = innerRef.current;
-    if (!el || !live) return;
-    if (stickRef.current) el.scrollTop = el.scrollHeight;
-    syncFade(el);
-  }, [reasoning, live]);
+    if (!el || !open) return;
+    const frame = requestAnimationFrame(() => {
+      if (live && stickRef.current) el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+      syncFade(el);
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [reasoning, live, open]);
 
   // 用户自己滚 → 更新「还粘不粘底」。scroll 不冒泡，只能挂在滚动容器自己身上。
   useEffect(() => {
     const el = innerRef.current;
     if (!el) return;
     const onScroll = () => {
-      stickRef.current = el.scrollHeight - el.clientHeight - el.scrollTop < 24;
+      if (el.scrollHeight - el.clientHeight - el.scrollTop < 24) stickRef.current = true;
+      else if (el.scrollTop < lastTop.current - 1) stickRef.current = false;
+      lastTop.current = el.scrollTop;
       syncFade(el);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [live]);
+    const observer = new ResizeObserver(() => {
+      if (live && stickRef.current) el.scrollTop = el.scrollHeight;
+      lastTop.current = el.scrollTop;
+      syncFade(el);
+    });
+    observer.observe(el);
+    return () => { el.removeEventListener('scroll', onScroll); observer.disconnect(); };
+  }, [live, open]);
 
   // 「已完成但没记耗时」（老数据）就别硬凑一个 0.0 秒，回落到朴素标题
   const title = active
@@ -181,12 +198,15 @@ export default function ReasoningChain({
       <Collapse
         open={open}
         id={bodyId}
-        innerRef={innerRef}
-        innerClassName={
-          live ? 'reasoning-chain__body reasoning-chain__body--live' : 'reasoning-chain__body'
-        }
       >
-        {reasoning}
+        <div className="reasoning-chain__viewport" ref={viewportRef}>
+          <div ref={innerRef} className="reasoning-chain__body reasoning-chain__body--live"
+            tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
+            {reasoning}
+          </div>
+          <span className="reasoning-chain__blur reasoning-chain__blur--top" aria-hidden="true" />
+          <span className="reasoning-chain__blur reasoning-chain__blur--bottom" aria-hidden="true" />
+        </div>
       </Collapse>
     </div>
   );

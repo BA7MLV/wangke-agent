@@ -21,6 +21,9 @@ import SkillPicker from '../components/SkillPicker';
 import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, ThinkLine } from '../components/motion';
 import ReasoningChain from '../components/ReasoningChain';
+import VirtualMessages from '../components/VirtualMessages';
+import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
+import { db } from '../store/db';
 import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
@@ -208,10 +211,7 @@ function MessageActions({
           三种语义由调用方给出不同的说法（见 retryHint），一颗图标两种消息共用 */}
       {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
 
-      <Button variant="tertiary" size="sm" className="course-chat__fork-action"
-        aria-label="从这条消息分叉出新会话" data-testid="chat-fork-message" isDisabled={busy} onPress={onFork}>
-        Fork
-      </Button>
+      {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
 
       {!isUser && (
         <Dropdown>
@@ -282,7 +282,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
           }}>
           <Dropdown.Item id="copy" textValue="复制" data-testid="chat-user-copy"><Sym name="content_copy" />复制</Dropdown.Item>
           <Dropdown.Item id="retry" textValue="重试" data-testid="chat-user-retry"><Sym name="refresh" />重试</Dropdown.Item>
-          <Dropdown.Item id="fork" textValue="Fork · 分支出新会话" data-testid="chat-user-fork">Fork · 分支出新会话</Dropdown.Item>
+          <Dropdown.Item id="fork" textValue="分支出新会话" data-testid="chat-user-fork"><Sym name="fork" />分支出新会话</Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown.Popover>
     </Dropdown>
@@ -539,6 +539,7 @@ export default function CourseChat() {
    * ② 聚焦时把消息流吸底（键盘弹出会顶矮面板）。
    */
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const composerHoldRef = useRef<HTMLDivElement>(null);
   const voiceDraftBase = useRef('');
   const [voiceEditVersion, setVoiceEditVersion] = useState(0);
   /**
@@ -575,6 +576,10 @@ export default function CourseChat() {
   const activeId = useCourseChat((s) => s.activeId);
   const loaded = useCourseChat((s) => s.loaded);
   const messages = useCourseChat((s) => s.messages);
+  const hasOlder = useCourseChat((s) => s.hasOlder);
+  const loadingOlder = useCourseChat((s) => s.loadingOlder);
+  const historyError = useCourseChat((s) => s.historyError);
+  const loadOlder = useCourseChat((s) => s.loadOlder);
   const loading = useCourseChat((s) => s.loading);
   /**
    * 正在生成的会话 id（可能不止一条）。侧栏 Recent 行尾的 分支/归档/删除 据此
@@ -826,6 +831,8 @@ export default function CourseChat() {
       if (distance <= NEAR_BOTTOM_PX) stickRef.current = true;
       else if (top < lastTopRef.current - 1) stickRef.current = false;
       lastTopRef.current = top;
+      const state = useCourseChat.getState();
+      if (top < 40 && !stickRef.current && !state.historyError) void state.loadOlder();
       if (jumpBtnRef.current) jumpBtnRef.current.dataset.show = stickRef.current ? 'false' : 'true';
     };
     element.addEventListener('scroll', onScroll, { passive: true });
@@ -980,12 +987,18 @@ export default function CourseChat() {
    * 课程名传「课程库」而不是某门课：这个会话是**跨课程**的（助手自己挑上下文），
    * 写死成当前选中的那门课会在文件头留下一句假话。
    */
-  const exportSession = () => {
+  const exportSession = async () => {
     if (messages.length === 0) return void toast.info('当前会话还没有内容');
+    const rows = activeId == null ? [] : await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const savedIds = new Set(rows.map((row) => row.id));
+    const exportMessages = [
+      ...rows.map((row) => ({ ...row, role: row.role === 'user' ? 'user' : 'ai' })),
+      ...messages.filter((message) => !savedIds.has(message.rowId)),
+    ];
     const markdown = buildSessionMarkdown({
       title: activeSession?.title ?? '新会话',
       videoName: '资料',
-      messages: messages.map((message) => ({
+      messages: exportMessages.map((message) => ({
         role: message.role === 'user' ? ('user' as const) : ('assistant' as const),
         content: message.content,
         reasoning: message.reasoning,
@@ -1124,7 +1137,7 @@ export default function CourseChat() {
       }
     >
       <div
-        className={`course-chat${messages.length === 0 ? ' course-chat--empty' : ''}`}
+        className={`course-chat${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
         data-testid="course-chat-page"
       >
         <section className="course-chat__main" aria-label="AI 助手聊天">
@@ -1151,7 +1164,8 @@ export default function CourseChat() {
           )}
 
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
-            {messages.length === 0 && (
+            {!loaded && <ChatHistorySkeleton />}
+            {loaded && messages.length === 0 && (
               <div className="course-chat__empty">
                 {/* 空态里的标题、说明与快捷提问**都取决于库里有没有课**，
                     所以在 `courseCount` 到手之前一个字都不能写死 ——
@@ -1207,7 +1221,12 @@ export default function CourseChat() {
               </div>
             )}
 
-            {messages.map((message, index) => {
+            {messages.length > 0 && <div className="chat-history-loader" aria-live="polite">
+              {hasOlder && <button type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>
+                {loadingOlder ? '正在加载历史消息…' : historyError ?? '加载更早消息'}
+              </button>}
+            </div>}
+            {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}>{(message, index) => {
               const user = message.role === 'user';
               /**
                * 「重新生成」只对**最后一条**完整回答成立：改历史中间的一步要用「分支」
@@ -1352,7 +1371,7 @@ export default function CourseChat() {
                   )}
                 </article>
               );
-            })}
+            }}</VirtualMessages>}
           </div>
 
           {/* 正文独占上行；底部技能入口固定在左，发送操作固定在右。
@@ -1405,12 +1424,13 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            <div className="course-chat__composer">
+            <div className="course-chat__composer" ref={composerHoldRef}>
               <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
                 ref={composerRef}
                 className="course-chat__input"
                 aria-label="给 AI 助手发送消息"
+                aria-description="长按输入栏说话，松开完成，上滑取消；识别后可编辑再发送"
                 rows={1}
                 fullWidth
                 value={draft}
@@ -1456,7 +1476,7 @@ export default function CourseChat() {
                       ? sendMode === 'queue'
                         ? '说一句排队，答完这轮自动接着问…'
                         : '说一句立刻插入，打断这轮换个问法…'
-                      : '随便问点什么'
+                      : '随便问点什么，或长按说话'
                 }
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' || event.shiftKey) return;
@@ -1509,6 +1529,7 @@ export default function CourseChat() {
                   })}
                 <VoiceInput
                   key={activeId ?? 'draft'}
+                  holdTargetRef={composerHoldRef}
                   disabled={!sessionReady}
                   hasText={!!draft.trim()}
                   editVersion={voiceEditVersion}

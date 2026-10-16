@@ -361,21 +361,23 @@ await check('展开：已思考用时 x 秒 + 吸顶 + 正文不限高', async (
     return {
       position: cs.position,
       top: cs.top,
-      gap: cs.getPropertyValue('--reasoning-sticky-gap').trim() || '0px',
+      headerHeight: cs.getPropertyValue('--app-bar-h').trim() || '60px',
       background: cs.backgroundColor,
       fontSize: parseFloat(cs.fontSize),
       bodyFontSize: parseFloat(getComputedStyle(bubble).fontSize),
       titleLeft: title.getBoundingClientRect().left,
-      bubbleLeft: bubble.getBoundingClientRect().left,
+      menuLeft: document.querySelector('[data-testid="nav-rail-toggle"] svg').getBoundingClientRect().left,
+      alignItems: cs.alignItems,
       titleRight: title.getBoundingClientRect().right,
       iconLeft: icon.getBoundingClientRect().left,
     };
   });
   assert.equal(box.position, 'sticky');
-  assert.equal(parseFloat(box.top), -parseFloat(box.gap));
+  assert.equal(parseFloat(box.top), parseFloat(box.headerHeight), '吸顶位置应紧贴顶栏下沿');
   assert.equal(box.background, 'rgba(0, 0, 0, 0)', '吸顶标题不应有底色');
   assert.ok(box.fontSize > box.bodyFontSize, '标题字号应略大于正文');
-  assert.ok(Math.abs(box.titleLeft - box.bubbleLeft) < 1, '标题应与内容列左缘对齐');
+  assert.ok(Math.abs(box.titleLeft - box.menuLeft) < 1, '标题应与顶栏菜单图标左缘对齐');
+  assert.equal(box.alignItems, 'flex-start', '标题应贴顶，不在点击区域内垂直居中');
   assert.ok(box.iconLeft >= box.titleRight, '图标应位于标题文字右侧');
   await chain.locator('.reasoning-chain__toggle').hover();
   assert.equal(await chain.locator('.reasoning-chain__toggle').evaluate((el) => getComputedStyle(el).backgroundColor),

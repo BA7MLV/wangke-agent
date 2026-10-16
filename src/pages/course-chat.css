@@ -87,6 +87,7 @@
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
 .course-chat__main {
+  container-type: inline-size;
   min-width: 0;
   min-height: 0;
   flex: 1 1 auto;
@@ -179,26 +180,55 @@
 
 /* ── 消息流 ───────────────────────────────────────────────────────────── */
 .course-chat__messages {
-  /* 滚动容器的上内边距在思考链里还要再当一次「吸顶偏移」（见 reasoning-chain.css
-     的 `--reasoning-sticky-gap`）：同一个数写两处必然漂移，所以在这里定义一次。
-
-     顶栏浮起后（见 ui/layout.tsx），再叠一个 `--app-bar-h`：消息首屏仍从栏下开始，
-     一滚动就穿到顶栏背后被渐进模糊。吸顶偏移不用跟着改 —— 它按内容盒顶边算，
-     内容盒已经随内边距一起下移了，正好钉在顶栏下沿。 */
+  overflow-anchor: none;
+  /* 首屏消息让出浮动顶栏，再留 28px 阅读间距；吸顶标题单独贴顶栏下沿，
+     不继承首屏的阅读间距。 */
   --reasoning-sticky-gap: 28px;
+  --course-chat-message-inset: max(20px, calc((100cqw - var(--course-chat-column)) / 2));
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) max(20px, calc((100% - var(--course-chat-column)) / 2)) 8px;
+  padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset) 8px;
   scrollbar-gutter: stable;
+}
+
+.chat-history-loader {
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.chat-history-loader button { cursor: pointer; }
+
+/* 展开的耗时标题跟顶栏菜单图标同轴：20px 顶栏内边距 + (34px 按钮 - 16px 图标) / 2。
+   用消息容器的宽度计算列缩进，避免按钮自身的百分比参照导致宽屏错位。
+   不改正文列；标题顶部也不再由 40px 点击区域的垂直居中额外撑开。 */
+.course-chat__messages .reasoning-chain[data-mode='expanded'] {
+  width: 100%;
+}
+
+.course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
+  /* sticky 的 top 相对滚动视口，不是 padding 后的内容起点；紧贴浮动顶栏下沿。 */
+  top: auto;
+  align-items: flex-start;
+}
+
+.course-chat__messages .reasoning-chain[data-mode='expanded'] > .t-acc-panel {
+  margin-left: 0;
 }
 
 /* 有「课程上下文」条时：它固定在消息区上方、自己让出顶栏高度，
    消息区就退回常规内边距（否则顶栏高度叠加两次）。 */
 .course-chat__main:has(.course-chat__context) .course-chat__messages {
   padding-top: var(--reasoning-sticky-gap);
+}
+
+.course-chat__main:has(.course-chat__context) .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
+  top: 0;
 }
 
 /* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，

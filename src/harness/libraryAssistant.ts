@@ -102,7 +102,7 @@ function formatCourseLine(course: VideoRow, folderName?: string): string {
   const kind = course.kind === 'material' ? `阅读材料 · ${(course.materialFormat ?? '文档').toUpperCase()}` : '视频课程';
   const folder = folderName ? ` · 分类：${folderName}` : '';
   const deleted = course.fileDeleted ? ' · 原文件已删除（保留衍生内容）' : '';
-  return `- ${courseLink(course)} · ${kind} · ${progress.label}${folder}${deleted} · courseId=${course.id}`;
+  return `- ${courseLink(course)} · ${kind} · ${progress.label}${folder}${deleted} · courseId=${course.id} · path=/courses/${encodeURIComponent(course.id)}/info`;
 }
 
 /**
@@ -184,7 +184,7 @@ export const LIBRARY_COURSE_TOOLS: ToolDef[] = [
     function: {
       name: 'set_course_context',
       description:
-        '选择后续回答与检索要重点使用的课程上下文。先从 list_courses 或 search_course_library 的结果取得精确 courseId；传空数组可清除旧上下文、恢复全课程自动选择',
+        '选择后续回答与检索要重点使用的课程上下文。先从 read /courses 或 grep 的结果取得精确 courseId；传空数组可清除旧上下文、恢复全课程自动选择',
       parameters: {
         type: 'object',
         properties: {
@@ -253,7 +253,7 @@ export const LIBRARY_COURSE_TOOLS: ToolDef[] = [
       description:
         '提出一份资料库目录整理方案，展示给用户预览并等待确认。**这个工具不会直接改动任何数据**；' +
         '只有用户在方案卡上点「确认执行」之后才会真正建立文件夹并移动课程。' +
-        '先 list_courses 了解全库、list_folders 看现状，再调用它；courseIds 必须来自工具结果的真实 id',
+        '先 read /courses 了解全库、read /library/folders 看现状，再调用它；courseIds 必须来自工具结果的真实 id',
       parameters: {
         type: 'object',
         properties: {
@@ -270,7 +270,7 @@ export const LIBRARY_COURSE_TOOLS: ToolDef[] = [
                 courseIds: {
                   type: 'array',
                   items: { type: 'string' },
-                  description: '归入该分类的课程 id，取自 list_courses / list_folders 的结果；没有课程的分类不要列',
+                  description: '归入该分类的课程 id，取自 read /courses 的结果；没有课程的分类不要列',
                 },
               },
               required: ['name', 'courseIds'],
@@ -304,14 +304,14 @@ export function libraryAssistantTools(hasCourses: boolean): ToolDef[] {
  */
 function generalAssistantSystemPrompt(skillMetaList?: string): string {
   const skillSection = skillMetaList
-    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当用户问题与某项技能的用途匹配时，先调用 use_skill 加载完整规范，再按规范回答；技能正文列出参考文档时，可继续调用 read_skill_reference。不要凭技能名称猜测正文要求。`
-    : '\n\n本次会话没有可用技能。不要调用 use_skill 或 read_skill_reference，直接用通用知识回答。';
+    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及技能用途时，先 read /skills/{URI 编码后的名称} 加载规范，再按规范回答；参考文档使用返回的完整路径 read。可 read /skills 获取准确路径。不要凭名称猜测正文。`
+    : '\n\n本次会话没有可用技能，直接用通用知识回答。';
 
   return `你是这个学习应用里的 AI 助手。用户目前**还没有导入任何课程**，所以你手上没有他的课程数据、字幕或学习进度，但你的通用能力完全可用。${skillSection}
 
 工作规则：
 1. 直接用你自己的知识回答问题：概念解释、学习方法、代码、写作、规划、闲聊都可以。不要因为「没有课程数据」就拒绝回答或反复道歉。
-2. 你唯一能调用的工具是 ask_user。只有在缺少关键信息、且不同答案会导向明显不同的做法时才用它，给2~5 个候选方案让用户点选，不要凑选项。
+2. 可用 read 加载技能；缺少关键信息、且不同答案会导向明显不同的做法时，用 ask_user 给 2~5 个候选方案让用户点选，不要凑选项。
 3. 用户问到「我的课程、我的进度、我学过的内容」这类依赖他个人数据的问题时，如实说明当前资料库还是空的，并告诉他可以在「资料库」页面导入视频或 PDF / Markdown 材料 —— 导入之后你就能结合他的实际内容回答。给出你作为通用知识能提供的部分帮助，再补这句说明。
 4. 不编造他的课程、进度或学习记录。没有数据就说没有，不要虚构一个「你上一门课讲的是……」。
 5. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给候选方案，不要替用户猜。
@@ -326,8 +326,8 @@ export function libraryAssistantSystemPrompt(
   if (!hasCourses) return generalAssistantSystemPrompt(skillMetaList);
 
   const skillSection = skillMetaList
-    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当用户问题与某项技能的用途匹配时，先调用 use_skill 加载完整规范，再按规范回答；技能正文列出参考文档时，可继续调用 read_skill_reference。不要凭技能名称猜测正文要求。`
-    : '\n\n本次会话没有可用技能。不要调用 use_skill 或 read_skill_reference，直接依据课程数据与通用能力回答。';
+    ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及技能用途时，先 read /skills/{URI 编码后的名称} 加载规范，再按规范回答；参考文档使用返回的完整路径 read。可 read /skills 获取准确路径。不要凭名称猜测正文。`
+    : '\n\n本次会话没有可用技能，直接依据课程数据与通用能力回答。';
   const contextSection = contextCourses.length > 0
     ? `\n\n当前课程上下文：${contextCourses.map((course) => `《${course.name}》（courseId=${course.id}）`).join('、')}。除非用户明显换了话题，否则优先使用这些课程；话题变化时可以重新选择。`
     : '\n\n当前没有固定课程上下文。根据用户问题从全资料库判断最相关的课程。';
@@ -337,15 +337,15 @@ export function libraryAssistantSystemPrompt(
 工作规则：
 1. 只要问题涉及“我的课程、我的进度、课程里讲了什么、推荐我接下来学什么”等用户数据，回答前必须调用相应工具，不能凭空猜测。
 1b. 反过来：与他的课程无关的通用问题（概念解释、写代码、写作、生活常识、闲聊）**直接用你的通用知识回答**，不要为了「用上工具」而去检索资料库，也不要反问「你指的是哪门课」。这条与第 1 条同等重要。
-2. 课程上下文由你主动维护：问题明确针对某门或少数几门课程时，先通过 list_courses 或全库 search_course_library 找到精确 courseId，再调用 set_course_context 选择 1~5 门最相关课程。不要把无关课程塞进上下文。
-3. 用户明显换话题时，用 search_course_library 的 scope=all 从全库重新判断，再调用 set_course_context 替换上下文；问题是全库盘点、学习统计或跨全部课程比较时，调用 set_course_context 传空数组，避免旧课程限制本轮查询。
-4. 查具体知识点时用 search_course_library；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时，换同义词或更短的词再试。一次全库检索已经给出足够证据时，可以据此选择上下文并直接回答，不必机械地重复检索。
+2. 课程上下文由你主动维护：问题明确针对某门或少数几门课程时，先 read /courses 或 grep /courses 找到精确 courseId，再调用 set_course_context 选择 1~5 门最相关课程。不要把无关课程塞进上下文。
+3. 用户明显换话题时，用 grep 的 path="/courses" 从全库重新判断，再调用 set_course_context 替换上下文；问题是全库盘点、学习统计或跨全部课程比较时，调用 set_course_context 传空数组。grep 省略 path 或用 /courses/context 时遵循已选上下文。
+4. 查具体知识点时用 grep；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时换同义词或更短的词再试。需要上下文时 read 搜索结果返回的 path，按其定位单位传 range。学习统计 read /library/overview，课程详情 read /courses/{id}/info。证据足够时直接回答，不必机械重复检索。
 5. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
 6. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
 7. 不编造课程、进度或系统记录。资料库中没有相关内容时，明确说明“资料库中没有检索到”，再把通用知识与课程数据分开回答。
 8. 读操作之外只有两类写操作：ask_user（向用户提问）与 propose_folder_plan（提出目录整理方案）。除此之外不能声称已经替用户删除、收藏、导入、修改或完成课程；用户要求这类操作时，说明目前只能提供步骤或建议。
 9. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给 2~5 个候选方案让用户点选，不要替用户猜。选项要写成能一眼分辨的短方案名。凡是资料库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
-10. 整理资料库目录时：先 list_courses 了解全库、list_folders 看现有分类，再调用 propose_folder_plan 提交方案等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。**不要逐门调用 get_course_details**：课程名与类型在 list_courses 里已经够用（实测整理一整个分类时，逐门查详情会把工具调用次数用光，最后连方案都提交不出来），只在少数课程名看不出是什么内容时抽查一两门。
+10. 整理资料库目录时：先 read /courses 了解全库（有下一页时用 offset 继续）、read /library/folders 看现有分类，再调用 propose_folder_plan 等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。不要逐门读取 info：课程名与类型在列表里已经够用，只在少数课程名看不出内容时抽查一两门。
 11. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
 12. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
 }
@@ -378,6 +378,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       const status = String(args.status ?? 'all');
       const kind = String(args.kind ?? 'all');
       const limit = Math.min(50, Math.max(1, Number(args.limit) || 20));
+      const offset = Math.max(0, Math.floor(Number(args.offset) || 0));
       const [courses, folders] = await Promise.all([
         db.videos.orderBy('createdAt').reverse().toArray(),
         db.folders.toArray(),
@@ -389,8 +390,9 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         return (kind === 'all' || courseKind === kind) && (status === 'all' || progress.state === status);
       });
       if (filtered.length === 0) return '没有符合筛选条件的课程。';
-      const lines = filtered.slice(0, limit).map((course) => formatCourseLine(course, folderNames.get(course.folderId)));
-      if (filtered.length > limit) lines.push(`（还有 ${filtered.length - limit} 门未显示，可缩小筛选范围或提高 limit。）`);
+      const lines = filtered.slice(offset, offset + limit).map((course) => formatCourseLine(course, folderNames.get(course.folderId)));
+      if (!lines.length) return '已到课程列表末尾。';
+      if (filtered.length > offset + limit) lines.push(`（还有 ${filtered.length - offset - limit} 门未显示，继续 read /courses，offset=${offset + limit}。）`);
       return lines.join('\n');
     }
 
@@ -409,7 +411,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       const byId = new Map(rows.map((course) => [course.id, course]));
       const selected = requestedIds.map((id) => byId.get(id)).filter((course): course is VideoRow => !!course);
       if (selected.length === 0) {
-        return '没有找到这些 courseId 对应的课程。请先用 list_courses 或 search_course_library 获取精确 id。';
+        return '没有找到这些 courseId 对应的课程。请先用 read /courses 或 grep 获取精确 id。';
       }
 
       contextCourseIds = selected.map((course) => course.id);
@@ -435,7 +437,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       ]);
       const courseMap = new Map(courses.map((course) => [course.id, course]));
       if (requestedCourseId && !courseMap.has(requestedCourseId)) {
-        return `未找到 courseId=${requestedCourseId} 的课程。请先用 list_courses 取得精确 id。`;
+        return `未找到 courseId=${requestedCourseId} 的课程。请先用 read /courses 取得精确 id。`;
       }
       const scopedCourseIds = resolveCourseSearchScope(
         requestedCourseId,
@@ -477,7 +479,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         .map((hit, index) => {
           const course = courseMap.get(hit.doc.courseId)!;
           const excerpt = hit.doc.text.length > 500 ? `${hit.doc.text.slice(0, 500)}…` : hit.doc.text;
-          return `${index + 1}. 课程：${courseLink(course)}\n   来源：[${hit.doc.location}]\n   原文：${excerpt}\n   courseId=${course.id}`;
+          return `${index + 1}. 课程：${courseLink(course)}\n   来源：[${hit.doc.location}]\n   原文：${excerpt}\n   courseId=${course.id}\n   path=/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}\n   range.unit=${course.kind === 'material' ? (materialKindOf(course) === 'page' ? 'pages' : 'paragraphs') : 'seconds'}`;
         })
         .join('\n\n');
     }
@@ -499,6 +501,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       return [
         `课程：${courseLink(course)}`,
         `courseId=${course.id}`,
+        `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（range.unit=${course.kind === 'material' ? (materialKindOf(course) === 'page' ? 'pages' : 'paragraphs') : 'seconds'}）`,
         `类型：${course.kind === 'material' ? `阅读材料 · ${(course.materialFormat ?? '文档').toUpperCase()}` : '视频课程'}`,
         `分类：${folder?.name ?? '未分类'}`,
         `学习进度：${progress.label}`,

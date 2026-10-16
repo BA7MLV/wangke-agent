@@ -586,6 +586,9 @@ class WangkeDB extends Dexie {
     });
     // 用户手写笔迹独立保存，不进入每次都会整表读取的课程元数据。
     this.version(14).stores({ materialInk: 'id, materialId' });
+    this.version(15).stores({
+      chats: '++id, videoId, sessionId, createdAt, [sessionId+createdAt+id]',
+    });
   }
 }
 

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type RefObject } from 'react';
 import { Button } from '@heroui/react';
 import { transcribe } from '../api/siliconflow';
 import { getSettings, targetOrNull } from '../store/settings';
@@ -22,7 +22,7 @@ interface LiveRecognition {
 }
 
 /** One stable action slot: microphone when empty, send when populated. Never auto-send. */
-export default function VoiceInput({ onText, onStart, disabled, hasText = false, onSend, sendLabel = '发送', editVersion = 0 }: {
+export default function VoiceInput({ onText, onStart, disabled, hasText = false, onSend, sendLabel = '发送', editVersion = 0, holdTargetRef }: {
   onText: (text: string) => void;
   onStart?: () => void;
   disabled?: boolean;
@@ -30,6 +30,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
   onSend?: () => void;
   sendLabel?: string;
   editVersion?: number;
+  holdTargetRef?: RefObject<HTMLDivElement | null>;
 }) {
   const [phase, setPhase] = useState<'idle' | 'permission' | 'recording' | 'transcribing'>('idle');
   const [error, setError] = useState('');
@@ -42,6 +43,14 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
   const held = useRef(false);
   const suppressPress = useRef(false);
   const busy = useRef(false);
+  const root = useRef<HTMLSpanElement>(null);
+  const gesture = useRef<{ pointerId: number; x: number; y: number; target: HTMLElement } | null>(null);
+  const [holding, setHolding] = useState(false);
+  const [cancelHint, setCancelHint] = useState(false);
+  const cancelHold = useRef(false);
+  const holdSession = useRef(false);
+  const holdTranscript = useRef('');
+  const liveStarted = useRef(false);
   const onTextRef = useRef(onText);
   const previousEdit = useRef(editVersion);
   onTextRef.current = onText;
@@ -49,8 +58,15 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
   const stop = (cancel = false) => {
     if (timer.current) clearTimeout(timer.current);
     if (limit.current) clearTimeout(limit.current);
+    if (cancel) {
+      held.current = false;
+      gesture.current = null;
+      holdSession.current = false;
+      holdTranscript.current = '';
+      setHolding(false);
+    }
     if (recognition.current) {
-      if (cancel) {
+      if (cancel || !liveStarted.current) {
         generation.current++;
         recognition.current.abort();
         recognition.current = null;
@@ -95,6 +111,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
 
   const start = async () => {
     if (disabled || busy.current) return;
+    if (!held.current) { holdSession.current = false; holdTranscript.current = ''; }
     setError('');
     const speechWindow = window as unknown as {
       SpeechRecognition?: new () => LiveRecognition;
@@ -104,6 +121,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     if (Recognition) {
       const id = ++generation.current;
       const live = new Recognition();
+      liveStarted.current = false;
       recognition.current = live;
       busy.current = true;
       setPhase('permission');
@@ -113,6 +131,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       live.interimResults = true;
       live.onstart = () => {
         if (id !== generation.current) return;
+        liveStarted.current = true;
         setPhase('recording');
         limit.current = setTimeout(() => stop(), 60_000);
       };
@@ -121,7 +140,10 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       live.onresult = (event) => {
         if (id !== generation.current) return;
         const text = Array.from(event.results, (result) => result[0]?.transcript ?? '').join('').trim();
-        if (text) onTextRef.current(text);
+        if (text) {
+          if (holdSession.current) holdTranscript.current = text;
+          else onTextRef.current(text);
+        }
       };
       live.onerror = (event) => {
         if (id !== generation.current || event.error === 'aborted') return;
@@ -136,6 +158,8 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
         recognition.current = null;
         busy.current = false;
         setPhase('idle');
+        if (holdSession.current && holdTranscript.current) onTextRef.current(holdTranscript.current);
+        holdSession.current = false;
       };
       try { live.start(); } catch {
         recognition.current = null;
@@ -220,18 +244,98 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     }
   };
 
-  return (
-    <span className="voice-input" onPointerDownCapture={(event) => {
-      if (disabled || hasText || phase !== 'idle' || event.button !== 0) return;
-      held.current = false;
+  // Bind the whole composer without stealing short taps, typing or toolbar actions.
+  // Keep listeners stable while permission/recognition updates re-render the component.
+  const handlers = useRef({ down: (_event: PointerEvent) => {}, move: (_event: PointerEvent) => {}, end: (_event: PointerEvent) => {} });
+  handlers.current = {
+    down: (event) => {
+      if (disabled || busy.current || gesture.current || event.button !== 0 || !event.isPrimary) return;
+      const target = event.target as HTMLElement;
+      const voiceButton = target.closest('[data-testid="chat-voice"]');
+      if (!voiceButton && target.closest('button, a, [role="button"], [role="combobox"], [contenteditable="true"]')) return;
+      const captureTarget = holdTargetRef?.current ?? root.current;
+      if (!captureTarget) return;
+      gesture.current = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, target: captureTarget };
       suppressPress.current = false;
-      (event.target as HTMLElement).closest('button')?.setPointerCapture(event.pointerId);
-      timer.current = setTimeout(() => { held.current = true; void start(); }, 350);
-    }} onPointerUpCapture={() => {
+      timer.current = setTimeout(() => {
+        if (!gesture.current) return;
+        held.current = true;
+        holdSession.current = true;
+        holdTranscript.current = '';
+        cancelHold.current = false;
+        setCancelHint(false);
+        setHolding(true);
+        captureTarget.setPointerCapture(event.pointerId);
+        if (document.activeElement instanceof HTMLElement && captureTarget.contains(document.activeElement)) document.activeElement.blur();
+        window.getSelection()?.removeAllRanges();
+        void start();
+      }, 350);
+    },
+    move: (event) => {
+      const active = gesture.current;
+      if (!active || active.pointerId !== event.pointerId) return;
+      if (!held.current) {
+        if (Math.hypot(event.clientX - active.x, event.clientY - active.y) > 12) {
+          if (timer.current) clearTimeout(timer.current);
+          gesture.current = null;
+        }
+        return;
+      }
+      event.preventDefault();
+      cancelHold.current = active.y - event.clientY > 64;
+      setCancelHint(cancelHold.current);
+    },
+    end: (event) => {
+      const active = gesture.current;
+      if (!active || active.pointerId !== event.pointerId) return;
+      gesture.current = null;
       if (timer.current) clearTimeout(timer.current);
-      if (held.current) { suppressPress.current = true; held.current = false; stop(); }
-    }} onPointerCancelCapture={() => { held.current = false; suppressPress.current = true; stop(true); }}
-      onContextMenu={(event) => event.preventDefault()}>
+      if (held.current) {
+        suppressPress.current = true;
+        held.current = false;
+        setHolding(false);
+        const cancelled = event.type !== 'pointerup' || cancelHold.current;
+        if (cancelled) { holdTranscript.current = ''; holdSession.current = false; }
+        stop(cancelled);
+      }
+      if (active.target.hasPointerCapture(event.pointerId)) active.target.releasePointerCapture(event.pointerId);
+    },
+  };
+  useEffect(() => {
+    const target = holdTargetRef?.current ?? root.current;
+    if (!target) return;
+    target.classList.add('voice-input-target');
+    const down = (event: PointerEvent) => handlers.current.down(event);
+    const move = (event: PointerEvent) => handlers.current.move(event);
+    const end = (event: PointerEvent) => handlers.current.end(event);
+    const context = (event: Event) => { if (gesture.current || held.current) event.preventDefault(); };
+    const click = (event: MouseEvent) => {
+      if (!suppressPress.current) return;
+      event.preventDefault();
+      event.stopPropagation();
+      suppressPress.current = false;
+    };
+    target.addEventListener('pointerdown', down, true);
+    window.addEventListener('pointermove', move, { passive: false });
+    window.addEventListener('pointerup', end, true);
+    window.addEventListener('pointercancel', end, true);
+    target.addEventListener('lostpointercapture', end);
+    target.addEventListener('contextmenu', context);
+    target.addEventListener('click', click, true);
+    return () => {
+      target.classList.remove('voice-input-target');
+      target.removeEventListener('pointerdown', down, true);
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', end, true);
+      window.removeEventListener('pointercancel', end, true);
+      target.removeEventListener('lostpointercapture', end);
+      target.removeEventListener('contextmenu', context);
+      target.removeEventListener('click', click, true);
+    };
+  }, [holdTargetRef]);
+
+  return (
+    <span className="voice-input" ref={root}>
       <Button isIconOnly variant={hasText ? 'primary' : 'tertiary'} size="sm" className="voice-input__button"
         aria-label={hasText ? sendLabel : phase === 'recording' || phase === 'permission' ? '结束语音输入' : '语音输入'}
         aria-pressed={!hasText && phase === 'recording'} isDisabled={disabled || (!hasText && phase === 'transcribing')}
@@ -246,7 +350,12 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
           a={<Sym name={phase === 'recording' || phase === 'permission' ? 'stop' : 'mic'} />}
           b={<Sym name="arrow_upward" />} />
       </Button>
-      {(phase !== 'idle' || error) && <span className="voice-input__status" role="status" data-error={!!error}>
+      {holding && <span className="voice-input__hold" data-cancel={cancelHint} role="status" data-testid="chat-voice-hold">
+        <Sym name={cancelHint ? 'close' : 'mic'} />
+        <strong>{cancelHint ? '松开取消' : phase === 'permission' ? '正在开启麦克风…' : phase === 'idle' ? error || '语音未启动' : '松开完成'}</strong>
+        <span>{cancelHint ? '下滑继续说话' : '上滑取消 · 最长 60 秒'}</span>
+      </span>}
+      {!holding && (phase !== 'idle' || error) && <span className="voice-input__status" role="status" data-error={!!error}>
         {error || (phase === 'permission' ? '请允许麦克风与语音识别权限…' : phase === 'recording'
           ? recognition.current ? '实时转写中 · 点击停止或松开结束 · 最长 60 秒（使用浏览器语音服务）'
             : '此浏览器不支持实时识别，结束录音后转写 · 最长 60 秒'

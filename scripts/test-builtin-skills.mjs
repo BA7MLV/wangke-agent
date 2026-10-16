@@ -137,7 +137,7 @@ test('「资料整理」写明主轴互斥、数量区间、id 来源与确认�
   // 不认「必须等确认」就会声称整理完成
   assert.match(s.body, /主轴/);
   assert.match(s.body, /3~8 个/);
-  assert.match(s.body, /list_courses/);
+  assert.match(s.body, /read\(\{path:"\/courses"\}\)/);
   assert.match(s.body, /propose_folder_plan/);
   assert.match(s.body, /用户没有执行/);
   assert.match(s.description, /整理/);

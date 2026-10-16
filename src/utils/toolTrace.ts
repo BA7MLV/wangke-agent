@@ -16,6 +16,9 @@
 
 /** 工具名 → 动作短语。全部来自 `harness/tools.ts` 与 `harness/libraryAssistant.ts` 的工具注册表 */
 const TOOL_LABELS: Record<string, string> = {
+  grep: '检索正文',
+  read: '读取资源',
+  edit: '修改材料正文',
   // ── 课程问答（视频 / 阅读材料）──
   search_transcript: '检索字幕',
   search_material: '检索材料',
@@ -46,6 +49,9 @@ const TOOL_LABELS: Record<string, string> = {
  * 没登记的（`list_frames` / `present_quiz` 这类无参数工具）就没有detail，标题只报动作。
  */
 const DETAIL_KEYS: Record<string, string> = {
+  grep: 'query',
+  read: 'path',
+  edit: 'path',
   search_transcript: 'query',
   search_material: 'query',
   search_course_library: 'query',

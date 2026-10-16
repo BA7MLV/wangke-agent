@@ -659,7 +659,7 @@ export function PageShell({
               <Button
                 isIconOnly
                 variant="ghost"
-                className="size-[34px] shrink-0"
+                className="size-[34px] shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
                 onPress={() => setDrawerOpen(true)}
@@ -671,7 +671,7 @@ export function PageShell({
               <Button
                 isIconOnly
                 variant="ghost"
-                className="size-[34px] shrink-0"
+                className="size-[34px] shrink-0 rounded-full"
                 data-testid="nav-rail-toggle"
                 aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
                 /* aria-pressed 让「现在是不是收着的」不只存在于视觉里 */

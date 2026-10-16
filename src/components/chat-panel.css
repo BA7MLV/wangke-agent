@@ -32,17 +32,20 @@
    这个 div 同时就是滚动容器（PanelBody 的类名落在这里），所以上内边距也是
    思考链吸顶标题的偏移量 —— 同 course-chat.css 的同名变量。 */
 .chat-list-wrap {
+  overflow-anchor: none;
   --reasoning-sticky-gap: 4px;
-  display: flex;
-  flex-direction: column;
-  gap: 12px;
+  display: block;
   padding: var(--reasoning-sticky-gap) 0 8px;
 }
 
 .chat-msg {
+  padding-bottom: 12px;
   display: flex;
   min-width: 0;
 }
+
+.chat-panel-history { height: 36px; text-align: center; color: var(--muted); font-size: 0.8rem; }
+.chat-panel-history button { cursor: pointer; }
 
 .chat-msg--ai {
   justify-content: flex-start;

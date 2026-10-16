@@ -19,6 +19,7 @@
     "@lezer/markdown": "^1.7.2",
     "@ricky0123/vad-web": "^0.0.30",
     "@tailwindcss/vite": "^4.3.3",
+    "@tanstack/react-virtual": "^3.14.21",
     "@vidstack/react": "^1.15.6",
     "chart.js": "^4.5.1",
     "codemirror": "^6.0.2",

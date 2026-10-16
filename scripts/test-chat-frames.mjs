@@ -69,13 +69,13 @@ test('formatFrameList 缺 caption 时有占位描述', () => {
 
 test('qaSystem 默认不含画面引用规则', () => {
   const p = PROMPTS.qaSystem('测试课程');
-  assert.ok(!p.includes('list_frames'), '不应出现 list_frames');
+  assert.ok(!p.includes('/courses/current/frames'), '不应出现画面资源路径');
   assert.ok(!p.includes('[图@'), '不应出现画面标记');
 });
 
-test('qaSystem hasFrames=true 时注入 list_frames 与 [图@mm:ss] 规则', () => {
+test('qaSystem hasFrames=true 时注入 read frames 与 [图@mm:ss] 规则', () => {
   const p = PROMPTS.qaSystem('测试课程', undefined, true);
-  assert.match(p, /list_frames/);
+  assert.match(p, /read \/courses\/current\/frames/);
   assert.match(p, /\[图@mm:ss\]/);
 });
 
@@ -83,7 +83,7 @@ test('qaSystem 技能与画面规则可共存且编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true);
   assert.match(p, /7\. .*present_quiz/);
   assert.match(p, /8\. 可用的技能/);
-  assert.match(p, /9\. .*list_frames/);
+  assert.match(p, /9\. .*read \/courses\/current\/frames/);
 });
 
 // —— 2026-09-10 新增：代码块内的标记不得被改写（否则 mermaid / 普通代码源码被破坏） ——
@@ -132,7 +132,7 @@ test('qaSystem 无截图时不注入该规则', () => {
 test('qaSystem 截图规则与画面引用规则编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true, 1);
   assert.match(p, /4\. 本轮用户附带了 1 张截图/);
-  assert.match(p, /10\. .*list_frames/);
+  assert.match(p, /10\. .*read \/courses\/current\/frames/);
 });
 
 // —— 2026-09-17 新增：讲不清就画图（问答正文与题卡解析共用同一句话术） ——
