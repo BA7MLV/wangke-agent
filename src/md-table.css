@@ -223,6 +223,15 @@
   flex: 1 1 auto;
 }
 
+/* 手机端只有一个入口，完整表格按钮置于工具行中央。 */
+.md-table-tools[data-mobile='true'] {
+  justify-content: center;
+}
+
+.md-table-tools[data-mobile='true'] .md-table-tools__spacer {
+  display: none;
+}
+
 /* 「Markdown」→「已复制」文案变短时按钮不跟着缩，工具行不左右跳 */
 .md-table-copy {
   min-width: 88px;

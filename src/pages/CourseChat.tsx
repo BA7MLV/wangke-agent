@@ -374,15 +374,18 @@ function SourceList({ sources }: { sources: ChatSource[] }) {
  */
 function CourseCountSkeleton() {
   return (
-    <div className="course-chat__empty-skel" aria-hidden="true">
-      <div className="skel-bar course-chat__empty-skel__head" />
-      <div className="skel-bar course-chat__empty-skel__line" />
-      <div className="skel-bar course-chat__empty-skel__line course-chat__empty-skel__line--short" />
-      <div className="course-chat__empty-skel__starters">
-        {[0, 1, 2].map((i) => (
-          <div className="skel-bar course-chat__empty-skel__pill" key={i} />
-        ))}
+    <div className="course-chat__empty-skel t-skel" role="status" aria-label="正在准备聊天">
+      <div className="t-skel-skeleton is-pulsing" aria-hidden="true">
+        <div className="course-chat__empty-skel__head" />
+        <div className="course-chat__empty-skel__line" />
+        <div className="course-chat__empty-skel__line course-chat__empty-skel__line--short" />
+        <div className="course-chat__empty-skel__starters">
+          {[0, 1, 2].map((i) => (
+            <div className="course-chat__empty-skel__pill" key={i} />
+          ))}
+        </div>
       </div>
+      <span className="sr-only">正在准备聊天…</span>
     </div>
   );
 }
@@ -1200,28 +1203,6 @@ export default function CourseChat() {
         data-testid="course-chat-page"
       >
         <section className="course-chat__main" aria-label="AI 助手聊天">
-          {/* 只在助手**真的选定**了课程时才出现这条信息栏：没有选中时一行字都是废话
-              （曾经那里写着「助手自动选择」，说的就是「这里本来是空的」）。 */}
-          {contextCourses.length > 0 && (
-            <div className="course-chat__context" data-testid="course-chat-context">
-              <span className="course-chat__context-label">
-                <Sym name="toc" aria-hidden="true" />
-                课程上下文
-              </span>
-              <div className="course-chat__context-chips">
-                {contextCourses.map((course) => (
-                  <Chip key={course.id} className="course-chat__context-chip" variant="secondary" size="sm">
-                    {course.name}
-                  </Chip>
-                ))}
-              </div>
-              {iconButton('恢复自动选择课程', <Sym name="refresh" />, clearCourseContext, {
-                disabled: loading,
-                testId: 'chat-context-reset',
-              })}
-            </div>
-          )}
-
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
             {!loaded && <ChatHistorySkeleton />}
             {loaded && messages.length === 0 && (
@@ -1281,9 +1262,11 @@ export default function CourseChat() {
             )}
 
             {messages.length > 0 && <div className="chat-history-loader" aria-live="polite">
-              {hasOlder && <button type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>
-                {loadingOlder ? '正在加载历史消息…' : historyError ?? '加载更早消息'}
-              </button>}
+              {hasOlder && loadingOlder ? <PendingReply label="正在加载历史消息…" /> : hasOlder && (
+                <button type="button" onClick={() => void loadOlder()}>
+                  {historyError ?? '加载更早消息'}
+                </button>
+              )}
             </div>}
             {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}>{(message, index) => {
               const user = message.role === 'user';
@@ -1346,7 +1329,23 @@ export default function CourseChat() {
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
                             「先给结论、下面才是问题」。 */}
                         {renderCards(message)}
-                        {message.content && (
+                        {message.error && !message.streaming && canRetry && (
+                          <div className="course-chat__failed" data-testid="chat-answer-failed" role="alert">
+                            <Sym name="error" aria-hidden="true" />
+                            <span className="course-chat__failed-text">{message.content}</span>
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              className="course-chat__failed-continue"
+                              data-testid="chat-error-continue"
+                              isDisabled={loading}
+                              onPress={() => void retryMessage(message.key)}
+                            >
+                              继续回答
+                            </Button>
+                          </div>
+                        )}
+                        {message.content && !message.error && (
                           <XMarkdown
                             content={message.content}
                             components={{
@@ -1489,6 +1488,27 @@ export default function CourseChat() {
               </div>
             )}
             <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}>
+              {/* 上下文属于这次提问的输入范围，和输入框放在同一张 chat 卡里；
+                  不再悬在消息区上方，避免用户误以为它是另一条顶栏。 */}
+              {contextCourses.length > 0 && (
+                <div className="course-chat__context" data-testid="course-chat-context">
+                  <span className="course-chat__context-label">
+                    <Sym name="toc" aria-hidden="true" />
+                    课程上下文
+                  </span>
+                  <div className="course-chat__context-chips">
+                    {contextCourses.map((course) => (
+                      <Chip key={course.id} className="course-chat__context-chip" variant="secondary" size="sm">
+                        {course.name}
+                      </Chip>
+                    ))}
+                  </div>
+                  {iconButton('恢复自动选择课程', <Sym name="refresh" />, clearCourseContext, {
+                    disabled: loading,
+                    testId: 'chat-context-reset',
+                  })}
+                </div>
+              )}
               <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
                 ref={composerRef}

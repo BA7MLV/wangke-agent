@@ -121,7 +121,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     if (!['read', 'grep', 'edit'].includes(name)) {
       if (local && ['present_quiz', 'show_widget'].includes(name)) return executeLocal(name, args);
       if (!local && ['ask_user', 'set_course_context', 'propose_folder_plan'].includes(name)) return executeLibrary(name, args);
-      return `未知工具：${name}`;
+      return `未知工具「${name}」。这里只能使用本轮工具列表中的工具；不能访问 /tmp、宿主文件系统或 writeFile。需要展示 SVG 时请使用 show_widget(format="svg", code=...)。`;
     }
     if (name === 'grep' && (typeof args.query !== 'string' || !args.query.trim())) return '请提供要检索的关键词。';
     for (const key of ['offset', 'limit'] as const) {

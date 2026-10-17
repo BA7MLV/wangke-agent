@@ -1783,6 +1783,39 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     const message = state.messages.find((m) => m.key === key);
     if (!message) return;
     const sessionId = state.activeId;
+
+    /**
+     * 没有正文的失败回答没有 rowId，但仍要能从回答旁边的「继续回答」入口重跑。
+     * 普通失败时 user 行已经落库、失败的 assistant 行没有落库；草稿态连会话行都还没有，
+     * 此时 send 的文本仍保留在输入框里。
+     */
+    if (message.error) {
+      if (sessionId == null) {
+        const retryText = state.draft.trim();
+        if (!retryText) return;
+        set((s) => ({ messages: s.messages.filter((m) => m.key !== key) }));
+        await get().send(retryText);
+        return;
+      }
+
+      const messageIndex = state.messages.findIndex((m) => m.key === key);
+      const user = messageIndex > 0 ? state.messages[messageIndex - 1] : undefined;
+      if (!user || user.role !== 'user' || messageIndex !== state.messages.length - 1) return;
+
+      const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const userRow = [...rows].reverse().find((row) =>
+        row.role === 'user'
+        && row.content === user.content
+        && row.createdAt === user.createdAt,
+      );
+      if (userRow?.id == null) return;
+
+      await db.chats.delete(userRow.id);
+      set((s) => ({ messages: s.messages.slice(0, messageIndex - 1) }));
+      await get().send(user.content);
+      return;
+    }
+
     // 还没落库的消息没有可续写的「断点」，也没有可删的行（正在流的那条就是如此）
     if (sessionId == null || message.rowId == null) return;
 

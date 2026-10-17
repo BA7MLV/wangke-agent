@@ -252,8 +252,9 @@
    8px 圆点，颜色跟主色 —— 外形没变，变的是「出现 / 消失」有了方向感：
    从边缘滑进来、圆点弹开，读完后缩回去（见 DotBadge）。 */
 .nav-unread {
-  top: 4px;
-  right: 4px;
+  /* 点要落在汉堡 / panel_left 图标的圆形按钮内，不贴着外圈边框。 */
+  top: 10px;
+  right: 10px;
 }
 
 .nav-unread .t-badge-dot {

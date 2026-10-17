@@ -565,6 +565,6 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
        */
       return `已修改 ${r.changed} 处，改动已高亮在用户正在看的那份文档里，用户可以一键撤销。请用一两句话说明你改了什么。`;
     }
-    return `未知工具：${name}`;
+    return `未知工具「${name}」。当前运行在浏览器学习应用中，没有通用文件系统或终端能力；不要重试 write/writeFile/fs/shell 等未注册工具。若要展示 SVG，请调用 show_widget(format="svg", code=...)；若要修改 Markdown，请调用已提供的 edit 工具。`;
   };
 }

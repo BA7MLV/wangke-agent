@@ -500,7 +500,7 @@ function TableSheet({
             className="md-table-sheet__dialog"
             data-snap={snap}
             data-testid="md-table-sheet"
-            aria-label={`表格：${rows.length} 行，${header.cells.length} 列`}
+            aria-label="完整表格"
           >
             <Drawer.Handle
               className="md-table-sheet__handle"
@@ -513,9 +513,6 @@ function TableSheet({
             <Drawer.Header className="md-table-sheet__header">
               <div className="md-table-sheet__heading">
                 <Drawer.Heading className="md-table-sheet__title">表格</Drawer.Heading>
-                <span className="md-table-sheet__meta">
-                  {rows.length} 行 × {header.cells.length} 列
-                </span>
               </div>
               <Button
                 size="sm"
@@ -541,7 +538,7 @@ function TableSheet({
                   streaming={false}
                   colWidths={null}
                   containerClassName="md-table-scroll md-table-scroll--sheet"
-                  caption={`表格，共 ${rows.length} 行，${header.cells.length} 列`}
+                  caption="完整表格"
                 />
               </div>
             </Drawer.Body>
@@ -707,11 +704,7 @@ export function MarkdownTable({
     else setExpanded((value) => !value);
   };
 
-  const expandLabel = isMobile
-    ? '查看完整表格'
-    : expanded
-      ? '收起'
-      : `展开全部 · ${rowCount} 行`;
+  const expandLabel = expanded ? '收起' : '查看完整表格';
 
   const scrollClass = [
     'md-table-scroll',
@@ -739,7 +732,7 @@ export function MarkdownTable({
           containerRef={scrollRef}
           containerClassName={scrollClass}
           tableClassName={isStreaming ? 'md-table--streaming' : undefined}
-          caption={`表格，共 ${rowCount} 行，${parsed.columns} 列`}
+          caption="表格预览"
         />
       </div>
 
@@ -750,10 +743,7 @@ export function MarkdownTable({
       ) : null}
 
       {showTools ? (
-        <div className="md-table-tools">
-          <span className="md-table-tools__meta">
-            {rowCount} 行 × {parsed.columns} 列
-          </span>
+        <div className="md-table-tools" data-mobile={isMobile ? 'true' : undefined}>
           <span className="md-table-tools__spacer" />
           {!isMobile ? (
             <>

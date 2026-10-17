@@ -5,6 +5,14 @@ import { COMMENT_AUTHOR_POOL } from './comments.ts';
 export const MATERIAL_IMAGE_RULE = '用户想看材料里的原图、图表或需要你提供图片链接时，先 read /courses/{真实courseId}/images（单课程可用 /courses/current/images）。已知页/段时用相应 range 缩小范围，否则用 offset/limit 分页。只使用工具返回的图片引用：把 ![说明](#source-image/...) 原样放进正文即可展示可放大的原图；用户只要链接时用工具给出的 [说明](#source-image/...)。PDF 返回的是整页原文画面，必须称为页面图，不能冒充单独裁出的插图。目录中的名称与位置不是视觉证据，未收到实际图片时不能声称已看懂图像；需要辨读细节可请用户框选截图提问。材料缺失、外链或相对路径不可用时如实说明，并提供工具返回的原文来源链接。不要自己编造图片 URL、页码或图片编号，不要用生成图替代原图。';
 
 /**
+ * 运行时能力契约：模型不会自动知道自己是在浏览器中运行的，也不会知道
+ * 工具列表之外的宿主能力不存在。把这段同时放进课程问答与资料库助手，
+ * 避免模型套用 coding agent 的 writeFile / /tmp 习惯。
+ */
+export const RUNTIME_CAPABILITY_RULE =
+  '运行环境与工具边界：你运行在浏览器里的学习应用中，不是终端或 coding agent。只能调用本轮工具列表中明确提供的工具；不要虚构 write、writeFile、fs、shell、terminal、python 或任何未声明工具，也不要尝试访问 /tmp、用户电脑路径或宿主文件系统。用户说“生成/画 SVG”时，意思是生成并展示内容，不是保存文件：调用 show_widget，传 format="svg" 和完整 code，收到通过回执后把返回的 ```svg 围栏原样放进回答；不要生成 filePath/content 形式的写文件调用。只有用户明确要求修改课程 Markdown 时，才在工具明确提供 edit 且编辑面已打开时调用 edit，path 使用 /courses/current/material。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
+
+/**
  * 「讲不清就画图」规则：问答正文（qaSystem）与阅读材料问答（qaSystemMaterial）共用同一句话术。
  *
  * 两个要点都不能省：
@@ -224,6 +232,7 @@ ${transcript}
     selectionCount?: number,
   ) => {
     const rules = [
+      RUNTIME_CAPABILITY_RULE,
       '回答前先用 grep 检索 /courses/current/transcript。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，range={unit:"seconds",start:开始秒数,end:结束秒数}。',
       '检索有预算：通常 2~4 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',
       '回答必须基于字幕内容，不要编造。字幕中没有涉及的内容，明确说明"课程中未提及"。',
@@ -282,6 +291,7 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
     const noun = kind === 'page' ? '页' : '段';
     const docType = kind === 'page' ? 'PDF 文档' : '文档';
     const rules = [
+      RUNTIME_CAPABILITY_RULE,
       `回答前先用 grep 检索 /courses/current/material。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，range={unit:"${kind === 'page' ? 'pages' : 'paragraphs'}",start:起始${noun},end:结束${noun}}，范围闭区间、从 1 起。`,
       MATERIAL_IMAGE_RULE,
       '检索有预算：通常 2~4 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',

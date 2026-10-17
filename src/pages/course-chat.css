@@ -123,16 +123,16 @@
   flex: 0 0 auto;
   min-width: 0;
   min-height: 40px;
-  /* 顶栏浮起后让出它的高度（见上一条消息流的注释） */
-  margin: calc(var(--app-bar-h, 60px) + 8px) auto 0;
-  padding: 6px 12px;
-  width: min(100%, var(--course-chat-column));
+  grid-column: 1 / -1;
+  grid-row: 1;
+  margin: 0;
+  padding: 6px 4px 8px;
   display: flex;
   flex-wrap: wrap;
   align-items: center;
   gap: 7px;
-  border-radius: var(--radius);
-  background: color-mix(in oklch, var(--accent) 7%, var(--background));
+  border-bottom: 1px solid var(--border-secondary);
+  background: transparent;
   color: var(--muted);
   font-size: 0.8125rem;
 }
@@ -204,6 +204,40 @@
 
 .chat-history-loader button { cursor: pointer; }
 
+.course-chat__history-skel {
+  position: relative;
+  display: grid;
+  gap: 10px;
+  padding: 24px 0;
+}
+
+/* `t-skel` 的通用片段默认把骨架层绝对定位；聊天历史是动态高度的结构骨架，
+   这里只把骨架层放回布局流，脉冲与 reduced-motion 仍由 transitions.dev 接管。 */
+.course-chat__history-skel.t-skel > .t-skel-skeleton {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  display: grid;
+  gap: 18px;
+  width: 100%;
+  opacity: 1;
+  filter: none;
+}
+
+.course-chat__history-skel-bar {
+  border-radius: var(--radius-sm);
+  background: var(--background-tertiary);
+}
+
+.course-chat__history-skel-status {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
 /* 展开的耗时标题跟顶栏菜单图标同轴：20px 顶栏内边距 + (34px 按钮 - 16px 图标) / 2。
    用消息容器的宽度计算列缩进，避免按钮自身的百分比参照导致宽屏错位。
    不改正文列；标题顶部也不再由 40px 点击区域的垂直居中额外撑开。 */
@@ -221,16 +255,6 @@
 
 .course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__content {
   margin-left: calc(var(--course-chat-message-inset) - 29px);
-}
-
-/* 有「课程上下文」条时：它固定在消息区上方、自己让出顶栏高度，
-   消息区就退回常规内边距（否则顶栏高度叠加两次）。 */
-.course-chat__main:has(.course-chat__context) .course-chat__messages {
-  padding-top: var(--reasoning-sticky-gap);
-}
-
-.course-chat__main:has(.course-chat__context) .reasoning-chain[data-mode='expanded'] {
-  --reasoning-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
 }
 
 /* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，
@@ -346,17 +370,30 @@
 /* ── 数课程期间的骨架 ────────────────────────────────────────────────────
    尺寸对着上面那三条真规则来（h2 的 clamp 字号 × 1.25 行高、p 的 0.9375rem、
    药丸的 min-height 40px、starters 的 margin-top 26px），这样骨架换成真内容时
-   块与块之间不会错位。`.skel-bar` 负责底色与呼吸动画，这里只调几何。
-
-   ⚠️ 每条都要带 `.course-chat__empty-skel` 前缀（0,2,0）。只写 `.skel-bar` 同级
-   的单类选择器会和 `ui/skeleton.css` 的 `.skel-bar { height: 12px }` 打平（都是 0,1,0），
-   谁赢取决于两个样式表的打包顺序 —— 结果是「药丸有时候 40px、有时候 12px」这种
-   只在某些构建下复现的鬼影。 */
+   块与块之间不会错位。这里复用 transitions.dev 的 `t-skel` 脉冲，只调几何。 */
 .course-chat__empty-skel {
   width: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
+}
+
+.course-chat__empty-skel.t-skel > .t-skel-skeleton {
+  position: static;
+  inset: auto;
+  z-index: auto;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  opacity: 1;
+  filter: none;
+}
+
+.course-chat__empty-skel__head,
+.course-chat__empty-skel__line,
+.course-chat__empty-skel__pill {
+  background: var(--background-tertiary);
 }
 
 .course-chat__empty-skel .course-chat__empty-skel__head {
@@ -681,6 +718,35 @@
   margin-left: auto;
 }
 
+.course-chat__failed {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in oklch, var(--danger) 28%, var(--border));
+  border-radius: var(--radius);
+  background: var(--danger-soft);
+  color: var(--danger-soft-foreground);
+  font-size: 0.8125rem;
+  line-height: 1.5;
+}
+
+.course-chat__failed > svg {
+  flex: none;
+  color: var(--danger);
+}
+
+.course-chat__failed-text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.course-chat__failed-continue {
+  flex: none;
+  margin-left: auto;
+}
+
 .course-chat__sources {
   margin-top: 6px;
   display: flex;
@@ -848,6 +914,15 @@
 
 .course-chat__composer[data-asking='true'] > .course-chat__composer-tools,
 .course-chat__composer[data-asking='true'] > [data-testid='skill-picker'] {
+  grid-row: 3;
+}
+
+.course-chat__composer:has(> .course-chat__context) > .course-chat__input {
+  grid-row: 2;
+}
+
+.course-chat__composer:has(> .course-chat__context) > .course-chat__composer-tools,
+.course-chat__composer:has(> .course-chat__context) > [data-testid='skill-picker'] {
   grid-row: 3;
 }
 
@@ -1152,8 +1227,7 @@
 
 @media (max-width: 760px) {
   .course-chat__context {
-    padding-inline: 12px 8px;
-    border-radius: var(--radius);
+    padding-inline: 4px;
   }
 
   .course-chat__messages {
