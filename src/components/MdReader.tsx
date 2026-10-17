@@ -1,5 +1,5 @@
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { XMarkdown } from '@ant-design/x-markdown';
+import { Markdown as XMarkdown } from './markdown/Markdown';
 import { Button, Spinner } from '@heroui/react';
 import { db, type MaterialBlockRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';

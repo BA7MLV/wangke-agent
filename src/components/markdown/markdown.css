@@ -1,0 +1,11 @@
+.md-math { max-width: 100%; }
+.md-math--display {
+  display: block;
+  overflow-x: auto;
+  overflow-y: hidden;
+  margin-block: 0.75em;
+  padding-block: 0.15em;
+}
+.md-math--display .katex-display { margin: 0; }
+.md-math-pending { color: var(--md-sys-color-on-surface-variant, currentColor); }
+.md-math-error { white-space: pre-wrap; overflow-wrap: anywhere; }

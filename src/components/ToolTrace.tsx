@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Disclosure, Spinner } from '@heroui/react';
 import { Sym } from '../ui';
+import { IconSwap, Shimmer, TextSwap } from './motion';
 import type { ChatToolCall } from '../store/db';
 import { toolLabel } from '../utils/toolTrace';
 import './tool-trace.css';
@@ -30,6 +31,19 @@ function fmtMs(ms: number): string {
  *
  * `detail` 由 `utils/toolTrace.ts` 从参数里挑一个最有信息量的（检索词 / 技能名 / 起始时间）。
  * 工具链是**清单**不是日志：一行放得下的东西才看得进去，要看全部参数请去看工具本身。
+ *
+ * ## 时序（这一块在动效上刻意做成「有先后」的）
+ *
+ * 工具是**一个跑完才轮到下一个**的，界面应当说同一句话：
+ *
+ * - **标题**在真的有工具在跑（`status === 'running'`）时用 shimmer 高光扫过 ——
+ *   与思考链的状态行同一套语言（`.t-shimmer`），一眼看出「现在这一步在做什么」。
+ *   判据是**行**的状态而不是 `running`（整轮是否还在流）：一轮里工具跑完、正文还在写
+ *   的那一段，标题该是「已调用 N 个工具」的平静口吻，不该继续闪。
+ * - **每一行**按序号错开入场（`--tool-i`），流式时新起的那条从下方浮起、去模糊，
+ *   顺序读起来就是「先检索、再读取、最后出题」。
+ * - **状态格**用 `IconSwap` 做转圈 → 勾/叹号 的交叉淡出淡入，完成那一刻有个交代。
+ * - **耗时与结果摘要**在拿到的那一刻各自淡入 —— 它们不是行的一部分，是行的**产出**。
  */
 export default function ToolTrace({
   calls,
@@ -67,7 +81,12 @@ export default function ToolTrace({
         <Disclosure.Trigger className="tool-trace__toggle" data-testid="tool-trace-toggle">
           {/* 跑动中那颗扳手是主色，跑完转灰 —— 一眼分得出「还在查」和「查完了」 */}
           <Sym name="build" className="tool-trace__icon" />
-          <span className="tool-trace__title">{title}</span>
+          {/* 真的在跑才闪：跑完那一句是平静的计数，闪光只属于「正在进行」 */}
+          {acting ? (
+            <Shimmer className="tool-trace__title" text={title} />
+          ) : (
+            <TextSwap className="tool-trace__title" text={title} />
+          )}
           <Disclosure.Indicator className="tool-trace__caret" />
         </Disclosure.Trigger>
       </Disclosure.Heading>
@@ -81,13 +100,15 @@ export default function ToolTrace({
                 className="tool-trace__item"
                 data-status={call.status}
                 data-testid="tool-trace-item"
+                // 入场延迟按序号递进；封顶 4 步（最多 160ms），免得第 12 条工具等半秒才出现
+                style={{ ['--tool-i' as string]: Math.min(i, 4) }}
               >
                 <span className="tool-trace__state" aria-hidden="true">
-                  {call.status === 'running' ? (
-                    <Spinner size="sm" color="current" />
-                  ) : (
-                    <Sym name={call.status === 'error' ? 'error' : 'check'} />
-                  )}
+                  <IconSwap
+                    a={<Spinner size="sm" color="current" />}
+                    b={<Sym name={call.status === 'error' ? 'error' : 'check'} />}
+                    active={call.status === 'running' ? 'a' : 'b'}
+                  />
                 </span>
                 <span className="tool-trace__action">
                   <span className="tool-trace__label">{toolLabel(call.name)}</span>

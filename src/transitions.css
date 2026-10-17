@@ -107,6 +107,16 @@
   --shimmer-highlight: #0d0d0d;
   --shimmer-band: 400%;
   --shimmer-ease: linear;
+  /* Tool trace（一次 agent 轮次里的工具链）。
+     逐条错开入场 = 「时序」：流式时新出现的那条也是这么冒出来的；历史回放时
+     整张清单按序号依次亮起。--tool-i 由 JS 写在行上（已封顶，见 ToolTrace）。 */
+  --tool-item-in: var(--duration-fast);
+  --tool-item-stagger: var(--duration-stagger);
+  --tool-item-slide: var(--distance-micro);
+  --tool-item-blur: var(--blur-small);
+  --tool-item-ease: var(--ease-smooth-out);
+  --tool-fact-in: var(--duration-quick);
+  --tool-sweep: 1600ms;
   /* Notification badge */
   --badge-slide-dur: 260ms;
   --badge-pop-dur: 500ms;

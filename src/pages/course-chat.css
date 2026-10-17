@@ -858,6 +858,35 @@
     0 10px 30px rgb(0 0 0 / 0.07);
 }
 
+/* 确认问题与回答共用输入卡，不在消息流里再放第二个输入入口。 */
+.course-chat__composer[data-asking='true'] {
+  border-color: var(--accent);
+}
+
+.course-chat__composer > .ask-card {
+  grid-column: 1 / -1;
+  grid-row: 1;
+  min-width: 0;
+  max-height: min(360px, 36dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  margin: 0;
+  padding: 8px 0;
+  border: 0;
+  border-bottom: 1px solid var(--border-secondary);
+  border-radius: 0;
+  background: transparent;
+}
+
+.course-chat__composer[data-asking='true'] > .course-chat__input {
+  grid-row: 2;
+}
+
+.course-chat__composer[data-asking='true'] > .course-chat__composer-tools,
+.course-chat__composer[data-asking='true'] > [data-testid='skill-picker'] {
+  grid-row: 3;
+}
+
 /* TextArea：外框与底色由卡片提供，这里把它彻底摊平 —— 一个自带边框的
    输入框套在一张卡片里，会出现「框中框」，两层圆角也对不齐。 */
 .course-chat__input {
@@ -996,7 +1025,7 @@
   color: var(--background);
 }
 
-/* 停止键与发送键并存（2026-10-16）：尺寸与发送键一致，两颗并排在右下角。
+/* 停止键与发送键共用右下角同一操作位，尺寸一致，不同时出现。
    外观走默认 tertiary（不是 danger 红）：停止是**常规**操作，不是破坏性动作 ——
    已写出的内容会保留（见 store 的 `stop`），染成红色会让用户以为要丢东西。 */
 .course-chat__stop {

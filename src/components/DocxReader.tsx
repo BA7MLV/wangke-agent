@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
 import { createPortal } from 'react-dom';
 import { db, type MaterialBlockRow } from '../store/db';
 import { Sym } from '../ui';
@@ -44,6 +45,10 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
   const [total, setTotal] = useState(0);
   const [current, setCurrent] = useState(1);
   const [pages, setPages] = useState<HTMLElement[]>([]);
+  // null 表示自动适配；手动缩放后不被窗口尺寸变化覆盖。
+  const [zoom, setZoom] = useState<number | null>(null);
+  const [fitZoom, setFitZoom] = useState(1);
+  const scale = zoom ?? fitZoom;
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -78,6 +83,7 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
   useEffect(() => {
     let cancelled = false;
     setReady(false);
+    setZoom(null);
     setPages([]);
     setError(null);
     unitEls.current.clear();
@@ -150,6 +156,28 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
     };
   }, [blob, materialId]);
 
+  // 保留原文档排版，以真实纸张宽度计算缩放。CSS zoom 同时缩放布局高度，
+  // 不会像 transform 那样留下空白，也让划词、段落跳转与批注共享同一坐标系。
+  useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    if (!scroll || pages.length === 0) return;
+    const measure = () => {
+      const style = getComputedStyle(scroll);
+      const available = scroll.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+      const paperWidth = Math.max(...pages.map((page) => page.offsetWidth));
+      if (available > 0 && paperWidth > 0) setFitZoom(Math.min(1, available / paperWidth));
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(scroll);
+    for (const page of pages) observer.observe(page);
+    return () => observer.disconnect();
+  }, [pages]);
+
+  useLayoutEffect(() => {
+    for (const page of pages) page.style.zoom = String(scale);
+  }, [pages, scale]);
+
   // ── 当前位置跟踪（顶部窄带命中法，与 PdfReader 一致） ────────────────────
   useEffect(() => {
     const root = scrollRef.current;
@@ -187,6 +215,19 @@ export default function DocxReader({ blob, materialId, initialUnit, handleRef, o
           {ready ? `第 ${current} / ${total} 段` : <span className="skel-bar reader-pos-skel" aria-hidden="true" />}
         </span>
         <div className="mr-bar__spacer" />
+        <Button isIconOnly variant="tertiary" aria-label="缩小" data-testid="reader-zoom-out"
+          isDisabled={!ready || !!error} onPress={() => setZoom(Math.max(0.1, scale - 0.1))}>
+          <Sym name="zoom_out" />
+        </Button>
+        <span className="mr-bar__pos" data-testid="reader-zoom-value">{Math.round(scale * 100)}%</span>
+        <Button isIconOnly variant="tertiary" aria-label="放大" data-testid="reader-zoom-in"
+          isDisabled={!ready || !!error} onPress={() => setZoom(Math.min(3, scale + 0.1))}>
+          <Sym name="zoom_in" />
+        </Button>
+        <Button variant={zoom === null ? 'secondary' : 'tertiary'} data-testid="reader-fit-width"
+          isDisabled={!ready || !!error} onPress={() => setZoom(null)}>
+          自动适配
+        </Button>
         <ReaderProgress current={current} total={total} />
       </div>
       <InkToolbar disabled={!ready || !!error} />

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
-import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
+import type { ComponentProps } from '@ant-design/x-markdown';
+import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
 import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';

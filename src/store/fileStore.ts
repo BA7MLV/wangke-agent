@@ -7,8 +7,8 @@ import { db } from './db';
  * （结构化克隆 + SQLite 落盘 + 静态加密），因此课程文件存 OPFS
  * （流式分块写入、可报进度），IndexedDB 只存元数据。
  *
- * 兼容：OPFS 不可用时回退 IndexedDB；旧版本存在 IndexedDB 里的
- * 视频在首次读取时后台懒迁移到 OPFS。
+ * 兼容：Safari 缺少 createWritable 时使用 Worker 同步句柄；
+ * 两种写入方式均不可用时回退 IndexedDB。旧数据保留在原存储中。
  *
  * 目录按资源类型分开（videos / materials）：既让「清空视频」这类维护操作有明确边界，
  * 也避免两类文件的 id 混在同一个目录里。
@@ -45,11 +45,44 @@ function getDir(name: string): Promise<FileSystemDirectoryHandle | null> {
   return p;
 }
 
-/**
- * 保存课程文件：优先 OPFS 流式分块写入（onProgress 报 0→1）；
- * OPFS 不可用时回退 IndexedDB（无中间进度）。
- */
-export async function saveCourseFile(
+function writeInWorker(handle: FileSystemFileHandle, blob: Blob, onProgress?: (ratio: number) => void): Promise<boolean> {
+  return new Promise((resolve, reject) => {
+    let worker: Worker;
+    try {
+      worker = new Worker(new URL('./fileWriter.worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      resolve(false);
+      return;
+    }
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') {
+        onProgress?.(data.ratio);
+        return;
+      }
+      worker.terminate();
+      if (data.type === 'done') resolve(true);
+      else if (data.type === 'unsupported') resolve(false);
+      else reject(new DOMException(data.message, data.name));
+    };
+    worker.onerror = (event) => {
+      event.preventDefault();
+      worker.terminate();
+      reject(new Error('文件写入进程中断，请保持页面在前台并重新导入。'));
+    };
+    worker.onmessageerror = () => {
+      worker.terminate();
+      reject(new Error('文件写入通信失败，请重新导入。'));
+    };
+    try {
+      worker.postMessage({ handle, blob });
+    } catch {
+      worker.terminate();
+      resolve(false);
+    }
+  });
+}
+
+async function saveFile(
   id: string,
   blob: Blob,
   onProgress?: (ratio: number) => void,
@@ -61,23 +94,51 @@ export async function saveCourseFile(
     onProgress?.(1);
     return;
   }
-  const handle = await dir.getFileHandle(id, { create: true });
-  const writable = await handle.createWritable();
+  let existed = false;
   try {
-    for (let offset = 0; offset < blob.size; offset += CHUNK_SIZE) {
-      const end = Math.min(blob.size, offset + CHUNK_SIZE);
-      await writable.write(blob.slice(offset, end));
-      onProgress?.(blob.size > 0 ? end / blob.size : 1);
+    await dir.getFileHandle(id);
+    existed = true;
+  } catch (e) {
+    if ((e as DOMException).name !== 'NotFoundError') throw e;
+  }
+  const handle = await dir.getFileHandle(id, { create: true });
+  let writable: FileSystemWritableFileStream | undefined;
+  try {
+    let saved = false;
+    if (typeof handle.createWritable === 'function') {
+      try {
+        writable = await handle.createWritable();
+      } catch (e) {
+        if ((e as DOMException).name !== 'NotSupportedError') throw e;
+      }
     }
-    await writable.close();
+    if (writable) {
+      for (let offset = 0; offset < blob.size; offset += CHUNK_SIZE) {
+        const end = Math.min(blob.size, offset + CHUNK_SIZE);
+        await writable.write(blob.slice(offset, end));
+        onProgress?.(Math.min(0.99, end / blob.size));
+      }
+      await writable.close();
+      saved = true;
+    } else {
+      // 已有文件用 IndexedDB 原子替换，避免同步句柄中途失败破坏旧内容。
+      saved = !existed && await writeInWorker(handle, blob, onProgress);
+    }
+    if (saved) {
+      await db.files.delete(id);
+    } else {
+      await db.files.put({ id, blob });
+      await dir.removeEntry(id).catch(() => {});
+    }
+    onProgress?.(1);
   } catch (e) {
     try {
-      await writable.abort();
+      await writable?.abort();
     } catch {
       /* 句柄可能已关闭 */
     }
     try {
-      await dir.removeEntry(id);
+      if (!existed) await dir.removeEntry(id);
     } catch {
       /* 清理半截文件失败可忽略 */
     }
@@ -85,11 +146,31 @@ export async function saveCourseFile(
   }
 }
 
+/** 只有持久化完成后报告 100%；配额错误不换后端盲目重试。 */
+export async function saveCourseFile(
+  id: string,
+  blob: Blob,
+  onProgress?: (ratio: number) => void,
+  dirName: string = DIR_VIDEOS,
+): Promise<void> {
+  try {
+    onProgress?.(0);
+    await saveFile(id, blob, onProgress, dirName);
+  } catch (error) {
+    if ((error as Error).name === 'QuotaExceededError') {
+      throw new DOMException('设备或浏览器存储空间不足。请删除不需要的课程或释放设备空间后，重新导入。', 'QuotaExceededError');
+    }
+    throw error;
+  }
+}
+
 /**
- * 读取课程文件：先查 OPFS；查不到再查 IndexedDB（旧数据），
- * 命中旧数据后后台懒迁移到 OPFS 并删除 IndexedDB 副本。
+ * IndexedDB 的有效副本优先，避免失败的 OPFS 空文件遮住回退数据。
+ * 不在读取时迁移：读取不应触发大文件复制或与保存、删除竞争。
  */
 export async function getCourseFile(id: string, dirName: string = DIR_VIDEOS): Promise<Blob | null> {
+  const row = await db.files.get(id);
+  if (row) return row.blob;
   const dir = await getDir(dirName);
   if (dir) {
     try {
@@ -99,20 +180,7 @@ export async function getCourseFile(id: string, dirName: string = DIR_VIDEOS): P
       if ((e as DOMException).name !== 'NotFoundError') throw e;
     }
   }
-  const row = await db.files.get(id);
-  if (!row) return null;
-  if (dir) {
-    // 懒迁移，不阻塞本次读取；失败则下次读取时再试
-    void (async () => {
-      try {
-        await saveCourseFile(id, row.blob, undefined, dirName);
-        await db.files.delete(id);
-      } catch {
-        /* ignore */
-      }
-    })();
-  }
-  return row.blob;
+  return null;
 }
 
 /** 删除课程文件（OPFS 与 IndexedDB 旧数据都清） */

@@ -37,11 +37,18 @@ try {
     assert.equal(await page.getByTestId('chat-delivery-bar').count(), 0);
     assert.equal(await page.getByTestId('chat-voice').count(), 1);
     await setState({ loading: true });
-    await page.getByTestId('chat-delivery-bar').waitFor();
+    await page.getByTestId('chat-stop').waitFor();
+    assert.equal(await page.getByTestId('chat-delivery-bar').count(), 0);
     assert.equal(await page.getByTestId('chat-voice').count(), 0);
-    assert.equal(await page.getByTestId('chat-send').isDisabled(), true);
+    assert.equal(await page.getByTestId('chat-send').count(), 0);
+    await page.locator('textarea').fill('   ');
+    assert.equal(await page.getByTestId('chat-delivery-bar').count(), 0);
+    assert.equal(await page.getByTestId('chat-stop').count(), 1);
     await page.locator('textarea').fill('补充一个问题');
     await page.getByTestId('chat-send').waitFor();
+    await page.getByTestId('chat-delivery-bar').waitFor();
+    assert.equal(await page.getByTestId('chat-stop').count(), 0);
+    assert.equal(await page.getByTestId('chat-send').isEnabled(), true);
     await page.getByTestId('chat-send-mode-steer').click();
     assert.equal(await page.getByTestId('chat-delivery-bar').getAttribute('data-mode'), 'steer');
     assert.match(await page.locator('.course-chat__send-hint').textContent(), /停止当前回复/);
@@ -57,6 +64,11 @@ try {
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
     await page.waitForTimeout(250);
     await page.screenshot({ path: `e2e-shots/chat-delivery-collapse-${width}.png` });
+    await page.locator('textarea').fill('');
+    await page.getByTestId('chat-stop').waitFor();
+    assert.equal(await page.getByTestId('chat-delivery-bar').count(), 0);
+    assert.equal(await page.getByTestId('chat-send').count(), 0);
+    await page.locator('textarea').fill('继续补充');
     for (const field of ['pendingAsk', 'pendingPlan']) {
       await setState({ [field]: { messageKey: 'waiting' } });
       await page.getByTestId('chat-delivery-bar').waitFor({ state: 'detached' });

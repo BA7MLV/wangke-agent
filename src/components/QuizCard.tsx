@@ -1,5 +1,6 @@
 import { useCallback, useMemo } from 'react';
-import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
+import type { ComponentProps } from '@ant-design/x-markdown';
+import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { QuizData } from '../harness/quiz';
 import { linkifyTimestamps, parseTs } from '../utils/linkify';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';

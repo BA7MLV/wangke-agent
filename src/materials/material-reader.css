@@ -226,6 +226,8 @@
 .mr-docx .docx-wrapper {
   background: transparent;
   padding: 0;
+  /* 放大后从左侧溢出，避免 flex 居中把纸张左边裁到不可滚动的区域。 */
+  align-items: flex-start;
 }
 
 .mr-docx .docx-wrapper > section.docx {

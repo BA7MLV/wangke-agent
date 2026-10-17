@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import path from 'node:path';
 import { chromium } from 'playwright';
 
-const BASE = process.env.BASE_URL || 'http://localhost:4173';
+const BASE = `${(process.env.BASE_URL || 'http://localhost:4173').replace(/\/$/, '')}/#/library`;
 const FIX_ZH = path.resolve('scripts/fixtures/sample-zh.pdf');
 const FIX_DOCX = path.resolve('scripts/fixtures/sample.docx');
 const FIX_SCANNED = path.resolve('scripts/fixtures/sample-scanned.pdf');
@@ -533,6 +533,36 @@ await check('docx-preview 渲染出正文', async () => {
     () => (document.querySelector('.mr-docx')?.textContent ?? '').includes('矩阵的秩'),
     { timeout: 30000 },
   );
+});
+
+await check('Word 默认适配宽度，窄容器不横向溢出，手动缩放后可恢复自动适配', async () => {
+  const scroll = page.locator('.mr-scroll').first();
+  const fits = () => page.waitForFunction(() => {
+    const scroll = document.querySelector('.mr-scroll');
+    const paper = document.querySelector('.mr-docx section.docx');
+    if (!scroll || !paper) return false;
+    const style = getComputedStyle(scroll);
+    const available = scroll.clientWidth - parseFloat(style.paddingLeft) - parseFloat(style.paddingRight);
+    return paper.getBoundingClientRect().width <= available + 1 && scroll.scrollWidth <= scroll.clientWidth + 1;
+  });
+  try {
+    await fits();
+    await scroll.evaluate((el) => { el.style.width = '360px'; el.style.maxWidth = '100%'; });
+    await fits();
+    const auto = Number.parseInt(await page.getByTestId('reader-zoom-value').innerText(), 10);
+    assert.ok(auto < 100, `窄容器应自动缩小，实际 ${auto}%`);
+    await page.getByTestId('reader-zoom-in').click();
+    await page.waitForFunction((before) => Number.parseInt(document.querySelector('[data-testid="reader-zoom-value"]').textContent, 10) > before, auto);
+    const manual = await page.getByTestId('reader-zoom-value').innerText();
+    await scroll.evaluate((el) => { el.style.width = '300px'; });
+    await page.waitForTimeout(150);
+    assert.equal(await page.getByTestId('reader-zoom-value').innerText(), manual, '手动缩放不应被尺寸变化覆盖');
+    await page.getByTestId('reader-fit-width').click();
+    await fits();
+  } finally {
+    await scroll.evaluate((el) => { el.style.removeProperty('width'); el.style.removeProperty('max-width'); });
+  }
+  await fits();
 });
 
 /**

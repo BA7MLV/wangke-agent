@@ -63,6 +63,12 @@
   white-space: nowrap;
 }
 
+/* 标题用 shimmer 时别把字色锁成 shimmer 底色：颜色继续跟 toggle 的
+   hover / 展开态走，shimmer 只负责 ::before 那层高光扫过。 */
+.tool-trace__title.t-shimmer {
+  color: inherit;
+}
+
 /* HeroUI 自带的指示箭头（按 data-expanded 自己翻转），只把颜色收进令牌 */
 .tool-trace__caret {
   color: var(--muted);
@@ -91,6 +97,7 @@
 /* 两行网格：第一行「状态 | 动作 + 对象 | 耗时」，第二行结果摘要跨在动作下面。
    用网格而不是嵌套 flex，是为了让结果摘要与动作文字**左缘对齐** —— 它属于那一行。 */
 .tool-trace__item {
+  position: relative;
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;
   column-gap: 6px;
@@ -98,6 +105,56 @@
   border-left: 2px solid var(--border-secondary);
   color: var(--muted);
   line-height: 1.5;
+  /* 时序：每条按自己的序号依次入场（--tool-i 由 JS 写在行上、已封顶）。
+     流式时新出现的那条也是这么冒出来的，读起来有先后而不是哗一下铺上来。 */
+  animation: tool-trace-item-in var(--tool-item-in) var(--tool-item-ease) both;
+  animation-delay: calc(var(--tool-item-stagger) * var(--tool-i, 0));
+}
+
+@keyframes tool-trace-item-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--tool-item-slide));
+    filter: blur(var(--tool-item-blur));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* 正在跑的那一条：左边栏转主色，再叠一道高光横扫 ——
+   与标题的 shimmer 刻意用两种语言（标题闪的是「字」，这一行动的是「底」），
+   同一屏同时出现也不会读成两条一模一样的状态。 */
+.tool-trace__item[data-status='running'] {
+  border-left-color: color-mix(in oklch, var(--accent) 65%, transparent);
+}
+
+.tool-trace__item[data-status='running']::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: var(--radius-sm);
+  background-image: linear-gradient(
+    100deg,
+    transparent 40%,
+    color-mix(in oklch, var(--accent) 16%, transparent) 50%,
+    transparent 60%
+  );
+  background-size: 400% 100%;
+  background-repeat: no-repeat;
+  animation: tool-trace-sweep var(--tool-sweep) var(--ease-linear) infinite;
+}
+
+@keyframes tool-trace-sweep {
+  0% {
+    background-position: 100% 0;
+  }
+  100% {
+    background-position: 0% 0;
+  }
 }
 
 .tool-trace__state {
@@ -141,6 +198,24 @@
   white-space: nowrap;
 }
 
+/* 耗时与结果摘要是这一行的**产出**：工具跑完才拿得到，所以各自淡入 ——
+   它们不是行的一部分，是行跑出来的东西。复用快档，让「完成」比「入场」更利落。 */
+.tool-trace__ms,
+.tool-trace__result {
+  animation: tool-trace-fact-in var(--tool-fact-in) var(--tool-item-ease) both;
+}
+
+@keyframes tool-trace-fact-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--tool-item-slide));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
 .tool-trace__ms {
   grid-row: 1;
   grid-column: 3;
@@ -165,5 +240,18 @@
 @media (pointer: coarse) {
   .tool-trace__toggle {
     min-height: 48px;
+  }
+}
+
+/* 关掉动效时把「时序」也一并收掉：入场错开只是装饰，
+   行本身的内容与状态一个都不少。 */
+@media (prefers-reduced-motion: reduce) {
+  .tool-trace__item,
+  .tool-trace__ms,
+  .tool-trace__result {
+    animation: none !important;
+  }
+  .tool-trace__item[data-status='running']::after {
+    display: none !important;
   }
 }

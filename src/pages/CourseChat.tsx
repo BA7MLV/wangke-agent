@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react';
-import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
+import type { ComponentProps } from '@ant-design/x-markdown';
+import { Markdown as XMarkdown } from '../components/markdown/Markdown';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -609,10 +610,14 @@ export default function CourseChat() {
    */
   const runningIds = useCourseChat((s) => s.runningIds);
   const draft = useCourseChat((s) => s.draft);
+  const hasDraft = !!draft.trim();
   const courseCount = useCourseChat((s) => s.courseCount);
   const skillIds = useCourseChat((s) => s.skillIds);
   const contextCourses = useCourseChat((s) => s.contextCourses);
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
+  const pendingQuestion = pendingAsk ? messages.find((message) => message.key === pendingAsk.messageKey)?.ask : undefined;
+  const composerAsk = pendingQuestion?.picked == null ? pendingQuestion : undefined;
+  const choiceOnly = !!composerAsk && composerAsk.allowCustom === false;
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
@@ -1038,11 +1043,10 @@ export default function CourseChat() {
 
   const renderCards = (message: CourseChatMessage) => (
     <>
-      {message.ask && (
+      {message.ask && (pendingAsk?.messageKey !== message.key || message.ask.picked != null) && (
         <AskCard
           ask={message.ask}
-          active={pendingAsk?.messageKey === message.key}
-          restored={pendingAsk?.messageKey === message.key && !!pendingAsk?.restored}
+          active={false}
           onPick={(option) => void answerAsk(option)}
         />
       )}
@@ -1425,7 +1429,7 @@ export default function CourseChat() {
               onSendNow={(id) => void sendQueuedNow(id)}
               onClear={clearQueue}
             />
-            {generating && (
+            {generating && hasDraft && (
               <div className="course-chat__delivery-bar" data-testid="chat-delivery-bar" data-mode={sendMode}>
                 <ToggleButtonGroup
                   className="course-chat__send-mode"
@@ -1447,12 +1451,21 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            <div className="course-chat__composer" ref={composerHoldRef}>
+            <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}>
+              {composerAsk && (
+                <AskCard
+                  ask={composerAsk}
+                  active
+                  restored={pendingAsk?.restored}
+                  onPick={(option) => void answerAsk(option)}
+                  onCustom={() => composerRef.current?.focus()}
+                />
+              )}
               <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
                 ref={composerRef}
                 className="course-chat__input"
-                aria-label="给 AI 助手发送消息"
+                aria-label={composerAsk ? '回答助手的确认问题' : '给 AI 助手发送消息'}
                 aria-description="长按输入栏说话，松开完成，上滑取消；识别后可编辑再发送"
                 rows={1}
                 fullWidth
@@ -1489,17 +1502,19 @@ export default function CourseChat() {
                  * 用户真正的意图往往只是「等它答完，接着问下一句」—— 那条路现在是
                  * **排队**（Enter），输入框全程可打。
                  *
-                 * 唯一还禁用的是「历史没就绪」（`!sessionReady`）：那确实没东西可发。
+                 * 历史没就绪或问题只允许候选项时禁用；其他时候都可以继续输入。
                  */
-                disabled={!sessionReady}
+                disabled={!sessionReady || choiceOnly}
                 placeholder={
-                  pendingAsk
-                    ? '直接输入就是你的回答，回车确认'
-                    : generating
-                      ? sendMode === 'queue'
-                        ? '说一句排队，答完这轮自动接着问…'
-                        : '说一句立刻插入，打断这轮换个问法…'
-                      : '随便问点什么，或长按说话'
+                  choiceOnly
+                    ? '请从上方选择一项'
+                    : pendingAsk
+                      ? '在这里说说你的想法，回车继续…'
+                      : generating
+                        ? sendMode === 'queue'
+                          ? '说一句排队，答完这轮自动接着问…'
+                          : '说一句立刻插入，打断这轮换个问法…'
+                        : '随便问点什么，或长按说话'
                 }
                 onKeyDown={(event) => {
                   if (event.key !== 'Enter' || event.shiftKey) return;
@@ -1544,20 +1559,19 @@ export default function CourseChat() {
                     isDisabled={loading || !loaded || activeId == null || pendingAsk != null || pendingPlan != null}
                   />
                 </span>
-                {/* 停止键放在发送键前，发送始终固定在最右侧。 */}
-                {generating &&
-                  iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
+                {/* 发送与停止共用最右侧的操作位：生成中有草稿就发送，没有才停止。 */}
+                {generating ? (
+                  hasDraft ? iconButton(sendMode === 'queue' ? '排队发送' : '插入发送', <Sym name="arrow_upward" />,
+                    () => void send(draft), { className: 'course-chat__send', testId: 'chat-send', disabled: !sessionReady })
+                  : iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
                     className: 'course-chat__stop',
                     testId: 'chat-stop',
-                  })}
-                {generating ? (
-                  iconButton(sendMode === 'queue' ? '排队发送' : '插入发送', <Sym name="arrow_upward" />,
-                    () => void send(draft), { className: 'course-chat__send', testId: 'chat-send', disabled: !sessionReady || !draft.trim() })
+                  })
                 ) : <VoiceInput
                   key={activeId ?? 'draft'}
                   holdTargetRef={composerHoldRef}
-                  disabled={!sessionReady}
-                  hasText={!!draft.trim()}
+                  disabled={!sessionReady || choiceOnly}
+                  hasText={hasDraft}
                   editVersion={voiceEditVersion}
                   onStart={() => { voiceDraftBase.current = useCourseChat.getState().draft; }}
                   onText={(text) => {
@@ -1565,13 +1579,11 @@ export default function CourseChat() {
                     setDraft(base ? `${base} ${text}` : text);
                   }}
                   onSend={() => void send(useCourseChat.getState().draft)}
-                  sendLabel={loading
+                  sendLabel={pendingAsk ? '确认回答并继续' : loading
                     ? sendMode === 'queue'
                       ? '排队发送：等这一轮答完自动发出去'
                       : '插入发送：立刻打断这一轮，换成这句'
-                    : pendingAsk
-                      ? '确认这个回答'
-                      : '发送'}
+                    : '发送'}
                 />}
               </Toolbar>
             </div>
