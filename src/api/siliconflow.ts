@@ -383,6 +383,21 @@ function applyRecoveredDsml(msg: ChatMessage, raw: string): ChatMessage {
   };
 }
 
+/**
+ * 少数网关会把未解析的工具调用压成字段名串并塞进正文，例如
+ * `show_widgetformatsvgcode`。它不是用户内容，也不是合法的 DSML；即使
+ * 无法安全还原调用，也不能把这段内部协议泄漏到聊天气泡里。
+ *
+ * 这里只移除明确的工具调用前缀，不做宽泛的 XML/HTML 清洗，避免误伤 SVG
+ * 或讲义正文。真正的结构化调用仍由 DSML recoverer 负责。
+ */
+function stripLeakedToolPreamble(text: string): string {
+  return text.replace(
+    /(?:^|\s)(?:show_widget|writeFile|write)\s*(?:format|filePath|path)\s*(?:svg|mermaid|diagram|html|\/tmp\/[^\s]+)?\s*(?:code|content)?(?=\s|<|$)/gi,
+    (match) => match.startsWith(' ') ? ' ' : '',
+  );
+}
+
 /** 流式对话：onDelta 回调正文增量，onReasoning 回调思考增量，返回完整 assistant 消息（含 tool_calls） */
 export async function chatStream(
   t: ModelTarget,
@@ -452,7 +467,10 @@ export async function chatStream(
               const i = chunk.index ?? Object.keys(toolCalls).length;
               toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
             }
-            if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) { content += delta.text; onDelta?.(delta.text); }
+            if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) {
+              const text = stripLeakedToolPreamble(delta.text);
+              if (text) { content += text; onDelta?.(text); }
+            }
             if (chunk.type === 'content_block_delta' && delta?.type === 'thinking_delta' && delta.thinking) { reasoning += delta.thinking; onReasoning?.(delta.thinking); }
             if (chunk.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json) {
               const call = toolCalls[chunk.index ?? 0]; if (call) call.function.arguments += delta.partial_json;
@@ -461,7 +479,10 @@ export async function chatStream(
             continue;
           }
           if (t.protocol === 'openai-responses') {
-            if (chunk.type === 'response.output_text.delta' && chunk.delta) { content += chunk.delta; onDelta?.(chunk.delta); }
+            if (chunk.type === 'response.output_text.delta' && chunk.delta) {
+              const text = stripLeakedToolPreamble(chunk.delta);
+              if (text) { content += text; onDelta?.(text); }
+            }
             if (chunk.type === 'response.reasoning_summary_text.delta' && chunk.delta) { reasoning += chunk.delta; onReasoning?.(chunk.delta); }
             if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
               const i = chunk.output_index ?? Object.keys(toolCalls).length;
@@ -483,8 +504,8 @@ export async function chatStream(
             // 标记进界面、tool_calls 却是空的，于是 agent 以为模型答完了。
             if (dsml) absorb(dsml.push(delta.content));
             else {
-              content += delta.content;
-              onDelta?.(delta.content);
+              const text = stripLeakedToolPreamble(delta.content);
+              if (text) { content += text; onDelta?.(text); }
             }
           }
           if (delta.reasoning_content) {

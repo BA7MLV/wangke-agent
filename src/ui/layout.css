@@ -253,8 +253,8 @@
    从边缘滑进来、圆点弹开，读完后缩回去（见 DotBadge）。 */
 .nav-unread {
   /* 点要落在汉堡 / panel_left 图标的圆形按钮内，不贴着外圈边框。 */
-  top: 10px;
-  right: 10px;
+  top: 12px;
+  right: 12px;
 }
 
 .nav-unread .t-badge-dot {

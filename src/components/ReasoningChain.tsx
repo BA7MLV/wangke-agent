@@ -179,8 +179,8 @@ export default function ReasoningChain({
       isExpanded={open} onExpandedChange={setOpen}>
       <Disclosure.Heading className="reasoning-chain__heading">
       <Disclosure.Trigger className="reasoning-chain__toggle">
-        <TextSwap className="reasoning-chain__title" text={title} />
         {active && <MatrixDots className="reasoning-chain__icon" />}
+        <TextSwap className="reasoning-chain__title" text={title} />
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
         {live && <LiveElapsed from={since ?? mountedAt.current} />}
         <Disclosure.Indicator className="reasoning-chain__indicator" />

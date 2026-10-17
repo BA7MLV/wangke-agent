@@ -1335,7 +1335,7 @@ export default function CourseChat() {
                             <span className="course-chat__failed-text">{message.content}</span>
                             <Button
                               size="sm"
-                              variant="secondary"
+                              variant="ghost"
                               className="course-chat__failed-continue"
                               data-testid="chat-error-continue"
                               isDisabled={loading}
