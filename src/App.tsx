@@ -48,7 +48,7 @@ export default function App() {
       .join('\0'),
   );
   useEffect(() => {
-    if (!catalogsKey || !isModelMetaStale()) return;
+    if (!catalogsKey || !isModelMetaStale(catalogsKey.split('\0'))) return;
     void refreshModelMeta(catalogsKey.split('\0')).catch(() => {});
   }, [catalogsKey]);
 

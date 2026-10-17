@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
@@ -25,6 +26,10 @@ interface Props {
 }
 
 export default function MaterialReader({ material, handleRef }: Props) {
+  const [searchParams] = useSearchParams();
+  const requested = Number(searchParams.get('unit'));
+  const requestedUnit = Number.isSafeInteger(requested) && requested > 0 ? requested : undefined;
+  const initialUnit = requestedUnit ?? material.lastUnit;
   const [fileUrl, setFileUrl] = useState<string>('');
   const [blob, setBlob] = useState<Blob | null>(null);
   const [missing, setMissing] = useState(false);
@@ -114,7 +119,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
   }
 
   return (
-    <MaterialInkProvider key={materialId} materialId={materialId}>
+    <MaterialInkProvider key={`${materialId}:${requestedUnit ?? ''}`} materialId={materialId}>
     <div className="mr-shell">
       {/*
         「不能检索」必须显式说明：否则用户会以为「问答坏了」，而真实原因在材料自己身上。
@@ -126,7 +131,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
           <Sym name="warning" />
           <span>
             这份材料<strong>没有文本层</strong>（扫描件），无法参与问答检索；
-            但仍可在页面上划词或框选区域提问。
+            但仍可让助手展示页面图，或框选区域提问。
           </span>
         </div>
       )}
@@ -134,7 +139,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
         <div className="mr-hint" data-testid="material-empty-hint">
           <Sym name="warning" />
           <span>
-            这份材料<strong>没有正文</strong>，没有可供检索或提问的内容。
+            这份材料<strong>没有可检索正文</strong>；如果文件里有图片，仍可让助手查找并展示原图。
           </span>
         </div>
       )}
@@ -142,7 +147,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
         fileUrl && (
           <PdfReader
             fileUrl={fileUrl}
-            initialUnit={material.lastUnit}
+            initialUnit={initialUnit}
             handleRef={handleRef}
             onUnitChange={onUnitChange}
           />
@@ -152,7 +157,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
           <MdReader
             blob={blob}
             materialId={materialId}
-            initialUnit={material.lastUnit}
+            initialUnit={initialUnit}
             handleRef={handleRef}
             onUnitChange={onUnitChange}
           />
@@ -162,7 +167,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
           <HtmlReader
             blob={blob}
             materialId={materialId}
-            initialUnit={material.lastUnit}
+            initialUnit={initialUnit}
             initialView={material.htmlView ?? 'raw'}
             onViewChange={onHtmlViewChange}
             handleRef={handleRef}
@@ -176,7 +181,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
           <DocxReader
             blob={blob}
             materialId={materialId}
-            initialUnit={material.lastUnit}
+            initialUnit={initialUnit}
             handleRef={handleRef}
             onUnitChange={onUnitChange}
           />

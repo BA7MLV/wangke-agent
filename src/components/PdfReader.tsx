@@ -421,6 +421,7 @@ interface LayerProps {
  * 还会撞上 pdf.js 的「同一 canvas 重复 render」限制。
  */
 function PdfPageLayer({ doc, num, width, areaMode, onMeasured, onRegion }: LayerProps) {
+  const ink = useMaterialInk();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const textRef = useRef<HTMLDivElement>(null);
   const [ratio, setRatio] = useState(1);
@@ -501,7 +502,7 @@ function PdfPageLayer({ doc, num, width, areaMode, onMeasured, onRegion }: Layer
     if (!isUsableRegion(rect)) return;
 
     const canvas = canvasRef.current;
-    const image = canvas ? cropCanvasRegion(canvas, rect, ratio) : null;
+    const image = canvas ? cropCanvasRegion(canvas, rect, ratio, ink.strokes.get(`pdf:${num}`)) : null;
     // 顺手把框内文字也取出来：图 + 字双通道，公式/表格这类纯视觉识别易错的内容更稳
     const text = textRef.current ? textInRect(textRef.current, rect) : '';
     onRegion({ unit: num, image, text });

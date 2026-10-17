@@ -4,10 +4,11 @@ import { db, type VideoRow } from '../store/db';
 import { formatStudyDuration } from '../utils/studyLog';
 import { fmtTime } from '../utils/vtt';
 import { MAX_COURSE_CONTEXT, normalizeCourseContextIds, resolveCourseSearchScope } from './courseContext';
-import { validateAskUser, askUserToolResult, type AskUserData } from './askUser';
+import { validateAskUser, askUserToolResult, type AskUserData, type AskUserAnswer } from './askUser';
 import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { lexicalSearch } from './lexical';
+import { MATERIAL_IMAGE_RULE } from './prompts';
 
 /**
  * 课程助手沿用 chatSessions / chats 两张表保存历史，但它不从属于某一门课程。
@@ -45,7 +46,7 @@ export interface LibraryAssistantExecutorOptions {
    * 提问卡：把题面交给 UI，**等用户点选**后 resolve 成用户选中的那句话。
    * 不实现 = 用户永远收不到这张卡（工具会退化成「没问成」的解释，见下方同名分支）。
    */
-  onAskUser?: (ask: AskUserData) => Promise<string>;
+  onAskUser?: (ask: AskUserData) => Promise<AskUserAnswer | string>;
   /**
    * 目录整理方案：把方案交给 UI，**等用户确认**后 resolve。
    * resolve 值是 `{ ok, result }`：确认则 `result` 是落库结果；取消则 `ok=false`。
@@ -116,25 +117,31 @@ const ASK_USER_TOOL: ToolDef = {
   function: {
     name: 'ask_user',
     description:
-      '当缺少关键信息、而几个答案会导向明显不同的做法时，向用户提问并给 2~5 个候选方案让用户点选。' +
-      '用户点完（或自己打字回答）你才会继续。不要用它来确认你已经能从课程数据判断出的事，也不要在没有分叉时凑选项',
+      '缺少影响下一步的关键信息时向用户提问。type 支持 single 单选、multiple 多选、text 自由填写、confirm 确认明确动作。' +
+      '等待用户提交后继续，结果含 status、selectedIds、selectedLabels、text、note；skipped/cancelled 不代表同意，declined 表示拒绝。不要询问能从课程数据查到的事，不要凑选项。确认不赋予你额外的执行能力。',
     parameters: {
       type: 'object',
       properties: {
         question: { type: 'string', description: '一句话说清需要用户决定什么，不超过 200 字' },
+        type: { type: 'string', enum: ['single', 'multiple', 'text', 'confirm'], description: '默认 single；多项可同时成立用 multiple，没有合理候选用 text' },
         options: {
           type: 'array',
-          items: { type: 'string' },
+          items: { type: 'object', properties: { id: { type: 'string' }, label: { type: 'string' } }, required: ['id', 'label'] },
           minItems: 2,
           maxItems: 5,
-          description: '2~5 个候选方案，每条不超过 60 字，写成用户能一眼分辨的短方案名而不是完整句子',
+          description: 'single / multiple 必填，2~5 项，id 唯一稳定，label 不超过 60 字；text / confirm 不需要',
         },
         allowCustom: {
           type: 'boolean',
-          description: '是否提供「我自己说」入口，默认 true；候选方案很可能都不贴切时传 false',
+          description: '是否允许用自己的回答替代候选，默认 true；confirm 不允许自定义替代',
         },
+        allowSkip: { type: 'boolean', description: '是否允许跳过，默认 false' },
+        minSelections: { type: 'integer', description: '多选至少选几项，默认 1' },
+        maxSelections: { type: 'integer', description: '多选最多选几项，默认全部选项数' },
+        confirmLabel: { type: 'string', description: '确认按钮的实际动作，如「按此计划继续」，不超过 60 字' },
+        declineLabel: { type: 'string', description: '拒绝按钮文案，默认「暂不执行」' },
       },
-      required: ['question', 'options'],
+      required: ['question'],
     },
   },
 };
@@ -311,10 +318,10 @@ function generalAssistantSystemPrompt(skillMetaList?: string): string {
 
 工作规则：
 1. 直接用你自己的知识回答问题：概念解释、学习方法、代码、写作、规划、闲聊都可以。不要因为「没有课程数据」就拒绝回答或反复道歉。
-2. 可用 read 加载技能；缺少关键信息、且不同答案会导向明显不同的做法时，用 ask_user 给 2~5 个候选方案让用户点选，不要凑选项。
+2. 可用 read 加载技能；缺少影响下一步的关键信息时，用 ask_user，按问题选择 single / multiple / text / confirm；选择题给 2~5 项，不要凑选项。
 3. 用户问到「我的课程、我的进度、我学过的内容」这类依赖他个人数据的问题时，如实说明当前资料库还是空的，并告诉他可以在「资料库」页面导入视频或 PDF / Markdown 材料 —— 导入之后你就能结合他的实际内容回答。给出你作为通用知识能提供的部分帮助，再补这句说明。
 4. 不编造他的课程、进度或学习记录。没有数据就说没有，不要虚构一个「你上一门课讲的是……」。
-5. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给候选方案，不要替用户猜。
+5. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 选择合适的问题类型，不要替用户猜。
 6. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要罗列无关信息。`;
 }
 
@@ -344,10 +351,11 @@ export function libraryAssistantSystemPrompt(
 6. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
 7. 不编造课程、进度或系统记录。资料库中没有相关内容时，明确说明“资料库中没有检索到”，再把通用知识与课程数据分开回答。
 8. 读操作之外只有两类写操作：ask_user（向用户提问）与 propose_folder_plan（提出目录整理方案）。除此之外不能声称已经替用户删除、收藏、导入、修改或完成课程；用户要求这类操作时，说明目前只能提供步骤或建议。
-9. 缺少关键信息、且不同答案会导向明显不同的做法时，调用 ask_user 给 2~5 个候选方案让用户点选，不要替用户猜。选项要写成能一眼分辨的短方案名。凡是资料库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
+9. 缺少影响下一步的关键信息时，调用 ask_user，按需用单选、多选、自由填写或明确动作确认，不要替用户猜。选择题给 2~5 个短选项。凡是资料库里能查到的（有哪些课、进度如何、哪门讲了什么），都不许拿来问用户。
 10. 整理资料库目录时：先 read /courses 了解全库（有下一页时用 offset 继续）、read /library/folders 看现有分类，再调用 propose_folder_plan 等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。不要逐门读取 info：课程名与类型在列表里已经够用，只在少数课程名看不出内容时抽查一两门。
 11. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
-12. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。`;
+12. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。
+13. ${MATERIAL_IMAGE_RULE}`;
 }
 
 export function createLibraryAssistantExecutor(options: LibraryAssistantExecutorOptions = {}) {

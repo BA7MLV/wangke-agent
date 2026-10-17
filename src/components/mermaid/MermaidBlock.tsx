@@ -71,7 +71,7 @@ export default function MermaidBlock({ code, closed, title }: { code: string; cl
       copyToast="已复制 Mermaid 源码"
       waitingText="图表生成中…"
       renderingText="正在渲染图表…"
-      errorTitle="图表渲染失败，已回退为源码"
+      errorTitle="暂时无法显示图表"
       downloadPrefix="diagram"
       onRetry={() => setRetry((v) => v + 1)}
     />

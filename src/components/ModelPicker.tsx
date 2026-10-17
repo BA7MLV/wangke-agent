@@ -2,11 +2,12 @@ import { useState, type ReactNode } from 'react';
 import { Dropdown, ListBox, ScrollShadow, SearchField, Separator, Switch, Tooltip } from '@heroui/react';
 import { Sym } from '../ui';
 import { useSettings, sameRef, type ModelRef, type ModelSlot } from '../store/settings';
-import { guessContextWindow, hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
+import { guessContextWindow, hasThinkingDepth, supportsThinking } from '../api/modelCaps';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import ReasoningEffortSlider from './ReasoningEffortSlider';
 import './subtitle-danmaku.css';
 import { modelKey, modelLabel, modelsForSlot } from '../store/modelLibrary';
+import { ModelCapabilities } from './ModelCapabilities';
 
 interface Props {
   slot: ModelSlot;
@@ -128,8 +129,7 @@ export default function ModelPicker({
         {/* 供应商名独立一列：多供应商下模型 id 不再能唯一标识一个模型 */}
         <span className="model-picker__provider">{nameOf(ref.providerId)}</span>
         <span className="model-picker__id" title={ref.model}>{modelLabel(settings, ref)}</span>
-        {isVisionModel(cat, ref.model) && <span className="tag-mini tag-mini--primary">多模态</span>}
-        {supportsThinking(cat, ref.model) && <span className="tag-mini">可思考</span>}
+        <ModelCapabilities catalogId={cat} model={ref.model} compact />
       </span>
     );
   };

@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { peekSvgProgress, sanitizeSvg } from './svgRender';
+import { peekSvgProgress, sanitizeSvg, svgTitleOf } from './svgRender';
 import DiagramBlock, { type DiagramPhase } from './DiagramBlock';
 
 /**
@@ -57,21 +57,28 @@ export default function SvgBlock({ code, closed, title }: { code: string; closed
     }
   }, [trimmed, closed, progress]);
 
+  const displayTitle = useMemo(() => title || (svg ? svgTitleOf(svg) : null), [title, svg]);
+  const errorMessage = /没有找到 <svg|源码为空/.test(err)
+    ? '模型未返回有效的 SVG 图形，可让它重新生成。源码可在右上角菜单查看。'
+    : /没有闭合/.test(err)
+      ? '图形内容不完整，可让模型继续生成或重试。源码可在右上角菜单查看。'
+      : err;
+
   return (
     <DiagramBlock
       testId="svg"
       tag="SVG"
-      title={title}
+      title={displayTitle}
       phase={phase}
       svg={svg}
       stream={progress ? { kind: 'svg', progress } : null}
-      err={err}
+      err={errorMessage}
       source={trimmed}
       copyLabel="复制 SVG 源码"
       copyToast="已复制 SVG 源码"
       waitingText="图形生成中…"
       renderingText="正在渲染图形…"
-      errorTitle="图形无法渲染，已回退为源码"
+      errorTitle="暂时无法显示图形"
       downloadPrefix="figure"
     />
   );

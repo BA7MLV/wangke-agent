@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { useChatNotifications } from './chatNotifications';
 import { readChatPage } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
 import { catalogOf, getSettings } from './settings';
@@ -18,7 +19,7 @@ import { applyFolderPlan, type AppliedPlanResult } from '../pipelines/folderPlan
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage } from '../api/siliconflow';
-import { askUserToolResult, type AskUserData } from '../harness/askUser';
+import { askUserToolResult, askAnswerText, validateAskAnswer, type AskUserData, type AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
 
@@ -165,6 +166,7 @@ export interface ResumeSeed {
 
 /** 交给 `send` 的续跑请求：种子 + 这次要给模型的结果 */
 export interface ResumeRequest extends ResumeSeed {
+  askAnswer?: AskUserAnswer;
   /** 喂回模型的工具结果文本 */
   toolResult: string;
   /** 提问卡作答有（落一条 user 行）；方案确认没有 */
@@ -176,7 +178,7 @@ export interface ResumeRequest extends ResumeSeed {
 /** 悬着的「等用户回答」：UI 点击时调 resolve，agent 循环靠它继续往下走 */
 export interface PendingAsk {
   messageKey: string;
-  resolve: (picked: string) => void;
+  resolve: (picked: AskUserAnswer | string) => void;
   /** 从库里的挂起点恢复（刷新后）—— 仅用于 UI 显示「会话已恢复」 */
   restored?: boolean;
   /** 恢复态的续跑种子；活着的那一轮没有它 */
@@ -376,7 +378,7 @@ export interface CourseChatStore {
   /** 恢复自动选课程。草稿态同样只写内存，理由见 `setSkillIds` */
   clearCourseContext: () => void;
   /** 提问卡作答（同时把选择落成一条 user 消息） */
-  answerAsk: (option: string) => Promise<void>;
+  answerAsk: (option: AskUserAnswer | string) => Promise<void>;
   /** 停止生成：中断当前的 LLM 请求与 agent 循环（已流出的内容保留） */
   stop: () => void;
   // ── 流式期间的输入（排队 / 插入）─────────────────────────────────────────
@@ -892,6 +894,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       await db.chatSessions.delete(id);
     });
     parked.delete(id);
+    useChatNotifications.getState().dismiss(id);
     const sessions = await unarchivedSessions();
     set({ sessions });
     // 删的是别人的会话就别动当前这条 —— 用户没要求切会话
@@ -944,7 +947,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       if (archived) row.archived = true;
       else delete row.archived;
     });
-    if (archived) parked.delete(id);
+    if (archived) {
+      parked.delete(id);
+      useChatNotifications.getState().dismiss(id);
+    }
 
     /**
      * 两个方向都要重读整张 Recent 列表：
@@ -1170,6 +1176,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         delete row.resume;
         if (resume.toolName === 'ask_user' && row.ask && resume.userContent != null) {
           row.ask.picked = resume.userContent;
+          row.ask.answer = resume.askAnswer;
         }
         if (resume.toolName === 'propose_folder_plan' && row.folderPlan && resume.planApplied != null) {
           row.folderPlan.applied = resume.planApplied;
@@ -1290,7 +1297,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     };
 
     const holdAsk = (ask: AskUserData) =>
-      new Promise<string>((resolve) => {
+      new Promise<AskUserAnswer | string>((resolve) => {
         patchAi({ ask: { ...ask } });
         writeView(turnKey, {
           pendingAsk: {
@@ -1687,6 +1694,9 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       endInflight(turnKey, record);
       writeView(turnKey, { loading: false });
       markRunning(turnKey, false);
+      if (!abort.signal.aborted && readView(turnKey).queued.length === 0) {
+        useChatNotifications.getState().complete(turnKey);
+      }
       /**
        * 这一轮结束了（正常答完 / 出错 / 被停止打断 / 被插入打断），队首那条自动往下走。
        *
@@ -1919,12 +1929,14 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 留着的唯一作用是「万一真发生了，别往 null 会话里写消息」。
      */
     if (!pendingAsk || activeId == null) return;
-    const picked = option.trim();
-    if (!picked) return;
+    const message = get().messages.find(m => m.key === pendingAsk.messageKey);
+    if (!message?.ask || message.ask.picked != null) return;
+    const answer = validateAskAnswer(message.ask, option);
+    const picked = askAnswerText(answer);
     set((s) => ({
       messages: s.messages.map((m) =>
         m.key === pendingAsk.messageKey && m.ask
-          ? { ...m, ask: { ...m.ask, picked } }
+          ? { ...m, ask: { ...m.ask, picked, answer } }
           : m,
       ),
     }));
@@ -1938,7 +1950,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       await get().send(picked, undefined, seed.sessionId, {
         ...seed,
         userContent: picked,
-        toolResult: askUserToolResult(picked),
+        toolResult: askUserToolResult(answer),
+        askAnswer: answer,
       });
       return;
     }
@@ -1958,7 +1971,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       messages: [...s.messages, { key: `stored-${rowId}`, rowId, role: 'user', content: picked, createdAt }],
       pendingAsk: null,
     }));
-    pendingAsk.resolve(picked);
+    pendingAsk.resolve(answer);
   },
 
   // ── 目录整理方案 ──────────────────────────────────────────────────────────
@@ -2240,6 +2253,9 @@ async function continueInterrupted(
     endInflight(sessionId, record);
     writeView(sessionId, { loading: false });
     markRunning(sessionId, false);
+    if (!abort.signal.aborted && readView(sessionId).queued.length === 0) {
+      useChatNotifications.getState().complete(sessionId);
+    }
     // 续写也是一轮：它结束时同样要把队首那条送出去（用户可能在这期间排了话）
     drainQueue(sessionId);
   }
@@ -2348,7 +2364,9 @@ function releasePending(sessionId: number) {
    * 恢复态的卡**没有内存 promise**：`resolve` 走的是续跑，喂「（用户已离开该会话）」
    * 会被当成用户的选择启动一次假续跑。所以只清引用，不调 resolve。
    */
-  if (!view.pendingAsk?.restored) view.pendingAsk?.resolve('（用户已离开该会话）');
+  if (!view.pendingAsk?.restored) view.pendingAsk?.resolve({
+    status: 'cancelled', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '',
+  });
   if (!view.pendingPlan?.restored) view.pendingPlan?.resolve({ ok: false, result: null });
   writeView(sessionId, { pendingAsk: null, pendingPlan: null });
 }

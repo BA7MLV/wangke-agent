@@ -1,7 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
 import type { WidgetPayload } from '../harness/widgetRuntime';
-import type { AskUserData } from '../harness/askUser';
+import type { AskUserData, AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
 import type { HtmlView } from '../materials/types';
@@ -213,7 +213,7 @@ export interface ChatSessionRow {
    */
   skillIds?: number[];
   /**
-   * 置顶（非索引字段，无需升级版本）。展示层排前面，组内仍按 `createdAt` 升序。
+   * 置顶（非索引字段，无需升级版本）。展示层排前面，组内按最近消息倒序。
    * 不设 = 未置顶，老会话零迁移。
    */
   pinned?: boolean;
@@ -340,6 +340,7 @@ export interface ChatRow {
 
 /** 提问卡状态（`ChatRow.ask`）：题面与选项 + 用户的选择 */
 export interface AskUserState extends AskUserData {
+  answer?: AskUserAnswer;
   /** 被选中的选项原文；不设 = 尚未作答。存原文而不是下标，改选项顺序也不会错位 */
   picked?: string;
 }

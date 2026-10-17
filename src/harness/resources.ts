@@ -12,7 +12,7 @@ export const READ_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'read',
-    description: '读取虚拟资源或列目录。/skills 列可用技能，/skills/{编码后的名称} 加载技能，参考文档路径来自返回结果。/courses 列课程（支持 offset/limit 和 status/kind 筛选）；/courses/{id}/info 详情；/courses/{id}/transcript 字幕；/courses/{id}/material 材料；/courses/{id}/frames 画面。/library/overview 学习统计，/library/folders 分类。单课程问答可用 /courses/current 指代当前课程。正文按 range 读取，字幕每次最多 600 秒，材料最多 20 页/段；返回原始定位用于引用。',
+    description: '读取虚拟资源或列目录。/skills 列可用技能，/skills/{编码后的名称} 加载技能，参考文档路径来自返回结果。/courses 列课程（支持 offset/limit 和 status/kind 筛选）；/courses/{id}/info 详情；/courses/{id}/transcript 字幕；/courses/{id}/material 材料；/courses/{id}/images 原图目录（PDF 为页面图），返回可直接放进回答的图片与查看链接，支持 range、offset/limit；/courses/{id}/frames 视频画面。/library/overview 学习统计，/library/folders 分类。单课程问答可用 /courses/current 指代当前课程。正文按 range 读取，字幕每次最多 600 秒，材料最多 20 页/段；返回原始定位用于引用。',
     parameters: {
       type: 'object',
       properties: {
@@ -85,7 +85,7 @@ export function parseResource(path: unknown): Resource | undefined {
     if (p.length === 2 && p[0] === 'library' && p[1] === 'overview') return { type: 'overview' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'folders') return { type: 'folders' };
     if (p.length === 2 && p[0] === 'courses' && p[1] === 'context') return { type: 'context' };
-    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames'].includes(p[2]))) {
+    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images'].includes(p[2]))) {
       return { type: 'course', id: p[1], leaf: p[2] };
     }
     if (p[0] === 'skills' && p.length === 2) return { type: 'skill', name: p[1] };
@@ -152,7 +152,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     if (local && id !== options.courseId) return '单课程问答只能访问当前课程。';
     const course = await db.videos.get(id);
     if (!course) return '课程不存在，请 read /courses 获取真实路径。';
-    const kind = local ? options.kind : course.kind === 'material' ? (course.materialFormat === 'pdf' ? 'page' : 'para') : undefined;
+    const kind = options.kind ?? (course.kind === 'material' ? ((course.materialFormat ?? 'pdf') === 'pdf' ? 'page' : 'para') : undefined);
     const leaf = resource.leaf ?? (name === 'grep' ? (kind ? 'material' : 'transcript') : 'info');
     const canonical = `${coursePath(id)}/${leaf}`;
     const execute = local ? executeLocal : createToolExecutor(id, { kind });
@@ -167,6 +167,14 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
       return `path=${canonical}\n定位单位：${kind === 'page' ? 'pages' : kind ? 'paragraphs' : 'seconds'}\n${result}`;
     }
     if (leaf === 'info') return executeLibrary('get_course_details', { courseId: id });
+    if (leaf === 'images') {
+      if (course.kind !== 'material') return '此课程不是阅读材料。视频画面请 read 对应的 frames 资源。';
+      const range = args.range === undefined ? undefined : contentRange(args.range, kind);
+      if (typeof range === 'string') return range;
+      const { readMaterialImageCatalog } = await import('../materials/images');
+      const result = await readMaterialImageCatalog(course, args.offset as number | undefined, args.limit as number | undefined, range);
+      return `${result}${range?.clipped ? `\n（本次范围已截断至 ${range.end}，可继续分段 read。）` : ''}`;
+    }
     if (leaf === 'frames') {
       if (kind || (local && !options.hasFrames)) return '此课程没有可用画面。';
       return `path=${canonical}\n${await execute('list_frames', {})}`;

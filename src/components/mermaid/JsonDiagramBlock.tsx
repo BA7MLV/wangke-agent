@@ -86,7 +86,7 @@ export default function JsonDiagramBlock({ code, closed, title }: { code: string
       copyToast="已复制 diagram 源码"
       waitingText="图形生成中…"
       renderingText="正在渲染图形…"
-      errorTitle="图形无法渲染，已回退为源码"
+      errorTitle="暂时无法显示图形"
       downloadPrefix="diagram"
     />
   );

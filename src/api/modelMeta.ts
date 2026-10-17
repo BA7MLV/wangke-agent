@@ -29,9 +29,20 @@ const TTL_MS = 7 * 24 * 3600 * 1000;
  * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs、
  * scripts/test-thinking-depth.mjs）：版本写错的话那份夹具会被当成过期缓存丢掉。
  */
-export const MODEL_META_CACHE_VERSION = 3;
+export const MODEL_META_CACHE_VERSION = 4;
 
 export interface ModelMeta {
+  name?: string;
+  inputModalities?: string[];
+  outputModalities?: string[];
+  /** 原始声明用于 UI；运行时 context/output 保留既有兜底。 */
+  declaredContext?: number;
+  declaredOutput?: number;
+  declaredReasoning?: boolean;
+  declaredToolCall?: boolean;
+  structuredOutput?: boolean;
+  cost?: { input?: number; output?: number };
+  lastUpdated?: string;
   context: number;
   output: number;
   vision: boolean;
@@ -63,6 +74,7 @@ export interface ThinkingControl {
 interface MetaCache {
   version: number;
   updatedAt: number;
+  catalogs?: Record<string, number>;
   /** 键 = `${catalogId}\0${modelId}` */
   models: Record<string, ModelMeta>;
 }
@@ -79,8 +91,12 @@ interface ReasoningOption {
 
 /** models.dev 条目（只取需要的字段） */
 interface ModelsDevEntry {
+  name?: string;
+  last_updated?: string;
+  cost?: { input?: number; output?: number };
+  structured_output?: boolean;
   limit?: { context?: number; output?: number };
-  modalities?: { input?: string[] };
+  modalities?: { input?: string[]; output?: string[] };
   reasoning?: boolean;
   reasoning_options?: ReasoningOption[];
   tool_call?: boolean;
@@ -176,9 +192,43 @@ export function modelMetaInfo(): { updatedAt: number; count: number } | null {
   return c ? { updatedAt: c.updatedAt, count: Object.keys(c.models).length } : null;
 }
 
-export function isModelMetaStale(): boolean {
+export function isModelMetaStale(catalogs?: readonly string[]): boolean {
   const c = load();
+  if (catalogs?.length) return catalogs.some((id) => !c?.catalogs?.[id] || Date.now() - c.catalogs[id] > TTL_MS);
   return !c || Date.now() - c.updatedAt > TTL_MS;
+}
+
+export function catalogMetaUpdatedAt(catalogId: string): number | null {
+  return load()?.catalogs?.[catalogId] ?? null;
+}
+
+const finiteNumber = (n: unknown): number | undefined =>
+  typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n : undefined;
+const modalities = (value: unknown): string[] | undefined =>
+  Array.isArray(value) ? [...new Set(value.filter((m): m is string => typeof m === 'string'))] : undefined;
+
+export function parseModelMeta(m: ModelsDevEntry): ModelMeta {
+  const context = finiteNumber(m.limit?.context);
+  const output = finiteNumber(m.limit?.output);
+  const input = modalities(m.modalities?.input);
+  return {
+    name: typeof m.name === 'string' ? m.name : undefined,
+    inputModalities: input,
+    outputModalities: modalities(m.modalities?.output),
+    declaredContext: context,
+    declaredOutput: output,
+    declaredReasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
+    declaredToolCall: typeof m.tool_call === 'boolean' ? m.tool_call : undefined,
+    structuredOutput: typeof m.structured_output === 'boolean' ? m.structured_output : undefined,
+    cost: m.cost ? { input: finiteNumber(m.cost.input), output: finiteNumber(m.cost.output) } : undefined,
+    lastUpdated: typeof m.last_updated === 'string' ? m.last_updated : undefined,
+    context: context || 131072,
+    output: output ?? 8192,
+    vision: !!input?.includes('image'),
+    reasoning: m.reasoning === true,
+    toolCall: m.tool_call === true,
+    thinking: parseThinking(m),
+  };
 }
 
 /**
@@ -189,35 +239,45 @@ export function isModelMetaStale(): boolean {
  *   localStorage 是纯浪费（而配额满了会静默让整份缓存写不进去）。
  *   传空数组则整份都不保留（没有登记就没有查询入口）。
  */
-export async function refreshModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
+const inFlight = new Map<string, Promise<{ count: number }>>();
+
+export function refreshModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
+  const ids = [...new Set(catalogs.map((id) => id.trim()).filter(Boolean))].sort();
+  const key = JSON.stringify(ids);
+  const pending = inFlight.get(key);
+  if (pending) return pending;
+  const request = fetchModelMeta(ids).finally(() => inFlight.delete(key));
+  inFlight.set(key, request);
+  return request;
+}
+
+async function fetchModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
   const wanted = [...new Set(catalogs.filter((c) => c.trim().length > 0))];
   if (wanted.length === 0) return { count: 0 };
 
-  const res = await fetch(API_URL);
+  const res = await fetch(API_URL, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
   const json = (await res.json()) as Record<string, { models?: Record<string, ModelsDevEntry> }>;
 
   const models: Record<string, ModelMeta> = {};
+  const refreshed: string[] = [];
   for (const catalog of wanted) {
     const src = json?.[catalog]?.models;
     if (!src) continue;
+    refreshed.push(catalog);
     for (const [id, m] of Object.entries(src)) {
-      const context = m?.limit?.context;
-      if (!context) continue;
-      models[metaKey(catalog, id)] = {
-        context,
-        output: m.limit?.output ?? 8192,
-        vision: !!m.modalities?.input?.includes('image'),
-        reasoning: !!m.reasoning,
-        toolCall: !!m.tool_call,
-        thinking: parseThinking(m),
-      };
+      if (!m || typeof m !== 'object') continue;
+      models[metaKey(catalog, id)] = parseModelMeta(m);
     }
   }
   if (Object.keys(models).length === 0) {
     throw new Error(`models.dev 里没有 ${wanted.join(' / ')} 的模型数据`);
   }
-  mem = { version: MODEL_META_CACHE_VERSION, updatedAt: Date.now(), models };
+  const previous = load();
+  const updatedAt = Date.now();
+  const kept = Object.fromEntries(Object.entries(previous?.models ?? {}).filter(([key]) => !refreshed.includes(key.split('\0')[0])));
+  mem = { version: MODEL_META_CACHE_VERSION, updatedAt, models: { ...kept, ...models },
+    catalogs: { ...previous?.catalogs, ...Object.fromEntries(refreshed.map((id) => [id, updatedAt])) } };
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(mem));
   } catch {

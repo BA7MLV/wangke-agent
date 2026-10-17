@@ -1,6 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react';
+import Dexie, { liveQuery } from 'dexie';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from '../components/markdown/Markdown';
+import { MaterialImage } from '../components/MaterialImage';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
@@ -32,6 +34,8 @@ import ContextUsageButton from '../components/ContextUsageButton';
 import { useContextCompression } from '../components/useContextCompression';
 import { EMPTY_COMPRESSION, retainedContext, useContextCompressionStore } from '../store/contextCompression';
 import { useCourseChat, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
+import { useChatNotifications } from '../store/chatNotifications';
+import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useSettings } from '../store/settings';
 import { estimateTokens } from '../harness/context';
 import { libraryAssistantSystemPrompt } from '../harness/libraryAssistant';
@@ -275,9 +279,10 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
     data-collapsed={overflows && !expanded}>{message.content}</span>;
   return (
     <div className="course-chat__user-content">
-    {!touchMenu ? <div className="course-chat__bubble course-chat__bubble--user">{content}</div> : (
+    <div className="course-chat__bubble course-chat__bubble--user">
+    {!touchMenu ? content : (
     <Dropdown trigger="longPress">
-      <Dropdown.Trigger className="course-chat__bubble course-chat__bubble--user course-chat__user-trigger"
+      <Dropdown.Trigger className="course-chat__user-trigger"
         aria-label="用户消息，长按查看时间和操作" data-testid="chat-user-message-trigger">
         {content}
       </Dropdown.Trigger>
@@ -308,6 +313,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
       data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
       {expanded ? '收起' : '展开全文'}<Sym name="keyboard_arrow_down" />
     </Button>}
+    </div>
     </div>
   );
 }
@@ -598,6 +604,18 @@ export default function CourseChat() {
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
   const loaded = useCourseChat((s) => s.loaded);
+  const { open: settingsOpen } = useSettingsDialog();
+  useLayoutEffect(() => {
+    const sync = () => useChatNotifications.getState().setViewing(
+      loaded && !settingsOpen && document.visibilityState === 'visible' ? activeId : null,
+    );
+    sync();
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      document.removeEventListener('visibilitychange', sync);
+      useChatNotifications.getState().setViewing(null);
+    };
+  }, [activeId, loaded, settingsOpen]);
   const messages = useCourseChat((s) => s.messages);
   const hasOlder = useCourseChat((s) => s.hasOlder);
   const loadingOlder = useCourseChat((s) => s.loadingOlder);
@@ -617,7 +635,7 @@ export default function CourseChat() {
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
   const pendingQuestion = pendingAsk ? messages.find((message) => message.key === pendingAsk.messageKey)?.ask : undefined;
   const composerAsk = pendingQuestion?.picked == null ? pendingQuestion : undefined;
-  const choiceOnly = !!composerAsk && composerAsk.allowCustom === false;
+  const choiceOnly = !!composerAsk && composerAsk.type !== 'text' && (composerAsk.allowCustom === false || composerAsk.type === 'confirm');
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
@@ -790,14 +808,14 @@ export default function CourseChat() {
   const CourseLink = useCallback(
     ({ href, children }: ComponentProps & { href?: string }) => {
       const target = href ?? '';
+      if (target.startsWith('#source-image/')) return <MaterialImage href={target} label={children} linkOnly />;
       if (target.startsWith('#/player/')) {
-        const courseId = decodeURIComponent(target.slice('#/player/'.length));
         return (
           <a
             href={target}
             onClick={(event) => {
               event.preventDefault();
-              navigate(`/player/${courseId}`);
+              navigate(target.slice(1));
             }}
           >
             {children}
@@ -995,7 +1013,7 @@ export default function CourseChat() {
   const loopAlive = pendingAsk != null || pendingPlan != null;
 
   /**
-   * Recent 的展示顺序：**置顶的在前**，组内保持 store 给的 `createdAt` 升序（旧 → 新）。
+   * Recent 只展示发送过消息的会话：置顶优先，组内按最后消息时间倒序。
    *
    * 排序只在展示层做，**不去改 store 里的 `sessions`**：那边有两条逻辑拿
    * `sessions[sessions.length - 1]` 当「最新的那条会话」（bootstrap 的默认选中、
@@ -1004,9 +1022,33 @@ export default function CourseChat() {
    * 已归档的会话**不进 Recent**（store 的 `sessions` 里本来就没有它们，
    * 这里不再重复过滤 —— 归档项的落脚点是设置 → 数据 → 已归档会话）。
    */
+  const [sessionActivity, setSessionActivity] = useState<Map<number, number>>(() => new Map());
+  useEffect(() => {
+    // 订阅持久化消息，首条发送、后台回答和跨标签页更新都能刷新最近列表。
+    const subscription = liveQuery(async () => new Map(await Promise.all(
+      sessions.filter((session) => session.id != null).map(async (session) => {
+        const query = () => db.chats.where('[sessionId+createdAt+id]').between(
+          [session.id!, Dexie.minKey, Dexie.minKey],
+          [session.id!, Dexie.maxKey, Dexie.maxKey],
+        ).reverse();
+        const [user, latest] = await Promise.all([
+          query().filter((message) => message.role === 'user').first(),
+          query().first(),
+        ]);
+        return [session.id!, user ? latest!.createdAt : 0] as const;
+      }),
+    ))).subscribe({
+      next: setSessionActivity,
+      error: () => toast.error('最近会话加载失败，请刷新重试'),
+    });
+    return () => subscription.unsubscribe();
+  }, [sessions]);
   const recentSessions = useMemo(
-    () => (sessions.some((s) => s.pinned) ? [...sessions].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)) : sessions),
-    [sessions],
+    () => sessions.filter((session) => sessionActivity.has(session.id!) && sessionActivity.get(session.id!) !== 0)
+      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)
+        || sessionActivity.get(b.id!)! - sessionActivity.get(a.id!)!
+        || b.createdAt - a.createdAt || b.id! - a.id!),
+    [sessions, sessionActivity],
   );
 
   /**
@@ -1043,11 +1085,13 @@ export default function CourseChat() {
 
   const renderCards = (message: CourseChatMessage) => (
     <>
-      {message.ask && (pendingAsk?.messageKey !== message.key || message.ask.picked != null) && (
+      {message.ask && (
         <AskCard
+          key={message.key}
           ask={message.ask}
-          active={false}
-          onPick={(option) => void answerAsk(option)}
+          active={pendingAsk?.messageKey === message.key}
+          restored={pendingAsk?.messageKey === message.key && pendingAsk.restored}
+          onPick={answerAsk}
         />
       )}
       {message.folderPlan && (
@@ -1082,6 +1126,8 @@ export default function CourseChat() {
           id: String(session.id),
           label: session.title,
           active: session.id === activeId,
+          pinned: !!session.pinned,
+          onUnpin: () => void setPinned(session.id!, false),
           /**
            * 生成中**也能切会话**（2026-10-16）：正在跑的那一轮绑在它自己的会话上，切走会 park
            * 它的视图、循环照旧在后台写，切回来看得到仍在流式的回答 —— 见 store 的 `loadSession`。
@@ -1452,15 +1498,6 @@ export default function CourseChat() {
               </div>
             )}
             <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}>
-              {composerAsk && (
-                <AskCard
-                  ask={composerAsk}
-                  active
-                  restored={pendingAsk?.restored}
-                  onPick={(option) => void answerAsk(option)}
-                  onCustom={() => composerRef.current?.focus()}
-                />
-              )}
               <SkillPicker value={skillIds} onChange={setSkillIds} />
               <TextArea
                 ref={composerRef}
@@ -1507,7 +1544,7 @@ export default function CourseChat() {
                 disabled={!sessionReady || choiceOnly}
                 placeholder={
                   choiceOnly
-                    ? '请从上方选择一项'
+                    ? '请在上方问题卡中作答'
                     : pendingAsk
                       ? '在这里说说你的想法，回车继续…'
                       : generating

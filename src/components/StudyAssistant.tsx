@@ -54,7 +54,6 @@ export default function StudyAssistant({ open, onOpenChange, activeTab, onTabCha
           <Button slot="trigger" variant="primary" className="study-assistant__trigger"
             data-testid="study-assistant-toggle" aria-label={open ? '收起学习助手' : '打开学习助手'}>
             <Sym name={open ? 'keyboard_arrow_down' : 'neurology'} />
-            {open ? '收起助手' : '学习助手'}
           </Button>
         </Disclosure.Heading>
       </Disclosure>

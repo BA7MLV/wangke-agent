@@ -63,13 +63,30 @@
 }
 
 .ask-card__options {
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
   display: grid;
   gap: 6px;
 }
 
+.ask-card__hint {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.ask-card__note { margin-top: 8px; }
+.ask-card__error { color: var(--danger); font-size: 0.875rem; margin-top: 8px; }
+
 /* 快捷作答：原生 <button> + MD3 令牌上色（与 cards.css 的 .quiz-option 同一套理由：
    「一行一个可选项」在语义上更接近列表项，按钮的胶囊形状会让它们像一排按钮） */
 .ask-option {
+  width: 100%;
+  max-width: none;
+  height: auto;
+  white-space: normal;
   box-sizing: border-box;
   min-height: 44px;
   padding: 8px 12px;
@@ -90,6 +107,9 @@
   background: var(--default-soft);
   border-color: var(--border);
 }
+
+.ask-option[data-slot='checkbox'] { justify-content: flex-start; }
+.ask-option [data-slot='checkbox-content'] { width: 100%; justify-content: flex-start; }
 
 .ask-option:disabled {
   cursor: default;

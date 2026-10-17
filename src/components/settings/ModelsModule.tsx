@@ -35,7 +35,6 @@ import {
 import {
   guessContextWindow,
   isVisionModel,
-  outputLimitOf,
   supportsThinking,
 } from '../../api/modelCaps';
 import { UNLIMITED_ROUNDS } from '../../harness/loopGuard';
@@ -46,6 +45,9 @@ import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
 import JevCard from './JevCard';
 import ModelLibrary from './ModelLibrary';
 import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibrary';
+import { ModelCapabilities } from '../ModelCapabilities';
+import { useModelMetaRevision } from '../../utils/useModelMeta';
+import { formatModelTokens } from '../../api/modelPresentation';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -80,31 +82,9 @@ const SLOT_HINT: Record<ModelSlot, string> = {
 const SLOT_ORDER: readonly ModelSlot[] = ['chat', 'vision', 'asr'];
 
 /** 上下文窗口的紧凑写法：128000 → 128K，1048576 → 1M。列表里每行都要显示，太长会挤掉模型名 */
-function compactTokens(n: number): string {
-  if (n >= 1_000_000) return `${Math.round(n / 100_000) / 10}M`;
-  if (n >= 1000) return `${Math.round(n / 1000)}K`;
-  return String(n);
-}
-
 /** 能力徽标：多模态 / 可思考。模型 id 长的行里这两枚最占地方，所以做成小圆角标签 */
 function CapBadges({ catalogId, model }: { catalogId: string; model: string }) {
-  const vision = isVisionModel(catalogId, model);
-  const think = supportsThinking(catalogId, model);
-  if (!vision && !think) return null;
-  return (
-    <>
-      {vision && (
-        <Chip size="sm" variant="soft" color="accent" className="h-4 px-1 text-[10px]">
-          多模态
-        </Chip>
-      )}
-      {think && (
-        <Chip size="sm" variant="soft" color="success" className="h-4 px-1 text-[10px]">
-          可思考
-        </Chip>
-      )}
-    </>
-  );
+  return <ModelCapabilities catalogId={catalogId} model={model} compact />;
 }
 
 /**
@@ -119,7 +99,6 @@ function ModelOptionRow({
   providerName,
   model,
   catalogId,
-  catalogKnown,
   selected,
   favorite,
   label,
@@ -175,10 +154,9 @@ function ModelOptionRow({
       <span className="flex shrink-0 items-baseline gap-2.5 text-[11px] text-muted">
         <span className="max-w-[120px] truncate text-right">{providerName}</span>
         <span
-          className={`min-w-[42px] text-right tabular-nums ${catalogKnown ? '' : 'opacity-75 italic'}`}
+          className="min-w-12 text-right tabular-nums"
         >
-          {catalogKnown ? '' : '≈'}
-          {compactTokens(guessContextWindow(catalogId, model))}
+          {formatModelTokens(getModelMeta(catalogId, model)?.declaredContext)}
         </span>
       </span>
       <span
@@ -445,7 +423,7 @@ function SlotModelSelect({
             </span>
             <span className="flex shrink-0 items-center gap-2 text-[13px] text-muted">
               <span className="text-xs tabular-nums text-muted">
-                {ref.model ? compactTokens(guessContextWindow(catalogId, ref.model)) : ''}
+                {ref.model ? formatModelTokens(getModelMeta(catalogId, ref.model)?.declaredContext) : ''}
               </span>
               <Sym name="keyboard_arrow_down" />
             </span>
@@ -866,7 +844,7 @@ function ProviderRow({
           </Field>
           <Field
             label="能力数据源"
-            hint="models.dev 上的供应商 key（如 siliconflow-cn）。填了才能查到这个模型的上下文窗口 / 视觉 / 思考能力；留空则按模型名猜，界面上会标「≈」"
+            hint="models.dev 上的供应商 key（如 siliconflow-cn）。按供应商 + 模型 ID 精确匹配模态、上下文和定价；未匹配时标为能力未知。"
             testId={`field-catalog-${provider.id}`}
           >
             <Input
@@ -902,6 +880,7 @@ function ProviderRow({
  */
 export default function ModelsModule() {
   const settings = useSettings();
+  useModelMetaRevision();
   const [checking, setChecking] = useState(false);
   /** 每家供应商各自拉到的在架模型（key = provider id）。分家存是因为各家列表互不相干。 */
   const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
@@ -1002,7 +981,7 @@ export default function ModelsModule() {
 
   // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
-    if (catalogs.length === 0 || !isModelMetaStale()) return;
+    if (catalogs.length === 0 || !isModelMetaStale(catalogs)) return;
     let cancelled = false;
     refreshModelMeta(catalogs)
       .then(() => {
@@ -1028,7 +1007,7 @@ export default function ModelsModule() {
         catalogOf(settings, settings.llmModel.providerId),
         settings.llmModel.model,
       );
-      if (meta) settings.update({ contextWindow: meta.context });
+      if (meta?.declaredContext) settings.update({ contextWindow: meta.declaredContext });
       toast.success(`已更新 ${count} 个模型的能力数据`);
     } catch (e) {
       toast.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
@@ -1156,7 +1135,7 @@ export default function ModelsModule() {
 
   const currentLlm = settings.llmModel;
   const currentLlmCatalog = catalogOf(settings, currentLlm.providerId);
-  const currentOut = currentLlm.model ? outputLimitOf(currentLlmCatalog, currentLlm.model) : 0;
+  const currentMeta = getModelMeta(currentLlmCatalog, currentLlm.model);
 
   return (
     <>
@@ -1191,11 +1170,7 @@ export default function ModelsModule() {
       >
         <Field
           label="上下文窗口（tokens）"
-          hint={`当前文本模型 ${currentLlm.model || '未设置'} 在 ${settings.providers.find((p) => p.id === currentLlm.providerId)?.name ?? '未知供应商'} 标称 ${
-            currentLlm.model ? compactTokens(guessContextWindow(currentLlmCatalog, currentLlm.model)) : '—'
-          } 上下文 / ${currentOut ? compactTokens(currentOut) : '—'} 输出（来自 ${
-            currentLlmCatalog ? 'models.dev' : '启发式估算，填了 models.dev key 才准'
-          }）。这个值用来裁历史，填得偏小只是让历史留短些，不会浪费模型的输出额度`}
+          hint={`models.dev：上下文 ${formatModelTokens(currentMeta?.declaredContext)} / 最大输出 ${formatModelTokens(currentMeta?.declaredOutput)}。下方为实际历史预算，可手动调整；未提供能力数据时使用应用默认预算，不代表模型标称上限。`}
           testId="field-context-window"
         >
           <Input
@@ -1314,8 +1289,8 @@ export default function ModelsModule() {
         <div className="mt-3 text-xs leading-relaxed text-muted">
           {metaInfo
             ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）`
-            : '能力数据未拉取，模型列表里的窗口与能力标签暂用内置启发式估算'}
-          。上下文窗口标「≈」表示该供应商没填 models.dev key，数值是猜的。
+            : '能力数据未拉取，可在「我的模型」中更新'}
+          。列表与详情仅展示 models.dev 已声明的能力；未收录的模型仍可手动添加。
         </div>
       </SectionCard>
     </>

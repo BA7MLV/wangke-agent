@@ -19,6 +19,22 @@
  */
 import DOMPurify from 'dompurify';
 
+/** 某些模型把整段 SVG 当成 HTML 文本转义；仅在根标签也被转义时解一层，再走完整净化。 */
+export function normalizeSvgSource(raw: string): string {
+  if (/<svg[\s/>]/i.test(raw) || !/&lt;svg(?:\s|&gt;|\/)/i.test(raw)) return raw;
+  return raw.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"')
+    .replace(/&apos;|&#39;/g, "'").replace(/&amp;/g, '&');
+}
+
+/** 仅从已经净化的 SVG 读取模型给出的标题。 */
+export function svgTitleOf(svg: string): string | null {
+  const root = new DOMParser().parseFromString(svg, 'image/svg+xml').documentElement;
+  const title = Array.from(root.children).find((child) => child.localName === 'title')?.textContent
+    || root.getAttribute('aria-label');
+  const clean = title?.replace(/[\u0000-\u001f\u007f]/g, '').trim();
+  return clean ? [...clean].slice(0, 40).join('') : null;
+}
+
 /** SVG 标签白名单。刻意不含 script / foreignObject / image / style / use / a / 动画与滤镜原语。 */
 const ALLOWED_TAGS = [
   // 结构
@@ -74,7 +90,7 @@ const URL_REF_RE = /url\(\s*['"]?\s*([^'")]*)/gi;
  * @throws 源码不是一段完整 SVG / 净化后为空 / 命中危险特征或外部引用 —— 调用方回退源码展示
  */
 export function sanitizeSvg(raw: string): string {
-  const sliced = sliceSvg(raw);
+  const sliced = sliceSvg(normalizeSvgSource(raw));
 
   const clean = purifySvgChunk(sliced);
 
@@ -155,7 +171,7 @@ export interface SvgProgress {
  * @throws 命中安全闸门（外部 `url(...)` 之类）—— 与 `sanitizeSvg` 同一套判定
  */
 export function peekSvgProgress(raw: string): SvgProgress | null {
-  const source = raw.trim();
+  const source = normalizeSvgSource(raw).trim();
   if (!source) return null;
 
   const start = source.search(/<svg[\s/>]/i);

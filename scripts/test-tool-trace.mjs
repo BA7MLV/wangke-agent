@@ -15,6 +15,7 @@
 import assert from 'node:assert/strict';
 import {
   toolLabel,
+  toolDisplay,
   toolDetail,
   toolHint,
   summarizeToolResult,
@@ -88,6 +89,37 @@ test('技能类工具把技能名带出来', () => {
   );
 });
 
+test('资源工具识别技能目录、技能加载与参考文档', () => {
+  const path = `/skills/${encodeURIComponent('公文讲义写作')}`;
+  assert.deepEqual(toolDisplay('read', '/skills'), { label: '查看可用技能' });
+  assert.deepEqual(toolDisplay('read', path), { label: '加载技能', detail: '公文讲义写作' });
+  assert.equal(toolHint('read', JSON.stringify({ path })), '正在加载技能：公文讲义写作');
+  assert.deepEqual(toolDisplay('read', `${path}/references/${encodeURIComponent('写作规范')}.md`), {
+    label: '查阅技能参考', detail: '公文讲义写作 · 写作规范.md',
+  });
+  assert.equal(toolHint('read', '{"path":"/skills"}'), '正在查看可用技能…');
+});
+
+test('先识别完整路径再截断展示，兼容历史与名称中的编码斜杠', () => {
+  const path = `/skills/${encodeURIComponent('公文讲义写作/进阶')}`;
+  assert.equal(toolDetail('read', JSON.stringify({ path })), path);
+  assert.deepEqual(toolDisplay('read', path), { label: '加载技能', detail: '公文讲义写作/进阶' });
+  assert.equal(toolDisplay('read', '/skills/公文讲义写作').detail, '公文讲义写作');
+  assert.equal(toolDisplay('read', `/skills/${encodeURIComponent('字'.repeat(80))}`).detail, `${'字'.repeat(40)}…`);
+});
+
+test('普通资源安全解码，坏转义、半截参数与非技能目录不误识别', () => {
+  assert.deepEqual(toolDisplay('read', '/courses/%E4%B8%AD%E6%96%87/info'), {
+    label: '读取资源', detail: '/courses/中文/info',
+  });
+  assert.equal(toolDisplay('read', '/skills-extra/test').label, '读取资源');
+  assert.equal(toolDisplay('read', '/skills').label, '查看可用技能');
+  assert.equal(toolDisplay('read', '/courses/100%/info').detail, '/courses/100%/info');
+  assert.doesNotThrow(() => toolDisplay('read', '/skills/%E5%85…'));
+  assert.equal(toolHint('read', '{"path":"/skills/'), '正在读取资源…');
+  assert.equal(toolDisplay('edit', '/courses/%E4%B8%AD%E6%96%87/material').detail, '/courses/中文/material');
+});
+
 test('材料范围取 from，不做时间格式化', () => {
   assert.equal(toolDetail('get_material_range', '{"from":12,"to":14}'), '12');
 });
@@ -126,7 +158,7 @@ test('状态行：有 detail 用冒号接，没有就用省略号', () => {
 });
 
 test('提问卡的状态行是等待口吻，不是「正在…」', () => {
-  assert.equal(toolHint('ask_user', '{}'), '等你选一个…');
+  assert.equal(toolHint('ask_user', '{}'), '等待你的回答');
 });
 
 test('未注册工具的状态行用调用方给的兜底文案', () => {

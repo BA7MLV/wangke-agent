@@ -2,7 +2,7 @@ import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRe
 import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { Eraser, Highlighter, MousePointer2, PenLine, Redo2, Undo2 } from 'lucide-react';
 import { db } from '../store/db';
-import { hitsInk, inkPath, type InkPoint, type InkStroke, type InkTool } from '../materials/ink';
+import { hitsInk, inkPath, inkOpacity, type InkNib, type InkPoint, type InkStroke, type InkTool } from '../materials/ink';
 import { useSelectionAsk } from '../store/selectionAsk';
 import { uuid } from '../utils/uuid';
 import './material-ink.css';
@@ -16,6 +16,12 @@ interface InkContextValue {
   setColor: (color: string) => void;
   width: number;
   setWidth: (width: number) => void;
+  nib: InkNib;
+  setNib: (nib: InkNib) => void;
+  opacity: number;
+  setOpacity: (opacity: number) => void;
+  smoothing: number;
+  setSmoothing: (smoothing: number) => void;
   finger: boolean;
   setFinger: (finger: boolean) => void;
   ready: boolean;
@@ -38,6 +44,10 @@ export function MaterialInkProvider({ materialId, children }: { materialId: stri
   const [tool, setTool] = useState<InkTool>('read');
   const [color, setColor] = useState('#dc2626');
   const [width, setWidth] = useState(3);
+  const [nib, setNib] = useState<InkNib>('pressure');
+  const [penOpacity, setPenOpacity] = useState(1);
+  const [highlightOpacity, setHighlightOpacity] = useState(0.25);
+  const [smoothing, setSmoothing] = useState(0.35);
   const [finger, setFinger] = useState(false);
   const [ready, setReady] = useState(false);
   const [rows, setRows] = useState<InkStroke[]>([]);
@@ -127,6 +137,8 @@ export function MaterialInkProvider({ materialId, children }: { materialId: stri
     return bySurface;
   }, [rows]);
   return <InkContext value={{ materialId, tool, setTool, color, setColor, width, setWidth, finger, setFinger,
+    nib, setNib, opacity: tool === 'highlight' ? highlightOpacity : penOpacity,
+    setOpacity: tool === 'highlight' ? setHighlightOpacity : setPenOpacity, smoothing, setSmoothing,
     ready, status, error, retry: () => void (ready ? flush() : load()), strokes, commit, undo, redo,
     canUndo: history.past.length > 0, canRedo: history.future.length > 0, pen }}>{children}</InkContext>;
 }
@@ -156,11 +168,18 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
         </ToggleButtonGroup>
         <Button isIconOnly variant="tertiary" aria-label="撤销批注" data-testid="ink-undo" isDisabled={!ink.canUndo || disabled} onPress={ink.undo}><Undo2 size={18} /></Button>
         <Button isIconOnly variant="tertiary" aria-label="重做批注" data-testid="ink-redo" isDisabled={!ink.canRedo || disabled} onPress={ink.redo}><Redo2 size={18} /></Button>
-        {ink.tool !== 'read' && !disabled && <>
+        {(ink.tool === 'pen' || ink.tool === 'highlight') && !disabled && <>
+          {ink.tool === 'pen' && <label className="ink-width">笔型 <select aria-label="笔型" value={ink.nib} onChange={(e) => ink.setNib(e.target.value as InkNib)}>
+            <option value="pressure">压感笔</option><option value="ballpoint">圆珠笔</option><option value="brush">毛笔</option>
+          </select></label>}
           <label className="ink-color" title="笔迹颜色"><span className="sr-only">笔迹颜色</span><input type="color" value={ink.color} onChange={(e) => ink.setColor(e.target.value)} /></label>
-          <label className="ink-width"><span className="sr-only">笔迹粗细</span><select aria-label="笔迹粗细" value={ink.width} onChange={(e) => ink.setWidth(Number(e.target.value))}>
-            <option value={2}>细</option><option value={3}>中</option><option value={5}>粗</option>
+          <label className="ink-range">粗细 <input aria-label="笔迹粗细" type="range" min="1" max="12" step="0.5" value={ink.width} onChange={(e) => ink.setWidth(Number(e.target.value))} /><span>{ink.width * (ink.tool === 'highlight' ? 6 : 1)}px</span></label>
+          <label className="ink-range">浓度 <input aria-label="笔迹浓度" type="range" min="5" max="100" step="5" value={Math.round(ink.opacity * 100)} onChange={(e) => ink.setOpacity(Number(e.target.value) / 100)} /><span>{Math.round(ink.opacity * 100)}%</span></label>
+          <label className="ink-width">美化 <select aria-label="实时字迹美化" value={ink.smoothing} onChange={(e) => ink.setSmoothing(Number(e.target.value))}>
+            <option value={0}>关闭</option><option value={0.35}>轻度平滑</option><option value={0.65}>增强平滑</option>
           </select></label>
+        </>}
+        {ink.tool !== 'read' && !disabled && <>
           <ToggleButton isSelected={ink.finger} onChange={ink.setFinger} data-testid="ink-finger">手指绘制</ToggleButton>
         </>}
       </div>
@@ -175,7 +194,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
 
 const SavedStroke = memo(function SavedStroke({ stroke }: { stroke: InkStroke }) {
   return <svg viewBox={`0 0 1000 ${stroke.height}`} preserveAspectRatio="none" aria-hidden="true" data-ink-stroke={stroke.id}>
-    <path d={inkPath(stroke)} fill={stroke.color} opacity={stroke.tool === 'highlight' ? 0.25 : 1} />
+    <path d={inkPath(stroke)} fill={stroke.color} opacity={inkOpacity(stroke)} />
   </svg>;
 });
 
@@ -213,7 +232,7 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     frame.current = requestAnimationFrame(() => {
       frame.current = 0;
       const g = gesture.current;
-      if (g && g.tool !== 'erase') preview.current?.setAttribute('d', inkPath(g.stroke));
+      if (g && g.tool !== 'erase') preview.current?.setAttribute('d', inkPath(g.stroke, false));
     });
   };
   const capture = (e: ReactPointerEvent) => {
@@ -239,12 +258,13 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
       tool: ink.tool === 'highlight' ? 'highlight' : 'pen', color: ink.color,
       width: ink.width * (ink.tool === 'highlight' ? 6 : 1) * 1000 / rect.width,
       height: rect.height / rect.width * 1000, points: [p], createdAt: Date.now(),
+      renderer: 'freehand-v1', nib: ink.nib, opacity: ink.opacity, smoothing: ink.smoothing,
     };
     gesture.current = { id: e.pointerId, isPen: e.pointerType === 'pen', stroke, erased: new Set(), last: p, rect, tool: ink.tool };
     ink.pen.current.active = e.pointerType === 'pen';
     previewSvg.current?.setAttribute('viewBox', `0 0 1000 ${stroke.height}`);
     preview.current?.setAttribute('fill', stroke.color);
-    preview.current?.setAttribute('opacity', stroke.tool === 'highlight' ? '0.25' : '1');
+    preview.current?.setAttribute('opacity', String(inkOpacity(stroke)));
     capture(e);
     if (ink.tool === 'erase') erase(p);
     else paint();

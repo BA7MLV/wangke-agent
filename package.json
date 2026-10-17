@@ -37,6 +37,7 @@
     "mermaid": "^11.17.2",
     "onnxruntime-web": "^1.29.0",
     "pdfjs-dist": "^4.10.38",
+    "perfect-freehand": "^1.2.3",
     "react": "^19.3.0",
     "react-dom": "^19.3.0",
     "react-router-dom": "^6.30.6",

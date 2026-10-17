@@ -217,10 +217,11 @@ await check('ask_user 出卡，且列出候选方案', async () => {
   assert.match(text, /优先按什么/, '卡上要有题面');
   assert.match(text, /按考试时间紧迫度/, '卡上要有选项');
   await page.screenshot({ path: 'scripts/out/ask-composer-desktop.png' });
-  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 1, '问题直接展示在聊天输入区域');
-  assert.equal(await page.locator('[data-testid="ask-custom-input"]').count(), 0, '不再创建第二套输入框');
+  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 0, '问题属于助手，不放在输入区');
+  assert.equal(await page.locator('.course-chat__bubble--ai [data-testid="ask-card"]').count(), 1);
   await card.locator('[data-testid="ask-custom"]').click();
-  assert.ok(await page.locator('textarea.course-chat__input').evaluate((el) => el === document.activeElement), '自己回答应聚焦原聊天框');
+  assert.ok(await card.getByRole('textbox', { name: '你的回答' }).isVisible());
+  await card.getByRole('button', { name: '返回选项' }).click();
 });
 
 await check('点一个方案 → 卡片锁定选中、回答接着出来', async () => {
@@ -272,7 +273,7 @@ await check('回答流到一半时切到课程库再回来，内容不丢且最�
   }, { timeout: 10000 });
   assert.ok(streaming, '应观察到流式内容');
 
-  await page.evaluate(() => { window.location.hash = '#/'; });
+  await page.evaluate(() => { window.location.hash = '#/library'; });
   await page.waitForSelector('[data-testid="video-item"]', { timeout: 15000 });
   await page.waitForTimeout(400);
   await page.evaluate(() => { window.location.hash = '#/chat'; });
@@ -332,7 +333,7 @@ await check('确认执行 → folders / folderId 真落库，且课程库立刻�
   assert.ok(applied, '卡片应显示已执行');
 
   // 课程库页面：分组要跟着变（库页订阅 libraryRevision 才做得到）
-  await page.evaluate(() => { window.location.hash = '#/'; });
+  await page.evaluate(() => { window.location.hash = '#/library'; });
   const groups = await waitFor(async () => {
     const names = await page.locator('.group-header__name, .group-header').allInnerTexts().catch(() => []);
     const joined = names.join('|');
@@ -442,7 +443,7 @@ await check('收尾轮与宽限轮都不吭声 → 说清「用完几轮 / 还�
     return t.includes('轮次上限') ? t : null;
   }, { timeout: 20000 });
   assert.ok(notice, '兜底文案必须出现（不能是空气泡或一句「未获得回答」）');
-  assert.match(notice, /6 次工具调用/, '要说清用完了几轮');
+  assert.match(notice, /检索了 6 轮/, '要说清用完了几轮');
   assert.match(notice, /propose_folder_plan/, '要点名它最后还想调什么');
   assert.match(notice, /继续/, '要给出下一步动作');
   assert.match(notice, /整理方案。/, '要把它最后说过的话留下来当进度');
@@ -527,8 +528,8 @@ await check('刷新后方案卡仍可确认，执行后从断点续跑', async (
   assert.ok(answer, '确认后应继续跑出最终回答');
 });
 
-console.log('—— 8. 确认输入区：手机布局与自定义作答 ——');
-await check('手机端复用聊天框，输入数字 / 中文不快选，回车作答后继续', async () => {
+console.log('—— 8. 助手问题卡：手机布局与自定义作答 ——');
+await check('手机端卡内自由作答，数字 / 中文不快选，提交后继续', async () => {
   await resetChats();
   await page.setViewportSize({ width: 390, height: 844 });
   await push(toolChunks('ask_user', {
@@ -537,13 +538,13 @@ await check('手机端复用聊天框，输入数字 / 中文不快选，回车�
     allowCustom: true,
   }));
   await typeAndSend('帮我安排学习');
-  const card = page.locator('.course-chat__composer [data-testid="ask-card"]');
+  const card = page.locator('[data-testid="ask-card"]');
   await card.waitFor();
   const box = await card.boundingBox();
-  assert.ok(box && box.x >= 0 && box.x + box.width <= 390 && box.y + box.height <= 844, '确认区在手机视口内');
+  assert.ok(box && box.x >= 0 && box.x + box.width <= 390, '问题卡在手机端不横向溢出');
   await page.screenshot({ path: 'scripts/out/ask-composer-mobile.png' });
   await card.locator('[data-testid="ask-custom"]').click();
-  const field = page.locator('textarea.course-chat__input');
+  const field = card.getByRole('textbox', { name: '你的回答' });
   await field.fill('1 周三次，每次半小时');
   assert.equal(await card.count(), 1, '数字作为文字输入，不触发选项');
   await field.dispatchEvent('compositionstart');
@@ -551,8 +552,8 @@ await check('手机端复用聊天框，输入数字 / 中文不快选，回车�
   assert.equal(await card.count(), 1, '中文输入法确认候选字时不提交');
   await field.dispatchEvent('compositionend');
   await push(textChunks('好的，每周安排三次学习。'));
-  await field.press('Enter');
-  assert.ok(await waitFor(async () => (await card.count()) === 0), '回答后收起确认区');
+  await card.getByRole('button', { name: '提交回答' }).click();
+  assert.ok(await waitFor(async () => (await card.getAttribute('data-answered')) === 'true'), '回答后保留只读问题记录');
   assert.ok(await waitFor(async () => (await readAll('chats')).some((r) => r.ask?.picked === '1 周三次，每次半小时')), '自定义回答落库');
   await page.setViewportSize({ width: 1440, height: 900 });
 });
@@ -561,14 +562,78 @@ await check('只允许选项时禁用自由输入，选择后恢复输入', asyn
   await resetChats();
   await push(toolChunks('ask_user', { question: '请选择学习方式', options: ['先复习', '先预习'], allowCustom: false }));
   await typeAndSend('继续学习');
-  const card = page.locator('.course-chat__composer [data-testid="ask-card"]');
+  const card = page.locator('[data-testid="ask-card"]');
   await card.waitFor();
   assert.ok(await page.locator('textarea.course-chat__input').isDisabled());
   assert.equal(await card.locator('[data-testid="ask-custom"]').count(), 0);
   await push(textChunks('我们先复习。'));
   await card.getByRole('button', { name: '先复习' }).click();
-  assert.ok(await waitFor(async () => (await card.count()) === 0));
+  assert.ok(await waitFor(async () => (await card.getAttribute('data-answered')) === 'true'));
   assert.ok(await page.locator('textarea.course-chat__input').isEnabled());
+});
+
+console.log('—— 9. 多选、文本、确认与跳过 ——');
+await check('多选刷新恢复：数量限制、补充、结构化答案持久化与工具续跑', async () => {
+  await resetChats();
+  await push(toolChunks('ask_user', {
+    type: 'multiple', question: '优先复习哪些科目？',
+    options: [{ id: 'math', label: '数学' }, { id: 'english', label: '英语' }, { id: 'politics', label: '政治' }],
+    minSelections: 2, maxSelections: 2,
+  }));
+  await typeAndSend('帮我确定复习范围');
+  await page.locator('[data-testid="ask-card"]').waitFor();
+  await page.reload();
+  const card = page.locator('[data-testid="ask-card"]');
+  await card.locator('[data-testid="ask-restored"]').waitFor();
+  assert.ok(await card.getByRole('button', { name: '提交选择' }).isDisabled());
+  await card.locator('.ask-option', { hasText: '数学' }).click();
+  assert.ok(await card.getByRole('checkbox', { name: '数学' }).isChecked());
+  assert.ok(await card.getByRole('button', { name: '提交选择' }).isDisabled());
+  await card.getByRole('checkbox', { name: '英语' }).focus();
+  await page.keyboard.press('Space');
+  assert.ok(await card.getByRole('checkbox', { name: '英语' }).isChecked());
+  assert.ok(await card.getByRole('checkbox', { name: '政治' }).isDisabled());
+  await card.getByRole('button', { name: '补充说明' }).click();
+  await card.getByRole('textbox', { name: '补充说明（选填）' }).fill('数学先补基础');
+  await page.screenshot({ path: 'scripts/out/ask-multiple-desktop.png' });
+  await push(textChunks('先复习数学和英语。'));
+  await card.getByRole('button', { name: '提交选择' }).click();
+  const row = await waitFor(async () => (await readAll('chats')).find(r => r.ask?.answer?.selectedIds?.length === 2));
+  assert.deepEqual(row.ask.answer.selectedIds, ['math', 'english']);
+  assert.equal(row.ask.answer.note, '数学先补基础');
+  const result = await waitFor(() => page.evaluate(() => window.__LLM__.requests.flatMap(r => r.messages ?? []).find(m => m.role === 'tool' && m.content.includes('selectedIds'))));
+  assert.deepEqual(JSON.parse(result.content).selectedIds, ['math', 'english']);
+  await page.reload();
+  await card.waitFor();
+  assert.equal(await card.getAttribute('data-answered'), 'true');
+  assert.match(await card.innerText(), /数学先补基础/);
+});
+
+await check('文本问题无需候选，空回答不可提交', async () => {
+  await resetChats();
+  await push(toolChunks('ask_user', { type: 'text', question: '你的学习目标是什么？' }));
+  await typeAndSend('制定目标');
+  const card = page.locator('[data-testid="ask-card"]');
+  await card.waitFor();
+  assert.equal(await card.locator('.ask-option').count(), 0);
+  assert.ok(await card.getByRole('button', { name: '提交回答' }).isDisabled());
+  await card.getByRole('textbox', { name: '你的回答' }).fill('两个月内通过考试');
+  await push(textChunks('好的，按两个月来安排。'));
+  await card.getByRole('button', { name: '提交回答' }).click();
+  assert.ok(await waitFor(async () => (await readAll('chats')).some(r => r.ask?.answer?.mode === 'text' && r.ask.answer.text === '两个月内通过考试')));
+});
+
+await check('明确拒绝与跳过分别存储，不会误当同意', async () => {
+  for (const skip of [false, true]) {
+    await resetChats();
+    await push(toolChunks('ask_user', { type: 'confirm', question: '按这份计划继续吗？', confirmLabel: '按计划继续', allowSkip: skip }));
+    await typeAndSend('确认计划');
+    const card = page.locator('[data-testid="ask-card"]');
+    await card.waitFor();
+    await push(textChunks(skip ? '已跳过。' : '好的，暂不执行。'));
+    await card.getByRole('button', { name: skip ? '跳过' : '暂不执行' }).click();
+    assert.ok(await waitFor(async () => (await readAll('chats')).some(r => r.ask?.answer?.status === (skip ? 'skipped' : 'declined'))));
+  }
 });
 
 await browser.close();

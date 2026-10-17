@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Button, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
 import type { ComponentProps } from '@ant-design/x-markdown';
+import { MaterialImage, SourceImage } from './MaterialImage';
+import { parseMaterialImageHref } from '../materials/imageRefs';
 import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
@@ -393,6 +395,7 @@ export default function ChatPanel({
   const SeekLink = useCallback(
     ({ href, children }: ComponentProps & { href?: string }) => {
       const h = href ?? '';
+      if (h.startsWith('#source-image/')) return <MaterialImage href={h} label={children} linkOnly onSource={readerRef && parseMaterialImageHref(h)?.courseId === videoId ? (unit) => { if (unit) readerRef.current?.scrollToUnit(unit); } : undefined} />;
       if (h.startsWith('#seek-')) {
         const secs = Number(h.slice(6));
         return (
@@ -428,7 +431,7 @@ export default function ChatPanel({
         </a>
       );
     },
-    [seekTo, readerRef],
+    [seekTo, readerRef, videoId],
   );
 
   // 上下文用量估算（system + 历史 + 当前输入/截图/引用），仅作 UI 提示
@@ -464,9 +467,10 @@ export default function ChatPanel({
       if (src?.startsWith('#frame-')) {
         return <FrameThumb secs={Number(src.slice(7))} alt={alt} frames={framesMeta} onSeek={seekTo} />;
       }
-      return <img src={src} alt={alt} />;
+      if (src?.startsWith('#source-image/')) return <MaterialImage href={src} label={alt} onSource={readerRef && parseMaterialImageHref(src)?.courseId === videoId ? (unit) => { if (unit) readerRef.current?.scrollToUnit(unit); } : undefined} />;
+      return <SourceImage src={src} alt={alt} />;
     },
-    [framesMeta, seekTo],
+    [framesMeta, seekTo, readerRef, videoId],
   );
 
   /** 读取讲义抽帧元数据（幻灯片帧，blob 不进状态） */
@@ -508,17 +512,17 @@ export default function ChatPanel({
         setHasSubtitles(true);
         const blockCount = await db.materialBlocks.where('materialId').equals(videoId).count();
         if (cancelled) return;
-        // 没有可检索文本：indexReady 保持 false，并给出**能操作的**说明。
-        // 话术必须按格式分：扫描件只可能是 PDF（有页面但取不到字），
-        // Word 取不到字就是「没有正文」—— 与 chunk.ts 的 judgeMaterialText 同一套区分。
+        // 没有可检索文字也能读取图片目录、展示原图或框选提问，不能把整个聊天锁死。
         if (blockCount === 0) {
           setIndexNote(
             materialKind === 'page'
-              ? '这份材料没有文本层（扫描件），无法参与检索；可以在阅读区划词或框选区域提问'
-              : '这份材料没有正文，没有可供检索的内容',
+              ? '这份材料没有可检索文字；可以让助手展示页面图，或在阅读区框选图片提问'
+              : '这份材料没有可检索正文；可以让助手查找并展示文件里的图片',
           );
+          setIndexReady(true);
           return;
         }
+        setIndexNote(null);
         setIndexReady(true);
         return;
       }

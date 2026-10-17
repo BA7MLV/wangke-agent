@@ -13,7 +13,7 @@
  */
 import assert from 'node:assert/strict';
 
-const { validateAskUser, askUserToolResult, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../src/harness/askUser.ts');
+const { validateAskUser, validateAskAnswer, askAnswerText, askUserToolResult, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../src/harness/askUser.ts');
 const { validateFolderPlan, MAX_PLAN_FOLDERS } = await import('../src/harness/folderPlan.ts');
 
 let passed = 0;
@@ -35,7 +35,7 @@ test('合法提问卡通过，且默认给「我自己说」', () => {
   const v = validateAskUser({ question: '你想按什么顺序学？', options: ['先基础后进阶', '按考试时间'] });
   assert.equal(v.ok, true);
   assert.equal(v.ask.allowCustom, true, '默认必须给自定义入口');
-  assert.deepEqual(v.ask.options, ['先基础后进阶', '按考试时间']);
+  assert.deepEqual(v.ask.options.map(o => o.label), ['先基础后进阶', '按考试时间']);
 });
 
 test('选项数上下限是硬边界（改了 UI 放不下）', () => {
@@ -83,7 +83,7 @@ test('allowCustom 显式 false 才关掉（模型说「候选都很贴切」时�
 
 test('选项里的多余空白被压成单空格（卡片是等宽排版，多空格会被撑歪）', () => {
   const v = validateAskUser({ question: '选哪个？', options: ['  a   b  ', ' c'] });
-  assert.deepEqual(v.ask.options, ['a b', 'c']);
+  assert.deepEqual(v.ask.options.map(o => o.label), ['a b', 'c']);
 });
 
 test('作答回喂模型的那句话：选中原文进引号，空作答退化成「没回答」', () => {
@@ -92,6 +92,35 @@ test('作答回喂模型的那句话：选中原文进引号，空作答退化�
   assert.equal(askUserToolResult('  按基础  '), '用户选择了：「按基础」。');
   // 空作答（用户没选就续跑，理论上不该发生）要显式告诉模型「没答」，不能编一个选择
   assert.match(askUserToolResult('   '), /没有回答/);
+});
+
+test('多选边界与稳定 ID：拒绝重复、未知 ID，文案从问题取', () => {
+  const raw = { type: 'multiple', question: '复习哪些？', options: [{ id: 'a', label: '行测' }, { id: 'b', label: '申论' }], minSelections: 2, maxSelections: 2 };
+  const { ask } = validateAskUser(raw);
+  const answer = { status: 'answered', mode: 'selection', selectedIds: ['b', 'a'], selectedLabels: ['伪造文案'], text: '', note: ' 优先申论 ' };
+  assert.throws(() => validateAskAnswer(ask, { ...answer, selectedIds: ['a'] }));
+  assert.throws(() => validateAskAnswer(ask, { ...answer, selectedIds: ['a', 'a'] }));
+  assert.throws(() => validateAskAnswer(ask, { ...answer, selectedIds: ['a', 'x'] }));
+  const result = validateAskAnswer(ask, answer);
+  assert.deepEqual(result.selectedLabels, ['申论', '行测']);
+  assert.equal(askAnswerText(result), '申论、行测\n补充：优先申论');
+  assert.deepEqual(JSON.parse(askUserToolResult(result)).selectedIds, ['b', 'a']);
+  for (const maxSelections of [1, 3, 1.5, '2']) assert.equal(validateAskUser({ ...raw, maxSelections }).ok, false);
+  assert.equal(validateAskUser({ ...raw, options: [{ id: 'a', label: '一' }, { id: 'a', label: '二' }] }).ok, false);
+});
+
+test('文本、拒绝、跳过和取消语义各自独立', () => {
+  const text = validateAskUser({ type: 'text', question: '目标是什么？' }).ask;
+  assert.equal(validateAskAnswer(text, '通过考试').mode, 'text');
+  assert.throws(() => validateAskAnswer(text, '   '));
+  const confirm = validateAskUser({ type: 'confirm', question: '继续？', confirmLabel: '开始安排' }).ask;
+  assert.equal(validateAskAnswer(confirm, '暂不执行').status, 'declined');
+  assert.throws(() => validateAskAnswer(confirm, '随便'));
+  const skipped = { status: 'skipped', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
+  assert.throws(() => validateAskAnswer(text, skipped));
+  assert.equal(validateAskAnswer({ ...text, allowSkip: true }, skipped).status, 'skipped');
+  assert.equal(validateAskAnswer(text, { ...skipped, status: 'cancelled' }).status, 'cancelled');
+  assert.equal(validateAskUser({ type: 'unknown', question: '继续？' }).ok, false);
 });
 
 // ── propose_folder_plan ─────────────────────────────────────────────────────

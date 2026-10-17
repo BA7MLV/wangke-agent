@@ -51,7 +51,8 @@ async function importFile(file) {
 }
 
 async function penStroke(layer, yOffset = 70) {
-  await layer.scrollIntoViewIfNeeded();
+  // 长页不能居中滚动：顶部可能落到固定工具栏后面，导致测试把笔点在按钮上。
+  await layer.evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
   await layer.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const box = await layer.boundingBox();
   const x = box.x + Math.min(box.width * .2, 120), y = box.y + Math.min(box.height * .4, yOffset);
@@ -67,6 +68,10 @@ try {
   assert.equal(await byId('study-assistant-panel').isVisible(), false);
   assert.equal(await byId('chat-input').count(), 1, '收起仍挂载问答');
   await byId('ink-pen').click();
+  await page.getByLabel('笔型', { exact: true }).selectOption('brush');
+  await page.getByLabel('实时字迹美化').selectOption('0.65');
+  await page.getByLabel('笔迹浓度').fill('60');
+  await page.getByLabel('笔迹粗细').fill('4.5');
   const first = page.locator('[data-page="1"] [data-testid="ink-layer"]');
   await first.waitFor();
   const box = await first.boundingBox();
@@ -83,6 +88,11 @@ try {
   const savedRows = await inkRows();
   const saved = savedRows[0];
   assert.equal(saved.surface, 'pdf:1');
+  assert.equal(saved.renderer, 'freehand-v1');
+  assert.equal(saved.nib, 'brush');
+  assert.equal(saved.smoothing, 0.65);
+  assert.equal(saved.opacity, 0.6);
+  assert.equal(await first.locator('[data-ink-stroke] path').getAttribute('opacity'), '0.6');
   assert.ok(new Set(saved.points.map((p) => p.pressure)).size > 2, '保留真实笔压');
   assert.ok(await first.locator('[data-ink-stroke] path').getAttribute('d'));
   await byId('ink-undo').click(); await waitSaved(0);
@@ -149,6 +159,35 @@ try {
   await byId('reader-tool-areaselect').click();
   await page.reload(); await first.locator('[data-ink-stroke]').first().waitFor();
   assert.equal(await first.locator('[data-ink-stroke]').count(), 2, '刷新恢复笔迹');
+  assert.deepEqual((await inkRows()).find((s) => s.id === saved.id), saved, '笔型、浓度、美化与原始笔压持久化');
+
+  const cropCheck = await page.evaluate(async () => {
+    const { cropCanvasRegion } = await import('/src/materials/region.ts');
+    const { formatCitation } = await import('/src/store/selectionAsk.ts');
+    const { db } = await import('/src/store/db.ts');
+    const strokes = (await db.materialInk.toArray()).filter((s) => s.surface === 'pdf:1');
+    const canvas = document.querySelector('[data-page="1"] canvas');
+    const before = canvas.toDataURL();
+    const rect = { x: 0, y: 0, w: canvas.width, h: canvas.height };
+    const clean = cropCanvasRegion(canvas, rect, 1);
+    const marked = cropCanvasRegion(canvas, rect, 1, strokes);
+    const outside = cropCanvasRegion(canvas, { x: canvas.width - 30, y: canvas.height - 30, w: 20, h: 20 }, 1, strokes);
+    return {
+      changed: clean.dataUrl !== marked.dataUrl,
+      thumbChanged: clean.thumb !== marked.thumb,
+      originalUnchanged: before === canvas.toDataURL(),
+      hasInk: marked.hasInk,
+      outsideHasInk: !!outside.hasInk,
+      citation: formatCitation({ source: 'pdf', text: '原文', unitLabel: '第 1 页', image: marked }),
+    };
+  });
+  assert.equal(cropCheck.changed, true, '问答裁图包含笔迹');
+  assert.equal(cropCheck.thumbChanged, true, '缩略图包含笔迹');
+  assert.equal(cropCheck.originalUnchanged, true, '原始 PDF 画布保持原文');
+  assert.equal(cropCheck.hasInk, true);
+  assert.equal(cropCheck.outsideHasInk, false, '选区外批注不标记为附图内容');
+  assert.match(cropCheck.citation, /用户手写批注/);
+  assert.match(cropCheck.citation, /第 1 页/);
 
   await byId('study-assistant-toggle').click();
   await byId('chat-input').locator('textarea').fill('这段内容还没发送');

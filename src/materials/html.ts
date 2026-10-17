@@ -165,6 +165,19 @@ export function extractHtmlUnits(src: string): HtmlUnit[] {
   return walkUnits(doc.body, false);
 }
 
+/** Image locations use exactly the reader's unit numbering; image-only blocks have no fake anchor. */
+export function extractHtmlImageSources(src: string): { label: string; src: string; unit?: number }[] {
+  const doc = new DOMParser().parseFromString(src, 'text/html');
+  doc.querySelectorAll('script,style,noscript,template,iframe,object,embed,form').forEach((el) => el.remove());
+  // Imported data attributes are untrusted.
+  doc.querySelectorAll(`[${MR_UNIT_ATTR}]`).forEach((el) => el.removeAttribute(MR_UNIT_ATTR));
+  walkUnits(doc.body, true);
+  return [...doc.querySelectorAll('img')].filter((el) => !isHidden(el)).map((el, i) => {
+    const unit = Number(el.closest(`[${MR_UNIT_ATTR}]`)?.getAttribute(MR_UNIT_ATTR));
+    return { label: el.getAttribute('alt') || `原图 ${i + 1}`, src: el.getAttribute('src') ?? '', ...(unit > 0 ? { unit } : {}) };
+  });
+}
+
 /* ── URL 分类 ─────────────────────────────────────────────────────────────── */
 
 export type UrlKind =

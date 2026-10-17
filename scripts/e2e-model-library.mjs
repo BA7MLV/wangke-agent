@@ -8,6 +8,12 @@ page.on('pageerror', (error) => errors.push(error.message));
 const base = process.env.BASE_URL ?? 'http://localhost:5173';
 const state = () => page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings')).state);
 try {
+  await page.route('https://models.dev/api.json', (route) => route.fulfill({ json: {
+    'siliconflow-cn': { models: {
+      'custom-alpha': { name: 'Alpha Vision', modalities: { input: ['text', 'image'], output: ['text'] }, limit: { context: 128000, output: 8192 }, reasoning: true, tool_call: true, cost: { input: 0, output: 2 } },
+      'custom-beta': { name: 'Beta Text', modalities: { input: ['text'], output: ['text'] }, tool_call: false },
+    } },
+  } }));
   await page.route('https://models.test/**', (route) => route.fulfill({ json: { data: [{ id: 'custom-alpha' }, { id: 'custom-beta' }] } }));
   await page.goto(`${base}/#/settings`);
   await page.getByTestId('card-model-library').waitFor();
@@ -19,12 +25,20 @@ try {
   await page.reload();
   await page.getByTestId('btn-check-models').click();
   await page.getByText('custom-alpha', { exact: true }).waitFor();
+  await page.getByTestId('model-discovery').getByText('VLM · 视觉', { exact: true }).waitFor();
+  await page.getByRole('button', { name: /按模型能力筛选/ }).click();
+  await page.getByRole('option', { name: 'VLM · 视觉', exact: true }).click();
+  assert.equal(await page.getByText('custom-beta', { exact: true }).count(), 0);
+  await page.getByRole('button', { name: /按模型能力筛选/ }).click();
+  await page.getByRole('option', { name: '全部能力', exact: true }).click();
   assert.equal((await state()).savedModels, undefined, 'fetch must not add models');
   await page.getByText('custom-alpha', { exact: true }).click();
   await page.getByRole('button', { name: '添加所选模型（1）', exact: true }).click();
   assert.ok((await state()).savedModels.some((m) => m.model === 'custom-alpha'));
   assert.ok(!(await state()).savedModels.some((m) => m.model === 'custom-beta'));
   await page.getByRole('button', { name: '编辑 custom-alpha', exact: true }).click();
+  assert.match(await page.getByTestId('model-metadata-details').innerText(), /文本、图像/);
+  assert.match(await page.getByTestId('model-metadata-details').innerText(), /\$0 \/ \$2/);
   await page.getByRole('textbox', { name: '模型显示名称', exact: true }).fill('日常问答');
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   await page.getByRole('button', { name: '关闭设置', exact: true }).click();
@@ -36,6 +50,7 @@ try {
   await page.goto(`${base}/#/settings`);
   await page.getByRole('button', { name: '编辑 日常问答', exact: true }).click();
   await page.getByRole('textbox', { name: '模型 ID', exact: true }).fill('custom-alpha-v2');
+  await page.getByTestId('model-metadata-details').getByText('能力未知', { exact: true }).waitFor();
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   assert.equal((await state()).llmModel.model, 'custom-alpha-v2', 'editing active ID migrates selection');
   await page.reload();

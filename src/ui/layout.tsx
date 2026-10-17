@@ -16,6 +16,7 @@ import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
 import { IconSwap } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
+import { useChatNotifications } from '../store/chatNotifications';
 import './layout.css';
 
 /**
@@ -114,6 +115,8 @@ export interface RecentItem {
   testId?: string;
   /** 当前正在看的那一条。为 true 时渲染成高亮 pill（见 Sidebar 里 Recent 的说明） */
   active?: boolean;
+  pinned?: boolean;
+  onUnpin?: () => void;
   /**
    * 行尾菜单的动作。传了就渲染那颗「更多」按钮，并接上右键。
    *
@@ -205,6 +208,7 @@ function Sidebar({
    * 移出列表，读 DOM 只能读到「此刻」，读不到「本来停在谁身上」。
    */
   const [focusedRecentId, setFocusedRecentId] = useState<string | null>(null);
+  const unreadIds = useChatNotifications((s) => s.unreadIds);
   /**
    * 当前开着行尾菜单的那一行。
    *
@@ -376,13 +380,31 @@ function Sidebar({
                       }
                       className="recent-item group min-h-9 gap-2.5 rounded-full px-2.5 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
                     >
-                      <span className="grid size-4 shrink-0 place-items-center text-sm" aria-hidden="true">
+                      {item.pinned && item.onUnpin ? (
+                        <span className="shrink-0" title="取消置顶"
+                          onPointerDown={(event) => event.stopPropagation()}
+                          onMouseDown={(event) => event.stopPropagation()}
+                          onClick={(event) => event.stopPropagation()}>
+                          <Button isIconOnly size="sm" variant="tertiary"
+                            className="size-6 min-w-0 rounded-md text-muted"
+                            aria-label={`取消置顶 ${item.label}`}
+                            data-testid={`${item.testId ?? item.id}-unpin`}
+                            onPress={item.onUnpin}>
+                            <Sym name="pin" />
+                          </Button>
+                        </span>
+                      ) : <span className="grid size-6 shrink-0 place-items-center text-sm" aria-hidden="true">
                         <Sym name="chat_bubble" />
-                      </span>
+                      </span>}
                       {/* 长标题始终用省略号收尾，完整内容可在重命名对话框中查看。 */}
                       <span className="recent-title min-w-0">
                         <span>{item.label}</span>
                       </span>
+                      {unreadIds.includes(Number(item.id)) && (
+                        <span className="size-2 shrink-0 rounded-full bg-accent"
+                          role="img" aria-label="会话已完成，未查看"
+                          data-testid={`${item.testId ?? item.id}-unread`} />
+                      )}
                       {item.menu && (
                         /**
                          * 挡冒泡的壳：见 `RecentItem.onDelete` 的注释。
@@ -501,6 +523,7 @@ export function PageShell({
 }: PageShellProps) {
   /** 窄屏抽屉开合。宽屏不渲染抽屉，所以不需要额外判宽度。 */
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const hasUnread = useChatNotifications((s) => s.unreadIds.length > 0);
   const { open: settingsOpen } = useSettingsDialog();
   useEffect(() => {
     if (settingsOpen) setDrawerOpen(false);
@@ -659,19 +682,21 @@ export function PageShell({
               <Button
                 isIconOnly
                 variant="ghost"
-                className="size-[34px] shrink-0 rounded-full"
+                className="relative size-[34px] shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
                 onPress={() => setDrawerOpen(true)}
               >
                 <Sym name="menu" />
+                {hasUnread && <span className="absolute top-1 right-1 size-2 rounded-full bg-accent"
+                  role="img" aria-label="有已完成的会话未查看" data-testid="nav-unread-dot" />}
               </Button>
             )}
             {rail && !isNarrow && (
               <Button
                 isIconOnly
                 variant="ghost"
-                className="size-[34px] shrink-0 rounded-full"
+                className="relative size-[34px] shrink-0 rounded-full"
                 data-testid="nav-rail-toggle"
                 aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
                 /* aria-pressed 让「现在是不是收着的」不只存在于视觉里 */
@@ -679,6 +704,8 @@ export function PageShell({
                 onPress={toggleRail}
               >
                 <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
+                {hasUnread && <span className="absolute top-1 right-1 size-2 rounded-full bg-accent"
+                  role="img" aria-label="有已完成的会话未查看" data-testid="nav-unread-dot" />}
               </Button>
             )}
             {onBack && (
@@ -732,9 +759,9 @@ export function PageShell({
         <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
           <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
           <Drawer.Content placement="left">
-            <Drawer.Dialog className="app-nav-drawer" aria-label="导航与会话">
+            <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent">
               <Drawer.Header className="mb-4 flex items-center justify-between p-0">
-                <Drawer.Heading className="text-sm text-muted">导航与会话</Drawer.Heading>
+                <Drawer.Heading className="text-sm text-muted">DeepStudent</Drawer.Heading>
                 <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
               </Drawer.Header>
               <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">

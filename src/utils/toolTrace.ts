@@ -67,6 +67,30 @@ export function toolLabel(name: string): string {
   return TOOL_LABELS[name] ?? name;
 }
 
+/** 只解码展示文字，不回写工具参数；坏转义也不能让历史消息渲染失败。 */
+function readablePath(path: string): string {
+  return path.replace(/(?:%[0-9a-f]{2})+/gi, (part) => {
+    try { return decodeURIComponent(part); } catch { return part; }
+  });
+}
+
+/** 实时状态与历史工具行共用。先按原始路径分段，避免名称里的 %2F 被误当成目录。 */
+export function toolDisplay(name: string, detail?: string): { label: string; detail?: string } {
+  if (name === 'read' && detail) {
+    const parts = detail.split('/');
+    if (parts[0] === '' && parts[1] === 'skills') {
+      if (parts.length === 2) return { label: '查看可用技能' };
+      const skill = readablePath(parts[2]);
+      if (skill && parts.length === 3) return { label: '加载技能', detail: clip(skill, 40) };
+      if (skill && parts[3] === 'references' && parts.length >= 5) {
+        return { label: '查阅技能参考', detail: clip(`${skill} · ${readablePath(parts.slice(4).join('/'))}`, 80) };
+      }
+    }
+    return { label: toolLabel(name), detail: clip(readablePath(detail), 40) };
+  }
+  return { label: toolLabel(name), detail: name === 'edit' && detail ? clip(readablePath(detail), 40) : detail };
+}
+
 /**
  * 这次调用在对谁做（检索词 / 技能名 / 起始位置），没有就是 `undefined`。
  *
@@ -92,6 +116,8 @@ export function toolDetail(name: string, argsJson?: string): string | undefined 
       return `${m}:${String(s).padStart(2, '0')}`;
     }
     const text = String(raw).trim();
+    // 路径先完整保留，展示时再解码、识别技能并截断；否则中文名会截在 % 转义中间。
+    if (name === 'read' || name === 'edit') return text || undefined;
     return text ? clip(text, 40) : undefined;
   } catch {
     return undefined;
@@ -106,7 +132,7 @@ export function toolDetail(name: string, argsJson?: string): string | undefined 
  */
 export function toolHint(name: string, argsJson?: string, fallback = '正在处理…'): string {
   // 提问卡不是「正在做什么」，它把选择权交回用户：文案要换成等待口吻，否则会读成系统还在忙
-  if (name === 'ask_user') return '等你选一个…';
+  if (name === 'ask_user') return '等待你的回答';
   /**
    * 未登记的工具（新加了工具却忘了加标签）走兜底。
    *
@@ -115,8 +141,8 @@ export function toolHint(name: string, argsJson?: string, fallback = '正在处�
    * 同一份数据、两种读法，各自的取舍不同 —— 这不是漏改。
    */
   if (!(name in TOOL_LABELS)) return fallback;
-  const detail = toolDetail(name, argsJson);
-  return detail ? `正在${toolLabel(name)}：${detail}` : `正在${toolLabel(name)}…`;
+  const { label, detail } = toolDisplay(name, toolDetail(name, argsJson));
+  return detail ? `正在${label}：${detail}` : `正在${label}…`;
 }
 
 /**

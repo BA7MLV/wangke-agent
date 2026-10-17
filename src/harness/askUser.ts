@@ -1,71 +1,105 @@
-/**
- * 提问卡（助手反问用户）数据结构 + 校验。纯模块无运行时依赖，Node 下可直接单测。
- *
- * 与 `quiz.ts` 的分工：题卡是**展示**（`present_quiz` 立即返回，卡片另存，用户不答也能继续），
- * 提问卡是**答案的来源**（工具要等用户点选才把结果喂回 agent 循环）。所以这里多一个
- * `allowCustom`（「这几个都不对，我自己说」），并且没有正确答案 —— 选哪条都是有效输入。
- */
-
+/** 提问协议。旧卡片的字符串选项仍可读取，新问题使用稳定 ID。 */
+export type AskUserType = 'single' | 'multiple' | 'text' | 'confirm';
+export interface AskOption { id: string; label: string }
 export interface AskUserData {
-  /** 题面：一句话说清需要用户决定什么 */
   question: string;
-  /** 2~5 个候选方案，单选 */
-  options: string[];
-  /** 是否提供「我自己说」入口（默认给：模型判断不了用户处境时，这比让用户在选项里硬选诚实） */
+  type?: AskUserType;
+  options: (AskOption | string)[];
   allowCustom?: boolean;
+  allowSkip?: boolean;
+  minSelections?: number;
+  maxSelections?: number;
 }
-
+export interface AskUserAnswer {
+  status: 'answered' | 'skipped' | 'declined' | 'cancelled';
+  mode: 'selection' | 'custom' | 'text';
+  selectedIds: string[];
+  selectedLabels: string[];
+  text: string;
+  note: string;
+}
 export type AskUserValidation = { ok: true; ask: AskUserData } | { ok: false; error: string };
-
-/** 选项条数上下限。少于 2 条不构成选择，多于 5 条用户读不完（这是 UI 约束，不是模型能力约束） */
 export const MIN_ASK_OPTIONS = 2;
 export const MAX_ASK_OPTIONS = 5;
-/** 单个选项字数上限：卡片里一行要放得下，超了模型应该改写成更短的方案名 */
-const MAX_OPTION_CHARS = 60;
 
-function clean(raw: unknown): string[] {
-  if (!Array.isArray(raw)) return [];
-  return raw.map((o) => (typeof o === 'string' ? o.trim().replace(/\s+/g, ' ') : ''));
+export function askOptions(ask: AskUserData): AskOption[] {
+  return ask.options.map((o, i) => typeof o === 'string' ? { id: `option-${i + 1}`, label: o } : o);
 }
 
-/**
- * 校验并清洗模型输出的提问卡参数；任何字段非法返回错误描述（供模型修正重试）。
- *
- * 错误文案要**具体到怎么改**（`quiz.ts` 的同一条理由）：模型收到「参数不合法」会换个说法重试，
- * 收到「第 2 个选项超过 60 字」才会真的去改。
- */
 export function validateAskUser(raw: unknown): AskUserValidation {
-  const ask = (raw as Partial<AskUserData> | null) ?? {};
-
-  const question = typeof ask.question === 'string' ? ask.question.trim() : '';
-  if (!question) return { ok: false, error: 'question（题面）不能为空' };
-  if (question.length > 200) return { ok: false, error: 'question 超过 200 字，请改成一句话' };
-
-  const options = clean(ask.options);
-  if (options.length < MIN_ASK_OPTIONS || options.length > MAX_ASK_OPTIONS) {
-    return { ok: false, error: `options 必须有 ${MIN_ASK_OPTIONS}~${MAX_ASK_OPTIONS} 个选项（收到 ${options.length} 个）` };
+  const fail = (error: string): AskUserValidation => ({ ok: false, error });
+  if (!raw || typeof raw !== 'object') return fail('question（题面）不能为空');
+  const a = raw as Record<string, unknown>;
+  const question = typeof a.question === 'string' ? a.question.trim() : '';
+  if (!question) return fail('question（题面）不能为空');
+  if (question.length > 200) return fail('question 超过 200 字，请改成一句话');
+  const type = (a.type ?? 'single') as AskUserType;
+  if (!['single', 'multiple', 'text', 'confirm'].includes(type)) return fail('type 必须是 single、multiple、text 或 confirm');
+  let options: AskOption[] = [];
+  if (type === 'confirm') {
+    options = [
+      { id: 'confirm', label: typeof a.confirmLabel === 'string' ? a.confirmLabel.trim() : '确认继续' },
+      { id: 'decline', label: typeof a.declineLabel === 'string' ? a.declineLabel.trim() : '暂不执行' },
+    ];
+  } else if (type !== 'text') {
+    const items = Array.isArray(a.options) ? a.options : [];
+    if (items.length < MIN_ASK_OPTIONS || items.length > MAX_ASK_OPTIONS) return fail(`options 必须有 2~5 个选项（收到 ${items.length} 个）`);
+    for (const [i, item] of items.entries()) {
+      const o = typeof item === 'string' ? { id: `option-${i + 1}`, label: item } : item;
+      if (!o || typeof o !== 'object' || typeof o.id !== 'string' || !o.id.trim() || typeof o.label !== 'string') return fail(`第 ${i + 1} 个选项需要非空 id 和 label，选项不能为空`);
+      options.push({ id: o.id.trim(), label: o.label.trim().replace(/\s+/g, ' ') });
+    }
   }
-  if (options.some((o) => !o)) return { ok: false, error: '选项不能为空' };
-  if (new Set(options).size !== options.length) return { ok: false, error: '选项不能重复' };
-  const tooLong = options.findIndex((o) => o.length > MAX_OPTION_CHARS);
-  if (tooLong >= 0) {
-    return { ok: false, error: `第 ${tooLong + 1} 个选项超过 ${MAX_OPTION_CHARS} 字，请改写成更短的方案名` };
-  }
-
-  return { ok: true, ask: { question, options, allowCustom: ask.allowCustom !== false } };
+  if (options.some(o => !o.label)) return fail('选项不能为空');
+  if (new Set(options.map(o => o.id)).size !== options.length || new Set(options.map(o => o.label)).size !== options.length) return fail('选项 ID 和文案不能重复');
+  const long = options.findIndex(o => o.label.length > 60);
+  if (long >= 0) return fail(`第 ${long + 1} 个选项超过 60 字，请改写成更短的方案名`);
+  const minSelections = type === 'multiple' ? (a.minSelections ?? 1) as number : 1;
+  const maxSelections = type === 'multiple' ? (a.maxSelections ?? options.length) as number : 1;
+  if (type === 'multiple' && (!Number.isInteger(minSelections) || !Number.isInteger(maxSelections) || minSelections < 1 || maxSelections < minSelections || maxSelections > options.length)) return fail('选择数量必须满足 1 ≤ minSelections ≤ maxSelections ≤ 选项数');
+  return { ok: true, ask: { question, type, options, allowCustom: type !== 'confirm' && a.allowCustom !== false, allowSkip: a.allowSkip === true, minSelections, maxSelections } };
 }
 
-/**
- * 用户作答后喂回模型的那句话。
- *
- * 放在这里（而不是 `libraryAssistant`）是因为它**是提问工具的语义**：工具返回什么，
- * 模型就据此以为用户说了什么。执行器与「刷新后的断点续跑」共用这一份 —— 续跑时没有
- * 内存 promise，由 store 自己按选择拼这句话；抽出来是为了两处说法不漂移。
- *
- * 纯函数、无运行时依赖，Node 下可直接单测。
- */
-export function askUserToolResult(picked: string): string {
-  const value = picked.trim();
-  if (!value) return '用户没有回答这个问题。请依据已有信息回答，并说明你做的假设。';
-  return `用户选择了：「${value}」。`;
+/** 所有入口共用校验，显示文案从原问题取，不能由答案伪造。 */
+export function validateAskAnswer(ask: AskUserData, input: AskUserAnswer | string): AskUserAnswer {
+  const type = ask.type ?? 'single';
+  const options = askOptions(ask);
+  const match = typeof input === 'string' ? options.find(o => o.label === input.trim()) : undefined;
+  const answer: AskUserAnswer = typeof input === 'string'
+    ? { status: 'answered', mode: match ? 'selection' : type === 'text' ? 'text' : 'custom', selectedIds: match ? [match.id] : [], selectedLabels: [], text: match ? '' : input.trim(), note: '' }
+    : { ...input, selectedIds: [...input.selectedIds], text: input.text.trim(), note: input.note.trim() };
+  if (answer.status === 'skipped') {
+    if (!ask.allowSkip) throw new Error('这个问题需要回答后才能继续');
+    return { status: 'skipped', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
+  }
+  if (answer.status === 'cancelled') return { status: 'cancelled', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
+  if (answer.mode === 'selection') {
+    const selected = answer.selectedIds.map(id => options.find(o => o.id === id));
+    const min = type === 'multiple' ? ask.minSelections ?? 1 : 1;
+    const max = type === 'multiple' ? ask.maxSelections ?? options.length : 1;
+    if (type === 'text' || selected.some(o => !o) || new Set(answer.selectedIds).size !== selected.length || selected.length < min || selected.length > max) throw new Error(`请选择 ${min === max ? min : `${min}–${max}`} 项`);
+    answer.selectedLabels = selected.map(o => o!.label);
+    answer.text = '';
+    answer.status = type === 'confirm' && answer.selectedIds[0] === 'decline' ? 'declined' : 'answered';
+  } else {
+    if (type === 'confirm' || (type !== 'text' && ask.allowCustom === false)) throw new Error('请使用问题卡中的选项回答');
+    if (!answer.text) throw new Error('请填写你的回答');
+    answer.mode = type === 'text' ? 'text' : 'custom';
+    answer.status = 'answered';
+    answer.selectedIds = [];
+    answer.selectedLabels = [];
+  }
+  return answer;
+}
+
+export function askAnswerText(answer: AskUserAnswer): string {
+  if (answer.status === 'skipped') return '跳过这个问题';
+  if (answer.status === 'cancelled') return '取消本次作答';
+  return [answer.mode === 'selection' ? answer.selectedLabels.join('、') : answer.text, answer.note].filter(Boolean).join('\n补充：');
+}
+
+export function askUserToolResult(answer: AskUserAnswer | string): string {
+  if (typeof answer !== 'string') return JSON.stringify(answer);
+  const value = answer.trim();
+  return value ? `用户选择了：「${value}」。` : '用户没有回答这个问题。请依据已有信息回答，并说明你做的假设。';
 }

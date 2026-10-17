@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { XMarkdown, type ComponentProps, type XMarkdownProps } from '@ant-design/x-markdown';
 import { protectMath } from './math';
+import { SourceImage, SourceImageLink } from '../MaterialImage';
 import './markdown.css';
 
 const MathFormula = lazy(() => import('./MathFormula'));
@@ -21,6 +22,8 @@ function IncompleteInline(props: ComponentProps) {
 }
 
 const SHARED_COMPONENTS = {
+  img: SourceImage,
+  a: SourceImageLink,
   'math-formula': Formula,
   'incomplete-link': IncompleteInline,
   'incomplete-image': IncompleteInline,

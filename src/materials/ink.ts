@@ -1,3 +1,6 @@
+import { getStroke } from 'perfect-freehand';
+
+export type InkNib = 'pressure' | 'ballpoint' | 'brush';
 /** 笔迹用页面自身的坐标系保存（宽 1000），缩放/横竖屏不会改变 PDF 上的落点。 */
 export interface InkPoint { x: number; y: number; pressure: number }
 export interface InkStroke {
@@ -10,6 +13,11 @@ export interface InkStroke {
   height: number;
   points: InkPoint[];
   createdAt: number;
+  /** 缺省表示旧版轮廓，升级后不改变已有笔迹外观。 */
+  renderer?: 'freehand-v1';
+  nib?: InkNib;
+  opacity?: number;
+  smoothing?: number;
 }
 export type InkTool = 'read' | 'pen' | 'highlight' | 'erase';
 
@@ -18,7 +26,23 @@ const radius = (stroke: InkStroke, point: InkPoint) =>
   stroke.width * (stroke.tool === 'highlight' ? 0.5 : 0.25 + point.pressure * 0.75);
 
 /** 一条填充轮廓而非数百个半透明线段，荧光笔重采样处不会出现深色接缝。 */
-export function inkPath(stroke: InkStroke): string {
+export function inkOpacity(stroke: InkStroke): number {
+  return stroke.opacity ?? (stroke.tool === 'highlight' ? 0.25 : 1);
+}
+
+export function inkPath(stroke: InkStroke, complete = true): string {
+  if (stroke.renderer === 'freehand-v1') {
+    const smooth = stroke.smoothing ?? 0.35;
+    const outline = getStroke(stroke.points, {
+      size: stroke.width,
+      thinning: stroke.tool === 'highlight' || stroke.nib === 'ballpoint' ? 0 : stroke.nib === 'brush' ? 0.8 : 0.5,
+      smoothing: smooth,
+      streamline: smooth,
+      simulatePressure: false,
+      last: complete,
+    });
+    return outline.length ? `M${outline.map(([x, y]) => `${n(x)},${n(y)}`).join('L')}Z` : '';
+  }
   const { points } = stroke;
   if (!points.length) return '';
   if (points.length === 1) {

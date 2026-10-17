@@ -84,6 +84,21 @@ check(r4c.ok && /^<svg/.test(r4c.out), '围栏里多写一句说明仍能切出 
 const r4d = await run('   ');
 check(!r4d.ok && /为空/.test(r4d.err ?? ''), `空内容报错（${r4d.err}）`);
 
+const escaped = (value) => value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const r4e = await run(escaped(good));
+check(r4e.ok && /viewBox="0 0 240 120"/.test(r4e.out), '整段转义的 SVG 恢复后仍能渲染');
+const r4f = await run(escaped('<svg viewBox="0 0 10 10"><rect fill="url(https://evil.example/x)"/></svg>'));
+check(!r4f.ok && /外部资源/.test(r4f.err ?? ''), '转义恢复不会绕过外部资源校验');
+const metadata = await page.evaluate(async () => {
+  const { sanitizeSvg, svgTitleOf, peekSvgProgress } = await import('/src/components/mermaid/svgRender.ts');
+  return {
+    title: svgTitleOf(sanitizeSvg('<svg viewBox="0 0 10 10"><title>模型提供的标题</title><rect width="5" height="5"/></svg>')),
+    progress: peekSvgProgress('&lt;svg viewBox=&quot;0 0 10 10&quot;&gt;&lt;rect width=&quot;5&quot; height=&quot;5&quot;/&gt;'),
+  };
+});
+check(metadata.title === '模型提供的标题', '读取 SVG 内模型提供的标题');
+check(metadata.progress?.elements.length === 1, '转义 SVG 在流式阶段也可预览');
+
 console.log('\n=== 5. 净化结果真的能渲染 ===');
 const rendered = await page.evaluate(async () => {
   const { sanitizeSvg } = await import('/src/components/mermaid/svgRender.ts');

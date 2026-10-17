@@ -6,7 +6,7 @@
   margin: 8px 0;
   border: 1px solid var(--border-secondary);
   border-radius: 8px;
-  background: var(--background-secondary);
+  background: transparent;
   overflow: hidden;
 }
 
@@ -14,9 +14,7 @@
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 2px 6px 2px 10px;
-  background: var(--background-tertiary);
-  border-bottom: 1px solid var(--border-secondary);
+  padding: 4px 6px 0 12px;
 }
 
 .xmd-mermaid-tag {
@@ -138,21 +136,6 @@
   }
 }
 
-/* 「生成中」退成画布下方的一行小字（图已经在长了，大占位就多余了） */
-.xmd-mermaid-live {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 0 12px 10px;
-  font-size: 12px;
-  color: var(--muted);
-}
-
-.xmd-mermaid-live .xmd-mermaid-dots {
-  width: 6px;
-  height: 6px;
-}
-
 /* foreignObject 内的 HTML 标签继承图内字体，避免落回浏览器默认字体 */
 .xmd-mermaid-canvas foreignObject,
 .xmd-mermaid-zoom-inner foreignObject {
@@ -162,8 +145,6 @@
 /* —— 渲染失败 —— */
 .xmd-mermaid-error {
   padding: 10px 12px;
-  background: var(--danger-soft);
-  border-bottom: 1px solid var(--border-secondary);
 }
 
 .xmd-mermaid-error-title {
@@ -171,19 +152,18 @@
   align-items: center;
   gap: 6px;
   font-size: 13px;
-  color: var(--danger);
+  color: var(--muted);
   margin-bottom: 4px;
 }
 
 .xmd-mermaid-error-msg {
   font-size: 12px;
-  color: var(--danger);
+  color: var(--muted);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 120px;
   overflow: auto;
   margin-bottom: 8px;
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 
 /* —— 源码 —— */
@@ -247,6 +227,7 @@
   display: flex;
   align-items: center;
   gap: 2px;
+  flex-shrink: 0;
 }
 
 /* 「源码已展开」的激活态：文档树规则覆盖按钮图标的颜色，

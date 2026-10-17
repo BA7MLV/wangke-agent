@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Button, Modal, Tooltip, Skeleton, Chip } from '@heroui/react';
+import { Button, Modal, Tooltip, Skeleton, Dropdown, Label } from '@heroui/react';
 import { Sym, toast, MODAL_CONTAINER_CLASS } from '../../ui';
 import { copyText } from '../../utils/clipboard';
 import { toStandaloneSvg } from './mermaidRender';
@@ -123,53 +123,38 @@ export default function DiagramBlock({
     URL.revokeObjectURL(url);
   };
 
-  // 受控弹窗：Esc / 点遮罩关闭由 Modal 自己走 onOpenChange 回写，
-  // 不需要像 mdui 那样额外监听 'closed' 事件同步 state。
-  /** HeroUI Button consumes Tooltip's focus context directly (one keyboard stop). */
-  const iconBtn = (suffix: string, label: string, icon: React.ReactNode, onClick: () => void, active?: boolean) => (
-    <Tooltip>
-        <Button
-          isIconOnly
-          variant="tertiary"
-          data-testid={`${testId}-${suffix}`}
-          aria-label={label}
-          className={active ? 'is-on' : undefined}
-          onPress={onClick}
-        >
-          {icon}
-        </Button>
-      <Tooltip.Content>{label}</Tooltip.Content>
-    </Tooltip>
-  );
-
   return (
     <div className="xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase} aria-busy={phase === 'waiting' || phase === 'drawing' || phase === 'rendering'}>
       <div className="xmd-mermaid-head">
-        <Chip size="sm" variant="soft">{tag}</Chip>
         {/* 标题：围栏参数里的那张图的名字。超长会被 fence.ts 截断，所以再挂一个 title 属性 ——
             与原生 SVG/HTML 的 title 一样，悬停看全。 */}
         {title ? (
           <span className="xmd-mermaid-title" title={title} data-testid={`${testId}-title`}>
             {title}
           </span>
-        ) : null}
+        ) : <span className="xmd-mermaid-tag">{tag}</span>}
         <span className="xmd-mermaid-spacer" />
         <div className="xmd-mermaid-tools">
-          {iconBtn('copy', copyLabel, <Sym name="content-copy" />, copySource)}
-          {svg && (
-            <>
-              {iconBtn('zoom', '查看大图', <Sym name="open-in-full" />, () => setZoomOpen(true))}
-              {iconBtn('download', '下载 SVG', <Sym name="download" />, download)}
-              {testId === 'diagram' && phase === 'ok' ? iconBtn('download-json', '下载 JSON', <Sym name="code" />, downloadJson) : null}
-            </>
-          )}
-          {iconBtn(
-            'source-toggle',
-            showSource ? '隐藏源码' : '查看源码',
-            <Sym name="code" />,
-            () => setShowSource((v) => !v),
-            showSource,
-          )}
+          <Dropdown>
+            <Button isIconOnly size="sm" variant="tertiary" aria-label="更多图形操作" data-testid={`${testId}-more`}>
+              <Sym name="more_horiz" size={18} />
+            </Button>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu aria-label="图形操作" onAction={(key) => {
+                if (key === 'copy') void copySource();
+                else if (key === 'zoom') setZoomOpen(true);
+                else if (key === 'download') download();
+                else if (key === 'download-json') downloadJson();
+                else if (key === 'source') setShowSource((v) => !v);
+              }}>
+                <Dropdown.Item id="copy" textValue={copyLabel} data-testid={`${testId}-copy`}><Sym name="content_copy" /><Label>{copyLabel}</Label></Dropdown.Item>
+                {svg ? <Dropdown.Item id="zoom" textValue="查看大图" data-testid={`${testId}-zoom`}><Sym name="open_in_full" /><Label>查看大图</Label></Dropdown.Item> : null}
+                {svg ? <Dropdown.Item id="download" textValue="下载 SVG" data-testid={`${testId}-download`}><Sym name="download" /><Label>下载 SVG</Label></Dropdown.Item> : null}
+                {svg && testId === 'diagram' && phase === 'ok' ? <Dropdown.Item id="download-json" textValue="下载 JSON" data-testid={`${testId}-download-json`}><Sym name="code" /><Label>下载 JSON</Label></Dropdown.Item> : null}
+                <Dropdown.Item id="source" textValue={showSource ? '隐藏源码' : '查看源码'} data-testid={`${testId}-source-toggle`}><Sym name="code" /><Label>{showSource ? '隐藏源码' : '查看源码'}</Label></Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
         </div>
       </div>
 
@@ -189,10 +174,6 @@ export default function DiagramBlock({
               <DiagramCanvas viewBox={stream.viewBox} shapes={stream.shapes} label={title ?? '图表'} />
             )}
           </div>
-          {phase === 'drawing' ? <div className="xmd-mermaid-live" data-testid={`${testId}-live`} role="status">
-            <Chip size="sm" variant="soft">实时预览</Chip>
-            <span>{waitingText}布局随结构更新</span>
-          </div> : null}
         </>
       ) : phase === 'error' ? (
         <div className="xmd-mermaid-error" data-testid={`${testId}-error`} role="alert">
@@ -220,7 +201,7 @@ export default function DiagramBlock({
         )
       )}
 
-      {(showSource || phase === 'error') && (
+      {showSource && (
         <pre className="xmd-mermaid-source" data-testid={`${testId}-source`}>
           {source}
         </pre>

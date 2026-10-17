@@ -344,7 +344,6 @@ export default function Library() {
   const navigate = useNavigate();
   const nav = useAppNav('home');
   const sessions = useCourseChat((s) => s.sessions);
-  const activeSessionId = useCourseChat((s) => s.activeId);
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
   const loadChatSession = useCourseChat((s) => s.loadSession);
   useEffect(() => {
@@ -1328,7 +1327,7 @@ export default function Library() {
         items: recentSessions.map((session) => ({
           id: String(session.id),
           label: session.title,
-          active: session.id === activeSessionId,
+          // 当前在资料页，没有正在查看的会话；否则已选中行可能不触发跳转。
           onClick: () => {
             if (session.id != null) {
               void loadChatSession(session.id);

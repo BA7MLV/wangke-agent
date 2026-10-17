@@ -465,7 +465,9 @@
 
 .course-chat__user-expand {
   display: flex;
-  margin: 4px 0 0 auto;
+  margin: 4px 0 0;
+  min-height: 32px;
+  padding-inline: 4px;
   gap: 4px;
   color: var(--muted);
   border-radius: var(--radius-full);
@@ -589,6 +591,11 @@
 }
 
 .course-chat__user-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: inherit;
   border: 0;
   font: inherit;
   text-align: left;

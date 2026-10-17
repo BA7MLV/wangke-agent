@@ -3,7 +3,7 @@ import { Disclosure, Spinner } from '@heroui/react';
 import { Sym } from '../ui';
 import { IconSwap, Shimmer, TextSwap } from './motion';
 import type { ChatToolCall } from '../store/db';
-import { toolLabel } from '../utils/toolTrace';
+import { toolDisplay } from '../utils/toolTrace';
 import './tool-trace.css';
 
 /** 单个工具的耗时：不到一秒报毫秒（「它卡了 800ms」看得见），过了就报秒 */
@@ -25,7 +25,7 @@ function fmtMs(ms: number): string {
  *
  * 跑的时候展开（那时候它就是屏幕上唯一在动的东西，用户要看着它知道模型没卡住），
  * 跑完自动收起（收起来之后答案才是主角）。用户可以自己点开逐条看。
- * 收起态只留一个计数，**不留最后一个工具名** —— 计数是稳定的，工具名会随新调用跳动。
+ * 收起态保留计数与成功加载的技能，方便回看这次回答采用了哪些技能。
  *
  * ## 每行只放一个参数
  *
@@ -64,10 +64,15 @@ export default function ToolTrace({
   if (calls.length === 0) return null;
 
   const acting = calls.find((c) => c.status === 'running');
+  const waitingForUser = acting?.name === 'ask_user';
   const failed = calls.filter((c) => c.status === 'error').length;
-  const title = acting
-    ? `${toolLabel(acting.name)}…`
-    : `已调用 ${calls.length} 个工具${failed > 0 ? ` · ${failed} 次失败` : ''}`;
+  const displays = calls.map((call) => toolDisplay(call.name, call.detail));
+  const loadedSkills = [...new Set(displays.flatMap((display, i) =>
+    calls[i].status === 'done' && display.label === '加载技能' && display.detail ? [display.detail] : []))];
+  const activeDisplay = acting ? toolDisplay(acting.name, acting.detail) : undefined;
+  const title = waitingForUser ? '等待你的回答' : activeDisplay
+    ? `${activeDisplay.label}${activeDisplay.detail ? `：${activeDisplay.detail}` : '…'}`
+    : `已调用 ${calls.length} 个工具${failed > 0 ? ` · ${failed} 次失败` : ''}${loadedSkills.length ? ` · 已加载技能：${loadedSkills.slice(0, 2).join('、')}${loadedSkills.length > 2 ? ` 等 ${loadedSkills.length} 个` : ''}` : ''}`;
 
   return (
     <Disclosure
@@ -82,7 +87,7 @@ export default function ToolTrace({
           {/* 跑动中那颗扳手是主色，跑完转灰 —— 一眼分得出「还在查」和「查完了」 */}
           <Sym name="build" className="tool-trace__icon" />
           {/* 真的在跑才闪：跑完那一句是平静的计数，闪光只属于「正在进行」 */}
-          {acting ? (
+          {acting && !waitingForUser ? (
             <Shimmer className="tool-trace__title" text={title} />
           ) : (
             <TextSwap className="tool-trace__title" text={title} />
@@ -105,14 +110,14 @@ export default function ToolTrace({
               >
                 <span className="tool-trace__state" aria-hidden="true">
                   <IconSwap
-                    a={<Spinner size="sm" color="current" />}
+                    a={call.name === 'ask_user' ? <Sym name="help" /> : <Spinner size="sm" color="current" />}
                     b={<Sym name={call.status === 'error' ? 'error' : 'check'} />}
                     active={call.status === 'running' ? 'a' : 'b'}
                   />
                 </span>
                 <span className="tool-trace__action">
-                  <span className="tool-trace__label">{toolLabel(call.name)}</span>
-                  {call.detail && <span className="tool-trace__detail">{call.detail}</span>}
+                  <span className="tool-trace__label">{displays[i].label}</span>
+                  {displays[i].detail && <span className="tool-trace__detail">{displays[i].detail}</span>}
                 </span>
                 {call.ms != null && <span className="tool-trace__ms">{fmtMs(call.ms)}</span>}
                 {call.result && <span className="tool-trace__result">{call.result}</span>}

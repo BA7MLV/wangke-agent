@@ -69,7 +69,10 @@ export const useSelectionAsk = create<SelectionAskStore>()((set) => ({
  */
 export function formatCitation(cite: Citation): string {
   const head = cite.unitLabel ? `[选自 ${cite.unitLabel}]` : '[选自课程内容]';
-  return `> ${head}\n> ${cite.text.replace(/\n/g, '\n> ')}`;
+  const inkNote = cite.image?.hasInk
+    ? '\n> [附图包含用户手写批注：请结合原文理解圈选、箭头和手写内容，区分原文与用户批注；无法辨认的笔迹请明确说明，不要猜测。]'
+    : '';
+  return `> ${head}\n> ${cite.text.replace(/\n/g, '\n> ')}${inkNote}`;
 }
 
 /** 「解释这段」用的默认提问；用户自己补问时走 compose 模式，不用这条 */

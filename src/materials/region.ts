@@ -8,6 +8,7 @@
  */
 
 import { collapseCjkSpaces } from './chunk.ts';
+import { inkOpacity, inkPath, type InkStroke } from './ink';
 
 /** 相对页面左上角的 CSS 像素矩形 */
 export interface RectCss {
@@ -22,6 +23,8 @@ export interface RegionImage {
   dataUrl: string;
   /** 持久化用缩略图（最长边 320） */
   thumb: string;
+  /** 裁图包含用户手写批注，问答中须与原文区分。 */
+  hasInk?: boolean;
 }
 
 /** 由两个拖拽端点算出规范矩形（支持任意方向拖） */
@@ -52,6 +55,7 @@ function drawScaled(
   sh: number,
   maxEdge: number,
   quality: number,
+  strokes: readonly InkStroke[] = [],
 ): string {
   const scale = Math.min(1, maxEdge / Math.max(sw, sh));
   const out = document.createElement('canvas');
@@ -63,6 +67,17 @@ function drawScaled(
   ctx.fillStyle = '#fff';
   ctx.fillRect(0, 0, out.width, out.height);
   ctx.drawImage(source, sx, sy, sw, sh, 0, 0, out.width, out.height);
+  // 直接画在限尺寸的裁图上，不复制高分辨率整页，也不污染原始 PDF canvas。
+  for (const stroke of strokes) {
+    ctx.save();
+    ctx.scale(out.width / sw, out.height / sh);
+    ctx.translate(-sx, -sy);
+    ctx.scale(source.width / 1000, source.height / stroke.height);
+    ctx.fillStyle = stroke.color;
+    ctx.globalAlpha = inkOpacity(stroke);
+    ctx.fill(new Path2D(inkPath(stroke)));
+    ctx.restore();
+  }
   return out.toDataURL('image/jpeg', quality);
 }
 
@@ -77,6 +92,7 @@ export function cropCanvasRegion(
   canvas: HTMLCanvasElement,
   rect: RectCss,
   ratio: number,
+  strokes: readonly InkStroke[] = [],
 ): RegionImage | null {
   if (!isUsableRegion(rect)) return null;
   const sx = Math.max(0, Math.round(rect.x * ratio));
@@ -84,10 +100,20 @@ export function cropCanvasRegion(
   const sw = Math.min(canvas.width - sx, Math.round(rect.w * ratio));
   const sh = Math.min(canvas.height - sy, Math.round(rect.h * ratio));
   if (sw < 2 || sh < 2) return null;
-  const dataUrl = drawScaled(canvas, sx, sy, sw, sh, 1280, 0.85);
-  const thumb = drawScaled(canvas, sx, sy, sw, sh, 320, 0.7);
+  const selected = strokes.filter((stroke) => {
+    let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
+    for (const p of stroke.points) {
+      left = Math.min(left, p.x); right = Math.max(right, p.x);
+      top = Math.min(top, p.y); bottom = Math.max(bottom, p.y);
+    }
+    const xScale = canvas.width / 1000, yScale = canvas.height / stroke.height;
+    return (left - stroke.width) * xScale < sx + sw && (right + stroke.width) * xScale > sx
+      && (top - stroke.width) * yScale < sy + sh && (bottom + stroke.width) * yScale > sy;
+  });
+  const dataUrl = drawScaled(canvas, sx, sy, sw, sh, 1280, 0.85, selected);
+  const thumb = drawScaled(canvas, sx, sy, sw, sh, 320, 0.7, selected);
   if (!dataUrl || !thumb) return null;
-  return { dataUrl, thumb };
+  return { dataUrl, thumb, ...(selected.length ? { hasInk: true } : {}) };
 }
 
 /** 框内文字的上限：再多也没意义，反倒挤占上下文 */
