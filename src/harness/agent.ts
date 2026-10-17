@@ -1,4 +1,4 @@
-import { chatStream, textOf, type ChatMessage, type ThinkingLevel, type ToolDef } from '../api/siliconflow';
+import { chatStream, textOf, type ChatMessage, type ThinkingLevel, type ToolCallDelta, type ToolDef } from '../api/siliconflow';
 import { effectiveContextWindow, outputLimitOf, thinkingParams } from '../api/modelCaps';
 import { getSettings, targetOfSlot } from '../store/settings';
 import {
@@ -76,6 +76,13 @@ export interface AgentCallbacks {
   onRoundStart?: (round: number) => void;
   /** 工具调用开始/结束（用于 UI 状态提示） */
   onToolStart?: (name: string, argsJson: string) => void;
+  /**
+   * 工具参数的流式增量（当前值是截至此刻的完整参数字符串）。
+   *
+   * 这条回调不能替代 onToolStart：onToolStart 仍然表示「完整 tool call
+   * 已经可以执行」。它只给需要提前预览大参数的 UI（例如 HTML widget）用。
+   */
+  onToolCallDelta?: (call: ToolCallDelta) => void;
   onToolEnd?: (name: string, result: string) => void;
   /**
    * 每次 `executeTool` **之前**通报当前累积的消息（`out`）。
@@ -167,6 +174,7 @@ export async function runAgentLoop(
       cb.onDelta,
       // 回调累计值含所有轮次思维链；返回消息的 reasoning_content 只有最后一轮——持久化用回调累计值
       cb.onReasoningDelta,
+      cb.onToolCallDelta,
     );
     out.push(msg);
 
@@ -267,6 +275,7 @@ export async function runAgentLoop(
       },
       cb.onDelta,
       cb.onReasoningDelta,
+      cb.onToolCallDelta,
     );
     if (textOf(finalMsg).trim()) {
       out.push(finalMsg);

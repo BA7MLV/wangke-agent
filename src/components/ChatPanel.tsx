@@ -56,8 +56,10 @@ import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
 import WidgetBlock from './WidgetBlock';
+import StreamingHtmlPreview from './StreamingHtmlPreview';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
+import { readPartialWidgetArguments } from '../utils/streamingHtml';
 import './chat-panel.css';
 
 interface Props {
@@ -116,6 +118,8 @@ interface ChatMsg {
   quiz?: QuizState;
   /** 沙箱图形卡（show_widget 的 html 形态产出） */
   widget?: WidgetPayload;
+  /** show_widget 参数尚未完整到达时的静态安全预览（不落库） */
+  widgetPreview?: { html: string };
   /** 落库后的 chats 行 id（作答状态回写用） */
   rowId?: number;
   streaming?: boolean;
@@ -1033,6 +1037,7 @@ export default function ChatPanel({
      * `null`（`x?.granted` 会报「property does not exist on never」），数组下标不做这种收窄。
      */
     const stopped: AgentStopInfo[] = [];
+    let widgetPreview: { html: string } | undefined;
     const abort = new AbortController();
     inflightAbort = abort;
     const updates = framePatch<ChatMsg>((patch) =>
@@ -1265,7 +1270,10 @@ export default function ChatPanel({
         },
         onWidget: (w) => {
           widgetState = w;
-          patchAi({ widget: w });
+          // 工具校验完成后切换到最终的隔离 iframe。清掉预览，避免同一张
+          // 图短暂出现两份；中间帧从未执行过模型提供的脚本。
+          widgetPreview = undefined;
+          patchAi({ widget: w, widgetPreview: undefined });
         },
       });
       /**
@@ -1293,6 +1301,17 @@ export default function ChatPanel({
             // 落库用不到（历史用终值 reasoningMs），所以不写进 ChatRow
             updates.stream(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
           },
+          onToolCallDelta: (call) => {
+            // show_widget 的 code 是一个 JSON 字符串，不能直接把参数片段
+            // 当 HTML。只在 format 已明确为 html 后，解码已经完整的
+            // JSON 字符串前缀，再交给静态安全预览组件。
+            if (call.name !== 'show_widget') return;
+            const partial = readPartialWidgetArguments(call.arguments);
+            if (partial.format !== 'html' || !partial.code) return;
+            const html = partial.code.slice(0, 60_000);
+            widgetPreview = { html };
+            updates.stream({ widgetPreview, hint: '正在生成交互图形…' });
+          },
           onDelta: (text) => {
             answer += text;
             updates.stream({ content: answer, hint: undefined });
@@ -1302,7 +1321,8 @@ export default function ChatPanel({
             if (answer.trim()) lastNarration = answer.trim();
             answer = '';
             roundsRan++;
-            patchAi({ content: '', hint: undefined });
+            widgetPreview = undefined;
+            patchAi({ content: '', hint: undefined, widgetPreview: undefined });
           },
           onToolStart: (name, argsJson) => {
             /**
@@ -1330,6 +1350,12 @@ export default function ChatPanel({
                 ...(ms != null ? { ms } : {}),
               };
               patchAi({ tools: [...toolCalls] });
+            }
+            // 参数校验 / 安全预检的软失败也不能把半成品留在最终回答里；
+            // 模型下一轮会根据工具回执重试。
+            if (name === 'show_widget') {
+              widgetPreview = undefined;
+              patchAi({ widgetPreview: undefined });
             }
             toolStartedAt = 0;
           },
@@ -1392,7 +1418,8 @@ export default function ChatPanel({
         const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
         // 停在思考中途也要计时：那正是用户最想知道的「它已经想了多久」
         const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
-        patchAi({ streaming: false, hint: undefined, content, reasoningMs });
+        widgetPreview = undefined;
+        patchAi({ streaming: false, hint: undefined, content, reasoningMs, widgetPreview: undefined });
         // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
         setLoading(false);
         const rowId = (await db.chats.add({
@@ -1412,6 +1439,7 @@ export default function ChatPanel({
           streaming: false,
           hint: undefined,
           error: true,
+          widgetPreview: undefined,
           reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
           // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
           content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
@@ -1552,6 +1580,7 @@ export default function ChatPanel({
     lastMsg?.tools?.length ?? 0,
     lastMsg?.quiz ? 1 : 0,
     lastMsg?.widget ? 1 : 0,
+    lastMsg?.widgetPreview?.html.length ?? 0,
   ].join('|');
   useEffect(() => {
     pinList();
@@ -1771,9 +1800,9 @@ export default function ChatPanel({
                       />
                     )}
                     {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
-                    {m.hint && !m.content ? (
+                    {m.hint && !m.content && !m.widgetPreview ? (
                       <ThinkLine text={m.hint} />
-                    ) : m.streaming && !m.content && !m.reasoning && !m.quiz && !m.widget ? (
+                    ) : m.streaming && !m.content && !m.reasoning && !m.quiz && !m.widget && !m.widgetPreview ? (
                       /* 待回复：提问刚上屏、首个 token 还没来的纯等待窗口。思考链/状态行/卡片
                          任一在场时它们已经在表示「在动」，这里就不重复。 */
                       <PendingReply />
@@ -1809,6 +1838,9 @@ export default function ChatPanel({
                             dark={widgetDark}
                             onPrompt={(t) => void send(t)}
                           />
+                        )}
+                        {!m.widget && m.widgetPreview && (
+                          <StreamingHtmlPreview html={m.widgetPreview.html} />
                         )}
                       </>
                     )}

@@ -202,6 +202,14 @@ export interface ToolCall {
   function: { name: string; arguments: string };
 }
 
+/** A progressively assembled function call, useful for rendering large tool arguments. */
+export interface ToolCallDelta {
+  index: number;
+  id: string;
+  name: string;
+  arguments: string;
+}
+
 /** 提取 assistant 消息的纯文本（多模态数组时拼接 text 部分） */
 export function textOf(msg: ChatMessage | null | undefined): string {
   if (!msg || msg.content == null) return '';
@@ -404,6 +412,7 @@ export async function chatStream(
   opts: ChatOptions,
   onDelta?: (content: string) => void,
   onReasoning?: (text: string) => void,
+  onToolCallDelta?: (call: ToolCallDelta) => void,
 ): Promise<ChatMessage> {
   const messages = wire(opts.messages);
   const res = await request(t, chatPath(t), {
@@ -430,17 +439,35 @@ export async function chatStream(
    *  `toolCalls` 里塞会撞号（网关跳过某个 index 时就会覆盖前一个）。 */
   const recovered: ToolCall[] = [];
 
+  const emitToolCall = (index: number) => {
+    const call = toolCalls[index];
+    if (!call) return;
+    onToolCallDelta?.({
+      index,
+      id: call.id,
+      name: call.function.name,
+      arguments: call.function.arguments,
+    });
+  };
+
   /** 还原器的产出：只有 text 能给界面，toolCall 进 recovered */
   const absorb = (parts: DsmlPart[]) => {
     let text = '';
     for (const p of parts) {
       if (p.kind === 'text') text += p.text;
-      else
+      else {
         recovered.push({
           id: `dsml_${recovered.length}`,
           type: 'function',
           function: { name: p.name, arguments: p.arguments },
         });
+        onToolCallDelta?.({
+          index: Object.keys(toolCalls).length + recovered.length - 1,
+          id: `dsml_${recovered.length - 1}`,
+          name: p.name,
+          arguments: p.arguments,
+        });
+      }
     }
     if (text) {
       content += text;
@@ -466,6 +493,7 @@ export async function chatStream(
             if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
               const i = chunk.index ?? Object.keys(toolCalls).length;
               toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
+              emitToolCall(i);
             }
             if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) {
               const text = stripLeakedToolPreamble(delta.text);
@@ -473,7 +501,12 @@ export async function chatStream(
             }
             if (chunk.type === 'content_block_delta' && delta?.type === 'thinking_delta' && delta.thinking) { reasoning += delta.thinking; onReasoning?.(delta.thinking); }
             if (chunk.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json) {
-              const call = toolCalls[chunk.index ?? 0]; if (call) call.function.arguments += delta.partial_json;
+              const i = chunk.index ?? 0;
+              const call = toolCalls[i];
+              if (call) {
+                call.function.arguments += delta.partial_json;
+                emitToolCall(i);
+              }
             }
             if (chunk.type === 'message_delta') finish = chunk.delta?.stop_reason === 'tool_use' ? 'tool_calls' : chunk.delta?.stop_reason === 'max_tokens' ? 'length' : 'stop';
             continue;
@@ -487,9 +520,15 @@ export async function chatStream(
             if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
               const i = chunk.output_index ?? Object.keys(toolCalls).length;
               toolCalls[i] = { id: chunk.item.call_id ?? chunk.item.id, type: 'function', function: { name: chunk.item.name, arguments: '' } };
+              emitToolCall(i);
             }
             if (chunk.type === 'response.function_call_arguments.delta') {
-              const call = toolCalls[chunk.output_index ?? 0]; if (call) call.function.arguments += chunk.delta ?? '';
+              const i = chunk.output_index ?? 0;
+              const call = toolCalls[i];
+              if (call) {
+                call.function.arguments += chunk.delta ?? '';
+                emitToolCall(i);
+              }
             }
             if (chunk.type === 'response.completed') finish = Object.values(toolCalls).length ? 'tool_calls' : chunk.response?.status === 'incomplete' ? 'length' : 'stop';
             continue;
@@ -517,10 +556,12 @@ export async function chatStream(
               const i = tc.index ?? 0;
               if (!toolCalls[i]) {
                 toolCalls[i] = { id: tc.id ?? '', type: 'function', function: { name: '', arguments: '' } };
+                emitToolCall(i);
               }
               if (tc.id) toolCalls[i].id = tc.id;
               if (tc.function?.name) toolCalls[i].function.name += tc.function.name;
               if (tc.function?.arguments) toolCalls[i].function.arguments += tc.function.arguments;
+              if (tc.id || tc.function?.name || tc.function?.arguments) emitToolCall(i);
             }
           }
         } catch {
