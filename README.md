@@ -547,7 +547,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 **写作技能** —— Agent Skills 规范（SKILL.md + references/），渐进式披露：讲义生成前由 LLM 路由按课程内容自动选用（讲义面板可按视频手动覆盖），问答 agent 通过 `use_skill` / `read_skill_reference` 工具按需加载正文与参考文档；**问答面板可按会话限定可用技能**（默认全部启用技能，限定后提示词清单与工具白名单同步收窄，模型调不到范围外的技能）；设置页可导入 .md 单文件或 zip 包，内置 7 个技能（公文讲义写作 / 公文版式规格 / 数学 / 编程 / 公考行测 / 公考申论 / 课程库整理 / 讲解配图，含 references）。
 
-**问答** —— 字幕全文检索（BM25）+ agent loop（function calling 检索工具），流式回答。**消息在发请求前统一过一道收口点**（`api/messageHygiene.ts`）：循环里的每道闸都可能留下「空回复」或「没人应答的工具调用」，它们单看都合理，只有整条链跑完才看得出下一次请求会被网关 400 拒掉（`Invalid assistant message: content or tool_calls must be set`）。所以清洗放在请求边界而不是禁止脏历史产生：空回复丢掉、悬空的工具调用补一条说清原因的合成结果、夹在中间的 system 提示挪到结果之后。题卡 / 提问卡那种「正文空但挂着卡片」的消息照旧落库（正文空 UI 才只渲染卡片），发请求时再洗掉。**Mermaid 出图**：懒加载引擎 + 串行渲染，未闭合围栏先挂起不抖，语法错回退源码 + 错误提示。**截图提问**：多图 + 时间轴上下文，三级降级，送模型时图与字幕上下文同时带且明确**以图为准**。**画面引用**：已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用。**出题**：`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化；解析按 Markdown 渲染，涉及流程 / 结构 / 对比时解析里的 ```mermaid 围栏直接出图（与问答正文同一条渲染链路），材料模式下不 linkify 时间戳以免死链。
+**问答** —— 字幕全文检索（BM25）+ agent loop（function calling 检索工具），流式回答。**长表格**：流式期间只挂单元格数已经对齐的完整行（末行写一半不显示），结束后超过 6 行的多列表格自动折叠（单列表更像清单，不折）；桌面内联展开、手机进 Bottom Sheet 看完整表，可复制 Markdown / CSV。**消息在发请求前统一过一道收口点**（`api/messageHygiene.ts`）：循环里的每道闸都可能留下「空回复」或「没人应答的工具调用」，它们单看都合理，只有整条链跑完才看得出下一次请求会被网关 400 拒掉（`Invalid assistant message: content or tool_calls must be set`）。所以清洗放在请求边界而不是禁止脏历史产生：空回复丢掉、悬空的工具调用补一条说清原因的合成结果、夹在中间的 system 提示挪到结果之后。题卡 / 提问卡那种「正文空但挂着卡片」的消息照旧落库（正文空 UI 才只渲染卡片），发请求时再洗掉。**Mermaid 出图**：懒加载引擎 + 串行渲染，未闭合围栏先挂起不抖，语法错回退源码 + 错误提示。**截图提问**：多图 + 时间轴上下文，三级降级，送模型时图与字幕上下文同时带且明确**以图为准**。**画面引用**：已有讲义抽帧时注册 `list_frames` 工具，agent 按画面描述选图并以 `[图@mm:ss]` 标记引用。**出题**：`present_quiz` 工具输出结构化题目，气泡内渲染可点选答题卡，点选即判、解析带时间戳跳转、作答状态持久化；解析按 Markdown 渲染，涉及流程 / 结构 / 对比时解析里的 ```mermaid 围栏直接出图（与问答正文同一条渲染链路），材料模式下不 linkify 时间戳以免死链。
 
 **弹幕** —— 基于字幕一键生成 AI 思考题弹幕（启发式为主、回忆式为辅、宁缺毋滥），播放时自画面右侧向左侧飘过，走**恒定线速度**（思考题长度差好几倍，固定时长会让最长的那条飞得最快 —— 恰好最难读的最快）；暂停跟随暂停，seek 回退可重看；控制栏「弹」开关持久化；「弹幕」页可重新生成、列表点击时间戳跳转。
 
@@ -684,6 +684,7 @@ node scripts/test-handout-prompts.mjs     # 提示词输出契约
 node scripts/test-builtin-skills.mjs      # 内置 skill 资产（frontmatter / 预算 / references）
 node scripts/test-chat-frames.mjs         # 画面引用：linkify / 清单格式化 / qaSystem 规则注入
 node scripts/test-chat-export.mjs         # 会话导出 Markdown：结构 / 折叠块 / 题卡作答 / 文件名清洗
+node scripts/test-markdown-table.mjs      # 表格复制：管道符 / 反斜杠 / 换行转义、CSV 引号、流式列宽
 node scripts/test-lazy-session.mjs        # 会话懒创建（草稿态）的数据层不变量：全新库 0 行 / 连点新建仍 0 行 / 首条消息才落库 / 删或归档到不剩回草稿态 / 落库失败不留半截（真 store + fake-indexeddb + 假模型流）
 node scripts/test-chat-followup.mjs      # 流式期间的输入（排队/插入）store 层不变量：排队不进请求 / 答完自动续发且落库 / 插入标中断原因且半截保留 / 空闲时 steer 即普通发送 / 两条插入撞车降级排队不丢 / 提问卡优先 / 队列四操作 / 生成中切会话不挡且队列跟着会话、切回看到仍在流 / **两条会话真并发各流各的、内容不互串** / 队列不落库
 node scripts/test-qa-skill-scope.mjs      # 问答技能范围：undefined / [] / [id] 三态、白名单×启用集合求交、工具放行条件

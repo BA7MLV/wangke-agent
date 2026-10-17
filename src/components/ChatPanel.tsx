@@ -51,6 +51,7 @@ import { framePatch } from '../utils/framePatch';
 import ToolTrace from './ToolTrace';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { MarkdownTable } from './MdTable';
+import { MarkdownStreamingProvider } from './markdown/streaming';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
@@ -1760,18 +1761,20 @@ export default function ChatPanel({
                       <ThinkLine text={m.hint} />
                     ) : (
                       <>
-                        <XMarkdown
-                          // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
-                          // 材料没有播放器，留着会生成点了没反应的死链；
-                          // #frame- 画面引用同理（材料没有抽帧）。
-                          content={
-                            isMaterial && materialKind
-                              ? linkifyUnits(m.content, materialKind)
-                              : linkifyTimestamps(linkifyFrames(m.content))
-                          }
-                          components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
-                          streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
-                        />
+                        <MarkdownStreamingProvider value={!!m.streaming}>
+                          <XMarkdown
+                            // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
+                            // 材料没有播放器，留着会生成点了没反应的死链；
+                            // #frame- 画面引用同理（材料没有抽帧）。
+                            content={
+                              isMaterial && materialKind
+                                ? linkifyUnits(m.content, materialKind)
+                                : linkifyTimestamps(linkifyFrames(m.content))
+                            }
+                            components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
+                            streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
+                          />
+                        </MarkdownStreamingProvider>
                         {m.quiz && (
                           <QuizCard
                             quiz={m.quiz.data}

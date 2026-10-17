@@ -86,6 +86,9 @@ const META = {
   // 渲染确定性（同一 JSON 两次逐字节一致）、graph 自动布局（分层/环/横向）、plot 采样与断渐近线、
   // 以及流式收敛不变量（半截 JSON 的 key 单调、最后一拍 === 完整渲染）。
   'test-json-diagram': { service: 'none', antd: false, timeout: 120 },
+  // Markdown 表格复制 / 流式列宽纯逻辑：管道符与反斜杠转义、CSV 引号、
+  // 行列数归一、列宽比例。DOM 侧的流式完整行与长表折叠由 e2e-chat-table 覆盖。
+  'test-markdown-table': { service: 'none', antd: false, timeout: 120 },
   // 懒创建会话（草稿态）的**数据层**不变量：真 store + 真 Dexie（fake-indexeddb）+ 假模型流。
   // 守的是「库里只存写过消息的会话」这一条 —— 全新库不产生空壳、连点新建仍是 0 行、
   // 首条消息才落库、删/归档到一条不剩回草稿态、落库失败不留半截消息。
@@ -205,6 +208,9 @@ const META = {
   'e2e-chat-image': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-chat-mermaid': { service: 'preview', antd: true, testFile: true, base: true, timeout: 300, video: '/tmp/wangke-mermaid-test.mp4' },
+  // 流式表格：逐字符流下只挂完整行、流式期无展开入口；结束后 6 行预览、
+  // 展开 / 收起、复制 Markdown；手机端 Bottom Sheet 半屏 → 全屏 → 关闭。
+  'e2e-chat-table': { service: 'dev', antd: false, testFile: false, base: true, timeout: 300 },
   // 课程助手的两张生成式卡片（提问选方案 / 目录整理方案）+ 跨页继续。
   // 模型流是页内假的（addInitScript 换掉 window.fetch），所以既不依赖 SF_KEY 也不花时间。
   'e2e-course-chat-cards': { service: 'preview', antd: false, base: true, timeout: 300 },

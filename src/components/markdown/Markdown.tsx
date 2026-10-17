@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { XMarkdown, type ComponentProps, type XMarkdownProps } from '@ant-design/x-markdown';
 import { protectMath } from './math';
+import { MarkdownStreamingProvider } from './streaming';
 import { SourceImage, SourceImageLink } from '../MaterialImage';
 import './markdown.css';
 
@@ -47,10 +48,14 @@ export const Markdown = memo(function Markdown({ components, streaming, content,
   const hasNextChunk = !!streaming?.hasNextChunk;
   const protectedContent = useMemo(() => protectMath(source, hasNextChunk), [source, hasNextChunk]);
   const mergedComponents = useMemo(() => ({ ...SHARED_COMPONENTS, ...components }), [components]);
-  return <XMarkdown
-    {...props}
-    content={protectedContent}
-    components={mergedComponents}
-    streaming={streaming}
-  />;
+  return (
+    <MarkdownStreamingProvider value={hasNextChunk}>
+      <XMarkdown
+        {...props}
+        content={protectedContent}
+        components={mergedComponents}
+        streaming={streaming}
+      />
+    </MarkdownStreamingProvider>
+  );
 });
