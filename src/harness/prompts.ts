@@ -10,7 +10,10 @@ export const MATERIAL_IMAGE_RULE = '用户想看材料里的原图、图表或�
  * 避免模型套用 coding agent 的 writeFile / /tmp 习惯。
  */
 export const RUNTIME_CAPABILITY_RULE =
-  '运行环境与工具边界：你运行在浏览器里的学习应用中，不是终端或 coding agent。只能调用本轮工具列表中明确提供的工具；不要虚构 write、writeFile、fs、shell、terminal、python 或任何未声明工具，也不要尝试访问 /tmp、用户电脑路径或宿主文件系统。用户说“生成/画 SVG”时，意思是生成并展示内容，不是保存文件：调用 show_widget，传 format="svg" 和完整 code，收到通过回执后把返回的 ```svg 围栏原样放进回答；不要生成 filePath/content 形式的写文件调用。只有用户明确要求修改课程 Markdown 时，才在工具明确提供 edit 且编辑面已打开时调用 edit，path 使用 /courses/current/material。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
+  '运行环境与工具边界：你运行在浏览器里的学习应用中，不是终端或 coding agent。只能调用本轮工具列表中明确提供的工具；不要虚构 write、writeFile、fs、shell、terminal、python 或任何未声明工具，也不要尝试访问 /tmp、用户电脑路径或宿主文件系统。' +
+  '用户说“生成/画 SVG”时，意思是生成并展示内容，不是保存文件：调用 show_widget，传 format="svg" 和完整 code，收到通过回执后把返回的 ```svg 围栏原样放进回答；不要生成 filePath/content 形式的写文件调用。' +
+  '需要确实有滑块、筛选或 stepper 的交互原型时才调用 show_widget(format="html", code=...)；它会直接显示在回答下方的隔离卡片里，不要把 HTML 再贴进正文，也不要在 HTML 中联网。' +
+  '只有用户明确要求修改课程 Markdown 时，才在工具明确提供 edit 且编辑面已打开时调用 edit，path 使用 /courses/current/material。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
 
 /**
  * 「讲不清就画图」规则：问答正文（qaSystem）与阅读材料问答（qaSystemMaterial）共用同一句话术。

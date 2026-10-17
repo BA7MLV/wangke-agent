@@ -22,6 +22,8 @@ import type { ChatMessage } from '../api/siliconflow';
 import { askUserToolResult, askAnswerText, validateAskAnswer, type AskUserData, type AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
+import { readPartialWidgetArguments } from '../utils/streamingHtml';
+import type { WidgetPayload } from '../harness/widgetRuntime';
 
 /**
  * 课程助手的全局会话状态。
@@ -147,6 +149,10 @@ export interface CourseChatMessage {
   ask?: AskUserState;
   /** 目录整理方案卡 */
   folderPlan?: FolderPlanState;
+  /** 沙箱图形卡（show_widget 的 html 形态产出） */
+  widget?: WidgetPayload;
+  /** show_widget 参数尚未完整到达时的静态安全预览（不落库） */
+  widgetPreview?: { html: string };
 }
 
 /**
@@ -1098,6 +1104,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      */
     const toolCalls: ChatToolCall[] = [];
     let toolStartedAt = 0;
+    /** show_widget 的 HTML 参数流预览；只放静态净化预览，不落库、不执行脚本。 */
+    let widgetPreview: { html: string } | undefined;
     /** 实际跑过的轮数（`onRoundStart` 记的）。兜底文案只能印真实值，不能拿设置里的上限顶 */
     let roundsRan = 0;
     /**
@@ -1238,6 +1246,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         content: message.content,
         createdAt: Date.now(),
         reasoning: message.reasoning,
+        ...(message.widget ? { widget: message.widget } : {}),
         ...(message.ask ? { ask: message.ask } : {}),
         ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         resume: { toolName, toolCallId: call?.id ?? '', midTurn },
@@ -1266,6 +1275,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           row.content = message.content;
           if (message.reasoning) row.reasoning = message.reasoning;
           else delete row.reasoning;
+          if (message.widget) row.widget = message.widget;
+          else delete row.widget;
           if (message.ask) row.ask = message.ask;
           else delete row.ask;
           if (message.folderPlan) row.folderPlan = message.folderPlan;
@@ -1280,6 +1291,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           content: message.content,
           createdAt: Date.now(),
           reasoning: message.reasoning,
+          ...(message.widget ? { widget: message.widget } : {}),
           ...(message.ask ? { ask: message.ask } : {}),
           ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         })) as number;
@@ -1435,6 +1447,12 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
       const executeTool = createResourceExecutor({
         allowedSkillIds: view.skillIds,
+        onWidget: (w) => {
+          // 校验与文档预检通过后才切换到真正的隔离 iframe。流式中间帧
+          // 始终由 StreamingHtmlPreview 以静态白名单方式显示。
+          widgetPreview = undefined;
+          patchAi({ widget: w, widgetPreview: undefined });
+        },
         library: {
           contextCourseIds: contextCourses.map((course) => course.id),
           onContextChange: async (courses) => {
@@ -1483,13 +1501,21 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             if (answer.trim()) lastNarration = answer.trim();
             answer = '';
             roundsRan++;
-            patchAi({ content: '', hint: undefined });
+            widgetPreview = undefined;
+            patchAi({ content: '', hint: undefined, widgetPreview: undefined });
           },
           onToolStart: (name, argsJson) => {
             lastHint = toolHint(name, argsJson, '正在读取资料…');
             toolStartedAt = Date.now();
             toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
             patchAi({ hint: lastHint, tools: [...toolCalls] });
+          },
+          onToolCallDelta: (call) => {
+            if (call.name !== 'show_widget') return;
+            const partial = readPartialWidgetArguments(call.arguments);
+            if (partial.format !== 'html' || !partial.code) return;
+            widgetPreview = { html: partial.code.slice(0, 60_000) };
+            patchAi({ widgetPreview, hint: '正在生成交互图形…' });
           },
           onToolEnd: (name, result) => {
             // 顺序执行 ⇒ 正在跑的那条就是末尾那条（同一个工具可能被连调多次，不能按名字反查）
@@ -1503,6 +1529,12 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
                 ...(ms != null ? { ms } : {}),
               };
               patchAi({ tools: [...toolCalls] });
+            }
+            // 参数校验 / 安全预检失败，或参数因 token 截断而未执行，
+            // 都不能把半成品留在最终回答里。
+            if (name === 'show_widget') {
+              widgetPreview = undefined;
+              patchAi({ widgetPreview: undefined });
             }
             toolStartedAt = 0;
           },
@@ -1533,7 +1565,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       });
       /** 一帧都没来过就别记 0（那会让「已思考用时 0.0 秒」看着像 bug） */
       const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
-      patchAi({ content: finalAnswer, streaming: false, hint: undefined, reasoningMs });
+      patchAi({ content: finalAnswer, streaming: false, hint: undefined, reasoningMs, widgetPreview: undefined });
       // 落的是**当前这条**（`currentKey` 可能已经因提问/方案而轮换过一次），
       // 卡片状态也从 store 里这条消息读，而不是读闭包里的副本：用户可能在这期间点了选项
       // （ask.picked 变了）或确认了方案（applied 变了），那些更新只落在 store 上。
@@ -1547,6 +1579,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         reasoning: reasoning || undefined,
         reasoningMs,
         ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+        ...(finalMessage?.widget ? { widget: finalMessage.widget } : {}),
         ...(finalMessage?.ask ? { ask: finalMessage.ask } : {}),
         ...(finalMessage?.folderPlan ? { folderPlan: finalMessage.folderPlan } : {}),
       })) as number;
@@ -1558,6 +1591,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
        */
       if (abort.signal.aborted) {
         const partial = answer.trim() || lastNarration.trim();
+        const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
         // 停在思考中途照样计时：那正是用户中止时最想知道的一个数
         const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
         const bySteer = record.intent === 'steer';
@@ -1596,6 +1630,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             interrupted: true,
             interruptReason: STEER_INTERRUPT_REASON,
             reasoningMs,
+            widgetPreview: undefined,
           });
           // 先解锁输入再落库，理由同下面非 abort 那条
           writeView(turnKey, { loading: false });
@@ -1608,6 +1643,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoning: reasoning || undefined,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+            ...(currentWidget ? { widget: currentWidget } : {}),
             interrupted: true,
             interruptReason: STEER_INTERRUPT_REASON,
           })) as number;
@@ -1619,7 +1655,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
            * **必须落库**：停止之后这段内容要留住，否则刷新就没了，等于「停止」= 白生成一轮。
            */
           const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
-          patchAi({ streaming: false, hint: undefined, content, reasoningMs });
+          patchAi({ streaming: false, hint: undefined, content, reasoningMs, widgetPreview: undefined });
           // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
           writeView(turnKey, { loading: false });
           const rowId = (await db.chats.add({
@@ -1631,6 +1667,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoning: reasoning || undefined,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+            ...(currentWidget ? { widget: currentWidget } : {}),
           })) as number;
           patchAi({ rowId });
         }
@@ -1649,10 +1686,42 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
          */
         const reason = error instanceof Error ? error.message : String(error);
         const partial = answer.trim();
+        const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
         if (!partial) {
           // 一个字都没流出来（多半是请求压根没发出去）：没有可续写的东西，照旧报错。
           // 不落库 —— 一条空的 assistant 在历史里没有意义（发请求时也会被 messageHygiene 丢掉）。
-          patchAi({ streaming: false, hint: undefined, error: true, content: `回答失败：${reason}` });
+          if (currentWidget) {
+            // The widget is already a complete, validated answer even when the
+            // follow-up text request failed. Keep it as a resumable assistant
+            // row instead of leaving a successful tool result only in memory.
+            patchAi({
+              streaming: false,
+              hint: undefined,
+              content: '',
+              interrupted: true,
+              interruptReason: reason,
+              reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
+              widgetPreview: undefined,
+            });
+            writeView(turnKey, { loading: false });
+            const rowId = (await db.chats.add({
+              videoId: LIBRARY_ASSISTANT_ID,
+              sessionId: turnKey,
+              role: 'assistant',
+              content: '',
+              createdAt: Date.now(),
+              reasoning: reasoning || undefined,
+              ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+              widget: currentWidget,
+              interrupted: true,
+              interruptReason: reason,
+            })) as number;
+            patchAi({ rowId });
+          } else {
+            // 一个字都没流出来（多半是请求压根没发出去）：没有可续写的东西，照旧报错。
+            // 不落库 —— 一条空的 assistant 在历史里没有意义（发请求时也被丢掉）。
+            patchAi({ streaming: false, hint: undefined, error: true, content: `回答失败：${reason}` });
+          }
         } else {
           // 停在思考中途照样计时：那正是用户最想知道的一个数（与停止那条同款）
           const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
@@ -1663,6 +1732,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             interrupted: true,
             interruptReason: reason,
             reasoningMs,
+            widgetPreview: undefined,
           });
           // 先解锁输入再落库：落库要一次 IndexedDB 往返，等它落完才解锁会让用户干等
           writeView(turnKey, { loading: false });
@@ -1675,6 +1745,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoning: reasoning || undefined,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+            ...(currentWidget ? { widget: currentWidget } : {}),
             interrupted: true,
             interruptReason: reason,
           })) as number;
@@ -2419,6 +2490,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
     interruptReason: row.interruptReason,
     ask: row.ask,
     folderPlan: row.folderPlan,
+    widget: row.widget,
   };
 }
 

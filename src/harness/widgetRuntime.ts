@@ -32,7 +32,7 @@
  * 3. **只内联自带库**：CDN 全部禁掉（`default-src 'none'` 且无任何外部来源），
  *    Chart.js 由宿主把源码**内联**进去。第三方 CDN 既是供应链面，也是绕过 CSP 的洞。
  *
- * 与宿主的唯一通道是 `postMessage`，且宿主侧会校验 `event.source === iframe.contentWindow`，
+ * 与宿主的唯一通道是 `postMessage`，且宿主侧会校验 iframe window 与 opaque origin，
  * 拿到的只是一个字符串（prompt 文本）或一个数字（高度）。
  */
 
@@ -130,6 +130,9 @@ const CSP = [
   // 断掉一切外发通道：fetch / XHR / WebSocket / sendBeacon 全废。
   // 这条是「投毒的字幕不能把数据搬走」的最后一道闸。
   "connect-src 'none'",
+  // connect-src 不管 document navigation；支持该 CSP 指令的浏览器也会禁止
+  // widget 自己导航到外部页面。参数校验还会在更早一层挡住导航 API。
+  "navigate-to 'none'",
   "frame-src 'none'",
   "child-src 'none'",
   "form-action 'none'",

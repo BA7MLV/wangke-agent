@@ -1,0 +1,8 @@
+{
+  "compilerOptions": {
+    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
+    "outDir": "dist-api", "rootDir": ".", "strict": true, "esModuleInterop": true,
+    "skipLibCheck": true, "types": ["node"], "composite": true
+  },
+  "include": ["apps/api/src/**/*.ts", "packages/contracts/src/**/*.ts"]
+}

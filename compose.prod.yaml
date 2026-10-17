@@ -1,0 +1,27 @@
+services:
+  app:
+    environment:
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to the public HTTPS URL}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:?Set WEBAUTHN_RP_ID to the public hostname}"
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_healthy
+    environment:
+      DOMAIN: "${DOMAIN:?Set DOMAIN to the public hostname}"
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  caddy_data:
+  caddy_config:

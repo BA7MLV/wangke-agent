@@ -13,6 +13,10 @@ import './streaming-html-preview.css';
  */
 interface Props {
   html: string;
+  /** Show the live-generation indicator. Tool previews use the default. */
+  isStreaming?: boolean;
+  /** Accessible status shown while a normal assistant HTML answer is parsing. */
+  statusText?: string;
 }
 
 const ALLOWED_TAGS = [
@@ -101,7 +105,11 @@ class StreamingHtmlRenderer {
   }
 }
 
-export default function StreamingHtmlPreview({ html }: Props) {
+export default function StreamingHtmlPreview({
+  html,
+  isStreaming = true,
+  statusText = '正在生成交互图形',
+}: Props) {
   const frozenRef = useRef<HTMLDivElement>(null);
   const liveRef = useRef<HTMLDivElement>(null);
   const rendererRef = useRef<StreamingHtmlRenderer | null>(null);
@@ -129,11 +137,17 @@ export default function StreamingHtmlPreview({ html }: Props) {
   }, [html]);
 
   return (
-    <div className="widget-stream-preview" data-testid="widget-stream-preview" aria-busy="true">
-      <div className="widget-stream-preview__status" role="status" aria-live="polite">
-        <span className="widget-stream-preview__dot" aria-hidden="true" />
-        正在生成交互图形
-      </div>
+    <div
+      className="widget-stream-preview"
+      data-testid="widget-stream-preview"
+      aria-busy={isStreaming || undefined}
+    >
+      {isStreaming && (
+        <div className="widget-stream-preview__status" role="status" aria-live="polite">
+          <span className="widget-stream-preview__dot" aria-hidden="true" />
+          {statusText}
+        </div>
+      )}
       <div ref={frozenRef} className="widget-stream-preview__frozen" />
       <div ref={liveRef} className="widget-stream-preview__live" />
     </div>

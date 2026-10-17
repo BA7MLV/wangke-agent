@@ -3,8 +3,9 @@
  *
  * ## 这个工具到底做什么（名字有误导性，先说清）
  *
- * 它**不渲染**任何东西。图形真正上屏靠的是回答正文里的 ```svg / ```mermaid / ```diagram 围栏，
- * 由 `components/mermaid/` 在渲染 Markdown 时接管。这个工具只做一件事：
+ * svg / mermaid / diagram **不由工具直接渲染**：它们真正上屏靠回答正文里的围栏，
+ * 由 `components/mermaid/` 在渲染 Markdown 时接管。html 则是例外：它会先构造隔离文档，
+ * 通过后由调用方把载荷交给 `WidgetBlock`。工具的共同职责是：
  *
  *   把模型写好的源码**先过一遍真正的渲染管线**（svg 走 `sanitizeSvg`、mermaid 走
  *   `renderMermaid` 的 parse、diagram 走 `validateDiagram` + `renderDiagram`），
@@ -16,12 +17,13 @@
  * **回退成显示源码** —— 用户在回答里看到一坨 XML，问题却不在他那一侧。
  * 模型如果能在这里就拿到可执行的报错并重试，用户根本不会撞上那个降级。
  *
- * ## 为什么不做成「渲染成卡片」
+ * ## 为什么图形围栏不做成「渲染成卡片」
  *
  * 卡片（present_quiz / ask / folderPlan）都挂在 `<XMarkdown>` **之后**渲染
  * （见 ChatPanel），图只能掉在整段回答末尾。而出图规范要求「图的前后各用一句
  * 说明，不要只丢一张图」「图与图之间要有正文过渡」—— 图必须活在正文里才做得到，
- * 唯一的载体就是围栏。所以这个工具刻意不建第二条渲染通道。
+ * 唯一的载体就是围栏。所以 svg / mermaid / diagram 刻意不建第二条渲染通道；
+ * html 是必须执行脚本的交互例外，才使用独立沙箱卡片。
  */
 
 import type { WidgetLib } from './widgetRuntime';
@@ -79,7 +81,7 @@ export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
       return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_HTML}）。只画图，不要把正文塞进来` };
     // 文档外壳由宿主的 runtime 统一提供。模型自己套一层会让 CSP 与桥接脚本的注入位置失控，
     // 所以这里直接拒掉并说清正确写法，而不是默默剥掉。
-    if (/<\s*(?:!doctype|html|head|body)\b/i.test(code))
+    if (/<\s*\/?\s*(?:!doctype|html|head|body)\b/i.test(code))
       return {
         ok: false,
         error: 'html 形态只给**片段**：不要写 <html>/<head>/<body>/DOCTYPE，外壳由宿主提供',
@@ -88,8 +90,29 @@ export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
     // 而不是让模型对着一个「空白图 + connect-src 报错」瞎猜。
     if (/<\s*script[^>]+src\s*=/i.test(code))
       return { ok: false, error: '不要用 <script src> 引外部脚本：外部网络已被禁用。需要库时改用 libs 参数（如 libs: ["chart.js"]）' };
-    if (/(?:src|href)\s*=\s*["']\s*(?:https?:)?\/\//i.test(code))
-      return { ok: false, error: '不要引用外部资源（http(s) 开头的 src/href）：外部网络已被禁用' };
+    // 交互统一走 data-wbw-prompt，不开放链接导航；图片只允许内联 data:image。
+    // 这比只拦 http(s) 更保守，也挡住 HTML entity / 混合大小写绕过协议黑名单的变体。
+    const urlAttr = /(?:^|[\s<])(src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))/gi;
+    for (const match of code.matchAll(urlAttr)) {
+      const attr = match[1].toLowerCase();
+      const value = match[2] ?? match[3] ?? match[4] ?? '';
+      if (value.includes('&'))
+        return { ok: false, error: 'src/href 不要使用 HTML entity；图片用原始 data:image，交互请使用 data-wbw-prompt' };
+      if (attr === 'href' && !value.startsWith('#'))
+        return { ok: false, error: 'html 形态不支持外部链接或链接导航；交互请使用 data-wbw-prompt' };
+      if (attr === 'src' && !/^data:image\//i.test(value))
+        return { ok: false, error: 'src 只允许内联 data:image；不要引用外部资源，交互请使用 data-wbw-prompt' };
+    }
+    // CSP 的 navigate-to 在部分 Chromium 版本里不会阻止 sandbox 文档导航，
+    // 所以再挡住脚本里最直接的导航 API。widget 的交互桥只需要 DOM、计时器和
+    // window.__wbw，不需要 location / window.open；宁可让模型删掉这段，也不把
+    // 课程内容放进 URL 交给外部站点。
+    const scriptBody = /<\s*script\b[^>]*>([\s\S]*?)(?:<\s*\/\s*script\s*>|$)/gi;
+    for (const match of code.matchAll(scriptBody)) {
+      const body = match[1] ?? '';
+      if (/\blocation\b|(?:window|globalThis|document|self|top|parent)\s*(?:\.\s*(?:open|location)|\[\s*["'](?:open|location)["']\s*\])/i.test(body))
+        return { ok: false, error: '脚本不能导航窗口或打开外部页面（location / window.open）；交互请使用 data-wbw-prompt' };
+    }
 
     const libs = normalizeLibs(a.libs);
     if (!libs.ok) return libs;

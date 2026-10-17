@@ -16,6 +16,69 @@ const VOID_TAGS = new Set([
   'param', 'source', 'track', 'wbr',
 ]);
 
+/**
+ * Tags that are plausible roots of a model-generated HTML answer.
+ *
+ * This is intentionally a positive list.  A sentence such as `2 < 3` or a
+ * Markdown autolink must continue through the Markdown renderer; only a
+ * message that starts like an HTML fragment is routed to the HTML preview.
+ */
+const HTML_ROOT_TAGS = new Set([
+  'a', 'article', 'aside', 'b', 'blockquote', 'body', 'button', 'caption', 'code',
+  'col', 'colgroup', 'dd', 'details', 'dialog', 'div', 'dl', 'dt', 'em', 'fieldset',
+  'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header',
+  'hr', 'html', 'img', 'input', 'label', 'li', 'main', 'nav', 'ol', 'p', 'pre',
+  'section', 'select', 'small', 'span', 'strong', 'summary', 'table', 'tbody', 'td',
+  'textarea', 'tfoot', 'th', 'thead', 'tr', 'ul',
+]);
+
+/**
+ * Decide whether an assistant message should use the HTML preview path.
+ *
+ * The normal answer renderer is Markdown.  Raw HTML needs a separate path so
+ * incomplete tags do not get displayed as source text while a response is
+ * streaming.  We only switch when the first meaningful token is a recognised
+ * HTML root (or a doctype/html shell); Markdown prose and fenced code remain
+ * untouched.
+ */
+export function looksLikeStreamingHtml(source: string): boolean {
+  const text = source.trimStart();
+  if (!text) return false;
+  if (readFencedHtml(text) !== undefined) return true;
+  return looksLikeRawHtml(text);
+}
+
+/**
+ * Return only the HTML payload for a raw or fenced HTML answer.
+ *
+ * Fenced HTML is common when a model was not instructed to use the widget
+ * tool.  It is still an HTML answer, not something the user should have to
+ * copy-paste into a browser.  Other fenced languages deliberately return
+ * `undefined` and remain code blocks.
+ */
+export function htmlPreviewSource(source: string): string | undefined {
+  const text = source.trimStart();
+  if (!text) return undefined;
+  const fenced = readFencedHtml(text);
+  return fenced ?? (looksLikeRawHtml(text) ? source : undefined);
+}
+
+function looksLikeRawHtml(text: string): boolean {
+  if (text.startsWith('```') || text.startsWith('~~~')) return false;
+  if (/^<!doctype\s+html(?:\s|>|$)/i.test(text)) return true;
+  if (/^<!--(?:.|\n)*?(?:-->|$)/.test(text)) return true;
+  const opening = /^<([A-Za-z][\w:-]*)(?:\s[^<>]*|\s*\/?>|$)/.exec(text);
+  return !!opening && HTML_ROOT_TAGS.has(opening[1].toLowerCase());
+}
+
+function readFencedHtml(text: string): string | undefined {
+  const match = /^(`{3,}|~{3,})[ \t]*(?:html|htm)[ \t]*(?:\r?\n|$)([\s\S]*)$/i.exec(text);
+  if (!match) return undefined;
+  const marker = match[1];
+  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return match[2].replace(new RegExp(`\\r?\\n${escaped}[ \\t]*$`), '');
+}
+
 export interface StreamingHtmlSplit {
   /** Raw prefix ending at the latest complete top-level element. */
   stableEnd: number;

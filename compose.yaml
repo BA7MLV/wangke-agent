@@ -1,0 +1,38 @@
+services:
+  app:
+    user: "${WANGKE_UID:-1000}:${WANGKE_GID:-1000}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "${WANGKE_IMAGE:-wangke-agent:0.1.0}"
+    restart: unless-stopped
+    environment:
+      APP_VERSION: "${APP_VERSION:-0.1.0}"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      DATA_DIR: /data
+      DB_PATH: /data/db/wangke.sqlite
+      BOOTSTRAP_SECRET_FILE: /data/config/bootstrap-secret
+      BOOTSTRAP_TTL_MS: "${BOOTSTRAP_TTL_MS:-900000}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:${PORT:-3000}}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
+      WEBAUTHN_RP_NAME: "${WEBAUTHN_RP_NAME:-Wangke Agent}"
+      MODEL_BASE_URL: "${MODEL_BASE_URL:-https://api.openai.com/v1}"
+      MODEL_API_KEY: "${MODEL_API_KEY:-}"
+      MODEL_NAME: "${MODEL_NAME:-gpt-4o-mini}"
+      MODEL_TIMEOUT_MS: "${MODEL_TIMEOUT_MS:-30000}"
+      MAX_FILE_BYTES: "${MAX_FILE_BYTES:-52428800}"
+    ports:
+      - "${WANGKE_BIND_HOST:-0.0.0.0}:${PORT:-3000}:3000"
+    volumes:
+      - "${WANGKE_HOST_DATA_DIR:-./data}:/data"
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

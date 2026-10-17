@@ -29,6 +29,8 @@ import { db } from '../store/db';
 import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
+import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
+import WidgetBlock from '../components/WidgetBlock';
 import ContextUsageButton from '../components/ContextUsageButton';
 import { useContextCompression } from '../components/useContextCompression';
 import { EMPTY_COMPRESSION, retainedContext, useContextCompressionStore } from '../store/contextCompression';
@@ -45,7 +47,8 @@ import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { prefersReducedMotion } from '../utils/motion';
 import { useMediaQuery, useViewportResize } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
-import { confirmDialog, PageShell, promptDialog, Sym, toast, useSkeletonGate } from '../ui';
+import { htmlPreviewSource } from '../utils/streamingHtml';
+import { confirmDialog, PageShell, promptDialog, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
 
@@ -660,6 +663,7 @@ export default function CourseChat() {
   /** 上下文窗口（输入 + 输出的总容量）：用量环的分母，也是历史裁剪的预算来源 */
   const ctxWin = useSettings((s) => s.contextWindow);
   const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
+  const widgetDark = useResolvedDark(useSettings((s) => s.theme));
   const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   /**
    * 本轮技能元数据清单（`- 名称：用途` 的单行块）。
@@ -1270,6 +1274,7 @@ export default function CourseChat() {
             </div>}
             {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}>{(message, index) => {
               const user = message.role === 'user';
+              const htmlPreview = !user ? htmlPreviewSource(message.content) : undefined;
               /**
                * 「重新生成」只对**最后一条**完整回答成立：改历史中间的一步要用「分支」
                * （删掉它后面所有消息是一次不可见的批量删除，用户会看到一条会话凭空少一段）。
@@ -1318,13 +1323,15 @@ export default function CourseChat() {
                         )}
                         {/* 状态行只在「还没有卡片要用户处理」时出现：提问卡挂着的时候，
                             卡片本身就是「等你」的提示，再叠一行转圈的「等你选一个…」是重复 */}
-                        {message.hint && !message.content && !message.ask && !message.folderPlan && (
+                        {message.hint && !message.content && !message.ask && !message.folderPlan
+                          && !message.widget && !message.widgetPreview && (
                           <ThinkLine text={message.hint} />
                         )}
                         {/* 待回复：提问刚刚上屏、首个 token 还没来，且思考/工具都还没开始的纯等待窗口。
                             有思考链（28 思考态）或状态行时它们已经在表示「在动」，这里就不重复。 */}
                         {message.streaming && !message.content && !message.reasoning && !message.hint
-                          && !message.ask && !message.folderPlan && <PendingReply />}
+                          && !message.ask && !message.folderPlan && !message.widget && !message.widgetPreview
+                          && <PendingReply />}
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
                             「先给结论、下面才是问题」。 */}
@@ -1346,29 +1353,47 @@ export default function CourseChat() {
                           </div>
                         )}
                         {message.content && !message.error && (
-                          <XMarkdown
-                            content={message.content}
-                            components={{
-                              a: CourseLink,
-                              p: StreamParagraph,
-                              code: MarkdownCode,
-                              pre: MarkdownPre,
-                              table: MarkdownTable,
-                            }}
-                            streaming={{
-                              hasNextChunk: !!message.streaming,
-                              /**
-                               * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
-                               * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
-                               * 文字一起长，正好落在下一个字符将出现的位置。
-                               *
-                               * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
-                               * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
-                               * 这里传 `false` 就是显式关掉。
-                               */
-                              tail: message.streaming ? { component: StreamTailCircle } : false,
-                            }}
+                          htmlPreview !== undefined ? (
+                            <StreamingHtmlPreview
+                              html={htmlPreview}
+                              isStreaming={!!message.streaming}
+                              statusText="正在解析 HTML"
+                            />
+                          ) : (
+                            <XMarkdown
+                              content={message.content}
+                              components={{
+                                a: CourseLink,
+                                p: StreamParagraph,
+                                code: MarkdownCode,
+                                pre: MarkdownPre,
+                                table: MarkdownTable,
+                              }}
+                              streaming={{
+                                hasNextChunk: !!message.streaming,
+                                /**
+                                 * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
+                                 * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
+                                 * 文字一起长，正好落在下一个字符将出现的位置。
+                                 *
+                                 * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
+                                 * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
+                                 * 这里传 `false` 就是显式关掉。
+                                 */
+                                tail: message.streaming ? { component: StreamTailCircle } : false,
+                              }}
+                            />
+                          )
+                        )}
+                        {message.widget && (
+                          <WidgetBlock
+                            payload={message.widget}
+                            dark={widgetDark}
+                            onPrompt={(text) => void send(text)}
                           />
+                        )}
+                        {!message.widget && message.widgetPreview && (
+                          <StreamingHtmlPreview html={message.widgetPreview.html} />
                         )}
                         {/* 操作行与来源都只在**这一轮写完**之后出现：流式进行中时正文还在变，
                             这两个块的计数与内容每一帧都不一样，闪得人没法读。 */}

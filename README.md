@@ -14,8 +14,8 @@
 ![React](https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=white)
 ![TypeScript](https://img.shields.io/badge/TypeScript-5.9-3178C6?logo=typescript&logoColor=white)
 ![Vite](https://img.shields.io/badge/Vite-5-646CFF?logo=vite&logoColor=white)
-![Local first](https://img.shields.io/badge/local--first-data_stays_on_device-2E7D32)
-![Platform](https://img.shields.io/badge/platform-iPad_Mobile_Desktop-455A64)
+![Docker](https://img.shields.io/badge/Docker-Linux-2496ED?logo=docker&logoColor=white)
+![Platform](https://img.shields.io/badge/platform-Web_Mobile_Desktop-455A64)
 
 [快速开始](#-快速开始) · [使用指南](#-使用指南) · [开发流程](#-开发流程) · [功能一览](#-功能一览) · [参考](#-参考)
 
@@ -29,7 +29,7 @@
 
 1. **遵守平台协议** —— 视频导入（含 B 站通道）与字幕获取依赖第三方平台的公开接口。使用者须自行确保其使用方式符合该平台的用户协议与所在地法律法规。作者不支持、也不鼓励任何形式的批量抓取、绕过权限或内容再分发。
 2. **尊重版权** —— 本项目不提供、不分发任何课程内容。请勿使用它下载或传播付费课程、会员专享及其他受版权保护的内容，由此产生的一切后果由使用者自行承担。
-3. **数据不出本机** —— 视频、字幕、讲义与设置（含 API Key 与平台 Cookie）全部保存在浏览器本地存储中，作者不收集、不上传任何用户数据。分享导出文件前请先确认其中不含自己的凭据。**唯一例外是 HTML 材料**：按原文档渲染时会去取它自己引用的远程图片 / 样式 / 字体（见下方「HTML 材料」），设置页可一键关掉。
+3. **数据由本地 Linux 服务保存** —— Docker volume 中保存数据库、文件和账号数据；模型 API Key 只配置在服务端环境，不返回浏览器、不进入二维码或普通日志。**唯一例外是 HTML 材料**：按原文档渲染时会去取它自己引用的远程图片 / 样式 / 字体（见下方「HTML 材料」），设置页可一键关掉。
 4. **API 费用自担** —— 转写、讲义与问答均调用第三方模型 API（默认硅基流动），产生的费用与账号风险由使用者承担。
 5. **按原样提供** —— 本软件按「原样」提供，不附带任何明示或默示担保；因使用本软件造成的直接或间接损失，作者不承担责任。
 
@@ -53,15 +53,15 @@ flowchart LR
     QA --> ASK["✍️ 划词 / 框选 / 截图提问 · 出题"]
 ```
 
-**关键约束：全部在浏览器里跑，没有后端。** 视频存 OPFS、字幕与正文存 IndexedDB、设置存 localStorage，唯一出网的是发给模型 API 的文本与音频片段。所以它能装到 iPad 主屏、断网也能翻讲义。
+**运行形态：Linux Docker 服务端 + 薄客户端。** 普通课程聊天仍保留原有聊天窗口；Bot 工作空间由后端持久化线程、运行状态和结构化消息，浏览器只通过版本化 API/SSE 交互。课程材料的本地缓存仍可使用 IndexedDB/OPFS，服务端数据以 Docker volume 为权威存储。
 
 ```mermaid
 flowchart TB
     UI["界面层 · React 19 + MD3 / mdui<br/>课程库 · 播放器 · 学习 · 设置"]
     PIPE["流水线层 · pipelines/<br/>转写 · 讲义 · 弹幕 · 制卡<br/>重试 / 并发池 / 断点续做"]
     AGENT["agent 层 · harness/<br/>function calling 检索工具"]
-    STORE["本机存储<br/>OPFS（视频）· IndexedDB（字幕/讲义/正文/时长）· localStorage（设置）"]
-    API["硅基流动 API<br/>ASR · 文本 · 视觉"]
+    STORE["Linux 服务存储<br/>SQLite WAL · 文件卷 · 备份"]
+    API["版本化 API<br/>认证 · 消息 · Agent · SSE"]
     UI --> PIPE --> AGENT
     PIPE --> STORE
     AGENT --> STORE
@@ -96,14 +96,51 @@ flowchart TB
 | | |
 |---|---|
 | **Node.js** | 22+（两个代码生成器用 Node 原生剥类型直接读 `.ts`，需要 22.6+） |
-| **API Key** | [硅基流动](https://cloud.siliconflow.cn/) 注册后申请，用于 ASR / 文本 / 视觉三类模型 |
+| **模型凭据** | 配置在 Linux Docker 服务的 `.env`；不会放进浏览器 |
 | **浏览器** | Chrome / Edge / Safari。PWA 安装与离线需要 HTTPS 或 localhost |
 
-### 跑起来
+### 跑起来（Linux Docker）
+
+推荐使用一键安装脚本：
+
+```bash
+git clone --branch v0.1.0 https://github.com/BA7MLV/wangke-agent.git
+cd wangke-agent
+./install.sh
+```
+
+离线或源码目录安装：
+
+```bash
+./install.sh --data-dir "$HOME/.wangke-agent" --port 3000
+```
+
+脚本会检查 Docker、创建带权限保护的数据目录、生成一次性 Bootstrap Secret、构建并启动服务。重复执行会保留数据库、文件和已有配置；初始化 secret 只在初始化前有效。首次进入 `/bot` 完成管理员初始化，模型密钥写入安装目录的 `.env`，只由 API 容器读取。
+
+安装后可用管理入口（不依赖 systemd）：
+
+```bash
+~/.wangke-agent/bin/wangke-agent status
+~/.wangke-agent/bin/wangke-agent logs -f
+~/.wangke-agent/bin/wangke-agent restart
+~/.wangke-agent/bin/wangke-agent update
+~/.wangke-agent/bin/wangke-agent backup
+```
+
+也可直接执行 `scripts/backup.sh --data-dir DIR --output-dir DIR`。备份包含 `data/db`（SQLite 主库及 WAL/SHM）、`data/files`、`data/config`、校验清单和受 `0600` 保护的 `.env`，文件名带 UTC 时间戳。Compose 服务运行时备份脚本会先短暂停止服务，复制后再启动，以避免 SQLite WAL 处于不一致状态；因此请预留短暂不可用时间。恢复必须显式指定目录：
+
+```bash
+scripts/restore.sh --data-dir "$HOME/.wangke-agent" backups/wangke-agent-YYYYmmddTHHMMSSZ.tar.gz
+```
+
+恢复前会自动生成当前数据备份，只接受上述白名单路径，并拒绝绝对路径、路径穿越和符号链接。恢复完成后按提示使用管理入口启动服务。若 Compose 文件不在源码目录，可为管理入口传 `--compose-file /path/to/compose.yaml`，或设置 `WANGKE_COMPOSE_FILE`。
+
+本地前端/API 开发：
 
 ```bash
 npm install
 npm run dev        # http://localhost:5173（已带 --host，局域网可访问）
+npm run dev:api    # 另一个终端启动 API（开发时使用）
 ```
 
 iPad 访问 `http://<Mac 的局域网 IP>:5173` 即可（同一 Wi-Fi）。
@@ -113,14 +150,28 @@ npm run build      # tsc -b + vite build → dist/
 npm run preview    # 本地预览生产构建（端口 4173）
 ```
 
+服务端构建和启动：
+
+```bash
+docker compose up -d --build
+curl http://localhost:3000/api/v1/health
+```
+
 > [!WARNING]
 > 非 localhost 的 `http://` 不是安全上下文：`crypto.randomUUID` 等 API 会缺失（代码里已降级，不会崩），但 **Service Worker / PWA 装不上**。要完整验证 PWA 行为，请走 HTTPS 托管。
+
+### 普通聊天与 Bot 工作空间
+
+- `/chat`（默认首页）保留普通聊天窗口，适合课程问答、Markdown、引用和现有工具状态。
+- `/bot` 是独立的 Bot 工作空间：线程、消息气泡、结构化进度/附件/提问/审批消息、SSE 断线恢复和后端持久运行。
+- Bot API 支持 Agent profile、线程参与者、`@提及`、消息反应和可恢复审批；审批结果会恢复对应的 Agent run。
+- Bot 模型通过 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME` 配置在服务端；没有配置密钥时不会访问外部模型，会返回安全的失败状态。
 
 ### 首次配置（必做）
 
 打开「设置」页（`/#/settings`）：
 
-1. 填 **API Key** —— 只存本机 `localStorage`，不上传
+1. 普通课程聊天的历史设置仍可从原设置页管理；服务端 Bot 的模型 Key 应配置在 Linux 安装目录 `.env`，不填入前端页面
 2. 点 **「检查模型可用性」** —— 拉取模型列表，并逐个核对四个槽位是否还在架上。拉回来的列表**按 API 地址缓存在本机**（24 小时 TTL），下次打开设置**先用缓存填上候选**、过期了再后台静默重拉，不必每次重开面板都手动点一遍
 3. 三个槽位（ASR / 文本 / 视觉）默认值见 [默认模型](#默认模型)，可在「模型配置」里改
 4. 「模型收藏夹」里勾选的模型会出现在各面板头部下拉中（面板级切换模型）
@@ -133,18 +184,28 @@ npm run preview    # 本地预览生产构建（端口 4173）
 
 ### 部署
 
-`dist/` 是纯静态产物，扔到任意静态托管即可。
+生产部署统一使用 Linux Docker Compose，由 API 同源托管前端静态文件；不要把 `dist/` 单独部署后再让浏览器直连模型服务。
 
 > [!IMPORTANT]
 > 应用依赖 `Cross-Origin-Opener-Policy` + `Cross-Origin-Embedder-Policy` 才能拿到 `crossOriginIsolated`（VAD 用 SharedArrayBuffer 多线程跑）。仓库里 `public/_headers` 已写好这两条。
 >
-> - **Netlify / Cloudflare Pages** —— 认 `_headers`，开箱即用
-> - **Vercel** —— 需自己在 `vercel.json` 里配同样的 `headers`
-> - **GitHub Pages** —— 不支持自定义响应头，VAD 退化为单线程（可用，只是慢）
+> HTTPS 反向代理（Caddy/Nginx）应放在 Docker 服务前面；公网启用 Passkey 前必须配置 HTTPS `PUBLIC_ORIGIN`。
 
 ```bash
-npx serve dist          # Mac 上快速试，然后 iPad Safari 打开局域网 IP
+docker compose up -d --build
 ```
+
+公网 HTTPS 可在 DNS 已指向服务器后使用 Caddy 覆盖配置：
+
+```bash
+DOMAIN=agent.example.com \\
+PUBLIC_ORIGIN=https://agent.example.com \\
+WEBAUTHN_RP_ID=agent.example.com \\
+WANGKE_BIND_HOST=127.0.0.1 \\
+docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+```
+
+Caddy 会自动申请和续期证书；公网部署不要把 Passkey 配置成 HTTP Origin。生产 Compose 的 `app` 只绑定本机回环地址，外部流量经 HTTPS 代理进入。
 
 iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA，离线外壳才生效。
 
@@ -154,10 +215,11 @@ iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA
 |---|---|
 | 视频文件 | OPFS（流式写入，导入带进度） |
 | 元数据 / 字幕 / 讲义 / 正文 / 学习时长 | IndexedDB（Dexie） |
-| 设置 / API Key | `localStorage` |
+| 浏览器界面设置缓存 | `localStorage`（仅缓存非服务端凭据） |
+| Bot 模型 API Key | Linux 安装目录 `.env`，仅 API 容器读取 |
 
 > [!CAUTION]
-> **清除站点数据 = 全部丢失**，没有云端副本。Safari 普通标签页里连续 7 天没打开，系统可能自动清理已导入的数据 —— 添加到主屏幕（PWA）可缓解。
+> Docker volume 是服务端权威数据；删除 volume 会删除服务端数据库和文件。浏览器缓存可以清除后重新从 API 获取，仍建议定期执行备份脚本。
 
 ---
 

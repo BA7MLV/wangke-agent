@@ -1,5 +1,6 @@
 node_modules
 dist
+dist-api
 dist-ssr
 # 用 --outDir 试构建时留下的产物目录（pdfjs 资源 + sw.js），不是源码
 dist-build
@@ -12,6 +13,7 @@ dist-skel
 data
 .env
 .env.*
+!.env.example
 scripts/.cache
 scripts/out
 .playwright-browsers

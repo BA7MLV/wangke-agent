@@ -16,7 +16,8 @@ import { buildWidgetDocument, WIDGET_MSG, type WidgetPayload } from '../harness/
  * ## 宿主只做两件事
  *
  * 收高度（决定 iframe 高度）、收 prompt（把用户点击转成新一轮提问）。
- * 两者都会校验 `event.source === iframe.contentWindow`，所以别的页面伪造同名消息无效。
+ * 两者都会校验 `event.source === iframe.contentWindow` 与 opaque origin
+ * `event.origin === "null"`，所以外部页面不能伪造同名消息。
  */
 
 interface Props {
@@ -38,6 +39,8 @@ export default function WidgetBlock({ payload, dark, onPrompt }: Props) {
 
   useEffect(() => {
     let cancelled = false;
+    setDoc('');
+    setFailed('');
     buildWidgetDocument(payload)
       .then((d) => !cancelled && setDoc(d))
       .catch((e) => !cancelled && setFailed(e instanceof Error ? e.message : String(e)));
@@ -52,8 +55,10 @@ export default function WidgetBlock({ payload, dark, onPrompt }: Props) {
 
   const onMessage = useCallback(
     (e: MessageEvent) => {
-      // 只认「自己那个 iframe」发来的消息，且只认约定的形状
-      if (!frameRef.current || e.source !== frameRef.current.contentWindow) return;
+      // 只认「自己那个 iframe」发来的消息，且只认 opaque origin。
+      // 只校验 source 不够：iframe 自己导航到外部页面后 contentWindow
+      // 仍然相同，外部页面可能伪造同名消息；opaque sandbox 的 origin 必须是 "null"。
+      if (e.origin !== 'null' || !frameRef.current || e.source !== frameRef.current.contentWindow) return;
       const d = e.data as { __wbw?: string; payload?: unknown } | null;
       if (!d || typeof d.__wbw !== 'string') return;
 
@@ -75,7 +80,13 @@ export default function WidgetBlock({ payload, dark, onPrompt }: Props) {
   }, [onMessage]);
 
   // 主题直接随 srcdoc 首屏注入，不靠消息通道 —— 省一次往返，也少一个能被伪造的面
-  const themed = useMemo(() => doc.replace('<body>', `<body data-wbw-theme="${dark ? 'dark' : 'light'}">`), [doc, dark]);
+  // The runtime stylesheet scopes dark colors to html[data-wbw-theme]. Keep
+  // the marker on the document root rather than body so it matches that
+  // contract (and so a widget's own body markup cannot shadow it).
+  const themed = useMemo(
+    () => doc.replace('<html lang="zh-CN">', `<html lang="zh-CN" data-wbw-theme="${dark ? 'dark' : 'light'}">`),
+    [doc, dark],
+  );
 
   if (failed) {
     return (

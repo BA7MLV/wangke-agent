@@ -185,22 +185,24 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
 };
 
 /**
- * 图形预检：把写好的 SVG / mermaid 先过一遍**真正的渲染管线**，通过才回一段围栏文本。
+ * 图形预检：把写好的 SVG / mermaid / diagram 先过一遍**真正的渲染管线**；HTML
+ * 则在隔离文档构造成功后交给 WidgetBlock。通过才给模型成功回执。
  *
- * ⚠️ 它不渲染。图真正上屏靠回执里那段围栏 —— 模型把它放进回答正文，
- * 由 components/mermaid/ 在渲染 Markdown 时接管。所以这个工具的价值是
- * **把「净化失败静默降级成显示源码」提前成一次可重试的工具报错**。
+ * ⚠️ svg / mermaid / diagram 不直接渲染：图真正上屏靠回执里的围栏 —— 模型把它放进回答正文，
+ * 由 components/mermaid/ 在渲染 Markdown 时接管。HTML 是需要脚本的交互例外，才走独立沙箱。
+ * 共同价值是把渲染失败提前成一次可重试的工具报错。
  *
  * 详见 ./widget.ts 顶部的说明（含「为什么不做成卡片」）。
  */
-const SHOW_WIDGET_TOOL: ToolDef = {
+export const SHOW_WIDGET_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'show_widget',
     description:
       '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 mermaid 源码、diagram JSON 或 SVG 源码，' +
       '通过后会把一段可直接放进回答正文的 ```mermaid / ```diagram / ```svg 围栏原样返回给你（带了 title 就会写成 ```diagram title="…"）；' +
-      '不通过会告诉你具体哪里不合规，改完再试。**它不直接出图**：必须把返回的围栏放进正文，图才会显示，且要放在它解释的那句话旁边、前后各配一句说明。',
+      'format="html" 则会把安全通过的 HTML 片段直接显示成下方隔离的交互卡，不要把它再贴进正文。' +
+      '不通过会告诉你具体哪里不合规，改完再试。svg / mermaid / diagram 仍必须把返回的围栏放进正文，且要放在它解释的那句话旁边、前后各配一句说明。',
     parameters: {
       type: 'object',
       properties: {

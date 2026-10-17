@@ -59,7 +59,7 @@ import WidgetBlock from './WidgetBlock';
 import StreamingHtmlPreview from './StreamingHtmlPreview';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
-import { readPartialWidgetArguments } from '../utils/streamingHtml';
+import { htmlPreviewSource, readPartialWidgetArguments } from '../utils/streamingHtml';
 import './chat-panel.css';
 
 interface Props {
@@ -1038,6 +1038,7 @@ export default function ChatPanel({
      */
     const stopped: AgentStopInfo[] = [];
     let widgetPreview: { html: string } | undefined;
+    let widgetState: WidgetPayload | undefined;
     const abort = new AbortController();
     inflightAbort = abort;
     const updates = framePatch<ChatMsg>((patch) =>
@@ -1256,7 +1257,6 @@ export default function ChatPanel({
       let quizState: QuizState | undefined;
       // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
       // 与「一段回答最多一张图」的出图规范一致。
-      let widgetState: WidgetPayload | undefined;
       const executeTool = createResourceExecutor({
         courseId: videoId,
         editable: canEditMd,
@@ -1273,7 +1273,7 @@ export default function ChatPanel({
           // 工具校验完成后切换到最终的隔离 iframe。清掉预览，避免同一张
           // 图短暂出现两份；中间帧从未执行过模型提供的脚本。
           widgetPreview = undefined;
-          patchAi({ widget: w, widgetPreview: undefined });
+          patchAi({ widget: w, widgetPreview: undefined, hint: undefined });
         },
       });
       /**
@@ -1431,19 +1431,48 @@ export default function ChatPanel({
           reasoning: reasoning || undefined,
           reasoningMs,
           ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+          ...(widgetState ? { widget: widgetState } : {}),
         })) as number;
         patchAi({ rowId });
       } else {
         const errMsg = e instanceof Error ? e.message : String(e);
-        patchAi({
-          streaming: false,
-          hint: undefined,
-          error: true,
-          widgetPreview: undefined,
-          reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
-          // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
-          content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
-        });
+        if (widgetState) {
+          // A validated widget is already useful even if the follow-up text
+          // request fails. Persist it instead of leaving the successful tool
+          // result only in the in-memory streaming row.
+          const partial = answer.trim();
+          const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
+          patchAi({
+            streaming: false,
+            hint: undefined,
+            widgetPreview: undefined,
+            reasoningMs,
+            content: partial,
+          });
+          setLoading(false);
+          const rowId = (await db.chats.add({
+            videoId,
+            sessionId,
+            role: 'assistant',
+            content: partial,
+            createdAt: Date.now(),
+            reasoning: reasoning || undefined,
+            reasoningMs,
+            ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
+            widget: widgetState,
+          })) as number;
+          patchAi({ rowId });
+        } else {
+          patchAi({
+            streaming: false,
+            hint: undefined,
+            error: true,
+            widgetPreview: undefined,
+            reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
+            // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
+            content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
+          });
+        }
       }
     } finally {
       if (inflightAbort === abort) inflightAbort = null;
@@ -1726,6 +1755,7 @@ export default function ChatPanel({
         </div>}
         {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef}>{(m, index) => {
           const isUser = m.role === 'user';
+          const htmlPreview = !isUser ? htmlPreviewSource(m.content) : undefined;
           /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */
           const canRetry = !isUser && index === msgs.length - 1;
           const canRetryAsk = isUser && msgs[index + 1]?.role === 'ai' && index === msgs.length - 2;
@@ -1800,7 +1830,7 @@ export default function ChatPanel({
                       />
                     )}
                     {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
-                    {m.hint && !m.content && !m.widgetPreview ? (
+                    {m.hint && !m.content && !m.quiz && !m.widget && !m.widgetPreview ? (
                       <ThinkLine text={m.hint} />
                     ) : m.streaming && !m.content && !m.reasoning && !m.quiz && !m.widget && !m.widgetPreview ? (
                       /* 待回复：提问刚上屏、首个 token 还没来的纯等待窗口。思考链/状态行/卡片
@@ -1808,20 +1838,28 @@ export default function ChatPanel({
                       <PendingReply />
                     ) : (
                       <>
-                        <MarkdownStreamingProvider value={!!m.streaming}>
-                          <XMarkdown
-                            // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
-                            // 材料没有播放器，留着会生成点了没反应的死链；
-                            // #frame- 画面引用同理（材料没有抽帧）。
-                            content={
-                              isMaterial && materialKind
-                                ? linkifyUnits(m.content, materialKind)
-                                : linkifyTimestamps(linkifyFrames(m.content))
-                            }
-                            components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
-                            streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
+                        {htmlPreview !== undefined ? (
+                          <StreamingHtmlPreview
+                            html={htmlPreview}
+                            isStreaming={!!m.streaming}
+                            statusText="正在解析 HTML"
                           />
-                        </MarkdownStreamingProvider>
+                        ) : (
+                          <MarkdownStreamingProvider value={!!m.streaming}>
+                            <XMarkdown
+                              // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
+                              // 材料没有播放器，留着会生成点了没反应的死链；
+                              // #frame- 画面引用同理（材料没有抽帧）。
+                              content={
+                                isMaterial && materialKind
+                                  ? linkifyUnits(m.content, materialKind)
+                                  : linkifyTimestamps(linkifyFrames(m.content))
+                              }
+                              components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
+                              streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
+                            />
+                          </MarkdownStreamingProvider>
+                        )}
                         {m.quiz && (
                           <QuizCard
                             quiz={m.quiz.data}

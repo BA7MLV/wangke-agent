@@ -14,7 +14,7 @@ import { useCourseChat } from '../store/courseChat';
  *
  * 播放页也用这份配置（value='home'：播放页是课程库的下级页面）。
  */
-export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
+export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig {
   const navigate = useNavigate();
   const createSession = useCourseChat((s) => s.createSession);
   // 图标只有一套 Lucide 描边字形，选中态靠 ListBox 的选中底色表达 ——
@@ -59,6 +59,13 @@ export function useAppNav(active: 'home' | 'chat' | 'study'): NavConfig {
       icon: <Sym name="video_library" />,
       onClick: () => navigate('/library'),
       testId: 'nav-rail-home',
+    },
+    {
+      value: 'bot',
+      label: 'Bot 工作空间',
+      icon: <Sym name="smart_toy" />,
+      onClick: () => navigate('/bot'),
+      testId: 'nav-rail-bot',
     },
   ];
   return { value: active, items };

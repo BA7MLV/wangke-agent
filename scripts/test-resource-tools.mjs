@@ -8,6 +8,7 @@ const server = await createServer({ server: { middlewareMode: true }, appType: '
 try {
   const { db } = await server.ssrLoadModule('/src/store/db.ts');
   const { createResourceExecutor, courseResourceTools, libraryResourceTools, parseResource, skillPath } = await server.ssrLoadModule('/src/harness/resources.ts');
+  const { libraryAssistantSystemPrompt } = await server.ssrLoadModule('/src/harness/libraryAssistant.ts');
   await db.videos.bulkAdd([
     { id: 'v', name: '视频', createdAt: 3, duration: 100 },
     { id: 'm', name: '材料', createdAt: 2, kind: 'material', materialFormat: 'pdf' },
@@ -30,7 +31,9 @@ try {
   const library = createResourceExecutor({ library: { onContextChange: (c) => { selected = c; } } });
   const names = new Set([...courseResourceTools(true), ...libraryResourceTools(true)].map((t) => t.function.name));
   assert.deepEqual([...names].sort(), ['ask_user', 'edit', 'grep', 'present_quiz', 'propose_folder_plan', 'read', 'set_course_context', 'show_widget'].sort());
-  assert.equal(libraryResourceTools(false).length, 2);
+  assert.equal(libraryResourceTools(false).length, 3);
+  assert.match(libraryAssistantSystemPrompt(undefined, [], false), /show_widget\(format="html"/);
+  assert.match(libraryAssistantSystemPrompt(undefined, [], true), /show_widget\(format="html"/);
   assert.equal(courseResourceTools().length, 4);
   assert.equal(parseResource('/courses/%ZZ/info'), undefined);
   assert.equal(parseResource('/courses/%2e%2e/info'), undefined);
@@ -55,6 +58,14 @@ try {
   assert.match(await library('read', { path: '/courses/m/material', range: { unit: 'pages', start: 3, end: 3 } }), /第三页/);
   const loaded = await library('read', { path: skillPath('测试/技能') });
   assert.match(loaded, /技能正文/);
+  const widgets = [];
+  const libraryWithWidget = createResourceExecutor({ onWidget: (value) => { widgets.push(value); } });
+  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>继续</button>' }), /已渲染/);
+  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>第二张</button>' }), /已渲染/);
+  assert.deepEqual(widgets, [
+    { html: '<button>继续</button>', libs: undefined },
+    { html: '<button>第二张</button>', libs: undefined },
+  ]);
   const refPath = loaded.split('\n').find((line) => line.startsWith('- /skills/')).slice(2);
   assert.equal(await library('read', { path: refPath }), '参考正文');
   const restricted = createResourceExecutor({ allowedSkillIds: [] });

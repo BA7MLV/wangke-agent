@@ -1,0 +1,15 @@
+node_modules
+dist
+dist-api
+dist-ssr
+data
+.git
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store
+.openchamber
+.worktrees
+scripts/.cache
+scripts/out

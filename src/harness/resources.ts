@@ -1,7 +1,7 @@
 import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
 import type { UnitKind } from '../materials/units';
-import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, type ToolExecutorOptions } from './tools';
+import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, SHOW_WIDGET_TOOL, type ToolExecutorOptions } from './tools';
 import { createLibraryAssistantExecutor, libraryAssistantTools, type LibraryAssistantExecutorOptions } from './libraryAssistant';
 
 /** Virtual resources backed by IndexedDB; paths never access the host filesystem. */
@@ -65,7 +65,7 @@ export function courseResourceTools(editable = false): ToolDef[] {
 }
 
 export function libraryResourceTools(hasCourses: boolean): ToolDef[] {
-  return [READ_TOOL, ...(hasCourses ? [GREP_TOOL] : []), ...libraryAssistantTools(hasCourses).filter((t) =>
+  return [READ_TOOL, SHOW_WIDGET_TOOL, ...(hasCourses ? [GREP_TOOL] : []), ...libraryAssistantTools(hasCourses).filter((t) =>
     ['ask_user', 'set_course_context', 'propose_folder_plan'].includes(t.function.name))];
 }
 
@@ -119,7 +119,11 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
   const executeLibrary = createLibraryAssistantExecutor(options.library);
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (!['read', 'grep', 'edit'].includes(name)) {
-      if (local && ['present_quiz', 'show_widget'].includes(name)) return executeLocal(name, args);
+      // show_widget is independent of a course. It still uses the shared
+      // executor so validation, rendering probes and the onWidget callback
+      // are identical in course and library chat.
+      if (name === 'show_widget') return executeLocal(name, args);
+      if (local && name === 'present_quiz') return executeLocal(name, args);
       if (!local && ['ask_user', 'set_course_context', 'propose_folder_plan'].includes(name)) return executeLibrary(name, args);
       return `未知工具「${name}」。这里只能使用本轮工具列表中的工具；不能访问 /tmp、宿主文件系统或 writeFile。需要展示 SVG 时请使用 show_widget(format="svg", code=...)。`;
     }
