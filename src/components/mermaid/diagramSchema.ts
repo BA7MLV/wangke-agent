@@ -94,7 +94,14 @@ export interface PlotDoc {
   labels?: TextLabel[];
 }
 
-export type DiagramDoc = GraphDoc | PlotDoc;
+export interface ChartDatum { label: string; value: number }
+export interface ChartDoc {
+  type: 'chart';
+  kind: 'bar' | 'line' | 'pie';
+  data: ChartDatum[];
+  y?: Point2;
+}
+export type DiagramDoc = GraphDoc | PlotDoc | ChartDoc;
 
 /** 渲染层的形状单位：一个逻辑图元 = 一段可独立净化的 SVG 片段 + 稳定 key */
 export interface DiagramShape {
@@ -107,6 +114,7 @@ export interface DiagramShape {
 // ───────────────────────────────────────────────────────────────────────────────
 
 export const LIMITS = {
+  maxData: 12,
   maxNodes: 10,
   maxEdges: 16,
   maxNodeLabel: 20,
@@ -299,6 +307,28 @@ export const pickValidPolygon = pick(checkPolygon);
 export const pickValidCircle = pick(checkCircle);
 export const pickValidLabel = pick(checkLabel);
 
+function checkDatum(where: string, raw: unknown): ChartDatum {
+  if (!isPlainObject(raw)) bad(`${where}必须是对象 {"label": …, "value": …}`);
+  rejectUnknown(where, raw, ['label', 'value']);
+  return { label: reqStr(`${where}.label`, raw.label, 12), value: reqNum(`${where}.value`, raw.value) };
+}
+export const pickValidDatum = pick(checkDatum);
+
+function validateChart(input: Record<string, unknown>): ChartDoc {
+  rejectUnknown('chart', input, ['type', 'kind', 'data', 'y']);
+  if (input.kind !== 'bar' && input.kind !== 'line' && input.kind !== 'pie') bad('chart.kind 必须是 bar / line / pie');
+  if (!Array.isArray(input.data) || !input.data.length || input.data.length > LIMITS.maxData) bad(`chart.data 必须有 1～${LIMITS.maxData} 项`);
+  const data = input.data.map((item, i) => checkDatum(`data[${i}]`, item));
+  const y = input.y == null ? undefined : reqPair('y', input.y);
+  if (y && (!(y[0] < y[1]) || !Number.isFinite(y[1] - y[0]))) bad('y 范围必须递增且跨度有限');
+  if (y && data.some(d => d.value < y[0] || d.value > y[1])) bad('data.value 超出了 y 范围');
+  if (input.kind === 'pie') {
+    if (y) bad('pie 不支持 y 范围');
+    if (data.some(d => d.value < 0) || !data.some(d => d.value > 0)) bad('pie 的 value 必须非负，且至少一项大于 0');
+  }
+  return { type: 'chart', kind: input.kind, data, y };
+}
+
 // ───────────────────────────────────────────────────────────────────────────────
 // 完整校验（终态 + show_widget 预检）
 // ───────────────────────────────────────────────────────────────────────────────
@@ -314,16 +344,16 @@ export function validateDiagram(input: unknown): DiagramDoc {
   // type 先判：它是其余字段的**解释上下文**。type 都写错了的时候报「不认识的字段」，
   // 会把模型引到错误的方向上 —— 它真正该做的是换 type，或者换 ```mermaid 围栏。
   const type = input.type;
+  if (type === 'chart') return validateChart(input);
   if (type !== 'graph' && type !== 'plot') {
     bad(
-      `type 必须是 "graph"（节点+连线的结构图）或 "plot"（函数图像/几何图形/坐标轴），实得 ${JSON.stringify(type)}。` +
-        '流程/时序/状态/层级这类标准结构图优先用 ```mermaid 围栏',
+      `type 必须是 "graph"（结构图）、"plot"（函数/几何）或 "chart"（柱/折/饼），实得 ${JSON.stringify(type)}。` +
+        '时序等未覆盖图种用 ```mermaid 围栏',
     );
   }
-  rejectUnknown('diagram', input, [
-    'type', 'direction', 'nodes', 'edges',
-    'x', 'y', 'axes', 'curves', 'points', 'segments', 'polygons', 'circles', 'labels',
-  ]);
+  rejectUnknown('diagram', input, type === 'graph'
+    ? ['type', 'direction', 'nodes', 'edges']
+    : ['type', 'x', 'y', 'axes', 'curves', 'points', 'segments', 'polygons', 'circles', 'labels']);
 
   if (type === 'graph') return validateGraph(input);
   return validatePlot(input);

@@ -9,13 +9,12 @@ description: 讲解与题目解析的出图规范：判断什么内容值得画�
 3. 一段回答最多一张图。图的前后各用一句话说明它在讲什么，不要只丢一张图。
 
 【图种选择】
-- 步骤、分支、因果 → flowchart（方向用 TD 或 LR）
+- 步骤、分支、因果、架构、层级、状态关系 → ```diagram 的 graph（方向 TB 或 LR）
 - 多方按时间来回交互（请求响应、握手、问答） → sequenceDiagram
-- 状态与迁移条件（含开始与结束） → stateDiagram-v2
-- 概念层级、分类拆解 → mindmap
-- 占比（不超过 6 项，且各项互斥） → pie
+- 必须表达专用开始/结束状态语义 → mermaid stateDiagram-v2
+- 柱状对比、折线趋势、占比 → ```diagram 的 chart（kind: bar / line / pie）
 - 函数图像、几何图形、坐标轴、自由曲线 → ```diagram 围栏的 plot（mermaid 表达不了，别硬套 flowchart）
-- 需要精确定位、自定义节点形状或边标签的结构图（mermaid 布局不听话时）→ ```diagram 围栏的 graph
+- 图布局和路由全部交给渲染器，不输出像素坐标、SVG 路径或自写 HTML 图表。
 
 【围栏名是硬契约】
 1. 围栏名必须写 ```mermaid 或 ```diagram。写成 ```dot / ```plantuml / ```graphviz 前端不认，
@@ -28,6 +27,7 @@ description: 讲解与题目解析的出图规范：判断什么内容值得画�
    把它回的围栏原样贴进正文。
 
 【```diagram 的 JSON schema】
+先写 type，再写 direction / kind / x / y 等配置，最后追加数组项；完整项到达即可预览，结束时严格校验。不要重复字段、写注释或尾逗号。
 渲染器负责坐标、布局、连线、刻度与采样，你只描述「有什么、怎么连、函数与范围」。
 **不要手算任何坐标** —— schema 里也没有绝对坐标字段。字段名大小写敏感，不要发明字段。
 （标题不在这里：它写在围栏参数上，见上一条。JSON 里出现 title 会按未知字段被拒。）
@@ -65,6 +65,14 @@ description: 讲解与题目解析的出图规范：判断什么内容值得画�
 ```diagram
 {"type":"graph","direction":"LR","nodes":[{"id":"c","label":"客户端"},{"id":"s","label":"服务端"},{"id":"d","label":"数据库"}],"edges":[{"from":"c","to":"s","label":"请求"},{"from":"s","to":"d","label":"查询"}]}
 ```
+
+▸ chart —— 柱状 / 折线 / 饼图（最多 12 项；饼图建议不超过 6 项）
+```diagram title="学习进度"
+{"type":"chart","kind":"bar","data":[{"label":"已学","value":8},{"label":"待学","value":4}]}
+```
+字段仅有 type、kind、data、可选 y（柱/折图的 [最小值,最大值]，必须包含所有数据）。
+data 每项仅 label（最多 12 字）和 value（有限数字）。pie 必须非负且至少一项大于零，不能给 y。
+不要为了普通数据图生成 HTML/Chart.js 或 SVG；导出 JSON 与 SVG 由前端提供。
 
 ▸ fn 表达式支持的范围
 数字、x、+ - * / ^ %、括号；常量 pi / e / tau；

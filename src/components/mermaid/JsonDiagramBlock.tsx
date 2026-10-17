@@ -47,7 +47,7 @@ export default function JsonDiagramBlock({ code, closed, title }: { code: string
     }
   }, [trimmed, closed]);
 
-  const { phase, svg, err } = useMemo<{ phase: DiagramPhase; svg: string | null; err: string }>(() => {
+  const { phase, svg, err, finalCanvas } = useMemo<{ phase: DiagramPhase; svg: string | null; err: string; finalCanvas?: DiagramStream }>(() => {
     if (!closed) {
       return stream ? { phase: 'drawing', svg: null, err: '' } : { phase: 'waiting', svg: null, err: '' };
     }
@@ -63,7 +63,10 @@ export default function JsonDiagramBlock({ code, closed, title }: { code: string
       }
       const validated = validateDiagram(doc);
       const rendered = renderDiagram(validated);
-      return { phase: 'ok', svg: sanitizeSvg(rendered.svg), err: '' };
+      return { phase: 'ok', svg: sanitizeSvg(rendered.svg), err: '', finalCanvas: {
+        kind: 'diagram', viewBox: rendered.viewBox,
+        shapes: rendered.shapes.map(s => ({ key: s.key, svg: sanitizeSvgFragment(s.svg) })),
+      } };
     } catch (e) {
       return { phase: 'error', svg: null, err: e instanceof Error ? e.message : String(e) };
     }
@@ -76,7 +79,7 @@ export default function JsonDiagramBlock({ code, closed, title }: { code: string
       title={title}
       phase={phase}
       svg={svg}
-      stream={stream}
+      stream={finalCanvas ?? stream}
       err={err}
       source={trimmed}
       copyLabel="复制 diagram 源码"

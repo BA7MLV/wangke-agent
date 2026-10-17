@@ -168,7 +168,7 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
               explanation: {
                 type: 'string',
                 description:
-                  '解析：正确项为什么对、干扰项为什么错；引用内容时带 [mm:ss] 时间戳（视频课程）或 [第N页]/[第N段]（阅读材料）。支持 Markdown（粗体、列表）与 ```mermaid、```diagram 两种图表围栏——流程、结构、对比、关系用 mermaid；函数图像、几何图形这类 mermaid 画不出的用 ```diagram 写一段 JSON（只描述结构与函数，坐标布局由渲染器算）。前端会把围栏渲染成图而不是源码',
+                  '解析：正确项为什么对、干扰项为什么错；引用内容时带 [mm:ss] 时间戳（视频课程）或 [第N页]/[第N段]（阅读材料）。支持 Markdown 与 ```diagram JSON 图表围栏：流程/架构/关系用 graph，函数/几何用 plot，柱/折/饼用 chart（kind:bar/line/pie，data:[{label,value}]）。只描述结构与数据，坐标布局由渲染器算。时序等未覆盖图种用 ```mermaid。前端会把围栏渲染成图而不是源码',
               },
               time: {
                 type: 'string',
@@ -208,13 +208,13 @@ const SHOW_WIDGET_TOOL: ToolDef = {
           type: 'string',
           enum: ['mermaid', 'diagram', 'svg', 'html'],
           description:
-            '源码类型。流程/时序/状态/层级/占比等结构关系优先 mermaid；函数图像、几何图形、坐标轴这类 mermaid 表达不了的用 diagram（JSON 中间层，坐标与布局由渲染器算）；' +
-            '界面原型（mockup）、带控件的交互图（滑块、筛选、stepper）、以及数据图表（柱/折/饼）用 html。svg 只在极少数白名单图元不够用时兜底',
+            '源码类型。优先 diagram JSON：流程/结构/层级用 graph，函数/几何用 plot，柱/折/饼用 chart。模型只描述结构与数据，布局由渲染器算；时序/ER 等未覆盖图种用 mermaid。' +
+            '界面原型或确实需要滑块、筛选、stepper 的自定义交互件用 html。svg 仅兼容历史内容，新图优先使用受约束 JSON',
         },
         code: {
           type: 'string',
           description:
-            '完整源码，不要包围栏、不要加解释文字。diagram 需是一个 JSON 对象：{"type":"plot","x":[-10,10],"y":[-3,3],"curves":[{"fn":"sin(x)"}]}（函数图像/几何/坐标轴）' +
+            '完整源码，不要包围栏、不要加解释文字。diagram 需是一个 JSON 对象：{"type":"chart","kind":"bar","data":[{"label":"甲","value":3}]}（柱/折/饼）；或 {"type":"plot","x":[-10,10],"y":[-3,3],"curves":[{"fn":"sin(x)"}]}（函数图像/几何/坐标轴）' +
             '或 {"type":"graph","nodes":[{"id":"a","label":"客户端"}],"edges":[{"from":"a","to":"b"}]}（结构图）——只描述有什么、怎么连、函数与范围，不要手算坐标，完整 schema 见「讲解配图」技能；' +
             'mermaid 需以图种声明开头（flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie）；' +
             'svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +

@@ -93,7 +93,7 @@ test('合法 graph / plot 通过校验并原样保留字段', () => {
 });
 
 test('type 缺失 / 写错 → 报错点明两种合法值与 mermaid 的分工', () => {
-  for (const t of [undefined, 'flowchart', 'chart', 42]) {
+  for (const t of [undefined, 'flowchart', 'unknown', 42]) {
     assert.throws(
       () => validateDiagram({ type: t, nodes: [{ id: 'a', label: 'x' }] }),
       (e) => e instanceof DiagramSchemaError && /type 必须是/.test(e.message) && /```mermaid/.test(e.message),
@@ -274,7 +274,7 @@ test('文本转义：label 里的 <script> / 引号 / & 原样变成文字', () 
 // 5. graph 布局
 // ───────────────────────────────────────────────────────────────────────────────
 
-test('最长路径分层：链 a→b→c 占三列，x 递增', () => {
+test('Dagre 默认 TB：链 a→b→c 占三行，y 递增', () => {
   const r = renderDiagram(
     validateDiagram({
       type: 'graph',
@@ -290,8 +290,8 @@ test('最长路径分层：链 a→b→c 占三列，x 递增', () => {
     }),
   );
   // box 形状是 rect：读 x（层号越大越靠右）
-  const x = (k) => Number(/ x="([\d.]+)"/.exec(shapeOf(r, k).svg)[1]);
-  assert.ok(x('node:a') < x('node:b') && x('node:b') < x('node:c'), '分层后应从左到右排开');
+  const y = (k) => Number(/ y="([\d.]+)"/.exec(shapeOf(r, k).svg)[1]);
+  assert.ok(y('node:a') < y('node:b') && y('node:b') < y('node:c'), 'TB 应从上到下排开');
   assert.equal(r.shapes.at(-1).key, 'edge:1', '边在节点之后（z 序：节点压住线）');
 });
 
@@ -352,8 +352,41 @@ test('direction LR 转置：层向纵向展开', () => {
   const lr = renderDiagram(validateDiagram({ type: 'graph', direction: 'LR', nodes, edges }));
   // box 是 rect：读 y（TB 下同层节点 y 相同；LR 下层向纵向展开）
   const y = (r, k) => Number(/ y="([\d.]+)"/.exec(shapeOf(r, k).svg)[1]);
-  assert.equal(y(tb, 'node:a'), y(tb, 'node:c'), 'TB 下同层节点纵向同排');
-  assert.ok(y(lr, 'node:a') < y(lr, 'node:b') && y(lr, 'node:b') < y(lr, 'node:c'), 'LR 下层向纵向展开');
+  assert.equal(y(lr, 'node:a'), y(lr, 'node:c'), 'LR 下链上节点横向同排');
+  assert.ok(y(tb, 'node:a') < y(tb, 'node:b') && y(tb, 'node:b') < y(tb, 'node:c'), 'TB 下层向纵向展开');
+  const x = (r, k) => Number(/ x="([\d.]+)"/.exec(shapeOf(r, k).svg)[1]);
+  assert.ok(x(lr, 'node:a') < x(lr, 'node:c'), 'LR 从左到右');
+});
+
+test('schema 按图种拒绝混入字段，图表校验数据与范围', () => {
+  assert.throws(() => validateDiagram({ ...GOOD_GRAPH, curves: [] }), /不认识的字段/);
+  assert.throws(() => validateDiagram({ ...GOOD_PLOT, nodes: [] }), /不认识的字段/);
+  for (const data of [[], [{ label: 'a', value: Infinity }], [{ label: 'a', value: 1, color: 'red' }]]) {
+    assert.throws(() => validateDiagram({ type: 'chart', kind: 'bar', data }));
+  }
+  assert.throws(() => validateDiagram({ type: 'chart', kind: 'pie', data: [{ label: 'a', value: -1 }] }));
+  assert.throws(() => validateDiagram({ type: 'chart', kind: 'pie', data: [{ label: 'a', value: 0 }] }));
+  assert.throws(() => validateDiagram({ type: 'chart', kind: 'bar', y: [0, 1], data: [{ label: 'a', value: 2 }] }));
+});
+
+test('柱/折/饼每字符流式收敛，安全转义与极值几何', () => {
+  for (const kind of ['bar', 'line', 'pie']) {
+    const raw = JSON.stringify({ type: 'chart', kind, data: [{ label: '<script>', value: 2 }, { label: '乙', value: 4 }] });
+    let keys = [];
+    for (let i = 1; i <= raw.length; i++) {
+      const progress = peekDiagramProgress(raw.slice(0, i));
+      if (!progress) continue;
+      const next = progress.shapes.map(s => s.key);
+      assert.ok(keys.every(key => next.includes(key)));
+      keys = next;
+    }
+    const rendered = renderDiagram(validateDiagram(JSON.parse(raw)));
+    assert.deepEqual(peekDiagramProgress(raw).shapes, rendered.shapes);
+    assert.equal(renderDiagram(validateDiagram(JSON.parse(raw))).svg, rendered.svg);
+    assert.ok(!rendered.svg.includes('<script>'));
+    const extreme = renderDiagram(validateDiagram({ type: 'chart', kind, data: [{ label: '大', value: 1e308 }, { label: '小', value: kind === 'pie' ? 0 : -1e308 }] }));
+    assert.ok(!/NaN|Infinity/.test(extreme.svg));
+  }
 });
 
 // ───────────────────────────────────────────────────────────────────────────────

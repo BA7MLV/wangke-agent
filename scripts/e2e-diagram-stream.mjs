@@ -208,9 +208,8 @@ check(phases.includes('waiting') && phases.includes('drawing') && phases.include
 check(drawing.length >= 3, `drawing 态持续了多拍（${drawing.length} 次取样）`);
 
 // key 单调增长：JSON 中间层的「边生成边画」核心可观测特征。
-// 只看 drawing 段 —— 闭合后画布换成静态 SVG、data-dkey 被摘掉，key 数归零是设计如此，
-// 拿闭合后的 0 去判「单调不减」会把正确实现判成回退。
-const keyCounts = drawing.map((s) => s.keys.length);
+// 闭合后继续复用画布，key 也必须保留。
+const keyCounts = samples.filter(s => s.phase === 'drawing' || s.phase === 'ok').map((s) => s.keys.length);
 const nonDecreasing = keyCounts.every((v, i) => i === 0 || v >= keyCounts[i - 1]);
 const distinctCounts = [...new Set(keyCounts)];
 check(nonDecreasing, `画布 key 数单调不减（${distinctCounts.join('→')}）`);
@@ -256,7 +255,12 @@ const finalState = await page.evaluate(async (figJson) => {
   const { sanitizeSvg } = await import('/src/components/mermaid/svgRender.ts');
   const block = document.querySelector('[data-testid="diagram-block"]');
   const canvas = block.querySelector('[data-testid="diagram-canvas"]');
-  const html = canvas.innerHTML;
+  const clone = canvas.querySelector('svg').cloneNode(true);
+  // Runtime animation/key metadata stays in the mounted canvas, never in exports.
+  for (const el of clone.querySelectorAll('*')) {
+    for (const attr of ['class', 'style', 'pathLength', 'data-dkey']) el.removeAttribute(attr);
+  }
+  const html = clone.outerHTML;
   const norm = (s) => s.replace(/\s+/g, '').replace(/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/, '');
   // 权威产物：与 JsonDiagramBlock 闭合路径同一串计算
   const expected = sanitizeSvg(renderDiagram(validateDiagram(figJson)).svg);
@@ -288,9 +292,7 @@ check(finalState.paths >= 1, `曲线真的画出来了（${finalState.paths} 条
 check(finalState.circles >= 1, `关键点真的画出来了（${finalState.circles} 个 circle）`);
 check(finalState.texts.some((t) => t?.includes('顶点')) && finalState.texts.some((t) => t?.includes('开口向上')) && finalState.texts.some((t) => t?.includes('y=x²')),
   `中文标签完整（${JSON.stringify(finalState.texts)}）`);
-check(finalState.leftovers === 0, `终态不留落画 class 残留（${finalState.leftovers} 个）`);
-check(finalState.pathLengths === 0, '终态不留 pathLength（预览期的动画标记不该进最终 DOM）');
-check(finalState.keys === 0, '终态是静态 SVG，不带流式期的 data-dkey 标记');
+check(finalState.keys === finalKeys.length, '终态保留流式画布的稳定 key');
 check(finalState.matchesExpected, '终态画布内容 === sanitizeSvg(renderDiagram(validateDiagram(src))) 的权威产物');
 check(finalState.idempotent, '终态再过一次净化不变（幂等）');
 check(finalState.tools.copy && finalState.tools.zoom && finalState.tools.download && finalState.tools.source,

@@ -91,6 +91,11 @@ export interface ModelRef {
   model: string;
 }
 
+export interface SavedModel extends ModelRef {
+  name: string;
+  slots: ModelSlot[];
+}
+
 /**
  * 一个可发请求的模型目标：端点 + 模型 + 能力数据源合成一体。
  *
@@ -137,6 +142,8 @@ export interface Settings {
   visionModel: ModelRef;
   /** 按用途分组的收藏模型列表（面板下拉的候选） */
   favorites: Record<ModelSlot, ModelRef[]>;
+  /** 用户明确添加的模型；缺省时兼容旧版当前模型与收藏。与发现缓存独立。 */
+  savedModels?: SavedModel[];
   /** 上下文窗口（tokens），自动探测默认值，可手改 */
   contextWindow: number;
   /** ASR 转写初始并发数（1-12，运行中按 AIMD 自适应：遇 429 减半，稳定后缓慢 +1） */

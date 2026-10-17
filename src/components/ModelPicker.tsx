@@ -1,11 +1,12 @@
-import type { ReactNode } from 'react';
-import { Dropdown, ListBox, ScrollShadow, Separator, Switch, Tooltip } from '@heroui/react';
+import { useState, type ReactNode } from 'react';
+import { Dropdown, ListBox, ScrollShadow, SearchField, Separator, Switch, Tooltip } from '@heroui/react';
 import { Sym } from '../ui';
 import { useSettings, sameRef, type ModelRef, type ModelSlot } from '../store/settings';
 import { guessContextWindow, hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import ReasoningEffortSlider from './ReasoningEffortSlider';
 import './subtitle-danmaku.css';
+import { modelKey, modelLabel, modelsForSlot } from '../store/modelLibrary';
 
 interface Props {
   slot: ModelSlot;
@@ -84,8 +85,8 @@ export default function ModelPicker({
   // 收藏夹不含当前值时并入当前值（去重、过滤空串），保证选中态始终可见、有效
   const candidates: ModelRef[] = [
     ...new Map(
-      [...(favs.length > 0 ? favs : []), value]
-        .filter((r) => r.model)
+      [...modelsForSlot(settings, slot).sort((a, b) => Number(favs.some((f) => sameRef(f, b))) - Number(favs.some((f) => sameRef(f, a)))), value]
+        .filter((r) => r.model && settings.providers.some((p) => p.id === r.providerId && p.serves.includes(slot)))
         .map((r) => [`${r.providerId}\0${r.model}`, r]),
     ).values(),
   ];
@@ -105,12 +106,12 @@ export default function ModelPicker({
     }
   };
 
-  const keyOf = (ref: ModelRef) => `${ref.providerId}\0${ref.model}`;
+  const keyOf = modelKey;
   const currentKey = keyOf(value);
 
   const tooltip =
-    favs.length === 0
-      ? `${SLOT_LABEL[slot]}：${nameOf(value.providerId)} · ${value.model}（收藏夹为空，可在设置页拉取并收藏模型）`
+    candidates.length <= 1
+      ? `${SLOT_LABEL[slot]}：${nameOf(value.providerId)} · ${value.model}（在设置 → 我的模型中添加更多模型）`
       : `${SLOT_LABEL[slot]}：${nameOf(value.providerId)} · ${value.model}（点击切换）`;
 
   /** 列表行内那一块：勾 + 供应商 + 模型 id + 能力标记。下拉菜单与弹层共用 */
@@ -126,7 +127,7 @@ export default function ModelPicker({
         />
         {/* 供应商名独立一列：多供应商下模型 id 不再能唯一标识一个模型 */}
         <span className="model-picker__provider">{nameOf(ref.providerId)}</span>
-        <span className="model-picker__id">{ref.model}</span>
+        <span className="model-picker__id" title={ref.model}>{modelLabel(settings, ref)}</span>
         {isVisionModel(cat, ref.model) && <span className="tag-mini tag-mini--primary">多模态</span>}
         {supportsThinking(cat, ref.model) && <span className="tag-mini">可思考</span>}
       </span>
@@ -237,6 +238,10 @@ function ChipDropdown({
 }) {
   const settings = useSettings();
 
+  const [query, setQuery] = useState('');
+  const needle = query.trim().toLowerCase();
+  const visible = candidates.filter((ref) => `${nameOf(ref.providerId)} ${ref.model} ${modelLabel(settings, ref)}`.toLowerCase().includes(needle));
+
   /**
    * 能不能思考 / 有没有深度，按**当前选中的模型**查，而不是按「面板打开时的那个」。
    * 用户在列表里换个模型，这两行就该当场跟着变 —— 深度区写死的话，
@@ -263,7 +268,7 @@ function ChipDropdown({
             data-testid="model-picker"
           >
             {SLOT_ICON[slot]}
-            <span className="model-picker__chip-name">{shortModelName(value.model)}</span>
+            <span className="model-picker__chip-name">{shortModelName(modelLabel(settings, value))}</span>
             <Sym name="keyboard_arrow_down" className="model-picker__chip-caret" />
           </Dropdown.Trigger>
         </Tooltip.Trigger>
@@ -281,6 +286,9 @@ function ChipDropdown({
           </span>
         </div>
 
+        <SearchField aria-label="搜索已添加模型" value={query} onChange={setQuery} className="px-3 py-2">
+          <SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索模型或供应商" /><SearchField.ClearButton /></SearchField.Group>
+        </SearchField>
         {/* min-h-0 必需：flex 子项默认 min-height:auto，不设的话
             ScrollShadow 会按内容撑开、把下面的思考区顶出面板。 */}
         <ScrollShadow
@@ -305,7 +313,7 @@ function ChipDropdown({
             }}
             className="model-picker__panel-items"
           >
-            {candidates.map((ref) => (
+            {visible.map((ref) => (
               <ListBox.Item
                 key={keyOf(ref)}
                 id={keyOf(ref)}
@@ -318,6 +326,8 @@ function ChipDropdown({
             ))}
           </ListBox>
         </ScrollShadow>
+        {!visible.length && <p role="status" className="px-3 py-2 text-xs text-muted">没有匹配的模型</p>}
+        <p className="px-3 py-2 text-xs text-muted">在设置 → 我的模型中添加和编辑模型</p>
 
         {canThink && (
           <>

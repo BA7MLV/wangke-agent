@@ -44,6 +44,8 @@ import { ms } from '../motion';
 import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
 import JevCard from './JevCard';
+import ModelLibrary from './ModelLibrary';
+import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibrary';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -119,6 +121,8 @@ function ModelOptionRow({
   catalogId,
   catalogKnown,
   selected,
+  favorite,
+  label,
   onSelect,
   onToggleFavorite,
   slot,
@@ -132,6 +136,8 @@ function ModelOptionRow({
   /** false = 没填 models.dev key，上下文窗口只能按名字猜，得标出来 */
   catalogKnown: boolean;
   selected: boolean;
+  favorite: boolean;
+  label?: string;
   onSelect: () => void;
   onToggleFavorite: () => void;
   slot: ModelSlot;
@@ -156,13 +162,14 @@ function ModelOptionRow({
       // 左半段必须是**供应商 id**（不是名字）：名字允许重名，当唯一键会把两家同名的
       // 候选挤成一条；而且供应商下拉认的是 id，认名字等于指向一家不存在的供应商。
       id={`${idPrefix ?? ''}${providerId}::${model}`}
-      textValue={model}
+      textValue={label || model}
       data-testid={`model-option-${model}`}
       className="relative flex flex-1 min-w-0 items-center gap-3.5 rounded-sm pr-[38px]"
       onAction={onSelect}
     >
       <span className="flex flex-1 min-w-0 items-center gap-2">
-        <span className="truncate font-mono text-[13px]">{model}</span>
+        <span className="truncate font-mono text-[13px]" title={model}>{label || model}</span>
+        {selected && <Sym name="check" />}
         <CapBadges catalogId={catalogId} model={model} />
       </span>
       <span className="flex shrink-0 items-baseline gap-2.5 text-[11px] text-muted">
@@ -175,19 +182,19 @@ function ModelOptionRow({
         </span>
       </span>
       <span
-        className={`absolute top-1/2 right-2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full border-0 bg-transparent text-base text-muted transition-opacity duration-200 cursor-pointer ${selected ? 'opacity-100 text-[#f5a623]' : 'opacity-0 hover:bg-foreground/8'} `}
-        data-fav={selected ? 'true' : 'false'}
+        className={`absolute top-1/2 right-2 grid h-6 w-6 -translate-y-1/2 place-items-center rounded-full border-0 bg-transparent text-base text-muted transition-opacity duration-200 cursor-pointer ${favorite ? 'opacity-100 text-accent' : 'opacity-60 hover:bg-foreground/8'} `}
+        data-fav={favorite ? 'true' : 'false'}
         data-testid={favTestId}
         role="button"
         tabIndex={-1}
-        aria-label={selected ? `取消收藏 ${model}` : `收藏 ${model}`}
+        aria-label={favorite ? `取消收藏 ${model}` : `收藏 ${model}`}
         onClick={(event) => {
           // 星标在 Item 内部，靠阻止冒泡避免顺手把模型也选中
           event.stopPropagation();
           onToggleFavorite();
         }}
       >
-        <Sym name="star" filled={selected} />
+        <Sym name="star" filled={favorite} />
       </span>
     </ListBox.Item>
   );
@@ -255,7 +262,6 @@ function SlotModelSelect({
   const update = useSettings((s) => s.update);
   const provider = settings.providers.find((p) => p.id === ref.providerId);
   const [kw, setKw] = useState('');
-  const [manual, setManual] = useState(false);
   const [open, setOpen] = useState(false);
   // 面板是 fixed 定位的，React Aria 要靠触发元素的 ref 才能算出「贴在按钮下方」。
   // 之前按钮是 Popover.Trigger（自带 ref），换成自己的 <button> 后必须自己传，
@@ -281,7 +287,7 @@ function SlotModelSelect({
    */
   useEffect(() => {
     if (!open) return;
-    panelRef.current?.querySelector('input')?.focus();
+    panelRef.current?.querySelector('input')?.focus({ preventScroll: true });
   }, [open]);
 
   /** 面板里要列的供应商：勾了该槽位的那些家；当前指的那家即便没勾也列出（否则改不回去） */
@@ -331,8 +337,8 @@ function SlotModelSelect({
   const groups = candidates.map((p) => {
     const ids = Array.from(
       new Set(
-        (options[p.id] ?? []).filter(
-          (id) => !needle || id.toLowerCase().includes(needle),
+        modelsForSlot(settings, slot).filter((m) => m.providerId === p.id).map((m) => m.model).filter(
+           (id) => !needle || `${id} ${modelLabel(settings, { providerId: p.id, model: id })} ${p.name}`.toLowerCase().includes(needle),
         ),
       ),
     ).sort((a, b) => Number(relevant(p.catalogId, b)) - Number(relevant(p.catalogId, a)));
@@ -367,7 +373,10 @@ function SlotModelSelect({
           aria-label={`${SLOT_LABEL[slot]}使用的供应商`}
           selectedKey={ref.providerId}
           onSelectionChange={(key) => {
-            if (key != null) setModel(String(key), ref.model);
+            if (key != null) {
+              const first = modelsForSlot(settings, slot).find((m) => m.providerId === String(key));
+              if (first) setModel(first.providerId, first.model);
+            }
           }}
         >
           <Select.Trigger>
@@ -389,21 +398,7 @@ function SlotModelSelect({
         </Select>
       </div>
 
-      {manual ? (
-        <div className="mt-2.5 flex items-center gap-2">
-          <Input
-            data-testid={`model-${name}`}
-            aria-label={`${SLOT_LABEL[slot]}模型 ID`}
-            value={ref.model}
-            placeholder="粘贴模型 ID，例如 Qwen/Qwen3-235B-A22B"
-            onChange={(e) => update({ [name]: { ...ref, model: e.target.value } })}
-            autoFocus
-          />
-          <Button variant="ghost" onPress={() => setManual(false)}>
-            返回列表
-          </Button>
-        </div>
-      ) : (
+      {(
         // 受控用法（isOpen + onOpenChange），不用 Popover.Trigger。
         //
         // 为什么绕开 Trigger：HeroUI v3 的 Popover.Trigger 渲染成
@@ -441,7 +436,7 @@ function SlotModelSelect({
             <span className="flex flex-1 min-w-0 items-center gap-2">
               {ref.model ? (
                 <>
-                  <span className="truncate font-mono text-[13px] font-medium">{ref.model}</span>
+                  <span className="truncate font-mono text-[13px] font-medium" title={ref.model}>{modelLabel(settings, ref)}</span>
                   <CapBadges catalogId={catalogId} model={ref.model} />
                 </>
               ) : (
@@ -469,7 +464,6 @@ function SlotModelSelect({
             ref={panelRef}
             style={{
               width: 'min(34rem, calc(100vw - 3rem))',
-              minHeight: '20rem',
             }}
           >
             {/**
@@ -533,6 +527,8 @@ function SlotModelSelect({
                         catalogId={provider.catalogId}
                         catalogKnown={provider.catalogId.trim().length > 0}
                         selected={sameRef({ providerId: provider.id, model: id }, ref)}
+                        favorite={true}
+                        label={modelLabel(settings, { providerId: provider.id, model: id })}
                         onSelect={() => setModel(provider.id, id)}
                         onToggleFavorite={() => toggleFavorite(provider.id, id)}
                         idPrefix="fav::"
@@ -559,7 +555,8 @@ function SlotModelSelect({
                         catalogId=""
                         catalogKnown={false}
                         selected={sameRef(f, ref)}
-                        onSelect={() => setModel(f.providerId, f.model)}
+                        favorite={true}
+                        onSelect={() => toast.warning('请先恢复供应商及其用途配置')}
                         onToggleFavorite={() => toggleFavorite(f.providerId, f.model)}
                         idPrefix="orphan::"
                       />
@@ -584,6 +581,8 @@ function SlotModelSelect({
                           catalogId={provider.catalogId}
                           catalogKnown={provider.catalogId.trim().length > 0}
                           selected={sameRef({ providerId: provider.id, model: id }, ref)}
+                          favorite={isFav(provider, id)}
+                          label={modelLabel(settings, { providerId: provider.id, model: id })}
                           onSelect={() => setModel(provider.id, id)}
                           onToggleFavorite={() => toggleFavorite(provider.id, id)}
                         />
@@ -597,21 +596,13 @@ function SlotModelSelect({
                 {totalResults === 0 ? (
                   <span className="min-w-0 truncate text-xs text-muted">
                     {Object.keys(options).length === 0
-                      ? '还没有拉取过模型列表，模型 ID 需要手动填写'
-                      : '没有匹配的模型'}
+                      ? '请先在「我的模型」中添加模型'
+                      : '没有匹配的已添加模型'}
                   </span>
                 ) : (
                   <span className="min-w-0 truncate text-xs text-muted">{totalResults} 个模型</span>
                 )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  data-testid={`model-manual-${name}`}
-                  onPress={() => setManual(true)}
-                >
-                  <Sym name="key" />
-                  手动填写
-                </Button>
+                <span className="text-xs text-muted">在「我的模型」中添加和编辑</span>
               </div>
             </Popover.Dialog>
           </Popover.Content>
@@ -1096,8 +1087,15 @@ export default function ModelsModule() {
         }
       }),
     );
-    setModelOptions(opts);
-    setProviderNotes(notes);
+    // 请求期间可能修改或删除连接；旧响应不能覆盖新连接的发现结果。
+    const currentProviders = useSettings.getState().providers;
+    const unchanged = (id: string) => {
+      const before = providers.find((p) => p.id === id);
+      const after = currentProviders.find((p) => p.id === id);
+      return before && after && before.baseUrl === after.baseUrl && before.apiKey === after.apiKey && before.protocol === after.protocol;
+    };
+    setModelOptions((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(opts).filter(([id]) => unchanged(id))) }));
+    setProviderNotes((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(notes).filter(([id]) => unchanged(id))) }));
 
     const failed = Object.entries(notes).filter(([, note]) => note.startsWith('拉取失败'));
     const totalModels = Object.values(opts).reduce((n, ids) => n + ids.length, 0);
@@ -1133,14 +1131,16 @@ export default function ModelsModule() {
     // 槽位改指第一家（id 必然存在：至少剩一家）；收藏项直接丢。
     const rest = settings.providers.filter((x) => x.id !== p.id);
     const fallback = rest[0].id;
-    const patch: Partial<Settings> = { providers: rest };
+    const patch: Partial<Settings> = { providers: rest, savedModels: savedModelsOf(settings).filter((m) => m.providerId !== p.id) };
     // 模型列表缓存按 baseUrl 索引，删除是**唯一**一处能确定它再也用不上的时机
     dropModelList(p.baseUrl);
     setModelOptions(({ [p.id]: _dropped, ...kept }) => kept);
     setProviderNotes(({ [p.id]: _dropped, ...kept }) => kept);
     for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
       if (settings[name].providerId === p.id) {
-        patch[name] = { ...settings[name], providerId: fallback };
+        const slot = name === 'llmModel' ? 'chat' : name === 'visionModel' ? 'vision' : 'asr';
+        const replacement = modelsForSlot(settings, slot).find((m) => m.providerId !== p.id);
+        patch[name] = { providerId: replacement?.providerId ?? fallback, model: replacement?.model ?? '' };
       }
     }
     const favs = { ...settings.favorites };
@@ -1160,21 +1160,11 @@ export default function ModelsModule() {
 
   return (
     <>
+      <ModelLibrary options={modelOptions} checking={checking} onFetch={handleCheck} />
       <SectionCard
         title="选择模型"
-        subtitle="三个槽位各挑一个模型。点任意一行展开检索面板，可按供应商筛选、收藏常用模型"
+        subtitle="为三种用途设置默认模型。候选来自上方「我的模型」，Chat 可随时切换。"
         testId="card-models"
-        actions={
-          <LoadingButton
-            variant="secondary"
-            loading={checking}
-            data-testid="btn-check-models"
-            onPress={() => void handleCheck()}
-          >
-            <Sym name="refresh" />
-            拉取模型列表
-          </LoadingButton>
-        }
       >
         <div className="flex flex-col gap-2.5">
           {SLOT_ORDER.map((slot) => {
@@ -1309,7 +1299,7 @@ export default function ModelsModule() {
               removable={settings.providers.length > 1 || i > 0}
               onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
               onChange={(patch) => {
-                if (patch.protocol && patch.protocol !== p.protocol) {
+                if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
                   setModelOptions(({ [p.id]: _old, ...rest }) => rest);
                   setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
                 }

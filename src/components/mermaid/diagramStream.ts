@@ -18,6 +18,8 @@
 import { renderDiagram } from './diagramRender.ts';
 import {
   pickValidCircle,
+  pickValidDatum,
+  LIMITS,
   pickValidCurve,
   pickValidEdge,
   pickValidLabel,
@@ -26,6 +28,7 @@ import {
   pickValidPolygon,
   pickValidSegment,
   type Curve,
+  type ChartDatum,
   type DiagramDoc,
   type DiagramShape,
   type GraphDoc,
@@ -146,7 +149,8 @@ function scanArrayItems(src: string, from: number): unknown[] {
 function scanTop(src: string): ScanResult | null {
   const start = src.indexOf('{');
   if (start < 0) return null;
-  const out: ScanResult = { type: null, scalars: {}, arrays: {} };
+  if (src.slice(0, start).trim()) return null;
+  const out: ScanResult = { type: null, scalars: Object.create(null), arrays: Object.create(null) };
   let i = start + 1;
   for (;;) {
     i = skipWs(src, i);
@@ -224,13 +228,20 @@ function pair(v: unknown): Point2 | undefined {
 export function peekDiagramProgress(raw: string): DiagramProgress | null {
   const scan = scanTop(raw);
   if (!scan || !scan.type) return null;
-  if (scan.type !== 'graph' && scan.type !== 'plot') return null; // 等终态报「type 不合法」
+  if (scan.type !== 'graph' && scan.type !== 'plot' && scan.type !== 'chart') return null;
 
   let doc: DiagramDoc;
-  if (scan.type === 'graph') {
+  if (scan.type === 'chart') {
+    const kind = scan.scalars.kind;
+    if (kind !== 'bar' && kind !== 'line' && kind !== 'pie') return null;
+    const data = (scan.arrays.data ?? []).slice(0, LIMITS.maxData).map(pickValidDatum).filter((d): d is ChartDatum => d !== null && (kind !== 'pie' || d.value >= 0));
+    if (!data.length) return null;
+    const y = pair(scan.scalars.y);
+    doc = { type: 'chart', kind, data, y: y && y[0] < y[1] && Number.isFinite(y[1] - y[0]) ? y : undefined };
+  } else if (scan.type === 'graph') {
     const seen = new Set<string>();
     const nodes: GraphNode[] = [];
-    for (const item of scan.arrays.nodes ?? []) {
+    for (const item of (scan.arrays.nodes ?? []).slice(0, LIMITS.maxNodes)) {
       const n = pickValidNode(item);
       // 同 id 只收第一个：半截数据里出现重复 id 时，画布按 key 合并会互相顶掉
       if (n && !seen.has(n.id)) {
@@ -240,8 +251,9 @@ export function peekDiagramProgress(raw: string): DiagramProgress | null {
     }
     if (nodes.length === 0) return null;
     const edges: GraphEdge[] = (scan.arrays.edges ?? [])
+      .slice(0, LIMITS.maxEdges)
       .map(pickValidEdge)
-      .filter((e): e is GraphEdge => e !== null && seen.has(e.from) && seen.has(e.to));
+      .filter((e): e is GraphEdge => e !== null && e.from !== e.to && seen.has(e.from) && seen.has(e.to));
     doc = {
       type: 'graph',
       direction: scan.scalars.direction === 'LR' ? 'LR' : 'TB',
@@ -255,17 +267,17 @@ export function peekDiagramProgress(raw: string): DiagramProgress | null {
     const y = pair(scan.scalars.y);
     if (y && y[0] < y[1]) plot.y = y;
     if (typeof scan.scalars.axes === 'boolean') plot.axes = scan.scalars.axes;
-    const curves = (scan.arrays.curves ?? []).map(pickValidCurve).filter((c): c is Curve => c !== null);
+    const curves = (scan.arrays.curves ?? []).slice(0, LIMITS.maxCurves).map(pickValidCurve).filter((c): c is Curve => c !== null);
     if (curves.length > 0) plot.curves = curves;
-    const points = (scan.arrays.points ?? []).map(pickValidPoint).filter((p) => p !== null);
+    const points = (scan.arrays.points ?? []).slice(0, LIMITS.maxPoints).map(pickValidPoint).filter((p) => p !== null);
     if (points.length > 0) plot.points = points;
-    const segments = (scan.arrays.segments ?? []).map(pickValidSegment).filter((s) => s !== null);
+    const segments = (scan.arrays.segments ?? []).slice(0, LIMITS.maxSegments).map(pickValidSegment).filter((s) => s !== null);
     if (segments.length > 0) plot.segments = segments;
-    const polygons = (scan.arrays.polygons ?? []).map(pickValidPolygon).filter((p) => p !== null);
+    const polygons = (scan.arrays.polygons ?? []).slice(0, LIMITS.maxPolygons).map(pickValidPolygon).filter((p) => p !== null);
     if (polygons.length > 0) plot.polygons = polygons;
-    const circles = (scan.arrays.circles ?? []).map(pickValidCircle).filter((c) => c !== null);
+    const circles = (scan.arrays.circles ?? []).slice(0, LIMITS.maxCircles).map(pickValidCircle).filter((c) => c !== null);
     if (circles.length > 0) plot.circles = circles;
-    const labels = (scan.arrays.labels ?? []).map(pickValidLabel).filter((l) => l !== null);
+    const labels = (scan.arrays.labels ?? []).slice(0, LIMITS.maxLabels).map(pickValidLabel).filter((l) => l !== null);
     if (labels.length > 0) plot.labels = labels;
     doc = plot;
   }

@@ -4,9 +4,9 @@
  * 这是「AI 定义结构 + 确定性工具渲染」里「确定性工具」的那一半。模型只描述
  * 节点、连线、函数与范围；坐标、布局、连线路由、刻度、文字位置全部在这里算：
  *
- * - graph：最长路径分层 + 层内按序 + 边界求交 + 贝塞尔连线 + 箭头 marker。
- *   布局只依赖「已经拿到的数据」，所以流式期间先到的节点不会因为后来的节点而挪位
- *   （层号只增不减的那部分除外，见 diagramStream 的说明）。
+ * - graph：Dagre 分层、环处理、连线路由与标签占位。流式期间布局随完整结构更新，
+ *   图元 key 保持稳定；同一份完整数据的布局确定。
+ * - chart：柱/折/饼数据映射为图元，不接受模型提供的像素坐标或脚本。
  * - plot：nice ticks 刻度、表达式采样（渐近线自动断条）、几何图元、图例。
  *   函数图像不再由模型手算坐标 —— 这是「模型直出 SVG」最常漂移的地方。
  *
@@ -25,14 +25,15 @@
  *
  * 所有文本都经过 `esc` 转义 —— 模型写的 label 是第三方文本，不能原样进 DOM。
  */
+import { graphlib, layout } from '@dagrejs/dagre';
 import { compileExpression } from './expr.ts';
 import type {
   CircleGeom,
+  ChartDoc,
   Curve,
   DiagramDoc,
   DiagramShape,
   GraphDoc,
-  GraphEdge,
   GraphNode,
   PlotDoc,
   Point2,
@@ -158,8 +159,6 @@ interface NodeBox {
   shape: GraphNode['shape'];
   w: number;
   h: number;
-  layer: number;
-  row: number;
   cx: number;
   cy: number;
 }
@@ -173,56 +172,17 @@ function nodeSize(label: string, shape: GraphNode['shape']): { w: number; h: num
   const lw = Math.max(...lines.map((l) => textWidth(l)));
   switch (shape) {
     case 'ellipse':
-      return { w: Math.max(60, lw + 28), h: 38 };
+      return { w: Math.max(60, lw * 1.4 + 28), h: Math.max(38, lines.length * FONT * 1.8 + 16) };
     case 'diamond':
-      return { w: Math.max(74, lw * 1.5 + 26), h: 46 };
+      return { w: Math.max(74, lw * 2 + 26), h: Math.max(46, lines.length * FONT * 2.5 + 16) };
     case 'round':
-      return { w: Math.max(58, lw + 28), h: 34 };
+      return { w: Math.max(58, lw + 28), h: Math.max(34, lines.length * FONT * 1.25 + 16) };
     default:
-      return { w: Math.max(56, lw + 22), h: 34 };
-  }
-}
-
-/**
- * 最长路径分层：roots（无入边）在第 0 层，其余取「最长的前驱链 + 1」。
- *
- * 迭代次数按节点数封顶（|V|+1 轮），环不会让循环停不下来 —— 有环时层号在封顶轮
- * 后定死，仍然是确定值。这正是「确定性」的含义：不是「最优布局」，而是
- * 「同一份输入永远同一个布局」。
- */
-function assignLayers(nodes: GraphNode[], edges: GraphEdge[]): Map<string, number> {
-  const layer = new Map<string, number>(nodes.map((n) => [n.id, 0]));
-  const valid = edges.filter((e) => layer.has(e.from) && layer.has(e.to) && e.from !== e.to);
-  for (let round = 0; round <= nodes.length; round++) {
-    let changed = false;
-    for (const e of valid) {
-      const want = (layer.get(e.from) ?? 0) + 1;
-      if ((layer.get(e.to) ?? 0) < want) {
-        layer.set(e.to, want);
-        changed = true;
-      }
-    }
-    if (!changed) break;
-  }
-  return layer;
-}
-
-/** 节点盒的边界点：连线的起止点从盒子边缘出发，不是从中心穿过去 */
-function edgePoint(box: NodeBox, dir: 'top' | 'bottom' | 'left' | 'right'): Point2 {
-  switch (dir) {
-    case 'top':
-      return [box.cx, box.cy - box.h / 2];
-    case 'bottom':
-      return [box.cx, box.cy + box.h / 2];
-    case 'left':
-      return [box.cx - box.w / 2, box.cy];
-    case 'right':
-      return [box.cx + box.w / 2, box.cy];
+      return { w: Math.max(56, lw + 22), h: Math.max(34, lines.length * FONT * 1.25 + 16) };
   }
 }
 
 function renderGraph(doc: GraphDoc): RenderedDiagram {
-  const vertical = doc.direction !== 'LR';
   const nodes = doc.nodes ?? [];
   const edges = (doc.edges ?? []).filter((e) => e.from !== e.to);
 
@@ -230,37 +190,24 @@ function renderGraph(doc: GraphDoc): RenderedDiagram {
     return { width: 0, height: 0, viewBox: '0 0 0 0', shapes: [], svg: '' };
   }
 
-  const layers = assignLayers(nodes, edges);
+  // Dagre owns ranking, cycle handling, parallel edge routing and label space.
+  // Array order is the deterministic tie-breaker; no model-supplied pixels.
+  const graph = new graphlib.Graph({ multigraph: true });
+  graph.setGraph({ rankdir: doc.direction ?? 'TB', nodesep: GAP_Y, ranksep: GAP_X, marginx: PAD, marginy: PAD });
   const boxes: NodeBox[] = nodes.map((n) => {
     const { w, h } = nodeSize(n.label, n.shape);
-    return { id: n.id, label: n.label, shape: n.shape, w, h, layer: layers.get(n.id) ?? 0, row: 0, cx: 0, cy: 0 };
+    graph.setNode(n.id, { width: w, height: h });
+    return { id: n.id, label: n.label, shape: n.shape, w, h, cx: 0, cy: 0 };
   });
-
-  // 层内按 nodes 数组顺序排行（稳定：数组顺序就是模型的书写顺序）
-  const byLayer = new Map<number, NodeBox[]>();
+  edges.forEach((edge, i) => {
+    graph.setEdge(edge.from, edge.to, { width: edge.label ? textWidth(edge.label, SMALL) + 8 : 0, height: edge.label ? 20 : 0, labelpos: 'c' }, String(i));
+  });
+  layout(graph);
   for (const b of boxes) {
-    const arr = byLayer.get(b.layer) ?? [];
-    arr.push(b);
-    byLayer.set(b.layer, arr);
+    const position = graph.node(b.id);
+    b.cx = position.x;
+    b.cy = position.y;
   }
-  const maxW = Math.max(...boxes.map((b) => b.w));
-  const maxH = Math.max(...boxes.map((b) => b.h));
-  const colStep = maxW + GAP_X;
-  const rowStep = maxH + GAP_Y;
-
-  // 顶对齐：列高增长时已落位的节点不挪位（流式预览稳定性的来源）
-  for (const b of boxes) {
-    const row = (byLayer.get(b.layer) ?? []).indexOf(b);
-    b.row = row;
-    if (vertical) {
-      b.cx = PAD + colStep / 2 + b.layer * colStep;
-      b.cy = PAD + rowStep / 2 + row * rowStep;
-    } else {
-      b.cx = PAD + rowStep / 2 + row * rowStep;
-      b.cy = PAD + colStep / 2 + b.layer * colStep;
-    }
-  }
-  const byId = new Map(boxes.map((b) => [b.id, b]));
 
   const bounds = new Bounds();
   const shapes: DiagramShape[] = [];
@@ -310,41 +257,12 @@ function renderGraph(doc: GraphDoc): RenderedDiagram {
 
   // 连线（端点存在才画；顺序即 edges 数组顺序）
   edges.forEach((e, i) => {
-    const a = byId.get(e.from);
-    const b = byId.get(e.to);
-    if (!a || !b) return;
-    let d: string;
-    let mid: Point2;
-    if (a.layer === b.layer) {
-      // 同层：直线横跨（TB 是竖线，LR 是横线）
-      const s = vertical ? edgePoint(a, 'bottom') : edgePoint(a, 'right');
-      const t = vertical ? edgePoint(b, 'top') : edgePoint(b, 'left');
-      d = `M${fmt(s[0])} ${fmt(s[1])} L${fmt(t[0])} ${fmt(t[1])}`;
-      mid = [(s[0] + t[0]) / 2, (s[1] + t[1]) / 2];
-    } else {
-      const forward = b.layer > a.layer;
-      const s = vertical
-        ? forward
-          ? edgePoint(a, 'right')
-          : edgePoint(a, 'left')
-        : forward
-          ? edgePoint(a, 'bottom')
-          : edgePoint(a, 'top');
-      const t = vertical
-        ? forward
-          ? edgePoint(b, 'left')
-          : edgePoint(b, 'right')
-        : forward
-          ? edgePoint(b, 'top')
-          : edgePoint(b, 'bottom');
-      const dx = t[0] - s[0];
-      const dy = t[1] - s[1];
-      // 前向：水平控制点（TB）/ 垂直控制点（LR）；回边（环）朝反方向撇出去
-      const c1: Point2 = vertical ? [s[0] + dx * (forward ? 0.45 : -0.4), s[1]] : [s[0], s[1] + dy * (forward ? 0.45 : -0.4)];
-      const c2: Point2 = vertical ? [t[0] - dx * (forward ? 0.45 : -0.4), t[1]] : [t[0], t[1] - dy * (forward ? 0.45 : -0.4)];
-      d = `M${fmt(s[0])} ${fmt(s[1])} C${fmt(c1[0])} ${fmt(c1[1])} ${fmt(c2[0])} ${fmt(c2[1])} ${fmt(t[0])} ${fmt(t[1])}`;
-      mid = [(s[0] + 3 * c1[0] + 3 * c2[0] + t[0]) / 8, (s[1] + 3 * c1[1] + 3 * c2[1] + t[1]) / 8];
-    }
+    const route = graph.edge(e.from, e.to, String(i));
+    const d = route.points.map((p: { x: number; y: number }, j: number) => {
+      bounds.add(p.x, p.y);
+      return `${j ? 'L' : 'M'}${fmt(p.x)} ${fmt(p.y)}`;
+    }).join(' ');
+    const mid: Point2 = [route.x ?? 0, route.y ?? 0];
     let svg = `<g><path d="${d}" fill="none" stroke="${C.edge}" stroke-width="1.5" marker-end="url(#${ARROW_ID})"/>`;
     if (e.label) {
       const lw = textWidth(e.label, 9.5);
@@ -675,5 +593,53 @@ function renderPlot(doc: PlotDoc, opts: RenderOptions): RenderedDiagram {
  * 坏 fn 直接抛错 —— 那时用户与模型都该得到明确反馈，而不是一张 quietly 少画了曲线的图。
  */
 export function renderDiagram(doc: DiagramDoc, opts: RenderOptions = {}): RenderedDiagram {
-  return doc.type === 'graph' ? renderGraph(doc) : renderPlot(doc, opts);
+  return doc.type === 'graph' ? renderGraph(doc) : doc.type === 'chart' ? renderChart(doc) : renderPlot(doc, opts);
+}
+
+/** Data stays semantic. Fixed canvas, zero baseline and bounded labels are renderer policy. */
+function renderChart(doc: ChartDoc): RenderedDiagram {
+  const width = doc.kind === 'pie' ? 560 : Math.max(560, doc.data.length * 80 + 80);
+  const height = 340;
+  const shapes: DiagramShape[] = [];
+  const add = (key: string, svg: string) => shapes.push({ key, svg: `<g>${svg}</g>` });
+  if (doc.kind === 'pie') {
+    // Normalize before summing to avoid overflow for large finite values.
+    const max = Math.max(...doc.data.map(d => d.value), 1);
+    const total = doc.data.reduce((s, d) => s + d.value / max, 0);
+    let angle = -Math.PI / 2;
+    doc.data.forEach((d, i) => {
+      const ratio = total ? (d.value / max) / total : 0;
+      const end = angle + ratio * Math.PI * 2;
+      const color = CURVE_COLORS[i % CURVE_COLORS.length];
+      const wedge = ratio === 1
+        ? `<circle cx="150" cy="170" r="115" fill="${color}"/>`
+        : ratio > 0 ? `<path d="M150 170 L${fmt(150 + 115 * Math.cos(angle))} ${fmt(170 + 115 * Math.sin(angle))} A115 115 0 ${ratio > 0.5 ? 1 : 0} 1 ${fmt(150 + 115 * Math.cos(end))} ${fmt(170 + 115 * Math.sin(end))} Z" fill="${color}" stroke="white"/>` : '';
+      add(`datum:${i}`, `${wedge}<rect x="290" y="${24 + i * 25}" width="10" height="10" fill="${color}"/>${labelText(308, 34 + i * 25, `${d.label} · ${fmt(ratio * 100)}%`, 'start', 16)}`);
+      angle = end;
+    });
+  } else {
+    // Normalize arithmetic as well as geometry: finite input must never yield NaN paths.
+    const scale = Math.max(1, ...doc.data.map(d => Math.abs(d.value)), ...(doc.y ?? []).map(Math.abs));
+    const lo = doc.y ? doc.y[0] / scale : Math.min(0, ...doc.data.map(d => d.value / scale));
+    const hi = doc.y ? doc.y[1] / scale : Math.max(0, ...doc.data.map(d => d.value / scale));
+    const span = hi - lo || 1;
+    const y = (v: number) => 270 - ((v / scale - lo) / span) * 230;
+    const baseline = y(Math.max(lo * scale, Math.min(hi * scale, 0)));
+    const step = (width - 80) / Math.max(doc.data.length, 1);
+    add('axes', `<path d="M55 35 V270 H${width - 20} M55 ${fmt(baseline)} H${width - 20}" fill="none" stroke="${C.axis}"/>${labelText(50, 44, String(hi * scale), 'end', 16)}${labelText(50, 270, String(lo * scale), 'end', 16)}`);
+    doc.data.forEach((d, i) => {
+      const x = 55 + step * (i + 0.5);
+      const cy = y(d.value);
+      const previous = doc.data[i - 1];
+      const mark = doc.kind === 'bar'
+        ? `<rect x="${fmt(x - step * 0.3)}" y="${fmt(Math.min(cy, baseline))}" width="${fmt(step * 0.6)}" height="${fmt(Math.abs(baseline - cy))}" rx="2" fill="${C.geom}"/>`
+        : `${previous ? `<path d="M${fmt(x - step)} ${fmt(y(previous.value))} L${fmt(x)} ${fmt(cy)}" fill="none" stroke="${C.geom}" stroke-width="2"/>` : ''}<circle cx="${fmt(x)}" cy="${fmt(cy)}" r="4" fill="${C.geom}"/>`;
+      const chars = [...d.label];
+      let label = '';
+      for (let j = 0; j < chars.length; j += 4) label += labelText(x, 292 + j / 4 * 18, chars.slice(j, j + 4).join(''), 'middle', 16);
+      add(`datum:${i}`, `${mark}${label}${labelText(x, cy - 8, String(d.value), 'middle', 16)}`);
+    });
+  }
+  const viewBox = `0 0 ${width} ${height}`;
+  return { width, height, viewBox, shapes, svg: `<svg xmlns="http://www.w3.org/2000/svg" viewBox="${viewBox}">${shapes.map(s => s.svg).join('')}</svg>` };
 }

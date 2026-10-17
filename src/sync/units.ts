@@ -250,6 +250,7 @@ export const SYNC_SETTINGS_KEYS = [
   'llmModel',
   'visionModel',
   'favorites',
+  'savedModels',
   'contextWindow',
   'asrConcurrency',
   'thinkingEnabled',

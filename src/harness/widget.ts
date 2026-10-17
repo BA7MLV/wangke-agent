@@ -210,7 +210,7 @@ export function widgetRejectedText(err: unknown): string {
     fix = 'edge 的 from/to 必须指向 nodes 里已存在的 id；报错消息里列出了全部可用 id，照着改';
   else if (/type 必须是/.test(raw))
     fix =
-      'type 只能取 "graph"（节点+连线）或 "plot"（函数图像/几何/坐标轴）。流程/时序/状态/层级/占比这类标准结构图优先改用 ```mermaid 围栏';
+      'type 只能取 "graph"（节点+连线）、"plot"（函数图像/几何/坐标轴）或 "chart"（柱/折/饼数据图）。时序等未覆盖图种用 ```mermaid 围栏';
   else if (/不是合法的 JSON/.test(raw))
     fix =
       '围栏里必须是一个 JSON 对象（{"type": …} 开头）。检查多余的逗号、缺引号、把说明文字写进了围栏；也不要把 SVG / mermaid 源码放进 ```diagram';

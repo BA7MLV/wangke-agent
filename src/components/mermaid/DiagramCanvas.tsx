@@ -23,7 +23,7 @@ import type { DiagramShape } from './diagramSchema';
  * （见 drawMark.ts）。更新路径刻意**不**打 class —— 打了就会让落画动画对
  * 已经画过的图元重播一遍。
  */
-export default function DiagramCanvas({ viewBox, shapes }: { viewBox: string; shapes: DiagramShape[] }) {
+export default function DiagramCanvas({ viewBox, shapes, label = '图表' }: { viewBox: string; shapes: DiagramShape[]; label?: string }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const rootRef = useRef<SVGElement | null>(null);
   /** key → 当前 DOM 节点。只增不删（除整体重置），key 的顺序由 shapes 数组决定 */
@@ -47,14 +47,6 @@ export default function DiagramCanvas({ viewBox, shapes }: { viewBox: string; sh
 
     const nodes = nodesRef.current;
     const shown = shownRef.current;
-
-    // key 集合缩小（半截数据被改写，正常流式里不会发生）：推倒重来，
-    // 而不是留一张对不上的半张图。
-    if (shapes.length < shown.size) {
-      root.replaceChildren();
-      nodes.clear();
-      shown.clear();
-    }
 
     const still = prefersReducedMotion();
     for (let i = 0; i < shapes.length; i++) {
@@ -80,14 +72,20 @@ export default function DiagramCanvas({ viewBox, shapes }: { viewBox: string; sh
 
     // 出现在上一拍、这一拍没有的 key（理论上不会发生：完整值不会变回不完整）：
     // 摘掉对应节点，避免画布残留。
+    const keys = new Set(shapes.map(s => s.key));
     for (const [key, node] of nodes) {
-      if (!shapes.some((s) => s.key === key)) {
+      if (!keys.has(key)) {
         node.remove();
         nodes.delete(key);
         shown.delete(key);
       }
     }
-  });
+    // Preserve painter order even when defs or an earlier key arrive late.
+    shapes.forEach(({ key }, i) => {
+      const node = nodes.get(key);
+      if (node && root.children[i] !== node) root.insertBefore(node, root.children[i] ?? null);
+    });
+  }, [viewBox, shapes]);
 
-  return <div ref={hostRef} className="xmd-live-svg" data-testid="diagram-canvas-root" />;
+  return <div ref={hostRef} role="img" aria-label={label} className="xmd-live-svg" data-testid="diagram-canvas-root" />;
 }

@@ -1,5 +1,5 @@
 import { useCallback, useState } from 'react';
-import { Button, Modal, Tooltip } from '@heroui/react';
+import { Button, Modal, Tooltip, Skeleton, Chip } from '@heroui/react';
 import { Sym, toast, MODAL_CONTAINER_CLASS } from '../../ui';
 import { copyText } from '../../utils/clipboard';
 import { toStandaloneSvg } from './mermaidRender';
@@ -114,12 +114,20 @@ export default function DiagramBlock({
     URL.revokeObjectURL(url);
   }, [svg, downloadPrefix, title]);
 
+  const downloadJson = () => {
+    const url = URL.createObjectURL(new Blob([JSON.stringify(JSON.parse(source), null, 2) + '\n'], { type: 'application/json' }));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${fileStem(title, downloadPrefix)}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
   // 受控弹窗：Esc / 点遮罩关闭由 Modal 自己走 onOpenChange 回写，
   // 不需要像 mdui 那样额外监听 'closed' 事件同步 state。
-  /** 图标按钮 + 提示：Tooltip.Trigger 必须包住唯一可接收 ref 的元素 */
+  /** HeroUI Button consumes Tooltip's focus context directly (one keyboard stop). */
   const iconBtn = (suffix: string, label: string, icon: React.ReactNode, onClick: () => void, active?: boolean) => (
     <Tooltip>
-      <Tooltip.Trigger>
         <Button
           isIconOnly
           variant="tertiary"
@@ -130,15 +138,14 @@ export default function DiagramBlock({
         >
           {icon}
         </Button>
-      </Tooltip.Trigger>
       <Tooltip.Content>{label}</Tooltip.Content>
     </Tooltip>
   );
 
   return (
-    <div className="xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase}>
+    <div className="xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase} aria-busy={phase === 'waiting' || phase === 'drawing' || phase === 'rendering'}>
       <div className="xmd-mermaid-head">
-        <span className="xmd-mermaid-tag">{tag}</span>
+        <Chip size="sm" variant="soft">{tag}</Chip>
         {/* 标题：围栏参数里的那张图的名字。超长会被 fence.ts 截断，所以再挂一个 title 属性 ——
             与原生 SVG/HTML 的 title 一样，悬停看全。 */}
         {title ? (
@@ -153,6 +160,7 @@ export default function DiagramBlock({
             <>
               {iconBtn('zoom', '查看大图', <Sym name="open-in-full" />, () => setZoomOpen(true))}
               {iconBtn('download', '下载 SVG', <Sym name="download" />, download)}
+              {testId === 'diagram' && phase === 'ok' ? iconBtn('download-json', '下载 JSON', <Sym name="code" />, downloadJson) : null}
             </>
           )}
           {iconBtn(
@@ -167,10 +175,10 @@ export default function DiagramBlock({
 
       {phase === 'waiting' || phase === 'rendering' ? (
         <div className="xmd-mermaid-placeholder" data-testid={`${testId}-pending`}>
-          <span className="xmd-mermaid-dots" />
-          <span>{phase === 'waiting' ? waitingText : renderingText}</span>
+          <Skeleton className="h-16 w-24 rounded-lg motion-reduce:animate-none" />
+          <span role="status">{phase === 'waiting' ? waitingText : renderingText}</span>
         </div>
-      ) : phase === 'drawing' && stream ? (
+      ) : (phase === 'drawing' || phase === 'ok') && stream ? (
         <>
           {/* 画布先出，提示退成一行小字：空图也有正确的宽高比（viewBox 一到手就定了），
               所以整块不会随着内容增长来回跳。追加过程见 LiveSvg / DiagramCanvas。 */}
@@ -178,16 +186,16 @@ export default function DiagramBlock({
             {stream.kind === 'svg' ? (
               <LiveSvg rootAttrs={stream.progress.rootAttrs} elements={stream.progress.elements} />
             ) : (
-              <DiagramCanvas viewBox={stream.viewBox} shapes={stream.shapes} />
+              <DiagramCanvas viewBox={stream.viewBox} shapes={stream.shapes} label={title ?? '图表'} />
             )}
           </div>
-          <div className="xmd-mermaid-live" data-testid={`${testId}-live`}>
-            <span className="xmd-mermaid-dots" />
-            <span>{waitingText}</span>
-          </div>
+          {phase === 'drawing' ? <div className="xmd-mermaid-live" data-testid={`${testId}-live`} role="status">
+            <Chip size="sm" variant="soft">实时预览</Chip>
+            <span>{waitingText}布局随结构更新</span>
+          </div> : null}
         </>
       ) : phase === 'error' ? (
-        <div className="xmd-mermaid-error" data-testid={`${testId}-error`}>
+        <div className="xmd-mermaid-error" data-testid={`${testId}-error`} role="alert">
 <div className="xmd-mermaid-error-title">
           <Sym name="warning" />
           <span>{errorTitle}</span>
@@ -212,7 +220,7 @@ export default function DiagramBlock({
         )
       )}
 
-      {(showSource || phase === 'error' || phase === 'waiting') && (
+      {(showSource || phase === 'error') && (
         <pre className="xmd-mermaid-source" data-testid={`${testId}-source`}>
           {source}
         </pre>
@@ -268,7 +276,6 @@ function ZoomPane({ testId, svg, onDownload }: { testId: string; svg: string; on
       <div className="xmd-mermaid-zoom-bar">
         <div className="xmd-mermaid-zoom-tools">
           <Tooltip>
-            <Tooltip.Trigger>
               <Button
                 isIconOnly
                 variant="tertiary"
@@ -279,14 +286,12 @@ function ZoomPane({ testId, svg, onDownload }: { testId: string; svg: string; on
               >
                 <Sym name="zoom-out" />
               </Button>
-            </Tooltip.Trigger>
             <Tooltip.Content>缩小</Tooltip.Content>
           </Tooltip>
           <span className="xmd-mermaid-zoom-label" data-testid={`${testId}-zoom-label`}>
             {Math.round(zoom * 100)}%
           </span>
           <Tooltip>
-            <Tooltip.Trigger>
               <Button
                 isIconOnly
                 variant="tertiary"
@@ -297,7 +302,6 @@ function ZoomPane({ testId, svg, onDownload }: { testId: string; svg: string; on
               >
                 <Sym name="zoom-in" />
               </Button>
-            </Tooltip.Trigger>
             <Tooltip.Content>放大</Tooltip.Content>
           </Tooltip>
           <Button
