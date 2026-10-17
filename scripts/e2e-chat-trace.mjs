@@ -337,6 +337,12 @@ await check('跑完自动收起：思考链 → 思考过程（不带用时）�
    */
   await page.waitForSelector('[data-testid="chat-message-actions"]', { timeout: 40000 });
   assert.equal(await chain.getAttribute('data-mode'), 'closed');
+  // 标题现在走 transitions.dev 的 Text states swap（150ms），读之前先等它落地
+  await page.waitForFunction(
+    () => document.querySelector('.reasoning-chain__title')?.textContent?.trim() === '思考过程',
+    null,
+    { timeout: 2000 },
+  );
   assert.equal((await chain.locator('.reasoning-chain__title').innerText()).trim(), '思考过程');
   assert.equal(
     await page.locator('[data-testid="reasoning-elapsed"]').count(),
@@ -353,6 +359,12 @@ await check('跑完自动收起：思考链 → 思考过程（不带用时）�
 await check('展开：已思考用时 x 秒 + 吸顶 + 正文不限高', async () => {
   await chain.locator('.reasoning-chain__toggle').click();
   assert.equal(await chain.getAttribute('data-mode'), 'expanded');
+  // 同上：Text states swap 先把旧行送走，150ms 后才换上新文案
+  await page.waitForFunction(
+    () => /^已思考用时 /.test(document.querySelector('.reasoning-chain__title')?.textContent?.trim() ?? ''),
+    null,
+    { timeout: 2000 },
+  );
   assert.match((await chain.locator('.reasoning-chain__title').innerText()).trim(), /^已思考用时 /);
   const box = await chain.locator('.reasoning-chain__toggle').evaluate((el) => {
     const cs = getComputedStyle(el);

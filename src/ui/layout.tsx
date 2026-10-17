@@ -14,7 +14,7 @@ import {
 import { Sym } from './icons';
 import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
-import { IconSwap } from '../components/motion';
+import { DotBadge, IconSwap } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
 import './layout.css';
@@ -693,8 +693,8 @@ export function PageShell({
                 onPress={() => setDrawerOpen(true)}
               >
                 <Sym name="menu" />
-                {hasUnread && <span className="absolute top-1 right-1 size-2 rounded-full bg-accent"
-                  role="img" aria-label="有已完成的会话未查看" data-testid="nav-unread-dot" />}
+                <DotBadge open={hasUnread} className="nav-unread"
+                  label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>
             )}
             {rail && !isNarrow && (
@@ -709,8 +709,8 @@ export function PageShell({
                 onPress={toggleRail}
               >
                 <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
-                {hasUnread && <span className="absolute top-1 right-1 size-2 rounded-full bg-accent"
-                  role="img" aria-label="有已完成的会话未查看" data-testid="nav-unread-dot" />}
+                <DotBadge open={hasUnread} className="nav-unread"
+                  label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>
             )}
             {onBack && (

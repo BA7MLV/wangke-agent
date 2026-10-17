@@ -74,16 +74,27 @@
   overscroll-behavior: contain;
 }
 
+/* 渐隐长度与 transitions.css 的 --reason-fade 同一个 token
+   （29 Reasoning stream 的蒙版）。通用 .t-reason 默认上下都淡；
+   这里按 data-fade-* **各自**开关：贴底时底部那截不该再把最后一行抹灰。 */
 .reasoning-chain__body--live[data-fade-top='true'] {
-  mask-image: linear-gradient(to bottom, transparent, #000 20px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade));
+  mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade));
 }
 
 .reasoning-chain__body--live[data-fade-bottom='true'] {
-  mask-image: linear-gradient(to bottom, #000 calc(100% - 20px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--reason-fade)), transparent);
+  mask-image: linear-gradient(to bottom, black calc(100% - var(--reason-fade)), transparent);
 }
 
 .reasoning-chain__body--live[data-fade-top='true'][data-fade-bottom='true'] {
-  mask-image: linear-gradient(to bottom, transparent, #000 20px, #000 calc(100% - 20px), transparent);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade), black calc(100% - var(--reason-fade)), transparent);
+  mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade), black calc(100% - var(--reason-fade)), transparent);
+}
+
+.reasoning-chain__body--live[data-fade-top='false'][data-fade-bottom='false'] {
+  -webkit-mask-image: none;
+  mask-image: none;
 }
 
 /* No second grid/blur animation: use HeroUI's disclosure transition alone. */

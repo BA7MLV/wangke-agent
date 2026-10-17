@@ -1,4 +1,14 @@
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type MutableRefObject,
+  type ReactNode,
+  type Ref,
+  type RefObject,
+} from 'react';
 
 /**
  * 新消息入场动画的 key 跟踪（配 .t-msg-enter，见 transitions.css）。
@@ -226,6 +236,170 @@ export function ThinkLine({
       role="status"
     />
   );
+}
+
+type Bezier = readonly [number, number, number, number];
+
+/** --reason-ease 的 JS 版：只认 cubic-bezier(...) 与常见关键字，其余回落参考值。 */
+function parseReasonEase(raw: string): Bezier {
+  const cubic = /cubic-bezier\(\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*,\s*([-\d.]+)\s*\)/.exec(raw);
+  if (cubic) {
+    const p = cubic.slice(1, 5).map(Number);
+    if (p.length === 4 && p.every(Number.isFinite)) return p as unknown as Bezier;
+  }
+  switch (raw.trim()) {
+    case 'linear':
+      return [0, 0, 1, 1];
+    case 'ease':
+      return [0.25, 0.1, 0.25, 1];
+    case 'ease-in':
+      return [0.42, 0, 1, 1];
+    case 'ease-out':
+      return [0, 0, 0.58, 1];
+    case 'ease-in-out':
+      return [0.42, 0, 0.58, 1];
+    default:
+      return [0.22, 1, 0.36, 1];
+  }
+}
+
+/** 三次贝塞尔在某一轴上的分量：((A·t + B)·t + C)·t。 */
+function bezierAxis(a: number, b: number, t: number): number {
+  return ((1 - 3 * b + 3 * a) * t + (3 * b - 6 * a)) * t * t + 3 * a * t;
+}
+
+/** 给定 x 轴进度，返回 cubic-bezier 的 y 轴进度（牛顿迭代反解 t）。 */
+function bezierProgress([x1, y1, x2, y2]: Bezier, x: number): number {
+  if (x <= 0) return 0;
+  if (x >= 1) return 1;
+  let t = x;
+  for (let i = 0; i < 5; i++) {
+    const dx = bezierAxis(x1, x2, t) - x;
+    if (Math.abs(dx) < 1e-4) break;
+    const slope = 3 * (1 - 3 * x2 + 3 * x1) * t * t + 2 * (3 * x2 - 6 * x1) * t + 3 * x1;
+    if (Math.abs(slope) < 1e-6) break;
+    t -= dx / slope;
+  }
+  return bezierAxis(y1, y2, Math.min(1, Math.max(0, t)));
+}
+
+/**
+ * 29 Reasoning stream — 实时 transcript 的自动跟随。
+ *
+ * 参考片段用 transform 把静态 transcript 每 --reason-hold 向上送 --reason-lines 行，
+ * 并克隆一份循环。实时正文有两个约束让它不能照搬：
+ *  - 内容只增不改，克隆会让读屏把整段念两遍；
+ *  - 用户要能自己滚回去读，transform 会把 wheel / touch / 键盘滚动全挡掉。
+ *
+ * 所以这里保留原生 scrollTop，只借它的**节奏**：落后不超过两步时，每步之后停
+ * --reason-hold，再用 --reason-step / --reason-ease 补间到当前底部；落后超过两步
+ * （模型吐得比补间快）就不再等，立刻追上去 —— 最新一行不该被关在视口外。
+ * 用户往上滚时 `stickRef` 会被置 false，补间立即停。
+ */
+export function useReasoningStream(
+  elRef: RefObject<HTMLDivElement | null>,
+  enabled: boolean,
+  stickRef: MutableRefObject<boolean>,
+  revision: string,
+): () => void {
+  const clock = useRef({ timer: 0, raf: 0, running: false, last: 0 });
+
+  const stop = useCallback(() => {
+    const c = clock.current;
+    if (c.timer) window.clearTimeout(c.timer);
+    if (c.raf) cancelAnimationFrame(c.raf);
+    c.timer = 0;
+    c.raf = 0;
+    c.running = false;
+  }, []);
+
+  // 收起 / 思考结束：半途的补间不该继续跑
+  useEffect(() => {
+    if (enabled) return;
+    stop();
+    clock.current.last = 0;
+  }, [enabled, stop]);
+
+  // 卸载
+  useEffect(() => stop, [stop]);
+
+  useEffect(() => {
+    if (!enabled) return;
+    const el = elRef.current;
+    if (!el || !stickRef.current) return;
+    // 收窄后的引用：TS 不会把窄化带进下面延迟执行的函数声明里
+    const host = el;
+    const c = clock.current;
+
+    const root = getComputedStyle(document.documentElement);
+    const stepMs = ms('--reason-step', 500);
+    const holdMs = ms('--reason-hold', 840);
+    const lines = parseFloat(root.getPropertyValue('--reason-lines')) || 2;
+    const lineH = parseFloat(getComputedStyle(host).lineHeight) || 18;
+    const ease = parseReasonEase(root.getPropertyValue('--reason-ease'));
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    const bottom = () => host.scrollHeight - host.clientHeight;
+
+    function run() {
+      c.timer = 0;
+      if (!stickRef.current) return;
+      const to = bottom();
+      const from = host.scrollTop;
+      if (to - from <= 0.5) return;
+
+      if (reduced || stepMs <= 0) {
+        host.scrollTop = to;
+        c.last = performance.now();
+        return;
+      }
+
+      c.running = true;
+      const started = performance.now();
+      const frame = (now: number) => {
+        if (!stickRef.current) {
+          c.running = false;
+          c.raf = 0;
+          return;
+        }
+        const p = Math.min(1, (now - started) / stepMs);
+        host.scrollTop = from + (to - from) * bezierProgress(ease, p);
+        if (p < 1) {
+          c.raf = requestAnimationFrame(frame);
+          return;
+        }
+        c.running = false;
+        c.raf = 0;
+        // 参考片段把 --reason-hold 当作「一步走完之后的停顿时长」，
+        // 所以节拍从落点起算，而不是从起跑起算。
+        c.last = performance.now();
+        // 补间途中到达的 token 会让底部继续往下长：跑完再看一眼，
+        // 还落后就进入下一步（快模型下这等于连续跟随，慢模型下才是停顿）。
+        queue();
+      };
+      c.raf = requestAnimationFrame(frame);
+    }
+
+    function queue() {
+      if (c.running || c.timer || !stickRef.current) return;
+      const distance = bottom() - host.scrollTop;
+      if (distance <= 0.5) return;
+      // 落后超过两步：最新几行已经被关在视口外，别再等 hold，立刻补上去。
+      // 恰好一两条时按参考节奏走：每 --reason-hold 一步。
+      const wait = distance > lineH * lines * 2
+        ? 0
+        : Math.max(0, holdMs - (performance.now() - c.last));
+      c.timer = window.setTimeout(run, wait);
+    }
+
+    queue();
+    // 依赖只要求「有新 token / 重新展开」时再排一步；运行中的补间不能被下一个
+    // token 取消（那会让滚动每帧重启），所以这个 effect 不返回清理函数 ——
+    // 取消统一由 enabled 的翻转与 stop 负责。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision, enabled, elRef, stickRef, stop]);
+
+  return stop;
 }
 
 /**
@@ -458,6 +632,38 @@ export function CountBadge({
   return (
     <span className={className ? `t-badge ${className}` : 't-badge'} data-open={count > 0} aria-hidden="true" style={style}>
       <span className="t-badge-dot">{count > max ? `${max}+` : count}</span>
+    </span>
+  );
+}
+
+/**
+ * 03 Notification badge 的圆点形态：有未读时从触发器边缘滑入并把圆点弹开，
+ * 读完后缩回。与 CountBadge 共用 .t-badge / .t-badge-dot，只是不显示数字。
+ *
+ * 角标要**常驻 DOM** 才播得出关闭那一下；`data-testid` 只在亮着时挂，
+ * 这样 e2e 仍可以按「有没有这个 testid」判断未读状态，而视觉上已经能缩回。
+ */
+export function DotBadge({
+  open,
+  label,
+  testId,
+  className,
+}: {
+  open: boolean;
+  label: string;
+  testId?: string;
+  className?: string;
+}) {
+  return (
+    <span
+      className={className ? `t-badge ${className}` : 't-badge'}
+      data-open={open}
+      role={open ? 'img' : undefined}
+      aria-label={open ? label : undefined}
+      aria-hidden={open ? undefined : true}
+      data-testid={open ? testId : undefined}
+    >
+      <span className="t-badge-dot" />
     </span>
   );
 }

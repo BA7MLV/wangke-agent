@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { Disclosure, Spinner } from '@heroui/react';
+import { TextSwap, useReasoningStream } from './motion';
 import './reasoning-chain.css';
 
 /**
@@ -115,6 +116,7 @@ export default function ReasoningChain({
   /** 思考中且展开着：自动跟随与实时计时。 */
   const live = active && open;
   const expanded = !active && open;
+  const stopStream = useReasoningStream(innerRef, live, stickRef, reasoning);
 
   /**
    * 渐隐的两端是**各自**开关的，不是「内容溢出就上下一起淡」：
@@ -130,12 +132,11 @@ export default function ReasoningChain({
     }
   };
 
-  // 流式续写时把视口按到底部
+  // 自动跟随由 useReasoningStream 负责向上送；这里只同步上下渐隐。
   useEffect(() => {
     const el = innerRef.current;
     if (!el || !open) return;
     const frame = requestAnimationFrame(() => {
-      if (live && stickRef.current) el.scrollTop = el.scrollHeight;
       lastTop.current = el.scrollTop;
       syncFade(el);
     });
@@ -148,7 +149,11 @@ export default function ReasoningChain({
     if (!el) return;
     const onScroll = () => {
       if (el.scrollHeight - el.clientHeight - el.scrollTop < 24) stickRef.current = true;
-      else if (el.scrollTop < lastTop.current - 1) stickRef.current = false;
+      else if (el.scrollTop < lastTop.current - 1) {
+        // 用户自己往上滚：先停掉正在跑的补间，别把他拽回底部
+        stickRef.current = false;
+        stopStream();
+      }
       lastTop.current = el.scrollTop;
       syncFade(el);
     };
@@ -160,7 +165,7 @@ export default function ReasoningChain({
     });
     observer.observe(el);
     return () => { el.removeEventListener('scroll', onScroll); observer.disconnect(); };
-  }, [live, open]);
+  }, [live, open, stopStream]);
 
   // 「已完成但没记耗时」（老数据）就别硬凑一个 0.0 秒，回落到朴素标题
   const title = active
@@ -174,7 +179,7 @@ export default function ReasoningChain({
       isExpanded={open} onExpandedChange={setOpen}>
       <Disclosure.Heading className="reasoning-chain__heading">
       <Disclosure.Trigger className="reasoning-chain__toggle">
-        <span className="reasoning-chain__title">{title}</span>
+        <TextSwap className="reasoning-chain__title" text={title} />
         {active && <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />}
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
         {live && <LiveElapsed from={since ?? mountedAt.current} />}
@@ -184,7 +189,8 @@ export default function ReasoningChain({
       <Disclosure.Content className="reasoning-chain__content">
         <Disclosure.Body className="reasoning-chain__panel">
         <div className="reasoning-chain__viewport" ref={viewportRef}>
-          <div ref={innerRef} className={live ? 'reasoning-chain__body reasoning-chain__body--live' : 'reasoning-chain__body'}
+          <div ref={innerRef}
+            className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
             {reasoning}
           </div>

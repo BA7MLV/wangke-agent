@@ -78,6 +78,12 @@
   --think-base: #7c7c7c;
   --think-highlight: #0d0d0d;
   --think-ease: ease-in-out;
+  /* Reasoning stream */
+  --reason-hold: 840ms;
+  --reason-step: 500ms;
+  --reason-lines: 2;
+  --reason-fade: 28px;
+  --reason-ease: cubic-bezier(0.22, 1, 0.36, 1);
   /* Streaming text */
   --stream-gap: 60ms;
   --stream-fade: 350ms;
@@ -411,6 +417,37 @@ html.dark {
 @media (prefers-reduced-motion: reduce) {
   .t-think-text { transition: none !important; transform: none !important; filter: none !important; }
   .t-think-text::before { display: none !important; }
+}
+
+/* ── 29 Reasoning stream ──────────────────────────────────────── */
+/* 参考实现是「固定高度卡片 + 克隆一份 transcript 循环播」。实时思考正文
+   只增不改：克隆会让读屏重复整段，循环也会把刚读过的旧内容再播一遍。
+   因此这里只搬两件成立的东西 —— 上下蒙版与「每 --reason-hold 走一步」的
+   节奏；滚动仍走原生 scrollTop（wheel / touch / PageDown / 读屏都不被
+   拦截），JS 只负责把这一步补间到新位置（见 ReasoningChain 的
+   useReasoningStream）。
+
+   正文自己的 data-fade-* 会覆盖这条通用蒙版：贴底时底部不该继续发灰
+   （见 reasoning-chain.css）。 */
+.t-reason {
+  position: relative;
+  overflow: hidden;
+  -webkit-mask-image: linear-gradient(
+    transparent 0,
+    black var(--reason-fade),
+    black calc(100% - var(--reason-fade)),
+    transparent 100%);
+  mask-image: linear-gradient(
+    transparent 0,
+    black var(--reason-fade),
+    black calc(100% - var(--reason-fade)),
+    transparent 100%);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  /* 补间本身在 JS 里按这个媒体查询直接落到终点（见 useReasoningStream）;
+     这里声明「不产生额外的滚动动画」的意图，和其余 32 个片段保持一致。 */
+  .t-reason { scroll-behavior: auto; }
 }
 
 /* ── 15 Shimmer text ───────────────────────────────────────────── */

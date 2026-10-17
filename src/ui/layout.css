@@ -199,6 +199,22 @@
   color: var(--foreground);
 }
 
+/* 未读角标：transitions.dev 03 的圆点形态（t-badge / t-badge-dot）。
+   位置从 .t-badge 默认的 -6/-8 收回到按钮内缘的 4px；尺寸取原来那颗
+   8px 圆点，颜色跟主色 —— 外形没变，变的是「出现 / 消失」有了方向感：
+   从边缘滑进来、圆点弹开，读完后缩回去（见 DotBadge）。 */
+.nav-unread {
+  top: 4px;
+  right: 4px;
+}
+
+.nav-unread .t-badge-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: var(--radius-full);
+  background: var(--accent);
+}
+
 /* ── 库页：导入投放区（自建；HeroUI 没有拖拽上传组件） ─────────────────────
    MD3 里没有 dropzone 这种组件，用 dashed outline 表达「可投放」是通行做法。 */
 /* 库页组件已由 HeroUI 原语与 Tailwind 工具类负责版式，见 pages/Library.tsx。 */
