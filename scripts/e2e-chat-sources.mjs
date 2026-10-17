@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// E2E：课程助手的「来源折叠 / 消息操作行 / 会话选中」（**不需要 API key**）。
+// E2E：课程助手的「来源文件 / 消息操作行 / 会话选中」（**不需要 API key**）。
 //
 // 为什么不像 e2e-course-chat-cards 那样用假模型流：这几条要验的东西全在**渲染层** ——
 // 来源是从**已经落库的回答正文**里解析出来的，操作行与来源行的出现时机只取决于
@@ -8,7 +8,7 @@
 //
 // 覆盖点：
 //   1. Recent：当前会话是唯一 aria-selected=true 的那条；点另一条高亮跟着走
-//   2. 带引用的回答 → 「N 个来源」计数正确；展开后列出课程名与位置（书名号要脱掉）
+//   2. 带引用的回答 → 直接显示来源文件名链接，不显示计数与位置（书名号要脱掉）
 //   3. 不带引用的回答 → 根本不渲染来源行（解析不到就不摆一行空壳）
 //   4. 来源行里点课程 → 跳播放页
 //   5. 复制这条回答 → 剪贴板里是 Markdown 原文（加粗标记与课程链接都在）
@@ -223,8 +223,8 @@ await check('点另一条 Recent → 高亮跟着走，且消息换成目标会�
   assert.doesNotMatch(text, /陪跑消息/, '陪跑会话的消息不该混进来');
 });
 
-console.log('—— 2. 来源折叠 ——');
-await check('带引用的回答：「2 个来源」，展开后列出两门课与引到的位置', async () => {
+console.log('—— 2. 来源文件 ——');
+await check('带引用的回答：直接显示可点击的文件名，不显示计数与位置', async () => {
   const sources = page.locator('[data-testid="chat-sources"]');
   await sources.first().waitFor({ timeout: 10000 });
   assert.equal(
@@ -233,30 +233,16 @@ await check('带引用的回答：「2 个来源」，展开后列出两门课�
     '四条消息里只有第一条回答带引用 —— 来源行应当只出现一次',
   );
 
-  const trigger = page.locator('[data-testid="chat-sources-trigger"]');
-  assert.equal(
-    (await trigger.innerText()).replace(/\s+/g, ' ').trim(),
-    '2 个来源',
-    '计数要与解析出的课程数一致',
-  );
-  assert.equal(
-    await page.locator('[data-testid="chat-source-item"]:visible').count(),
-    0,
-    '折叠态不该露出来源条目',
-  );
-
-  await trigger.click();
+  assert.equal(await page.locator('[data-testid="chat-sources-trigger"]').count(), 0, '不再显示折叠入口');
   const items = page.locator('[data-testid="chat-source-item"]:visible');
   await items.first().waitFor({ timeout: 10000 });
-  assert.equal(await items.count(), 2, '展开后应当列出两门课');
+  assert.equal(await items.count(), 2, '应当直接列出两个文件名');
 
   const text = (await items.allInnerTexts()).join('\n');
   assert.match(text, /高等数学（上）/, '要显示课程名');
   assert.doesNotMatch(text, /《/, '书名号是链接文本的装饰，来源列表里要脱掉');
-  assert.match(text, /12:34/, '要带上引到的时间点');
-  assert.match(text, /第 3 页/, '页码也要带上');
+  assert.doesNotMatch(text, /12:34|第 3 页|05:20|个来源/, '来源区只显示文件名');
   assert.match(text, /行测判断推理/, '第二门课同样要列出来');
-  assert.match(text, /05:20/, '第二门课的位置不能串到第一门名下');
 });
 
 await check('不带引用的回答：一条来源行都不渲染', async () => {
@@ -275,7 +261,7 @@ await check('来源行里点课程 → 跳播放页', async () => {
   ok('  （已跳到 #/player/c-math）');
 });
 
-// 回到对话页继续验操作行；来源折叠会回到折叠态，后面的断言不依赖它
+// 回到对话页继续验操作行
 await openChat();
 await page.click(`[data-testid="chat-recent-${target}"]`);
 await firstAiBubble().waitFor({ timeout: 10000 });

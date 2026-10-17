@@ -222,9 +222,9 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
   }, [ink.pen]);
   useEffect(() => cancel, [cancel, active, ink.tool, ink.finger]);
 
-  const point = (e: Pick<PointerEvent, 'clientX' | 'clientY' | 'pressure' | 'pointerType'>, rect: DOMRect): InkPoint => ({
+  const point = (e: Pick<PointerEvent, 'clientX' | 'clientY' | 'pressure' | 'pointerType'>, rect: DOMRect, height = rect.height / rect.width * 1000): InkPoint => ({
     x: Math.max(0, Math.min(1000, (e.clientX - rect.left) / rect.width * 1000)),
-    y: Math.max(0, Math.min(rect.height / rect.width * 1000, (e.clientY - rect.top) / rect.width * 1000)),
+    y: Math.max(0, Math.min(height, (e.clientY - rect.top) / rect.height * height)),
     pressure: e.pointerType === 'pen' && e.pressure > 0 ? e.pressure : 0.5,
   });
   const paint = () => {
@@ -259,6 +259,7 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
       width: ink.width * (ink.tool === 'highlight' ? 6 : 1) * 1000 / rect.width,
       height: rect.height / rect.width * 1000, points: [p], createdAt: Date.now(),
       renderer: 'freehand-v1', nib: ink.nib, opacity: ink.opacity, smoothing: ink.smoothing,
+      input: e.pointerType === 'touch' ? 'touch' : e.pointerType === 'pen' ? 'pen' : 'mouse',
     };
     gesture.current = { id: e.pointerId, isPen: e.pointerType === 'pen', stroke, erased: new Set(), last: p, rect, tool: ink.tool };
     ink.pen.current.active = e.pointerType === 'pen';
@@ -294,12 +295,16 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     const g = gesture.current;
     if (!g || g.id !== e.pointerId) return;
     e.preventDefault();
+    // 工具栏换行、滚动或缩放后仍投回这一笔的坐标系，不能一直使用落笔时的屏幕位置。
+    const rect = e.currentTarget.getBoundingClientRect();
+    if (!rect.width || !rect.height) return;
+    g.rect = rect;
     // Safari 旧版没有 coalesced events；空数组也必须回退到当前采样。
     const coalesced = e.nativeEvent.getCoalescedEvents?.() ?? [];
     for (const event of coalesced.length ? coalesced : [e.nativeEvent]) {
-      const p = point(event, g.rect);
+      const p = point(event, rect, g.stroke.height);
       if (g.tool === 'erase') erase(p);
-      else if (Math.hypot(p.x - g.last.x, p.y - g.last.y) > 0.35) {
+      else if (Math.hypot(p.x - g.last.x, p.y - g.last.y) > (e.type === 'pointerup' ? 0 : 0.1 * 1000 / rect.width)) {
         g.stroke.points.push(p); g.last = p;
       }
     }

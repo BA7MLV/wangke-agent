@@ -38,9 +38,6 @@
 }
 
 .study-assistant__content[hidden] { display: none; }
-.study-assistant__header { display: flex; align-items: center; gap: 8px; padding: 16px 16px 8px; flex: none; }
-.study-assistant__header h2 { margin: 0; font-size: 14px; font-weight: 600; }
-.study-assistant__header > span:last-child { margin-left: auto; }
 .study-assistant__heading { margin: 0; }
 .study-assistant [data-assistant-drag-handle] { touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: grab; }
 .study-assistant[data-dragging] [data-assistant-drag-handle], .study-assistant[data-dragging] .study-assistant__trigger { cursor: grabbing; }
@@ -59,5 +56,4 @@
 
 @media (max-height: 520px) {
   .study-assistant { gap: 8px; }
-  .study-assistant__header { padding-top: 8px; }
 }

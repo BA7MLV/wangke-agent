@@ -18,6 +18,8 @@ export interface InkStroke {
   nib?: InkNib;
   opacity?: number;
   smoothing?: number;
+  /** 手指优先贴合触点；持久化以保证刷新和问答裁图使用同一轮廓。 */
+  input?: 'touch' | 'pen' | 'mouse';
 }
 export type InkTool = 'read' | 'pen' | 'highlight' | 'erase';
 
@@ -37,9 +39,9 @@ export function inkPath(stroke: InkStroke, complete = true): string {
       size: stroke.width,
       thinning: stroke.tool === 'highlight' || stroke.nib === 'ballpoint' ? 0 : stroke.nib === 'brush' ? 0.8 : 0.5,
       smoothing: smooth,
-      streamline: smooth,
+      streamline: stroke.input === 'touch' ? 0 : smooth,
       simulatePressure: false,
-      last: complete,
+      last: complete || stroke.input === 'touch',
     });
     return outline.length ? `M${outline.map(([x, y]) => `${n(x)},${n(y)}`).join('L')}Z` : '';
   }

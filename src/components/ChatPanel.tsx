@@ -1332,7 +1332,7 @@ export default function ChatPanel({
           aria-label="切换会话"
         >
           <Select.Trigger>
-            <Select.Value />
+            <Select.Value className="chat-session-title" title={activeTitle} />
             <Select.Indicator />
           </Select.Trigger>
           <Select.Popover>
@@ -1497,6 +1497,14 @@ export default function ChatPanel({
                   )}
                 </div>
               )}
+              {m.content && <div className="chat-message-actions" data-testid="chat-message-actions">
+                {iconBtn('chat-copy-message', isUser ? '复制这条提问' : '复制这条回答', <Sym name="content_copy" />, () => {
+                  void copyText(m.content).then((ok) => {
+                    if (ok) toast.success(`已复制${isUser ? '这条提问' : '这条回答'}（Markdown）`);
+                    else toast.error('复制失败：剪贴板不可用');
+                  });
+                })}
+              </div>}
             </div>
           );
         }}</VirtualMessages>}

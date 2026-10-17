@@ -3,7 +3,9 @@
  *
  * ## 问题是什么
  *
- * DeepSeek V4 系把工具调用写成 DSML 标记：
+ * 这里要还原**两种**被网关当正文返回的调用标记。
+ *
+ * 第一种（本文件起初只为它而写）：DeepSeek V4 系的 DSML 标记。
  *
  * ```
  * <｜DSML｜tool_calls>
@@ -15,6 +17,16 @@
  *
  * 由**服务端**翻译成 OpenAI 的 `tool_calls` 再返回。翻译没发生时（网关的解析器
  * 在长上下文或 auto+stream 下漏判），整段标记就作为纯文本落进 `content`。
+ *
+ * 第二种：模型自己发明的「读起来像 XML」的简写（实测 DeepSeek-V4-Flash 会这样写）：
+ *
+ * ```
+ * <tool_call>read<param_key>path</param_key><param_value>/courses/…/material</param_value></tool_call>
+ * ```
+ *
+ * 它没有外层 wrapper、没有 invoke/parameter、参数名与值也换了标签名，因此
+ * `readDsmlTag` 完全不认。这段同样有两种后果，而且比 DSML 更糟：界面里出现
+ * 一整行尖括号正文，`read` 从未执行 —— 用户看到的是「模型说要读，却什么也没读」。
  *
  * 对本仓库的后果有两层，缺一不可：
  *
@@ -163,6 +175,24 @@ function paramValue(raw: string, attrs: string): unknown {
   }
 }
 
+/**
+ * `range` 被压成一行文本时的还原：`unit=paragraphs,start=20,end=28`。
+ *
+ * `read` 的 schema 里 `range` 是对象 `{ unit, start, end }`。这种方言没有嵌套结构，
+ * 模型就把对象摊平成 key=value。原样交给工具只会得到一句「range 必须包含 unit…」，
+ * 白白多跑一轮 —— 信息其实都在，转换失败才退回字符串让校验照常报错。
+ */
+function coerceFlatObject(raw: string): unknown {
+  const pairs = raw.split(',').map((part) => /^\s*([A-Za-z_]\w*)\s*=\s*(.*?)\s*$/.exec(part));
+  if (pairs.length < 2) return raw;
+  const out: Record<string, unknown> = Object.create(null);
+  for (const m of pairs) {
+    if (!m) return raw;
+    out[m[1]] = /^-?\d+$/.test(m[2]) ? Number(m[2]) : m[2];
+  }
+  return out;
+}
+
 /** 正在收集中的 invoke */
 interface PendingCall {
   marker: string;
@@ -259,6 +289,39 @@ export function createDsmlRecoverer(): {
           emitBody(buf.slice(pos));
           pos = buf.length;
           break;
+        }
+        // 部分网关泄漏的是裸 tool_call + param_key/param_value，而非 DSML。
+        // 等完整闭标签再解析；残缺或不符合语法的块原样保留，不能执行半截调用。
+        const xmlOpen = '<tool_call>';
+        const remaining = buf.slice(i);
+        if (xmlOpen.startsWith(remaining) && !final) break;
+        if (remaining.startsWith(xmlOpen)) {
+          const end = buf.indexOf('</tool_call>', i + xmlOpen.length);
+          if (end === -1 && !final) break;
+          if (end !== -1) {
+            const body = buf.slice(i + xmlOpen.length, end);
+            const name = /^\s*([\w.-]+)\s*/.exec(body);
+            const args: Record<string, unknown> = Object.create(null);
+            let rest = body.slice(name?.[0].length ?? 0);
+            while (rest) {
+              const param = /^\s*<param_key>([^<]+)<\/param_key>\s*<param_value>([\s\S]*?)<\/param_value>\s*/.exec(rest);
+              if (!param) break;
+              // 这种方言没有 `string="true"`，值一律当裸文本：`path` 里的前导 0
+              // 不能被 JSON 解析改写成数字。只有扁平写法的 range 需要还原成对象。
+              const key = decodeEntities(param[1].trim());
+              const value = decodeEntities(param[2]);
+              args[key] = key === 'range' ? coerceFlatObject(value) : value;
+              rest = rest.slice(param[0].length);
+            }
+            emitBody(buf.slice(pos, i));
+            if (name && !rest.trim()) {
+              out.push({ kind: 'toolCall', name: name[1], arguments: JSON.stringify(args) });
+              callCount++;
+              inBlock = true;
+            } else emitBody(buf.slice(i, end + '</tool_call>'.length));
+            pos = end + '</tool_call>'.length;
+            continue;
+          }
         }
         const tag = readDsmlTag(buf, i);
         if (tag === 'incomplete') {

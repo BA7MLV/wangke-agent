@@ -27,11 +27,6 @@ export default function StudyAssistant({ open, onOpenChange, activeTab, onTabCha
       <Disclosure ref={assistantRef} className="study-assistant" isExpanded={open}
         onExpandedChange={(expanded) => { if (!suppressToggle.current) onOpenChange(expanded); }}>
         <Disclosure.Content className="study-assistant__content" hidden={!open} data-testid="study-assistant-panel">
-          <header className="study-assistant__header" data-assistant-drag-handle data-testid="study-assistant-drag-handle" title="拖动移动学习助手">
-            <Sym name="neurology" />
-            <h2 className="text-balance">学习助手</h2>
-            <span className="text-muted text-xs">拖动可移动</span>
-          </header>
           <Tabs className="panel-tabs" variant="secondary" align="start" selectedKey={activeTab}
             onSelectionChange={(key) => {
               if (panelKeys.includes(key as StudyPanelKey)) onTabChange(key as StudyPanelKey);

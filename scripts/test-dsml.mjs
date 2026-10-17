@@ -75,6 +75,39 @@ function recover(chunks) {
   };
 }
 
+await test('裸 tool_call：逐字符分片仍能读取材料，正文不泄漏标签', () => {
+  const xml = '<tool_call>read<param_key>path</param_key><param_value>/courses/7a520ace-2840-4b78-b3ae-77c9331eab89/material</param_value><param_key>range</param_key><param_value>unit=paragraphs,start=20,end=28</param_value></tool_call>';
+  for (const chunks of [[xml], [...xml]]) {
+    const result = recover(['先读取材料。', ...chunks, '读取完成。']);
+    assert.equal(result.text, '先读取材料。读取完成。');
+    assert.equal(result.calls.length, 1);
+    assert.equal(result.calls[0].name, 'read');
+    assert.deepEqual(JSON.parse(result.calls[0].arguments), {
+      path: '/courses/7a520ace-2840-4b78-b3ae-77c9331eab89/material',
+      // 摊平的 range 还原成 schema 要的对象，否则工具会先报一次参数错、白跑一轮
+      range: { unit: 'paragraphs', start: 20, end: 28 },
+    });
+  }
+});
+
+await test('扁平 range 只在是 key=value 列表时转对象', () => {
+  const r = recover(['<tool_call>read<param_key>path</param_key><param_value>/a,b</param_value><param_key>range</param_key><param_value>all</param_value></tool_call>']);
+  assert.equal(r.calls.length, 1);
+  assert.deepEqual(JSON.parse(r.calls[0].arguments), { path: '/a,b', range: 'all' });
+});
+
+await test('残缺或无效裸 tool_call 不执行，普通 HTML 原样保留', () => {
+  for (const text of [
+    '<tool_call>read<param_key>path</param_key><param_value>/courses/a',
+    '<tool_call>read<param_key>path</param_key></tool_call>',
+    '示例 <div>hello</div> 和 a < b',
+  ]) {
+    const result = recover([...text]);
+    assert.equal(result.text, text);
+    assert.equal(result.calls.length, 0);
+  }
+});
+
 /** 真实观测到的那次泄漏（全角双横线 + 带空格方言 + ` calls`） */
 const OBSERVED =
   '查清了喵——先把证据和修正一起做完。\n\n' +

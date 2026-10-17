@@ -7,7 +7,6 @@ import { useNavigate } from 'react-router-dom';
 import {
   Button,
   Chip,
-  Disclosure,
   Dropdown,
   Input,
   TextArea,
@@ -319,7 +318,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
 }
 
 /**
- * 「N 个来源」：这条回答引用了哪些课程、引到了哪一处，折叠在正文之后。
+ * 来源直接显示文件名，点击文件名打开原文，不增加计数或折叠层级。
  *
  * 数据是从回答正文里**解析**出来的（见 utils/chatSources.ts 的说明），不是新字段 ——
  * 系统提示词本来就要求模型保留课程链接与时间戳。所以这里没有「模型没按格式写就为空」
@@ -330,21 +329,12 @@ function SourceList({ sources }: { sources: ChatSource[] }) {
   if (sources.length === 0) return null;
 
   return (
-    <Disclosure className="course-chat__sources" data-testid="chat-sources">
-      <Disclosure.Heading>
-        <Disclosure.Trigger className="course-chat__sources-trigger" data-testid="chat-sources-trigger">
-          {sources.length} 个来源
-          {/* 指示箭头用 HeroUI 自带的（它按 data-expanded 自己翻转），
-              只把尺寸与颜色收进本页的类里 */}
-          <Disclosure.Indicator className="course-chat__sources-caret" />
-        </Disclosure.Trigger>
-      </Disclosure.Heading>
-      <Disclosure.Content>
-        <Disclosure.Body className="course-chat__sources-body">
+    <div className="course-chat__sources" data-testid="chat-sources" aria-label="来源文件">
           {sources.map((source) => (
             <div key={source.courseId} className="course-chat__source" data-testid="chat-source-item">
               <a
                 className="course-chat__source-link"
+                title={`打开原文：${source.courseName}`}
                 href={`#/player/${encodeURIComponent(source.courseId)}`}
                 onClick={(event) => {
                   // 与正文里的课程链接同一套跳转：HashRouter 拥有 hash，别让浏览器重新加载
@@ -352,17 +342,11 @@ function SourceList({ sources }: { sources: ChatSource[] }) {
                   navigate(`/player/${source.courseId}`);
                 }}
               >
-                <Sym name="play_circle" />
                 <span className="course-chat__source-name">{source.courseName}</span>
               </a>
-              {source.refs.length > 0 && (
-                <span className="course-chat__source-refs">{source.refs.join(' · ')}</span>
-              )}
             </div>
           ))}
-        </Disclosure.Body>
-      </Disclosure.Content>
-    </Disclosure>
+    </div>
   );
 }
 

@@ -12,6 +12,8 @@
   min-width: 0;
   max-width: 260px;
 }
+.chat-session-select .select__trigger { min-width: 0; }
+.chat-session-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 /* ── 思考深度：文字标签 + 档位（窄屏只剩档位，见 ChatPanel 里的 isMobile 分支）── */
 .chat-effort-field {
@@ -42,17 +44,30 @@
   padding-bottom: 12px;
   display: flex;
   min-width: 0;
+  flex-direction: column;
 }
+/* 与主页同一条规则：操作行常驻占位、悬停/键盘焦点才显形，避免每条消息下面都挂着图标 */
+.chat-message-actions {
+  display: flex;
+  align-items: center;
+  margin-top: 2px;
+  opacity: 0;
+  transition: opacity var(--duration-quick) ease;
+}
+.chat-msg:hover .chat-message-actions,
+.chat-msg:focus-within .chat-message-actions { opacity: 1; }
+@media (hover: none) { .chat-message-actions { opacity: 1; } }
+.chat-bubble { user-select: text; -webkit-user-select: text; }
 
 .chat-panel-history { height: 36px; text-align: center; color: var(--muted); font-size: 0.8rem; }
 .chat-panel-history button { cursor: pointer; }
 
 .chat-msg--ai {
-  justify-content: flex-start;
+  align-items: flex-start;
 }
 
 .chat-msg--user {
-  justify-content: flex-end;
+  align-items: flex-end;
 }
 
 .chat-bubble {

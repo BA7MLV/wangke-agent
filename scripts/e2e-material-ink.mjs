@@ -139,6 +139,21 @@ try {
     el.dispatchEvent(new PointerEvent('pointerup', { ...next, clientX: r.left + 90 }));
   });
   await waitSaved(3); // 连续手指/电容笔笔画不进入触控笔的掌触保护窗口
+  assert.equal((await inkRows()).filter((s) => s.input === 'touch').length, 2);
+  // 增强美化下快速触摸转折：预览端点不能落后，抬手也不能突然变形。
+  const precision = await first.evaluate(async (el) => {
+    const { inkPath } = await import('/src/materials/ink.ts');
+    const stroke = { renderer: 'freehand-v1', input: 'touch', tool: 'pen', nib: 'ballpoint', width: 3,
+      smoothing: 0.65, points: [{ x: 10, y: 10, pressure: .5 }, { x: 80, y: 10, pressure: .5 }, { x: 80, y: 90, pressure: .5 }] };
+    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    path.setAttribute('d', inkPath(stroke, false));
+    el.querySelector('svg').append(path);
+    const bounds = path.getBBox();
+    path.remove();
+    return { bottom: bounds.y + bounds.height, same: inkPath(stroke, false) === inkPath(stroke, true) };
+  });
+  assert.ok(precision.bottom >= 90 && precision.bottom <= 92, '快速转折末端贴合触点');
+  assert.equal(precision.same, true, '手指抬起不改变预览轮廓');
   await byId('ink-undo').click(); await waitSaved(2);
   await byId('ink-undo').click(); await waitSaved(1);
   await byId('ink-finger').click();

@@ -15,7 +15,7 @@
    ④ 顶栏无分割线。浅灰画布 + 白色面板已经把层次做出来了，再加线只会像表格。
 
    ⑤ 助手消息下面是**两行附加信息**，都在正文之后、都靠左：一行操作（复制 / 更多，
-      悬浮才显形），一行「N 个来源」（折叠）。它们属于这条回答，所以跟正文同列同轴，
+      悬浮才显形），来源文件名链接。它们属于这条回答，所以跟正文同列同轴，
       不缩进、不套卡片 —— 一缩进就成了「回答的子内容」，而它们其实是回答的**元信息**。
    ========================================================================== */
 
@@ -683,41 +683,9 @@
 
 .course-chat__sources {
   margin-top: 6px;
-}
-
-/* 触发键：一行小字 + 箭头，没有底色 —— 它是「附注」不是按钮，
-   底色只在悬停时给一点反馈。左边距 -8px 是为了让**文字**左缘与正文对齐。 */
-.course-chat__sources .course-chat__sources-trigger {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  height: 28px;
-  margin-left: -8px;
-  padding: 0 8px;
-  border: 0;
-  border-radius: var(--radius-full);
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.8125rem;
-  cursor: pointer;
-  transition:
-    background-color var(--duration-quick) ease,
-    color var(--duration-quick) ease;
-}
-
-.course-chat__sources .course-chat__sources-trigger:hover,
-.course-chat__sources .course-chat__sources-trigger[data-hovered='true'],
-.course-chat__sources .course-chat__sources-trigger[data-expanded='true'] {
-  background: var(--default-soft);
-  color: var(--foreground);
-}
-
-.course-chat__sources .course-chat__sources-body {
   display: flex;
   flex-direction: column;
   gap: 7px;
-  padding: 8px 0 2px;
 }
 
 .course-chat__source {
@@ -744,22 +712,11 @@
   border-bottom-color: currentColor;
 }
 
-.course-chat__source-link > svg {
-  flex: none;
-  color: var(--accent);
-}
-
 .course-chat__source-name {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
-}
-
-/* 位置（12:34 / 第 3 页）：等宽数字，一列下来不会左右跳 */
-.course-chat__source-refs {
-  color: var(--muted);
-  font-variant-numeric: tabular-nums;
 }
 
 /* ── 输入卡：上行正文，下行固定技能入口与发送键 ─────────────────────── */
