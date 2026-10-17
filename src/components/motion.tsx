@@ -1,5 +1,92 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type Ref } from 'react';
 
+/**
+ * 新消息入场动画的 key 跟踪（配 .t-msg-enter，见 transitions.css）。
+ *
+ * 只有**尾部追加**的消息才播一次上浮淡入：发出去的那条提问 + 紧跟上屏的助手占位
+ * 是同批追加的，一起入场。这些情况都不播：
+ *   - 首帧（整表当基线）；
+ *   - 换会话（上一轮已有内容又换了 `resetKey`）；
+ *   - 向上加载更早的消息（头部插入）；
+ *   - 一次冒出太多条（> 3）：那是载入一整段历史，不是刚发出的一两条。
+ * 草稿态首问是例外：CourseChat 的会话懒创建，`activeId` 会从 null 变成真实 id，
+ * 它其实是「新建会话 + 追加两条」，要播。
+ *
+ * 播完 ~700ms 后把 key 移出集合、class 随之摘掉。这一步不能省：VirtualMessages
+ * 会把滚出视口的消息卸载、滚回来再挂载，class 留在元素上就会让历史消息重播入场。
+ *
+ * 返回值是「当前正在入场的 key 集合」，调用方按它决定挂不挂 class。
+ */
+export function useMessageEnter(keys: string[], resetKey?: unknown): ReadonlySet<string> {
+  // sig 是 keys 的内容签名：effect 依赖它而不是每次渲染都变的新数组
+  const sig = keys.join('\u0001');
+  const prev = useRef<{ reset?: unknown; keys: string[] } | null>(null);
+  const [entering, setEntering] = useState<ReadonlySet<string>>(() => new Set());
+
+  useEffect(() => {
+    const last = prev.current;
+    prev.current = { reset: resetKey, keys };
+    if (last === null) return;
+    // 换会话：上一轮已经有内容又换了 resetKey，是整表替换，不是「新消息」。
+    // 例外是草稿态首问：CourseChat 的会话是懒创建的，发第一句时 activeId 会从
+    // null 变成真实 id —— 那是「新建会话」，恰恰要播入场。
+    if (last.reset !== resetKey && last.reset != null) return;
+    if (keys.length <= last.keys.length) return;
+    if (!last.keys.every((k, i) => k === keys[i])) return;
+    const fresh = keys.slice(last.keys.length);
+    if (fresh.length > 3) return;
+    setEntering(new Set(fresh));
+    const t = window.setTimeout(() => {
+      setEntering((s) => {
+        const next = new Set(s);
+        for (const k of fresh) next.delete(k);
+        return next;
+      });
+    }, 700);
+    return () => window.clearTimeout(t);
+    // sig 已经代表了 keys 的内容，keys 不必进依赖（数组字面量每次都是新引用）
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sig, resetKey]);
+
+  return entering;
+}
+
+/** transitions.dev 31 的 twinkle 相位表：第 idx 个点的延迟序号（0..15）。 */
+const MATRIX_TWINKLE = [7, 2, 11, 5, 14, 9, 0, 12, 3, 15, 6, 10, 13, 1, 8, 4];
+
+/**
+ * 31 Matrix dot loader — 4×4 的 2px 点阵脉冲。「待回复」用它做「正在准备」的微动效：
+ * 比转圈安静，能和旁边那行 shimmer 文案并排。
+ *
+ * 每个点的相位序号写在 `--r` 上，延迟由 CSS 摊到一个脉冲周期里
+ * （`animation-delay: calc(var(--r) * var(--matrix-cycle) / 16)`）—— 周期是语义 token，
+ * 改 --matrix-cycle 时这里一个字都不用动。
+ */
+export function MatrixDots({ className }: { className?: string }) {
+  return (
+    <span className={className ? `t-matrix ${className}` : 't-matrix'} data-variant="twinkle" aria-hidden="true">
+      {Array.from({ length: 16 }, (_, i) => (
+        <i key={i} style={{ ['--r' as string]: MATRIX_TWINKLE.indexOf(i) }} />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * 「待回复」占位：一轮提问发出后、首个 token 到达之前，助手气泡里的等待态。
+ *
+ * 点阵来自 transitions.dev 的 31 Matrix dot loader，文案扫光来自 15 Shimmer text ——
+ * 和 ThinkLine（28 思考态）、StreamParagraph（30 流式）共用同一套 token 节奏。
+ */
+export function PendingReply({ label = '正在等待回复…' }: { label?: string }) {
+  return (
+    <span className="t-pending" role="status">
+      <MatrixDots />
+      <Shimmer text={label} />
+    </span>
+  );
+}
+
 /** 读取 :root 上的 motion token（毫秒），保持 JS 计时与 CSS 变量同步。
  *  构建压缩会把 150ms 改写成 .15s，这里兼容 s / ms 两种单位。 */
 export const ms = (name: string, fb: number): number => {

@@ -21,7 +21,7 @@ import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
 import SkillPicker from '../components/SkillPicker';
 import VoiceInput from '../components/VoiceInput';
-import { StreamParagraph, ThinkLine } from '../components/motion';
+import { StreamParagraph, ThinkLine, PendingReply, useMessageEnter } from '../components/motion';
 import ReasoningChain from '../components/ReasoningChain';
 import VirtualMessages from '../components/VirtualMessages';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
@@ -601,6 +601,8 @@ export default function CourseChat() {
     };
   }, [activeId, loaded, settingsOpen]);
   const messages = useCourseChat((s) => s.messages);
+  /** 新追加的消息（发出去的提问 + 助手占位）播一次上浮淡入，见 useMessageEnter */
+  const entering = useMessageEnter(messages.map((m) => m.key), activeId);
   const hasOlder = useCourseChat((s) => s.hasOlder);
   const loadingOlder = useCourseChat((s) => s.loadingOlder);
   const historyError = useCourseChat((s) => s.historyError);
@@ -1302,9 +1304,10 @@ export default function CourseChat() {
                 <article
                   key={message.key}
                   className={
-                    user
+                    (user
                       ? 'course-chat__message course-chat__message--user'
-                      : 'course-chat__message course-chat__message--ai'
+                      : 'course-chat__message course-chat__message--ai')
+                    + (entering.has(message.key) ? ' t-msg-enter' : '')
                   }
                   data-error={message.error ? 'true' : undefined}
                 >
@@ -1335,6 +1338,10 @@ export default function CourseChat() {
                         {message.hint && !message.content && !message.ask && !message.folderPlan && (
                           <ThinkLine text={message.hint} />
                         )}
+                        {/* 待回复：提问刚刚上屏、首个 token 还没来，且思考/工具都还没开始的纯等待窗口。
+                            有思考链（28 思考态）或状态行时它们已经在表示「在动」，这里就不重复。 */}
+                        {message.streaming && !message.content && !message.reasoning && !message.hint
+                          && !message.ask && !message.folderPlan && <PendingReply />}
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
                             「先给结论、下面才是问题」。 */}

@@ -42,7 +42,7 @@ import {
   toast,
   confirmDialog,
 } from '../ui';
-import { ThinkLine, StreamParagraph } from './motion';
+import { ThinkLine, StreamParagraph, PendingReply, useMessageEnter } from './motion';
 import ReasoningChain from './ReasoningChain';
 import VirtualMessages from './VirtualMessages';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
@@ -460,6 +460,8 @@ export default function ChatPanel({
   const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
+  /** 新追加的消息（发出去的提问 + 助手占位）播一次上浮淡入，见 useMessageEnter */
+  const entering = useMessageEnter(msgs.map((m) => m.key), activeId);
   const historySession = useRef(activeId);
   historySession.current = activeId;
   const [loadedSessionId, setLoadedSessionId] = useState<number | null>(null);
@@ -1690,7 +1692,8 @@ export default function ChatPanel({
           return (
             <div
               key={m.key}
-              className={isUser ? 'chat-msg chat-msg--user' : 'chat-msg chat-msg--ai'}
+              className={(isUser ? 'chat-msg chat-msg--user' : 'chat-msg chat-msg--ai')
+                + (entering.has(m.key) ? ' t-msg-enter' : '')}
               data-testid={isUser ? 'chat-msg-user' : 'chat-msg-ai'}
               data-streaming={m.streaming ? 'true' : undefined}
               data-error={m.error ? 'true' : undefined}
@@ -1759,6 +1762,10 @@ export default function ChatPanel({
                     {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
                     {m.hint && !m.content ? (
                       <ThinkLine text={m.hint} />
+                    ) : m.streaming && !m.content && !m.reasoning && !m.quiz && !m.widget ? (
+                      /* 待回复：提问刚上屏、首个 token 还没来的纯等待窗口。思考链/状态行/卡片
+                         任一在场时它们已经在表示「在动」，这里就不重复。 */
+                      <PendingReply />
                     ) : (
                       <>
                         <MarkdownStreamingProvider value={!!m.streaming}>

@@ -658,3 +658,77 @@ html.dark {
 @media (prefers-reduced-motion: reduce) {
   .t-stream-w { transition: none !important; filter: none !important; opacity: 1 !important; }
 }
+
+/* ── 33 Chat message enter ─────────────────────────────────────── */
+/* 新发出的消息：从下方轻微上浮 + 淡入 + 微模糊。意象取自 18 texts reveal 的
+   blurred rise，时长按 30 streaming 收敛到 --duration-fast（一条消息不该比
+   一个词慢太多）。class 由 useMessageEnter 只挂在**尾部新追加**的一两条上，
+   播完即摘 —— 虚拟列表的滚动重挂载因此不会让历史消息重播。 */
+:root {
+  --msg-enter-dur: var(--duration-fast);
+  --msg-enter-distance: var(--distance-medium);
+  --msg-enter-blur: var(--blur-small);
+  --msg-enter-ease: var(--ease-smooth-out);
+}
+@keyframes t-msg-enter {
+  from {
+    opacity: 0;
+    transform: translateY(var(--msg-enter-distance));
+    filter: blur(var(--msg-enter-blur));
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+.t-msg-enter {
+  animation: t-msg-enter var(--msg-enter-dur) var(--msg-enter-ease) both;
+  will-change: transform, opacity, filter;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-msg-enter { animation: none !important; }
+}
+
+/* ── 31 Matrix dot loader ──────────────────────────────────────── */
+/* 4×4 的 2px 点阵脉冲，「待回复」用它做「AI 正在准备」的微动效。每个点的相位
+   序号 --r（0..15，twinkle 乱序表见 components/motion.tsx 的 MatrixDots）由
+   内联样式给出，延迟在这里摊到一个脉冲周期上 —— 周期是语义 token，改
+   --matrix-cycle 时 JS 一个字都不用动。
+   底色/亮点直接取 HeroUI 的 --muted，深浅两套主题自动成立。 */
+:root {
+  --matrix-cycle: 1200ms;
+  --matrix-base: color-mix(in oklch, var(--muted) 35%, transparent);
+  --matrix-active: var(--muted);
+  --matrix-ease: ease-in-out;
+}
+.t-matrix {
+  display: grid;
+  grid-template-columns: repeat(4, 2px);
+  grid-auto-rows: 2px;
+  gap: 2px;
+}
+.t-matrix i {
+  display: block;
+  background: var(--matrix-base);
+  animation: t-matrix-pulse var(--matrix-cycle) var(--matrix-ease) infinite;
+  animation-delay: calc(var(--r, 0) * var(--matrix-cycle) / 16);
+}
+@keyframes t-matrix-pulse {
+  0%, 45%, 100% { background-color: var(--matrix-base); }
+  15%           { background-color: var(--matrix-active); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .t-matrix i { animation: none !important; }
+}
+
+/* 「待回复」整行：点阵 + 扫光文案。 */
+.t-pending {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
