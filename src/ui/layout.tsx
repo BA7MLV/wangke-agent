@@ -677,12 +677,17 @@ export function PageShell({
             {/* 两档各一颗，语义不同也不重复：
                 窄屏的侧栏在抽屉里（没渲染，只能开），汉堡是**开抽屉**；
                 宽屏的侧栏在页面里，`panel_left` 是**收 / 放这块画布**。
-                同一档里只留一颗 —— 留一个点了没反应的按钮比没有按钮更伤信任。 */}
+                同一档里只留一颗 —— 留一个点了没反应的按钮比没有按钮更伤信任。
+
+                三颗顶栏左侧的圆形键（这两颗开关 + 返回键）尺寸/描边/底色一律由
+                `layout.css` 的 `[data-testid='nav-rail-*']` 那条规则给，tsx 这里
+                只管语义 —— 这套外观原先只挂在主页（course-chat.css），切页面就
+                「掉一层皮」，已提到共享外壳，见那条规则的注释。 */}
             {rail && isNarrow && (
               <Button
                 isIconOnly
                 variant="ghost"
-                className="relative size-[34px] shrink-0 rounded-full"
+                className="relative shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
                 onPress={() => setDrawerOpen(true)}
@@ -696,7 +701,7 @@ export function PageShell({
               <Button
                 isIconOnly
                 variant="ghost"
-                className="relative size-[34px] shrink-0 rounded-full"
+                className="relative shrink-0 rounded-full"
                 data-testid="nav-rail-toggle"
                 aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
                 /* aria-pressed 让「现在是不是收着的」不只存在于视觉里 */
@@ -712,7 +717,7 @@ export function PageShell({
               <Button
                 isIconOnly
                 variant="ghost"
-                className="size-[34px] shrink-0"
+                className="shrink-0 rounded-full"
                 data-testid="nav-back"
                 aria-label="返回"
                 onPress={onBack}

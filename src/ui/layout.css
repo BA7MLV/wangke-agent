@@ -176,6 +176,29 @@
   }
 }
 
+/* ── 顶栏最左那颗圆形开关 ────────────────────────────────────────────────
+   折叠开关（窄屏是「打开抽屉」的汉堡、宽屏是「收放侧栏」的 panel_left）
+   在**每个页面**的顶栏最左边，是全应用出现频率最高的一颗键。它是主页
+   （`pages/course-chat.css`）里唯一定过圆形外观的键 —— 44px 触控目标 +
+   1px 描边 + 实底圆片 —— 其余页面都还是 HeroUI ghost 的裸图标，
+   切页面时同一颗键会「掉一层皮」。
+
+   所以这份样式住在共享外壳里而不是某个页面里。仍然写 CSS 而不是补
+   Tailwind 工具类：HeroUI 组件自身的 `[data-hovered]` 特异性更高，
+   工具类压不住它（见本文件开头的说明）。 */
+[data-testid='nav-rail-toggle'],
+[data-testid='nav-rail-open'],
+[data-testid='nav-back'] {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+}
+
 /* ── 库页：导入投放区（自建；HeroUI 没有拖拽上传组件） ─────────────────────
    MD3 里没有 dropzone 这种组件，用 dashed outline 表达「可投放」是通行做法。 */
 /* 库页组件已由 HeroUI 原语与 Tailwind 工具类负责版式，见 pages/Library.tsx。 */

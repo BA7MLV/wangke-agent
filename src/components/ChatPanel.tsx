@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Button, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { Button, Dropdown, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { MaterialImage, SourceImage } from './MaterialImage';
 import { parseMaterialImageHref } from '../materials/imageRefs';
@@ -27,9 +27,10 @@ import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../uti
 import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
 import type { MaterialReaderHandle } from '../materials/types';
 import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citation } from '../store/selectionAsk';
-import { buildSessionMarkdown, exportFileName } from '../utils/chatExport';
+import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
-import { useIsMobile, useViewportResize } from '../utils/useMobile';
+import { messageTime } from '../utils/messageTime';
+import { useIsMobile, useMediaQuery, useViewportResize } from '../utils/useMobile';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import {
   Panel,
@@ -88,6 +89,8 @@ interface ChatMsg {
   key: string;
   role: 'user' | 'ai';
   content: string;
+  /** 落库时间：手机端长按用户气泡时显示（与主页对话一致） */
+  createdAt?: number;
   /** 用户消息附带的截图缩略图 */
   images?: ChatImage[];
   /** 思考过程（推理模型 reasoning_content 的回调累计值） */
@@ -230,6 +233,194 @@ function UserContent({ content }: { content: string }) {
       </span>
       {rest && <span className="chat-quote__ask">{rest}</span>}
     </>
+  );
+}
+
+/**
+ * 一条消息下面的操作行。
+ *
+ * 与主页「AI 助手」页的 `MessageActions` 保持同一套交互：复制 / 重试 / 分支 / 更多，
+ * 悬浮或键盘焦点进入才显形，触屏常显；用户消息的动作行挂在气泡**外面**，
+ * 避免悬停时气泡底色多长出一条图标行。见 pages/CourseChat.tsx 的同名组件。
+ */
+function MessageActions({
+  content,
+  isUser,
+  busy,
+  canRetry,
+  retryHint,
+  onRetry,
+  onFork,
+  onExport,
+}: {
+  content: string;
+  isUser: boolean;
+  busy: boolean;
+  canRetry: boolean;
+  retryHint: string;
+  onRetry: () => void;
+  onFork: () => void;
+  onExport: () => void;
+}) {
+  const copy = (text: string, okMsg: string) => {
+    void (async () => {
+      const ok = await copyText(text);
+      if (ok) toast.success(okMsg);
+      else toast.error('复制失败：剪贴板不可用');
+    })();
+  };
+
+  const action = (
+    label: string,
+    icon: React.ReactNode,
+    onPress: () => void,
+    testId: string,
+    disabled = false,
+  ) => (
+    <Tooltip>
+      <Tooltip.Trigger>
+        <Button
+          isIconOnly
+          variant="tertiary"
+          size="sm"
+          className="chat-action"
+          aria-label={label}
+          isDisabled={disabled}
+          data-testid={testId}
+          onPress={onPress}
+        >
+          {icon}
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Content>
+        <p>{label}</p>
+      </Tooltip.Content>
+    </Tooltip>
+  );
+
+  const copyLabel = isUser ? '复制这条提问' : '复制这条回答';
+
+  return (
+    <div className="chat-message-actions" data-testid="chat-message-actions">
+      {action(
+        copyLabel,
+        <Sym name="content_copy" />,
+        () => copy(content, `已复制${isUser ? '这条提问' : '这条回答'}（Markdown）`),
+        'chat-copy-message',
+      )}
+
+      {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
+
+      {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
+
+      {!isUser && (
+        <Dropdown>
+          {/* Dropdown.Trigger 自己渲染 <button>，不能在里面再套 HeroUI Button */}
+          <Dropdown.Trigger
+            className="chat-action"
+            aria-label="更多操作"
+            data-testid="chat-message-more"
+          >
+            <Sym name="more_horiz" />
+          </Dropdown.Trigger>
+          <Dropdown.Popover placement="bottom start">
+            <Dropdown.Menu
+              onAction={(key) => {
+                if (key === 'copy-plain') copy(markdownToPlainText(content), '已复制这条回答（纯文本）');
+                else if (key === 'export') onExport();
+              }}
+            >
+              <Dropdown.Item id="copy-plain" textValue="复制纯文本" data-testid="chat-copy-plain">
+                <span className="chat-menu-item">复制纯文本</span>
+              </Dropdown.Item>
+              <Dropdown.Item id="export" textValue="导出本次会话" data-testid="chat-export-session">
+                <span className="chat-menu-item">导出本次会话</span>
+              </Dropdown.Item>
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
+      )}
+    </div>
+  );
+}
+
+/** 长消息默认展示六行；触屏长按可查看时间、复制完整提问与操作。 */
+function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
+  message: ChatMsg;
+  busy: boolean;
+  canRetry: boolean;
+  onRetry: () => void;
+  onFork: () => void;
+}) {
+  const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
+  const textRef = useRef<HTMLSpanElement>(null);
+  const [expanded, setExpanded] = useState(false);
+  const [overflows, setOverflows] = useState(false);
+  useLayoutEffect(() => {
+    const text = textRef.current;
+    if (!text) return;
+    const measure = () => setOverflows(text.scrollHeight > parseFloat(getComputedStyle(text).lineHeight) * 6 + 1);
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(text);
+    return () => observer.disconnect();
+  }, [message.content, touchMenu]);
+  const content = (
+    <span ref={textRef} id={`chat-user-text-${message.key}`} className="chat-user-text"
+      data-collapsed={overflows && !expanded}>
+      <UserContent content={message.content} />
+    </span>
+  );
+  return (
+    <div className="chat-user-content">
+      <div className="chat-bubble chat-bubble--user">
+        {!touchMenu ? content : (
+          <Dropdown trigger="longPress">
+            <Dropdown.Trigger className="chat-user-trigger"
+              aria-label="用户消息，长按查看时间和操作" data-testid="chat-user-message-trigger">
+              {content}
+            </Dropdown.Trigger>
+            <Dropdown.Popover placement="bottom end" className="chat-message-menu">
+              {message.createdAt != null && (
+                <time className="chat-message-time" dateTime={new Date(message.createdAt).toISOString()}
+                  data-testid="chat-message-time">
+                  {messageTime(message.createdAt)}
+                </time>
+              )}
+              <Dropdown.Menu
+                aria-label="提问操作"
+                disabledKeys={busy || message.rowId == null ? ['retry', 'fork'] : canRetry ? [] : ['retry']}
+                onAction={(key) => {
+                  if (key === 'retry') onRetry();
+                  else if (key === 'fork') onFork();
+                  else if (key === 'copy') void copyText(message.content).then((ok) => {
+                    if (ok) toast.success('已复制这条提问（Markdown）');
+                    else toast.error('复制失败：剪贴板不可用');
+                  });
+                }}
+              >
+                <Dropdown.Item id="copy" textValue="复制" data-testid="chat-user-copy">
+                  <Sym name="content_copy" />复制
+                </Dropdown.Item>
+                <Dropdown.Item id="retry" textValue="重试" data-testid="chat-user-retry">
+                  <Sym name="refresh" />重试
+                </Dropdown.Item>
+                <Dropdown.Item id="fork" textValue="分支出新会话" data-testid="chat-user-fork">
+                  <Sym name="fork" />分支出新会话
+                </Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
+        )}
+        {overflows && (
+          <Button size="sm" variant="tertiary" className="chat-user-expand"
+            aria-expanded={expanded} aria-controls={`chat-user-text-${message.key}`}
+            data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
+            {expanded ? '收起' : '展开全文'}<Sym name="keyboard_arrow_down" />
+          </Button>
+        )}
+      </div>
+    </div>
   );
 }
 
@@ -607,6 +798,7 @@ export default function ChatPanel({
           key: `h-${r.id}`,
           role: r.role === 'user' ? 'user' : 'ai',
           content: r.content,
+          createdAt: r.createdAt,
           images: r.images,
           reasoning: r.reasoning,
           reasoningMs: r.reasoningMs,
@@ -852,6 +1044,7 @@ export default function ChatPanel({
       const quoteBlock = curRefs.map(formatCitation).join('\n\n');
       const marker = curShots.map(shotTag).join('');
       const displayContent = (quoteBlock ? `${quoteBlock}\n\n` : '') + marker + q;
+      const createdAt = Date.now();
       const userImages: ChatImage[] = curShots.map((s) =>
         isMaterial
           ? {
@@ -868,6 +1061,7 @@ export default function ChatPanel({
           key: userKey,
           role: 'user',
           content: displayContent,
+          createdAt,
           images: userImages.length > 0 ? userImages : undefined,
         },
         { key: aiKey, role: 'ai', content: '', streaming: true },
@@ -879,7 +1073,7 @@ export default function ChatPanel({
         sessionId,
         role: 'user',
         content: displayContent,
-        createdAt: Date.now(),
+        createdAt,
         ...(userImages.length > 0 ? { images: userImages } : {}),
       });
       setMsgs((prev) => prev.map((m) => m.key === userKey ? { ...m, rowId: userRowId } : m));
@@ -1226,6 +1420,88 @@ export default function ChatPanel({
     }
   };
 
+  /**
+   * 消息重试。语义与主页一致：
+   * - 提问上的重试 = 重新回答这句话（删掉这一问一答，用同样的问题重跑）
+   * - 回答上的重试 = 重新生成（只对最后一条完整回答成立）
+   *
+   * 判据在 UI 与这里各挡一道：删掉历史中间的一段是一次不可见的批量删除，
+   * 要改中间那一步应该用「分支」。
+   */
+  const retryMessage = async (key: string) => {
+    if (loading || activeId == null) return;
+    const idx = msgs.findIndex((m) => m.key === key);
+    const message = msgs[idx];
+    if (!message || message.rowId == null) return;
+
+    const rows = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const rowIdx = rows.findIndex((row) => row.id === message.rowId);
+    if (rowIdx < 0) return;
+
+    if (message.role === 'user') {
+      if (msgs[idx + 1]?.role !== 'ai' || idx !== msgs.length - 2) return;
+      const tail = rows.slice(rowIdx);
+      await db.transaction('rw', db.chats, async () => {
+        for (const row of tail) if (row.id != null) await db.chats.delete(row.id);
+      });
+      setMsgs((prev) => prev.slice(0, idx));
+      await send(message.content);
+      return;
+    }
+
+    if (idx !== msgs.length - 1) return;
+    let userIdx = -1;
+    for (let i = rowIdx - 1; i >= 0; i--) {
+      if (rows[i].role === 'user') {
+        userIdx = i;
+        break;
+      }
+    }
+    if (userIdx < 0) return;
+    const userRow = rows[userIdx];
+    await db.transaction('rw', db.chats, async () => {
+      await db.chats.delete(message.rowId!);
+      await db.chats.delete(userRow.id!);
+    });
+    setMsgs((prev) => prev.filter((m) => m.rowId !== message.rowId && m.rowId !== userRow.id));
+    await send(userRow.content);
+  };
+
+  /** 从某条消息处分叉出新会话（复制到这条为止，原会话不动）。 */
+  const forkMessage = async (message: ChatMsg) => {
+    if (loading || activeId == null || message.rowId == null) return;
+    const source = sessions.find((s) => s.id === activeId);
+    if (!source) return;
+    const rows = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const cut = rows.findIndex((row) => row.id === message.rowId);
+    if (cut < 0) return;
+    const kept = rows.slice(0, cut + 1);
+    if (kept.length === 0) return;
+    const now = Date.now();
+    const newId = await db.transaction('rw', [db.chatSessions, db.chats], async () => {
+      const sid = (await db.chatSessions.add({
+        videoId,
+        title: `${source.title} · 分支`,
+        createdAt: now,
+        ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
+      })) as number;
+      for (const row of kept) {
+        const { id: _id, sessionId: _sessionId, ...rest } = row;
+        await db.chats.add({ ...rest, videoId, sessionId: sid });
+      }
+      return sid;
+    });
+    setSessions((prev) => [...prev, {
+      id: newId,
+      videoId,
+      title: `${source.title} · 分支`,
+      createdAt: now,
+      ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
+    }]);
+    setActiveId(newId);
+    toast.success('已从这条消息分支出新会话');
+  };
+
   /** 停止生成：断掉当前的 LLM 请求与 agent 循环（已流出的内容保留） */
   const stopGenerating = () => {
     inflightAbort?.abort();
@@ -1405,8 +1681,11 @@ export default function ChatPanel({
             {loadingOlder ? '正在加载历史消息…' : historyError ? '加载失败，点击重试' : '加载更早消息'}
           </button>}
         </div>}
-        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef}>{(m) => {
+        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef}>{(m, index) => {
           const isUser = m.role === 'user';
+          /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */
+          const canRetry = !isUser && index === msgs.length - 1;
+          const canRetryAsk = isUser && msgs[index + 1]?.role === 'ai' && index === msgs.length - 2;
           return (
             <div
               key={m.key}
@@ -1441,70 +1720,92 @@ export default function ChatPanel({
                       ))}
                     </div>
                   )}
-                  <div className="chat-bubble chat-bubble--user">
-                    <UserContent content={m.content} />
-                  </div>
-                </>
-              ) : (
-                <div className="chat-bubble chat-bubble--ai">
-                  {/* 思考链与工具链都**独立于正文**渲染：它们是这一轮的过程记录。
-                      此前这里的条件是「有 hint 就只显示那一行状态字」，于是模型一调工具
-                      （hint 被设上）整条思考链就消失、工具跑完又冒出来 —— 一块内容闪两次。
-                      现在状态行只负责「当前正在做什么」，过程记录留在它上面。 */}
-                  {m.reasoning && (
-                    <ReasoningChain
-                      reasoning={m.reasoning}
-                      active={!!m.streaming && !m.content}
-                      since={m.reasoningStartedAt}
-                      elapsedMs={m.reasoningMs}
+                  <UserMessageBubble
+                    message={m}
+                    busy={loading}
+                    canRetry={canRetryAsk}
+                    onRetry={() => void retryMessage(m.key)}
+                    onFork={() => void forkMessage(m)}
+                  />
+                  {!m.streaming && m.content && m.rowId != null && (
+                    <MessageActions
+                      content={m.content}
+                      isUser
+                      busy={loading}
+                      canRetry={canRetryAsk}
+                      retryHint="重新回答这句话（删掉这一问一答，用同样的问题重跑一次）"
+                      onRetry={() => void retryMessage(m.key)}
+                      onFork={() => void forkMessage(m)}
+                      onExport={downloadSession}
                     />
                   )}
-                  {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
-                  {m.hint && !m.content ? (
-                    <ThinkLine text={m.hint} />
-                  ) : (
-                    <>
-                      <XMarkdown
-                        // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
-                        // 材料没有播放器，留着会生成点了没反应的死链；
-                        // #frame- 画面引用同理（材料没有抽帧）。
-                        content={
-                          isMaterial && materialKind
-                            ? linkifyUnits(m.content, materialKind)
-                            : linkifyTimestamps(linkifyFrames(m.content))
-                        }
-                        components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
-                        streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
+                </>
+              ) : (
+                <>
+                  <div className="chat-bubble chat-bubble--ai">
+                    {/* 思考链与工具链都**独立于正文**渲染：它们是这一轮的过程记录。
+                        此前这里的条件是「有 hint 就只显示那一行状态字」，于是模型一调工具
+                        （hint 被设上）整条思考链就消失、工具跑完又冒出来 —— 一块内容闪两次。
+                        现在状态行只负责「当前正在做什么」，过程记录留在它上面。 */}
+                    {m.reasoning && (
+                      <ReasoningChain
+                        reasoning={m.reasoning}
+                        active={!!m.streaming && !m.content}
+                        since={m.reasoningStartedAt}
+                        elapsedMs={m.reasoningMs}
                       />
-                      {m.quiz && (
-                        <QuizCard
-                          quiz={m.quiz.data}
-                          picks={m.quiz.picks}
-                          onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)}
-                          onSeek={seekTo}
-                          // 材料没有播放器：解析里的时间戳不 linkify，免得出现点了没反应的死链
-                          seekable={!isMaterial}
+                    )}
+                    {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
+                    {m.hint && !m.content ? (
+                      <ThinkLine text={m.hint} />
+                    ) : (
+                      <>
+                        <XMarkdown
+                          // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
+                          // 材料没有播放器，留着会生成点了没反应的死链；
+                          // #frame- 画面引用同理（材料没有抽帧）。
+                          content={
+                            isMaterial && materialKind
+                              ? linkifyUnits(m.content, materialKind)
+                              : linkifyTimestamps(linkifyFrames(m.content))
+                          }
+                          components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
+                          streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
                         />
-                      )}
-                      {m.widget && (
-                        <WidgetBlock
-                          payload={m.widget}
-                          dark={widgetDark}
-                          onPrompt={(t) => void send(t)}
-                        />
-                      )}
-                    </>
+                        {m.quiz && (
+                          <QuizCard
+                            quiz={m.quiz.data}
+                            picks={m.quiz.picks}
+                            onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)}
+                            onSeek={seekTo}
+                            // 材料没有播放器：解析里的时间戳不 linkify，免得出现点了没反应的死链
+                            seekable={!isMaterial}
+                          />
+                        )}
+                        {m.widget && (
+                          <WidgetBlock
+                            payload={m.widget}
+                            dark={widgetDark}
+                            onPrompt={(t) => void send(t)}
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
+                  {!m.streaming && m.content && m.rowId != null && (
+                    <MessageActions
+                      content={m.content}
+                      isUser={false}
+                      busy={loading}
+                      canRetry={canRetry}
+                      retryHint="重新生成这条回答"
+                      onRetry={() => void retryMessage(m.key)}
+                      onFork={() => void forkMessage(m)}
+                      onExport={downloadSession}
+                    />
                   )}
-                </div>
+                </>
               )}
-              {m.content && <div className="chat-message-actions" data-testid="chat-message-actions">
-                {iconBtn('chat-copy-message', isUser ? '复制这条提问' : '复制这条回答', <Sym name="content_copy" />, () => {
-                  void copyText(m.content).then((ok) => {
-                    if (ok) toast.success(`已复制${isUser ? '这条提问' : '这条回答'}（Markdown）`);
-                    else toast.error('复制失败：剪贴板不可用');
-                  });
-                })}
-              </div>}
             </div>
           );
         }}</VirtualMessages>}

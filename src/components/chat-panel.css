@@ -50,13 +50,64 @@
 .chat-message-actions {
   display: flex;
   align-items: center;
-  margin-top: 2px;
+  gap: 2px;
+  margin-top: 4px;
+  margin-left: -6px; /* 抵消图标自身留白，让第一个图标与正文左缘对齐 */
   opacity: 0;
   transition: opacity var(--duration-quick) ease;
 }
 .chat-msg:hover .chat-message-actions,
-.chat-msg:focus-within .chat-message-actions { opacity: 1; }
+.chat-message-actions:focus-within { opacity: 1; }
 @media (hover: none) { .chat-message-actions { opacity: 1; } }
+
+/* 用户消息的动作行挂在气泡**外面**、与气泡右缘对齐（见 ChatPanel 的渲染结构）。 */
+.chat-msg--user .chat-message-actions {
+  justify-content: flex-end;
+  margin-left: 0;
+  margin-right: -6px;
+}
+@media (hover: none), (pointer: coarse), (max-width: 640px) {
+  .chat-msg--user > .chat-message-actions { display: none; }
+}
+
+/* 复制 / 重试 / 分支 / 更多：与主页同一套 30px 圆底图标按钮。
+   选择器写两层是有意的：Button 自带 .button 的尺寸类，Dropdown.Trigger 是裸 button，
+   两层一起写才能同时压住两边。 */
+.chat-message-actions .chat-action {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 16px;
+  cursor: pointer;
+  transition:
+    background-color var(--duration-quick) ease,
+    color var(--duration-quick) ease;
+}
+.chat-message-actions .chat-action:hover,
+.chat-message-actions .chat-action[data-hovered='true'],
+.chat-message-actions .chat-action[data-expanded='true'] {
+  background: var(--default);
+  color: var(--foreground);
+}
+
+.chat-menu-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+.chat-menu-item > svg {
+  flex: none;
+  color: var(--muted);
+}
+
 .chat-bubble { user-select: text; -webkit-user-select: text; }
 
 .chat-panel-history { height: 36px; text-align: center; color: var(--muted); font-size: 0.8rem; }
@@ -71,31 +122,102 @@
 }
 
 .chat-bubble {
-  max-width: 86%;
-  padding: 10px 14px;
-  font-size: 0.875rem;
-  line-height: 1.65;
+  max-width: 100%;
+  padding: 0;
+  font-size: 0.9375rem;
+  line-height: 1.75;
   overflow-wrap: anywhere;
 }
 
+/* 助手回答直接铺在面板底色上，不挂气泡 —— 与主页对话一致。
+   过程记录（思考链 / 工具链）与正文同属一条消息，吸顶标题盖住面板底色即可。 */
 .chat-bubble--ai {
+  flex: 1 1 auto;
+  width: 100%;
   border-radius: var(--radius-lg);
-  border-top-left-radius: var(--radius-xs);
-  background: var(--default-soft);
+  background: transparent;
   color: var(--foreground);
-  /* 思考链展开态的吸顶标题要盖住滚上来的正文，底色随气泡走（见 reasoning-chain.css） */
-  --reasoning-sticky-bg: var(--default-soft);
+  --reasoning-sticky-bg: var(--surface);
 }
 
+/* 用户发言：右对齐药丸。面板本身是 --surface，气泡改用淡一档的底色才看得见。 */
 .chat-bubble--user {
-  border-radius: var(--radius-lg);
-  border-bottom-right-radius: var(--radius-xs);
+  max-width: min(86%, 560px);
+  padding: 10px 16px;
+  border-radius: var(--radius-2xl);
   background: var(--default-soft);
-  color: var(--default-soft-foreground);
+  color: var(--foreground);
+  white-space: pre-wrap;
+}
+
+.chat-user-content {
+  max-width: min(86%, 560px);
+  min-width: 0;
+}
+
+.chat-user-content .chat-bubble--user {
+  max-width: 100%;
+}
+
+.chat-user-text {
+  display: block;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+}
+
+.chat-user-text[data-collapsed='true'] {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 6;
+  overflow: hidden;
+}
+
+.chat-user-expand {
+  display: flex;
+  margin: 4px 0 0;
+  min-height: 32px;
+  padding-inline: 4px;
+  gap: 4px;
+  color: var(--muted);
+  border-radius: var(--radius-full);
+}
+
+.chat-user-expand[aria-expanded='true'] svg {
+  transform: rotate(180deg);
+}
+
+.chat-user-trigger {
+  display: block;
+  width: 100%;
+  padding: 0;
+  background: transparent;
+  color: inherit;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: context-menu;
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+.chat-user-trigger[data-focus-visible='true'] {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.chat-message-time {
+  display: block;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
 }
 
 /* 回答中断的消息：整体降为错误容器色，让「失败」一眼可见 */
 .chat-msg[data-error='true'] .chat-bubble--ai {
+  padding: 12px 14px;
+  border-radius: var(--radius-lg);
   background: var(--danger-soft);
   color: var(--danger-soft-foreground);
   /* 错误气泡底色变了，吸顶标题得跟着变，否则长思考链滚上去会露出错误色的横条 */

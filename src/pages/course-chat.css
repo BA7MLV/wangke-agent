@@ -961,18 +961,6 @@
   color: var(--foreground);
 }
 
-.page-course-chat [data-testid='nav-rail-toggle'],
-.page-course-chat [data-testid='nav-rail-open'] {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  padding: 0;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--background);
-  color: var(--foreground);
-}
-
 .course-chat__new-chat:hover,
 .course-chat__new-chat:active {
   background: var(--surface-secondary);
