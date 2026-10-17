@@ -1435,7 +1435,18 @@ export default function ChatPanel({
     if (loading || activeId == null) return;
     const idx = msgs.findIndex((m) => m.key === key);
     const message = msgs[idx];
-    if (!message || message.rowId == null) return;
+    if (!message) return;
+
+    // 流式请求失败时，助手占位尚未落库，但用户问题已经落库；允许从这条失败消息继续，
+    // 不要求先有一个 assistant rowId。删除原问题后交给 send 重新创建一轮，避免上下文重复。
+    if (message.role === 'ai' && message.rowId == null && message.error) {
+      const previous = msgs[idx - 1];
+      if (!previous || previous.role !== 'user' || previous.rowId == null) return;
+      await db.chats.delete(previous.rowId);
+      setMsgs((prev) => prev.filter((m) => m.key !== message.key && m.key !== previous.key));
+      await send(previous.content);
+      return;
+    }
 
     const rows = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
     const rowIdx = rows.findIndex((row) => row.id === message.rowId);
@@ -1463,10 +1474,10 @@ export default function ChatPanel({
     if (userIdx < 0) return;
     const userRow = rows[userIdx];
     await db.transaction('rw', db.chats, async () => {
-      await db.chats.delete(message.rowId!);
+      if (message.rowId != null) await db.chats.delete(message.rowId);
       await db.chats.delete(userRow.id!);
     });
-    setMsgs((prev) => prev.filter((m) => m.rowId !== message.rowId && m.rowId !== userRow.id));
+    setMsgs((prev) => prev.filter((m) => m.key !== message.key && m.rowId !== userRow.id));
     await send(userRow.content);
   };
 
@@ -1731,7 +1742,7 @@ export default function ChatPanel({
                     onRetry={() => void retryMessage(m.key)}
                     onFork={() => void forkMessage(m)}
                   />
-                  {!m.streaming && m.content && m.rowId != null && (
+                  {!m.streaming && m.content && (m.rowId != null || m.error) && (
                     <MessageActions
                       content={m.content}
                       isUser
@@ -1808,7 +1819,7 @@ export default function ChatPanel({
                       isUser={false}
                       busy={loading}
                       canRetry={canRetry}
-                      retryHint="重新生成这条回答"
+                      retryHint={m.error ? '继续回答这句话' : '重新生成这条回答'}
                       onRetry={() => void retryMessage(m.key)}
                       onFork={() => void forkMessage(m)}
                       onExport={downloadSession}
@@ -2016,15 +2027,15 @@ export default function ChatPanel({
               </Tooltip.Content>
             </Tooltip>
           )}
-        </div>
-        <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
-          <ContextUsageButton
-            tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="panel-context-usage"
-            compression={contextCompression.state} onCompress={contextCompression.compress}
-            isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
-          />
-          ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
-          {ratio > 0.9 && ' · 点击用量环查看详情'}
+          <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
+            <ContextUsageButton
+              tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="panel-context-usage"
+              compression={contextCompression.state} onCompress={contextCompression.compress}
+              isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
+            />
+            ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
+            {ratio > 0.9 && ' · 点击用量环查看详情'}
+          </div>
         </div>
       </div>
     </Panel>

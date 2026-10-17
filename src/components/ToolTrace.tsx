@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
-import { Disclosure, Spinner } from '@heroui/react';
+import { Disclosure } from '@heroui/react';
 import { Sym } from '../ui';
+import { MatrixDots } from './motion';
 import { IconSwap, Shimmer, TextSwap } from './motion';
 import type { ChatToolCall } from '../store/db';
 import { toolDisplay } from '../utils/toolTrace';
@@ -110,7 +111,7 @@ export default function ToolTrace({
               >
                 <span className="tool-trace__state" aria-hidden="true">
                   <IconSwap
-                    a={call.name === 'ask_user' ? <Sym name="help" /> : <Spinner size="sm" color="current" />}
+                    a={call.name === 'ask_user' ? <Sym name="help" /> : <MatrixDots />}
                     b={<Sym name={call.status === 'error' ? 'error' : 'check'} />}
                     active={call.status === 'running' ? 'a' : 'b'}
                   />

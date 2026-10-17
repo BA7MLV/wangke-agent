@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Popover } from '@heroui/react';
-import { IconSwap, SuccessCheck } from './motion';
+import { IconSwap, MatrixDots, SuccessCheck } from './motion';
 import { Sym } from '../ui';
 import type { CompressionState } from '../store/contextCompression';
 import './context-usage.css';
@@ -79,7 +79,7 @@ export default function ContextUsageButton({ tokens, windowTokens, breakdown, te
         >
           <IconSwap active={compressing || showResult ? 'b' : 'a'} a={ring} b={
             <IconSwap active={showResult ? 'b' : 'a'}
-              a={<span className="ctx-usage__spinner"><Sym name="refresh" size={18} /></span>}
+               a={<MatrixDots className="ctx-usage__spinner" />}
               b={showResult ? <SuccessCheck key={compression?.revision} size={18} color="currentColor" /> : <span />}
             />
           } />

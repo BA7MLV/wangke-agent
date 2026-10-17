@@ -135,9 +135,57 @@
   content: '';
   position: absolute;
   inset: 0;
-  background: color-mix(in oklch, var(--background-secondary) 68%, transparent);
+  background: color-mix(in oklch, var(--dyn-edge, var(--background-secondary)) 68%, transparent);
   -webkit-mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
   mask-image: linear-gradient(to bottom, #000 0%, #000 45%, transparent 100%);
+}
+
+/*
+ * iOS `viewport-fit=cover` 会把页面绘制到刘海 / 灵动岛和 Home Indicator 后面。
+ * 这两个区域不是普通 DOM 的一部分，必须由页面根背景主动铺色；否则 Safari 会
+ * 保留一块与内容不同的系统色。播放页有封面动态色时，边缘跟随 `--dyn-edge`，
+ * 没有动态色时退回画布色。
+ *
+ * 用两个很短的渐变只做边缘衔接，不覆盖交互内容；页面根本身仍保持画布色，
+ * 因此横屏左右安全区也不会出现突然的色带。
+ */
+.page-player {
+  position: relative;
+  isolation: isolate;
+  background: var(--background-secondary);
+}
+
+.page-player::before,
+.page-player::after {
+  position: fixed;
+  z-index: -1;
+  right: 0;
+  left: 0;
+  pointer-events: none;
+  content: '';
+  background: linear-gradient(
+    to bottom,
+    var(--dyn-edge, var(--background-secondary)),
+    transparent
+  );
+}
+
+.page-player::before {
+  top: 0;
+  height: calc(env(safe-area-inset-top, 0px) + 24px);
+}
+
+.page-player::after {
+  bottom: 0;
+  height: calc(env(safe-area-inset-bottom, 0px) + 24px);
+  transform: rotate(180deg);
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .page-player::before,
+  .page-player::after {
+    background: var(--dyn-edge, var(--background-secondary));
+  }
 }
 
 /* 不支持 backdrop-filter / 用户要求减少透明：退回不透明底色。

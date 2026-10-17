@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { Disclosure, Spinner } from '@heroui/react';
-import { TextSwap, useReasoningStream } from './motion';
+import { Disclosure } from '@heroui/react';
+import { MatrixDots, TextSwap, useReasoningStream } from './motion';
 import './reasoning-chain.css';
 
 /**
@@ -180,7 +180,7 @@ export default function ReasoningChain({
       <Disclosure.Heading className="reasoning-chain__heading">
       <Disclosure.Trigger className="reasoning-chain__toggle">
         <TextSwap className="reasoning-chain__title" text={title} />
-        {active && <Spinner size="sm" color="current" className="reasoning-chain__icon" aria-hidden />}
+        {active && <MatrixDots className="reasoning-chain__icon" />}
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
         {live && <LiveElapsed from={since ?? mountedAt.current} />}
         <Disclosure.Indicator className="reasoning-chain__indicator" />

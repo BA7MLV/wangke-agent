@@ -52,9 +52,7 @@
 .ctx-usage[data-compression='compressing'] { color: var(--accent); }
 .ctx-usage[data-compression='success'] { color: var(--success); }
 .ctx-usage .t-icon { display: inline-grid; place-items: center; }
-.ctx-usage__spinner { display: inline-flex; animation: ctx-compress-spin 1s linear infinite; }
-.ctx-usage:not([data-compression='compressing']) .ctx-usage__spinner { animation: none; }
-@keyframes ctx-compress-spin { to { transform: rotate(360deg); } }
+.ctx-usage__spinner { display: inline-grid; }
 
 @media (prefers-reduced-motion: reduce) {
   .ctx-usage__fill {

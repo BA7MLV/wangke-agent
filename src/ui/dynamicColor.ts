@@ -121,12 +121,15 @@ export function setColorScheme(hex: string, options: { target: HTMLElement }): v
   target.style.setProperty('--dyn-border', `oklch(${accentL}% ${Math.min(s * 0.45, 0.09)} ${h})`);
   target.style.setProperty('--dyn-accent', accent);
   target.style.setProperty('--dyn-accent-fg', fg);
+  // 页面边缘（包括 iOS 刘海 / 灵动岛与 Home Indicator 区域）使用同一
+  // 个浅色表面，避免内容区与 viewport-fit=cover 的安全区出现色块断层。
+  target.style.setProperty('--dyn-edge', `oklch(${Math.min(accentL + 22, 96)}% ${Math.min(s * 0.18, 0.05)} ${h})`);
   target.dataset.dynColor = 'on';
 }
 
 /** 撤销 setColorScheme 写上去的全部属性 */
 export function removeColorScheme(target: HTMLElement): void {
-  for (const prop of ['--dyn-surface', '--dyn-surface-fg', '--dyn-border', '--dyn-accent', '--dyn-accent-fg']) {
+  for (const prop of ['--dyn-surface', '--dyn-surface-fg', '--dyn-border', '--dyn-accent', '--dyn-accent-fg', '--dyn-edge']) {
     target.style.removeProperty(prop);
   }
   delete target.dataset.dynColor;

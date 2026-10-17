@@ -124,6 +124,8 @@ export function useDynamicColor(options: {
   useEffect(() => {
     if (!target || !enabled || !sourceUrl) return;
     let cancelled = false;
+    const themeColorMeta = document.querySelector<HTMLMetaElement>('meta[name="theme-color"]');
+    const previousThemeColor = themeColorMeta?.content;
 
     const img = new Image();
     img.src = sourceUrl;
@@ -134,6 +136,12 @@ export function useDynamicColor(options: {
         // 取色是异步的，期间可能已经切了课程 / 卸载了页面
         if (cancelled || !hex) return;
         setColorScheme(hex, { target });
+        // 独立 PWA 下 iOS 会用 theme-color 填充状态栏 / 灵动岛后面的区域。
+        // 用实际计算出的边缘色同步它，而不是继续显示 index.html 里的默认蓝色。
+        if (themeColorMeta) {
+          const edge = getComputedStyle(target).getPropertyValue('--dyn-edge').trim();
+          if (edge) themeColorMeta.content = edge;
+        }
       })
       .catch(() => {
         /* 静默退回默认配色：取色失败绝不能影响播放 */
@@ -142,6 +150,7 @@ export function useDynamicColor(options: {
     return () => {
       cancelled = true;
       removeColorScheme(target);
+      if (themeColorMeta && previousThemeColor) themeColorMeta.content = previousThemeColor;
     };
   }, [sourceUrl, enabled, target]);
 
