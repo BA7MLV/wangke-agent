@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { Button } from '@heroui/react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
@@ -34,6 +35,19 @@ export default function MaterialReader({ material, handleRef }: Props) {
   const [blob, setBlob] = useState<Blob | null>(null);
   const [missing, setMissing] = useState(false);
   const [loading, setLoading] = useState(true);
+  const shellRef = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === shellRef.current);
+    document.addEventListener('fullscreenchange', sync);
+    return () => document.removeEventListener('fullscreenchange', sync);
+  }, []);
+
+  const toggleFullscreen = useCallback(() => {
+    if (document.fullscreenElement) void document.exitFullscreen();
+    else void shellRef.current?.requestFullscreen();
+  }, []);
 
   const format = material.materialFormat ?? 'pdf';
   const materialId = material.id;
@@ -120,7 +134,12 @@ export default function MaterialReader({ material, handleRef }: Props) {
 
   return (
     <MaterialInkProvider key={`${materialId}:${requestedUnit ?? ''}`} materialId={materialId}>
-    <div className="mr-shell">
+    <div className="mr-shell" ref={shellRef} data-fullscreen={fullscreen || undefined}>
+      <div className="mr-shell__actions">
+        <Button size="sm" variant="tertiary" onPress={toggleFullscreen} data-testid="reader-fullscreen" aria-label={fullscreen ? '退出全屏' : '全屏阅读'}>
+          {fullscreen ? '退出全屏' : '全屏阅读'}
+        </Button>
+      </div>
       {/*
         「不能检索」必须显式说明：否则用户会以为「问答坏了」，而真实原因在材料自己身上。
         扫描件（仅 PDF：有页面但无文本层）与无正文（压根没内容）是两回事，

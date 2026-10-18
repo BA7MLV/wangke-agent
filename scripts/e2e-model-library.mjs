@@ -16,13 +16,15 @@ try {
   } }));
   await page.route('https://models.test/**', (route) => route.fulfill({ json: { data: [{ id: 'custom-alpha' }, { id: 'custom-beta' }] } }));
   await page.goto(`${base}/#/settings`);
-  await page.getByTestId('card-model-library').waitFor();
+  await page.getByTestId('card-api').waitFor();
+  assert.equal(await page.getByTestId('card-model-library').count(), 0, 'models are only editable inside a provider');
   await page.evaluate(async () => {
     const { useSettings } = await import('/src/store/settings.ts');
     const current = useSettings.getState();
     current.update({ providers: current.providers.map((p) => ({ ...p, baseUrl: 'https://models.test/v1', apiKey: 'test-key' })) });
   });
   await page.reload();
+  await page.getByTestId('provider-summary-sf').click();
   await page.getByTestId('btn-check-models').click();
   await page.getByText('custom-alpha', { exact: true }).waitFor();
   await page.getByTestId('model-discovery').getByText('VLM · 视觉', { exact: true }).waitFor();
@@ -48,12 +50,14 @@ try {
   assert.equal((await state()).llmModel.model, 'custom-alpha');
   await page.keyboard.press('Escape');
   await page.goto(`${base}/#/settings`);
+  await page.getByTestId('provider-summary-sf').click();
   await page.getByRole('button', { name: '编辑 日常问答', exact: true }).click();
   await page.getByRole('textbox', { name: '模型 ID', exact: true }).fill('custom-alpha-v2');
   await page.getByTestId('model-metadata-details').getByText('能力未知', { exact: true }).waitFor();
   await page.getByRole('button', { name: '保存模型', exact: true }).click();
   assert.equal((await state()).llmModel.model, 'custom-alpha-v2', 'editing active ID migrates selection');
   await page.reload();
+  await page.getByTestId('provider-summary-sf').click();
   await page.getByRole('button', { name: '编辑 日常问答', exact: true }).waitFor();
   assert.equal((await state()).llmModel.model, 'custom-alpha-v2');
   await page.getByRole('button', { name: '手动添加', exact: true }).click();
@@ -90,6 +94,24 @@ try {
     };
   });
   assert.deepEqual(contracts, { favorite: 'renamed', rejectsActivePurpose: true, sameIdDifferentProvider: 2, asrNotInChat: true });
+  const secondRequests = [];
+  await page.route('https://second.test/**', (route) => {
+    secondRequests.push(route.request().url());
+    return route.fulfill({ json: { data: [{ id: 'second-remote' }] } });
+  });
+  await page.evaluate(async () => {
+    const { useSettings } = await import('/src/store/settings.ts');
+    const s = useSettings.getState();
+    s.update({ providers: [...s.providers, { ...s.providers[0], id: 'second', name: 'Second provider', baseUrl: 'https://second.test/v1' }], savedModels: [...s.savedModels, { providerId: 'second', model: 'second-saved', name: '', slots: ['chat'] }] });
+  });
+  assert.equal(secondRequests.length, 0, 'closed providers must not fetch');
+  assert.equal(await page.getByTestId('saved-models').getByText('second-saved', { exact: true }).count(), 0);
+  await page.getByTestId('provider-summary-second').click();
+  await page.getByTestId('saved-models').getByText('second-saved', { exact: true }).waitFor();
+  assert.equal(await page.getByTestId('saved-models').getByText('manual-model', { exact: true }).count(), 0);
+  await page.getByTestId('btn-check-models').click();
+  await page.getByTestId('model-discovery').getByText('second-remote', { exact: true }).waitFor();
+  assert.ok(secondRequests.every((url) => url === 'https://second.test/v1/models'));
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'mobile must not overflow');
   assert.deepEqual(errors, []);

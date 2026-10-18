@@ -13,6 +13,7 @@ import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
 import LiveGuest from './pages/LiveGuest';
 import BotWorkspace from './pages/BotWorkspace';
+import WidgetPreview from './pages/WidgetPreview';
 import SettingsModal from './components/SettingsModal';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
@@ -88,6 +89,8 @@ export default function App() {
           {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂左侧导航 ——
               它读的是主机的内容，与本机导航的目的地不是一回事（见 LiveGuest.tsx 文件头）。 */}
           <Route path="/live" element={<LiveGuest />} />
+          {/* show_widget HTML 的独立预览页；源码通过 BroadcastChannel 传递，不进 URL。 */}
+          <Route path="/widget-preview" element={<WidgetPreview />} />
         </Routes>
       </div>
     </HashRouter>

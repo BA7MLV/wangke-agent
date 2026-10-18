@@ -40,7 +40,7 @@ import {
 import { UNLIMITED_ROUNDS } from '../../harness/loopGuard';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../../api/modelMeta';
 import { ms } from '../motion';
-import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
+import { confirmDialog, Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
 import JevCard from './JevCard';
 import ModelLibrary from './ModelLibrary';
@@ -609,6 +609,7 @@ function ProviderRow({
   onRemove,
   removable,
   shaking,
+  children,
 }: {
   provider: Provider;
   others: readonly Provider[];
@@ -621,10 +622,12 @@ function ProviderRow({
   onRemove: () => void;
   removable: boolean;
   shaking: boolean;
+  children: ReactNode;
 }) {
   const inputRef = useRef<HTMLDivElement>(null);
   const [dupName, setDupName] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [showConnection, setShowConnection] = useState(!provider.apiKey.trim() || !provider.baseUrl.trim());
 
   // 与其他家重名时提示：模型选型都按供应商名显示，重名会让设置与面板都对不上是哪一家
   useEffect(() => {
@@ -634,6 +637,7 @@ function ProviderRow({
   // key 缺失时的抖动。动画通过内联 style 驱动，不依赖 .t-input / .is-shaking 类名。
   useEffect(() => {
     if (!shaking) return;
+    setShowConnection(true);
     const el = inputRef.current;
     if (!el) return;
     el.style.animation = 'none';
@@ -719,6 +723,9 @@ function ProviderRow({
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-border/70 px-3.5 pt-3.5 pb-4">
+          <details open={showConnection} onToggle={(event) => setShowConnection(event.currentTarget.open)}>
+            <summary className="cursor-pointer py-2 text-sm font-medium">连接设置 · 地址、密钥与协议</summary>
+            <div className="flex flex-col gap-3 pt-3">
           <div className="flex flex-nowrap items-center gap-2">
             <Input
               value={provider.name}
@@ -855,11 +862,14 @@ function ProviderRow({
               onChange={(e) => onChange({ catalogId: e.target.value.trim() })}
             />
           </Field>
+            </div>
+          </details>
           {note && (
-            <div className="text-xs leading-relaxed text-muted" data-testid={`provider-note-${provider.id}`}>
+            <div role={status === 'failed' ? 'alert' : 'status'} className="text-xs leading-relaxed text-muted" data-testid={`provider-note-${provider.id}`}>
               {note}
             </div>
           )}
+          {children}
         </div>
       )}
     </div>
@@ -869,14 +879,7 @@ function ProviderRow({
 /**
  * 「模型」模块。
  *
- * 版式参考 Pi agent 的模型配置：**要反复操作的东西放最上面，要配一次的东西沉到下面**。
- *   1. 三个槽位（文本 / 视觉 / ASR）各一行，点开才是检索面板 —— 日常只碰这里；
- *   2. 运行参数（上下文窗口、检索轮次、ASR 并发）—— 调优时才动；
- *   3. 供应商连接（默认折叠）—— 配一次就长期不动。
- *
- * 与旧版的差别不只是排版：旧版把「供应商」排在最上面，于是每次打开设置第一眼
- * 看到的是四个输入框，真正要用的模型选择被挤到屏幕外还带一个容易被手抄错的
- * 自由文本框。
+ * 供应商优先：展开一家后管理连接及其模型，再设置各用途的默认模型和运行参数。
  */
 export default function ModelsModule() {
   const settings = useSettings();
@@ -915,15 +918,13 @@ export default function ModelsModule() {
   const providersKey = settings.providers.map((p) => `${p.id}\0${p.baseUrl}\0${p.apiKey}\0${p.protocol ?? 'openai-chat'}`).join('\n');
 
   /**
-   * 打开设置就把模型候选填上：**先用缓存**（同步，不等网络），再对「没缓存或已过期」
-   * 的家静默拉一次。
+   * 打开设置先读取各家的缓存；仅为当前展开且缓存缺失或过期的供应商拉取列表。
    *
    * 这一段的全部意义是「别再让用户每开一次设置就手动点一次拉取」。
    * 所以顺序必须是「先缓存后网络」：缓存能立刻给出可点的候选，网络回来只是把它刷新。
    * 反过来的话用户还是要盯着一个空列表等一轮往返 —— 那和没有缓存没区别。
    *
-   * 静默拉取**失败不弹 toast**：用户没主动要求，弹一条只会制造焦虑；
-   * 连通性由供应商那一行的状态点表达（既有行为）。
+   * 自动拉取失败不弹 toast，在当前供应商详情中显示错误。
    */
   useEffect(() => {
     const providers = settings.providers;
@@ -943,7 +944,7 @@ export default function ModelsModule() {
         // 有缓存说明上次拉过：状态点该是「就绪」而不是「尚未检查连通性」
         cachedNotes[p.id] = `${hit.ids.length} 个模型在架 · 缓存`;
       }
-      if (!hit || hit.stale) needFetch.push(p);
+      if (p.id === openProvider && (!hit || hit.stale)) needFetch.push(p);
     }
     if (Object.keys(cachedIds).length > 0) {
       // 只补「还没有值」的那些：手动刷新刚拉回来的结果比缓存新，不能被它顶掉
@@ -967,9 +968,11 @@ export default function ModelsModule() {
           const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim(), protocol: p.protocol });
           if (cancelled) return;
           writeModelList(p.baseUrl, ids);
-          setModelOptions((prev) => (prev[p.id]?.length ? prev : { ...prev, [p.id]: ids }));
-        } catch {
-          // 静默失败，理由见上
+          setModelOptions((prev) => ({ ...prev, [p.id]: ids }));
+          setProviderNotes((prev) => ({ ...prev, [p.id]: `${ids.length} 个模型在架` }));
+        } catch (e) {
+          if (cancelled) return;
+          setProviderNotes((prev) => ({ ...prev, [p.id]: `拉取失败：${e instanceof Error ? e.message : String(e)}` }));
         }
       }
     })();
@@ -977,7 +980,7 @@ export default function ModelsModule() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providersKey]);
+  }, [providersKey, openProvider]);
 
   // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
@@ -1032,18 +1035,16 @@ export default function ModelsModule() {
   useEffect(() => () => clearTimeout(revertTimerRef.current), []);
 
   /**
-   * 「检查模型可用性」：**逐家**拉 `/models`。
-   *
-   * 为什么不能第一家失败就整轮放弃：多供应商之后，一家的 key 过期是常态（用户换了新 key
-   * 但没删旧供应商）。整体失败会让其余几家连候选列表都拉不出来 —— 于是用户为了修一家
-   * 的问题，必须先把另外几家也全部弄好。所以逐家独立记录结果，汇总成一句提示。
+   * 手动刷新只请求当前供应商的 `/models`，不检查或修改其他连接。
    */
-  const handleCheck = async () => {
-    const providers = settings.providers;
+  const handleCheck = async (providerId: string) => {
+    const providers = settings.providers.filter((p) => p.id === providerId);
+    if (!providers.length) return;
     const noKey = providers.filter((p) => !p.apiKey.trim() || !p.baseUrl.trim());
     if (noKey.length === providers.length) {
       triggerKeyError(noKey[0].id);
-      toast.warning('请先填写至少一家供应商的 API 地址与 Key');
+      setProviderNotes((prev) => ({ ...prev, [providerId]: '请先填写当前供应商的 API 地址与 Key' }));
+      toast.warning('请先填写当前供应商的 API 地址与 Key');
       return;
     }
     setChecking(true);
@@ -1139,10 +1140,51 @@ export default function ModelsModule() {
 
   return (
     <>
-      <ModelLibrary options={modelOptions} checking={checking} onFetch={handleCheck} />
+      <SectionCard
+        title="模型供应商"
+        subtitle="先选择供应商，再管理连接和模型。模型列表从该供应商的 API 拉取。"
+        testId="card-api"
+        actions={<>
+          <LoadingButton variant="tertiary" loading={metaRefreshing} data-testid="btn-refresh-meta" onPress={() => void handleRefreshMeta()}>刷新能力数据</LoadingButton>
+          <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>
+        </>}
+      >
+        <div className="flex flex-col gap-2">
+          {settings.providers.map((p, i) => (
+            <ProviderRow
+              key={p.id}
+              provider={p}
+              others={settings.providers.filter((x) => x.id !== p.id)}
+              note={providerNotes[p.id]}
+              status={statusOf(p)}
+              modelCount={modelOptions[p.id]?.length ?? null}
+              open={openProvider === p.id}
+              shaking={keyError === p.id}
+              removable={settings.providers.length > 1 || i > 0}
+              onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
+              onChange={(patch) => {
+                if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
+                  setModelOptions(({ [p.id]: _old, ...rest }) => rest);
+                  setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
+                }
+                settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
+              }}
+              onRemove={async () => {
+                if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
+              }}
+            >
+              <ModelLibrary key={p.id} providerId={p.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(p.id)} />
+            </ProviderRow>
+          ))}
+        </div>
+        <p className="mt-3 text-xs leading-relaxed text-muted">
+          {metaInfo ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）` : '能力数据未拉取，可在供应商详情中更新'}
+          。models.dev 仅补充能力与定价，不作为供应商可用模型列表；接口未提供列表时可手动添加。
+        </p>
+      </SectionCard>
       <SectionCard
         title="选择模型"
-        subtitle="为三种用途设置默认模型。候选来自上方「我的模型」，Chat 可随时切换。"
+        subtitle="为三种用途设置默认模型。候选来自各供应商中已添加的模型，Chat 可随时切换。"
         testId="card-models"
       >
         <div className="flex flex-col gap-2.5">
@@ -1239,60 +1281,6 @@ export default function ModelsModule() {
 
       <JevCard />
 
-      <SectionCard
-        title="模型供应商"
-        subtitle="每家一个连接：地址 + Key + 它能做的活。槽位的供应商下拉只列勾选了该能力的那些家，ASR 可以和文本模型不在同一家"
-        testId="card-api"
-        actions={
-          <>
-            <LoadingButton
-              variant="tertiary"
-              loading={metaRefreshing}
-              data-testid="btn-refresh-meta"
-              onPress={() => void handleRefreshMeta()}
-            >
-              刷新能力数据
-            </LoadingButton>
-            <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}>
-              <Sym name="add" />
-              添加供应商
-            </Button>
-          </>
-        }
-      >
-        <div className="flex flex-col gap-2">
-          {settings.providers.map((p, i) => (
-            <ProviderRow
-              key={p.id}
-              provider={p}
-              others={settings.providers.filter((x) => x.id !== p.id)}
-              note={providerNotes[p.id]}
-              status={statusOf(p)}
-              modelCount={modelOptions[p.id]?.length ?? null}
-              open={openProvider === p.id}
-              shaking={keyError === p.id}
-              removable={settings.providers.length > 1 || i > 0}
-              onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
-              onChange={(patch) => {
-                if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
-                  setModelOptions(({ [p.id]: _old, ...rest }) => rest);
-                  setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
-                }
-                settings.update({
-                  providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)),
-                });
-              }}
-              onRemove={() => removeProvider(p)}
-            />
-          ))}
-        </div>
-        <div className="mt-3 text-xs leading-relaxed text-muted">
-          {metaInfo
-            ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）`
-            : '能力数据未拉取，可在「我的模型」中更新'}
-          。列表与详情仅展示 models.dev 已声明的能力；未收录的模型仍可手动添加。
-        </div>
-      </SectionCard>
     </>
   );
 }

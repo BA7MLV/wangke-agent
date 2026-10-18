@@ -180,11 +180,11 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
           </select></label>
         </>}
         {ink.tool !== 'read' && !disabled && <>
-          <ToggleButton isSelected={ink.finger} onChange={ink.setFinger} data-testid="ink-finger">手指绘制</ToggleButton>
+          <ToggleButton isSelected={ink.finger} onChange={ink.setFinger} data-testid="ink-finger">启用手指绘制</ToggleButton>
         </>}
       </div>
       <div className="ink-toolbar__hint">
-        <span>{ink.tool === 'read' ? '用触控笔圈画重点' : ink.finger ? '手指 / 电容笔绘制；切回阅读可滚动' : '触控笔书写 · 手指拖动翻阅'}</span>
+         <span>{ink.tool === 'read' ? '手指滚动 · 触控笔可直接书写' : ink.finger ? '兼容模式：手指也可绘制' : '手指上下滚动 · 触控笔直接书写'}</span>
         {ink.error ? <span role="alert" className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span>
           : <span role="status">{ink.status}</span>}
       </div>
@@ -242,6 +242,9 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     if (!active || e.button !== 0) return;
     if (e.pointerType === 'touch' && (ink.pen.current.active || performance.now() < ink.pen.current.until || e.width > 40 || e.height > 40)) return;
     if (e.pointerType === 'touch' && !ink.finger) {
+      // 日用默认：手指只负责滚动，触控笔才负责书写。让浏览器原生滚动，
+      // 同时保留一个指针捕获兜底，兼容部分 WebView 不会为绝对定位覆盖层
+      // 触发原生滚动的情况。这里不调用 preventDefault，不会阻断系统手势。
       if (!e.isPrimary || pan.current) return;
       const scroll = e.currentTarget.closest<HTMLElement>('.mr-scroll');
       if (scroll) { pan.current = { id: e.pointerId, x: e.clientX, y: e.clientY, scroll }; capture(e); }
@@ -318,7 +321,7 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     ink.commit(g.tool === 'erase' ? { add: [], remove: strokes.filter((s) => g.erased.has(s.id)) } : { add: [g.stroke], remove: [] });
     cancel();
   };
-  return <div ref={layer} className="ink-layer" data-active={active || undefined} data-testid="ink-layer" data-ink-surface={surface}
+  return <div ref={layer} className="ink-layer" data-active={active || undefined} data-finger={ink.finger || undefined} data-testid="ink-layer" data-ink-surface={surface}
     onPointerDown={down} onPointerMove={move} onPointerUp={up}
     onPointerCancel={(e) => { if (gesture.current?.id === e.pointerId || pan.current?.id === e.pointerId) cancel(); }}
     onLostPointerCapture={(e) => { if (gesture.current?.id === e.pointerId || pan.current?.id === e.pointerId) cancel(); }}

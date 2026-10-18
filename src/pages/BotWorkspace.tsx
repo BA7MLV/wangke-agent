@@ -500,7 +500,7 @@ export default function BotWorkspace() {
 
   if (!status) {
     return (
-      <PageShell title="Bot 工作空间" rail={nav}>
+      <PageShell title="bot" rail={nav}>
         <HeroEmptyState className="bot-loading">
           <Spinner size="lg" color="accent" />
           <Typography.Heading level={2}>连接本机 Bot 服务</Typography.Heading>
@@ -512,7 +512,7 @@ export default function BotWorkspace() {
 
   if (!session?.authenticated) {
     return (
-      <PageShell title="Bot 工作空间" subtitle="独立 Bot 入口；普通课程聊天保持原有协议" rail={nav}>
+      <PageShell title="bot" rail={nav}>
         <AccessForm
           initialized={status.initialized}
           onDone={() => {
@@ -530,7 +530,7 @@ export default function BotWorkspace() {
 
   return (
     <PageShell
-      title={active?.title || 'Bot 工作空间'}
+      title={active?.title || 'bot'}
       subtitle="Agent 身份：本机 Bot（能力占位，不执行任意工具）"
       rail={nav}
       recent={{ label: 'Bot 线程', items: recent }}

@@ -2055,6 +2055,16 @@ export default function ChatPanel({
               }}
             />
           </div>
+          {/* 上文用量环：只留环，不再跟一串 `≈2.1k / 131k` 文字 —— 常驻的估值
+              在工具行上太吵（详情在环的弹层里），文字还会把发送键从最右侧挤开。
+              环排在发送键**前面**，发送键永远占最右那一格。 */}
+          <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
+            <ContextUsageButton
+              tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="panel-context-usage"
+              compression={contextCompression.state} onCompress={contextCompression.compress}
+              isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
+            />
+          </div>
           {/* 生成中：发送键**变成**停止键。单课程问答没有课程上下文要等用户，
               所以不用给「提问卡悬着」开口子（那边是例外）。 */}
           {loading ? (
@@ -2097,15 +2107,6 @@ export default function ChatPanel({
               </Tooltip.Content>
             </Tooltip>
           )}
-          <div className={ctxLevel ? `chat-ctx chat-ctx--${ctxLevel}` : 'chat-ctx'} data-testid="chat-ctx">
-            <ContextUsageButton
-              tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="panel-context-usage"
-              compression={contextCompression.state} onCompress={contextCompression.compress}
-              isDisabled={loading || !indexReady || activeId == null || activeId !== loadedSessionId}
-            />
-            ≈{(ctxEst / 1000).toFixed(1)}k / {Math.round(ctxWin / 1000)}k
-            {ratio > 0.9 && ' · 点击用量环查看详情'}
-          </div>
         </div>
       </div>
     </Panel>

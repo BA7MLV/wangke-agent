@@ -10,7 +10,13 @@
 .ink-range input { width: 80px; accent-color: var(--foreground); }
 .ink-range span { min-width: 36px; font-variant-numeric: tabular-nums; }
 .ink-layer { position: absolute; inset: 0; z-index: 10; pointer-events: none; overflow: hidden; }
-.ink-layer[data-active] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
+.ink-layer[data-active] { pointer-events: auto; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
+.ink-layer[data-active][data-finger] { touch-action: none; }
+.ink-toolbar__tools [data-testid="ink-finger"] { color: var(--muted); }
+.mr-shell { position: relative; }
+.mr-shell__actions { display: flex; justify-content: flex-end; padding: 4px 8px 0; }
+.mr-shell[data-fullscreen] { position: fixed; inset: 0; z-index: 30; background: var(--background); }
+.mr-shell[data-fullscreen] > .mr-root { height: 100dvh; }
 .ink-layer svg { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .mr-md__block, .mr-html__block, .mr-docx .docx-wrapper > section.docx { position: relative; }
 @media (max-width: 480px) {

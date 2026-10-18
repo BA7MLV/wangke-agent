@@ -365,17 +365,20 @@ html[data-keyboard='open'] .chat-composer {
   border-radius: 999px;
 }
 
-/* 上下文用量提示（≈x.xk / yk）：三档告警色走 MD3 语义令牌 */
+/* 上下文用量环的槽位（只放环，见 ContextUsageButton）。
+   `margin-left: auto` 把它连同后面的发送键一起顶到工具行右端，
+   而发送键排在它**后面**，因此永远占最右那一格。 */
 .chat-ctx {
   display: flex;
   align-items: center;
-  justify-content: flex-end;
   gap: 4px;
   flex: none;
   margin-left: auto;
-  text-align: right;
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
+}
+
+/* 三档告警色只作用于环本身（见 context-usage.css 的 data-level），
+   这两条保留给需要跟随档位着色的子元素。 */
+.chat-ctx--warn {
   color: var(--muted);
 }
 
@@ -517,34 +520,4 @@ html[data-keyboard='open'] .chat-composer {
 .chat-note > .chat-note__icon {
   flex: none;
   color: var(--muted);
-}
-
-/* ── 沙箱 widget（show_widget 的 html 形态）────────────────────────────────
-   外壳刻意保持极简：图形自己的配色与排版都在 iframe 里，外层只负责定位与错误态。
-   不设背景色 —— 与 SVG 那条一致，底色交给页面，widget 自身透明。 */
-.widget-block {
-  margin: 8px 0;
-  border-radius: var(--radius);
-  overflow: hidden;
-}
-
-.widget-block__frame {
-  display: block;
-  width: 100%;
-  border: 0;
-  transition: height var(--duration-fast, 250ms) var(--ease-smooth-out);
-}
-
-.widget-block--loading,
-.widget-block--error {
-  padding: 12px;
-  font-size: 12px;
-  color: var(--muted);
-  background: var(--default-soft);
-  border-radius: var(--radius-sm);
-}
-
-.widget-block--error {
-  color: var(--danger);
-  background: var(--danger-soft);
 }

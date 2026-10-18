@@ -3,6 +3,13 @@
 .reasoning-chain {
   margin-bottom: 6px;
   font-size: 0.75rem;
+  /* The panel is content-sized by HeroUI. Keep its height/opacity motion
+     deliberately slower than the default disclosure easing so the reveal
+     feels calm instead of snapping open. */
+  --reasoning-expand-duration: 380ms;
+  --reasoning-collapse-duration: 280ms;
+  --reasoning-expand-ease: cubic-bezier(0.33, 1, 0.68, 1);
+  --reasoning-collapse-ease: cubic-bezier(0.32, 0, 0.67, 0);
 }
 
 .reasoning-chain__heading {
@@ -49,6 +56,8 @@
 
 .reasoning-chain .reasoning-chain__indicator {
   margin-inline-start: 0;
+  transition-duration: var(--reasoning-expand-duration);
+  transition-timing-function: var(--reasoning-expand-ease);
 }
 
 .reasoning-chain__icon {
@@ -97,7 +106,22 @@
   mask-image: none;
 }
 
-/* No second grid/blur animation: use HeroUI's disclosure transition alone. */
+/* HeroUI exposes the measured panel height through --disclosure-panel-height.
+   Use that native height transition, but replace the default near-linear
+   timing with a softer non-linear curve. The closed rule is explicit so
+   collapsing does not inherit the slower opening pace. */
+.reasoning-chain .reasoning-chain__content {
+  transition:
+    height var(--reasoning-collapse-duration) var(--reasoning-collapse-ease),
+    opacity var(--reasoning-collapse-duration) var(--reasoning-collapse-ease);
+}
+
+.reasoning-chain .reasoning-chain__content[data-expanded='true'] {
+  transition:
+    height var(--reasoning-expand-duration) var(--reasoning-expand-ease),
+    opacity var(--reasoning-expand-duration) var(--reasoning-expand-ease);
+}
+
 @media (prefers-reduced-motion: reduce) {
   .reasoning-chain .reasoning-chain__content,
   .reasoning-chain .reasoning-chain__indicator {

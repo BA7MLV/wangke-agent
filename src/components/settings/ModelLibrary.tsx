@@ -10,19 +10,19 @@ import { useModelMetaRevision } from '../../utils/useModelMeta';
 
 const slots: ModelSlot[] = ['chat', 'vision', 'asr'];
 
-export default function ModelLibrary({ options, checking, onFetch }: {
+export default function ModelLibrary({ providerId, options, checking, onFetch }: {
+  providerId: string;
   options: Record<string, string[]>;
   checking: boolean;
   onFetch: () => Promise<void>;
 }) {
   const settings = useSettings();
   useModelMetaRevision();
-  const saved = savedModelsOf(settings);
+  const saved = savedModelsOf(settings).filter((m) => m.providerId === providerId);
   const [discover, setDiscover] = useState(false);
   const [query, setQuery] = useState('');
-  const [providerId, setProviderId] = useState(settings.providers[0]?.id ?? '');
   const [selected, setSelected] = useState<Set<string>>(new Set());
-  const [purpose, setPurpose] = useState<ModelSlot>('chat');
+  const [purpose, setPurpose] = useState<ModelSlot>(settings.providers.find((p) => p.id === providerId)?.serves[0] ?? 'chat');
   const [editor, setEditor] = useState<{ original: SavedModel | null; draft: SavedModel } | null>(null);
   const [error, setError] = useState('');
   const [metaError, setMetaError] = useState('');
@@ -30,7 +30,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
   const [kind, setKind] = useState<ModelKind | 'all'>('all');
   const [savedQuery, setSavedQuery] = useState('');
   const catalogOf = (id: string) => settings.providers.find((p) => p.id === id)?.catalogId ?? '';
-  const catalogs = settings.providers.map((p) => p.catalogId).filter(Boolean);
+  const catalogs = [catalogOf(providerId)].filter(Boolean);
   const matchesKind = (catalogId: string, model: string) => kind === 'all' || modelKind(getModelMeta(catalogId, model)) === kind;
   const matchesSearch = (catalogId: string, model: string, needle: string) => `${model} ${getModelMeta(catalogId, model)?.name ?? ''}`.toLowerCase().includes(needle);
   const filteredSaved = saved.filter((m) => matchesKind(catalogOf(m.providerId), m.model)
@@ -50,7 +50,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
   }
 
   return (
-    <SectionCard title="我的模型" subtitle="拉取列表后勾选添加；已添加模型同步出现在默认模型和 Chat 选择器中。" testId="card-model-library"
+    <SectionCard title="供应商模型" subtitle="从当前供应商 API 拉取模型后勾选添加；已添加模型可用于默认模型和 Chat。" testId="card-model-library"
       actions={<>
         <Button variant="secondary" onPress={() => openEditor(null)}>手动添加</Button>
         <LoadingButton loading={checking} variant="primary" data-testid="btn-check-models" onPress={() => {
@@ -63,7 +63,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
             <div><p className="text-sm font-medium">能力数据 · models.dev</p><p className="mt-1 text-xs text-muted">{!catalogs.length ? '尚未关联供应商目录' : catalogs.some((id) => !catalogMetaUpdatedAt(id)) ? '部分供应商能力数据尚未同步' : isModelMetaStale(catalogs) ? '正在使用缓存，建议刷新' : '已同步 · 按供应商与模型 ID 精确匹配'}</p></div>
             <LoadingButton size="sm" variant="secondary" loading={refreshing} onPress={async () => {
               setMetaError('');
-              if (!catalogs.length) { setMetaError('请先在下方供应商设置中填写 models.dev 供应商 key。'); return; }
+              if (!catalogs.length) { setMetaError('请先在当前供应商连接中填写 models.dev 供应商 key。'); return; }
               setRefreshing(true);
               try { await refreshModelMeta(catalogs); }
               catch (e) { setMetaError(`更新失败，保留已有数据：${e instanceof Error ? e.message : String(e)}`); }
@@ -87,13 +87,6 @@ export default function ModelLibrary({ options, checking, onFetch }: {
           </div>
           <p className="text-xs text-muted">拉取不会自动添加或覆盖已有配置。按用途添加，之后可以编辑。</p>
           <div className="flex flex-wrap gap-2">
-            <Select aria-label="发现模型的供应商" selectedKey={providerId} className="min-w-40 flex-1" onSelectionChange={(key) => {
-              const id = String(key); setProviderId(id); setSelected(new Set());
-              setPurpose(settings.providers.find((p) => p.id === id)?.serves[0] ?? 'chat');
-            }}>
-              <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
-              <Select.Popover isNonModal><ListBox>{settings.providers.map((p) => <ListBox.Item id={p.id} key={p.id} textValue={p.name}>{p.name || '未命名供应商'}</ListBox.Item>)}</ListBox></Select.Popover>
-            </Select>
             <Select aria-label="添加模型的用途" selectedKey={purpose} className="min-w-32" onSelectionChange={(key) => setPurpose(String(key) as ModelSlot)}>
               <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
               <Select.Popover isNonModal><ListBox>{(provider?.serves ?? []).map((slot) => <ListBox.Item id={slot} key={slot} textValue={SLOT_LABEL[slot]}>{SLOT_LABEL[slot]}</ListBox.Item>)}</ListBox></Select.Popover>
@@ -118,7 +111,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
                 <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control><span className="flex min-w-0 flex-1 flex-col gap-2"><span className="break-all font-mono text-sm">{model}</span><ModelCapabilities catalogId={catalogOf(providerId)} model={model} /></span>{added && <span className="shrink-0 text-xs text-muted">已添加</span>}</Checkbox.Content>
               </Checkbox>;
             })}
-            {!discovered.length && <p role="status" className="py-4 text-sm text-muted">{checking ? '正在拉取模型…' : needle || kind !== 'all' ? '没有匹配的模型，试试其他关键词或选择「全部能力」。' : '暂无可用列表，请检查下方供应商连接后重试，或手动添加。'}</p>}
+            {!discovered.length && <p role="status" className="py-4 text-sm text-muted">{checking ? '正在拉取模型…' : needle || kind !== 'all' ? '没有匹配的模型，试试其他关键词或选择「全部能力」。' : '暂无可用列表，请检查当前供应商连接后重新拉取，或手动添加。'}</p>}
           </div>
           <Button isDisabled={!selected.size || !provider?.serves.includes(purpose)} onPress={() => {
             const current = useSettings.getState();
@@ -137,12 +130,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
           catch (e) { setError(e instanceof Error ? e.message : String(e)); }
         }}>
           <h3 className="text-sm font-semibold">{editor.original ? '编辑模型' : '手动添加模型'}</h3>
-          <Select aria-label="模型所属供应商" selectedKey={editor.draft.providerId} isDisabled={!!editor.original} onSelectionChange={(key) => {
-            const id = String(key); setEditor({ ...editor, draft: { ...editor.draft, providerId: id, slots: [settings.providers.find((p) => p.id === id)?.serves[0] ?? 'chat'] } });
-          }}>
-            <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
-            <Select.Popover isNonModal><ListBox>{settings.providers.map((p) => <ListBox.Item id={p.id} key={p.id} textValue={p.name}>{p.name || '未命名供应商'}</ListBox.Item>)}</ListBox></Select.Popover>
-          </Select>
+          <p className="text-xs text-muted">所属供应商：{provider?.name || '未命名供应商'}</p>
           <Field label="模型 ID" hint="请求时发送的精确 ID，请与供应商文档一致。">
             <Input aria-label="模型 ID" autoFocus value={editor.draft.model} onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, model: e.target.value } })} />
           </Field>
@@ -162,7 +150,7 @@ export default function ModelLibrary({ options, checking, onFetch }: {
 
         <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">已添加模型 <span className="text-muted tabular-nums">{filteredSaved.length} / {saved.length}</span></h3></div>
         <SearchField aria-label="搜索我的模型" value={savedQuery} onChange={setSavedQuery}>
-          <SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索模型、名称或供应商" /><SearchField.ClearButton /></SearchField.Group>
+          <SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索当前供应商的模型或名称" /><SearchField.ClearButton /></SearchField.Group>
         </SearchField>
         <div className="flex max-h-96 flex-col divide-y divide-border overflow-y-auto overscroll-contain" data-testid="saved-models">
           {filteredSaved.map((m) => <div key={modelKey(m)} className="flex flex-wrap items-center gap-3 py-3">

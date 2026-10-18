@@ -1,0 +1,55 @@
+/* ── 沙箱 widget ──────────────────────────────────────────────────────────── */
+.widget-block {
+  margin: 8px 0;
+  border-radius: var(--radius);
+  overflow: hidden;
+}
+
+.widget-block__toolbar {
+  display: flex;
+  justify-content: flex-end;
+  padding: 0 2px 4px;
+}
+
+.widget-block__open {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.25;
+  text-decoration: none;
+}
+
+.widget-block__open:hover {
+  color: var(--foreground);
+  background: var(--default-soft);
+}
+
+.widget-block__open--disabled {
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+
+.widget-block__frame {
+  display: block;
+  width: 100%;
+  border: 0;
+}
+
+.widget-block--loading,
+.widget-block--error {
+  padding: 12px;
+  font-size: 12px;
+  color: var(--muted);
+  background: var(--default-soft);
+  border-radius: var(--radius-sm);
+}
+
+.widget-block--error {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
