@@ -170,6 +170,10 @@ const META = {
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
   // 全是零依赖纯函数，所以能进这一档 —— 拆出 skills/scope.ts 就是为了这个。
   'test-qa-skill-scope': { service: 'none', antd: false, timeout: 120 },
+  // 问答执行体（harness/qaRunner）的端到端不变量：假网关 + 真 agent 循环 + 真 Dexie。
+  // 守的是「一问一答落两行 / 工具往返不落库 / 中断也落库 / 技能白名单真拦得住 / 空回答不落库」
+  // 这些**静默**的数据形状 —— 单测拆不出来，只有把整条链跑完才看得见。
+  'test-qa-runner': { service: 'none', antd: false, timeout: 180 },
   // 云端同步的单元寻址：id 构造/解析往返、名字编码无歧义、分片边界、畸形 id 不抛、
   // 设置白名单与排除项无交集（含「apiKey / bilibiliCookie 永不可同步」）。零依赖纯函数。
   // ⚠️ 它**不**覆盖「新字段有没有被归类」—— 那条由编译期守门员负责
@@ -191,6 +195,26 @@ const META = {
   // meta 不发 coverState（guest 按 cover 单元能否拉到判空）、content 段/对照轨
   // （status 0 的未转写段也发）、cover blob→base64 分片进制可逆且不爆栈。
   'test-livelink-index': { service: 'none', antd: false, timeout: 120 },
+  // P2 host 侧写 op：apply 的幂等语义（study.add 靠去重表、card.decide 的 gone 分支、
+  // position.set 的 not-found）与 OpQueue 的串行/失败传播。Dexie 靠 fake-indexeddb 自带
+  // （与 test-migration.mjs 同一套），不需要常驻服务。
+  'test-livelink-ops': { service: 'none', antd: false, timeout: 120 },
+  // P2 guest 侧 outbox：入队序、落盘恢复、失败分类（终态丢弃 / internal 退避重试）、
+  // clientOpId 去重、坏落盘不许弄崩页面、position.set 禁止入队。零依赖纯逻辑。
+  'test-livelink-outbox': { service: 'none', antd: false, timeout: 120 },
+  // P2 host 侧接线（握手/版本/op 定向回执/问答流）：跑的是**真 LiveHost** + 进程内桩中继
+  // + 真 WebSocket（用 ws 的客户端当浏览器那个全局），Dexie 靠 fake-indexeddb、模型走假
+  // 网关，不需要常驻服务。守的是「这一帧发给谁」那类只在浏览器里看不出来的事：v1 hello 要
+  // close(4400) 且不发 version.err、两台来宾同时连着时 A 的 ack 不能到 B、未知 from 拒收、
+  // chat.req→ev→done 的帧序列、chat.stop 的 abort 生效、问答全局串行、控制帧无业务响应、
+  // study.add 重放只累加一次。
+  'test-livelink-host-wiring': { service: 'none', antd: false, timeout: 180 },
+  // P2 guest 侧接线：三条 op 路径（进度不入 outbox / 时长与审核入队）、补发**逐条**
+  // （第 2 条不许在第 1 条的 ack 之前发出去）、ack 只认 to=自己、internal 失败退避
+  // 不原地自旋、ack 看门狗原样重发、问答流组装与 to 隔离、稳定 guest id（刷新不新增设备）、
+  // 版本不匹配那句明说。协议细节对着无 socket 的 GuestCore 跑（假时钟精确到毫秒），
+  // 再加几条真桩中继 + 真 ws 的集成用例守 LiveGuest 的 socket 接线。
+  'test-livelink-guest-wiring': { service: 'none', antd: false, timeout: 180 },
   // 供应商注册表：模型引用带 provider、目标解析、报错文案指明是哪一家、
   // 导入合并不覆盖凭据。零依赖纯函数（settings.ts 里的纯函数，不碰 store）。
   'test-providers': { service: 'none', antd: false, timeout: 120 },

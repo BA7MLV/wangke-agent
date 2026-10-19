@@ -45,6 +45,7 @@ import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { progressRatio } from '../utils/videoProgress';
 import { useIsMobile } from '../utils/useMobile';
+// 课程/材料 id 的生成（降级实现与理由见 utils/uuid.ts 的文件头，仓库里只有那一份）
 import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget } from '../bilibili';
 import type { BiliSubtitleItem } from '../bilibili/dmview';
 import { formatTotalDuration, pageLabel, resolveSelectedPages, selectedDuration } from '../bilibili/pages';
@@ -117,11 +118,45 @@ function isStandalone(): boolean {
 // 主屏幕 PWA 豁免。只需在 iOS 非独立模式下提示一次。
 const SHOW_PWA_HINT = isIOS() && !isStandalone();
 
+/** 先用 Safari 原生媒体元数据读取时长，避免 iPadOS 为常见 MP4/MOV 扫描整个容器。 */
+async function probeNativeDuration(file: Blob): Promise<number> {
+  const url = URL.createObjectURL(file);
+  const video = document.createElement('video');
+  video.preload = 'metadata';
+  video.muted = true;
+  video.playsInline = true;
+  video.src = url;
+  try {
+    const duration = await new Promise<number>((resolve, reject) => {
+      const timer = window.setTimeout(() => reject(new Error('native duration timeout')), 3000);
+      video.onloadedmetadata = () => {
+        window.clearTimeout(timer);
+        resolve(video.duration);
+      };
+      video.onerror = () => {
+        window.clearTimeout(timer);
+        reject(new Error('native duration unavailable'));
+      };
+    });
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  } finally {
+    video.removeAttribute('src');
+    video.load();
+    URL.revokeObjectURL(url);
+  }
+}
+
 /**
  * 用 mediabunny 解析容器头探测时长：只读文件头/尾少量字节，
  * 支持 MKV/FLV 等 Safari 原生 <video> 不认的格式；15s 超时兜底。
  */
 async function probeDuration(file: Blob): Promise<number> {
+  try {
+    const native = await probeNativeDuration(file);
+    if (native > 0) return native;
+  } catch {
+    // Safari 不认识的容器交给 mediabunny 处理。
+  }
   const input = new MediaInput({ source: new BlobSource(file), formats: ALL_FORMATS });
   try {
     const duration = await Promise.race([
@@ -656,14 +691,15 @@ export default function Library() {
         await importMaterial(file, key);
         return;
       }
-      patchTask(key, { status: 'probing' });
-      const duration = await probeDuration(file);
-
       const id = uuid();
       patchTask(key, { status: 'writing', percent: 0 });
-      await saveVideoFile(id, file, (ratio) =>
+      // 探测时长与写入文件互不依赖。旧实现先 probe、再 save，
+      // 在 iPadOS 上会把两个慢步骤串起来；并行后总耗时取较慢的一项。
+      const durationPromise = probeDuration(file);
+      const savePromise = saveVideoFile(id, file, (ratio) =>
         patchTask(key, { percent: Math.round(ratio * 100) }),
       );
+      const [duration] = await Promise.all([durationPromise, savePromise]);
       await db.videos.put({
         id,
         name: file.name.replace(/\.[^.]+$/, ''),

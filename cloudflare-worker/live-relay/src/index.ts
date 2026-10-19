@@ -24,13 +24,16 @@
  *
  * 连接契约（与 src/livelink/ 的 host.ts / guest.ts 对齐，两侧已按此实现）：
  *   wss://<worker>?room=<配对码>&role=host|guest
- * 中继只合成两种帧（v 必须等于应用侧 protocol.ts 的 PROTOCOL_VERSION——两套部署
- * 不共享模块，只能靠约定）：
- *   {"v":1,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
- *   {"v":1,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
+ *
+ * 中继只合成两种帧，**都不带 v** —— 它们是控制帧，不是 app 协议帧（理由见下面常量
+ * 的注释）：
+ *   {"ctl":1,"t":"host-link-down","id":"relay"}   host 断开时广播给全体 guest
+ *   {"ctl":1,"t":"host-link-up","id":"relay"}     host 宽限内回来时广播给全体 guest
  *
  * close code 与 guest 页 FATAL_CLOSE_CODES（LiveGuest.tsx）一一对应，改前先看那：
  *   4000 房间回收 / 4001 配对码不存在 / 4403 配对限流
+ * 另有一个 4400（版本不匹配）由 **host** 侧 close，中继不合成它 —— 详见文件末的
+ * 「已知退化场景」与 protocol.ts 的 CLOSE_PROTOCOL_MISMATCH。
  */
 
 import { DurableObject } from 'cloudflare:workers';
@@ -64,9 +67,21 @@ const CLOSE_ROOM_EXPIRED = 4000;
 const CLOSE_BAD_CODE = 4001;
 const CLOSE_THROTTLED = 4403;
 
-/** 中继合成的链路状态帧。id 固定 'relay'：与业务帧的 id 命名空间分开，日志里一眼可辨。 */
-const HOST_LINK_DOWN = '{"v":1,"t":"host-link-down","id":"relay"}';
-const HOST_LINK_UP = '{"v":1,"t":"host-link-up","id":"relay"}';
+/**
+ * 中继合成的链路状态帧。
+ *
+ * **不带 `v`，也不跟着应用的 PROTOCOL_VERSION 走**：中继是**另一个部署物**，有自己的
+ * 发布节奏 —— app 提交 ≠ 中继上线。把控制帧塞进 app 的版本号里，等于给两个本该独立的
+ * 生命周期绑一根绳：每 bump 一次 app 协议都要重新部署一次中继，忘了部署的表现是
+ * 来宾收不到「已离线 / 已重连」（新来宾会把带旧 v 的两帧当坏帧静默丢掉）。
+ *
+ * 用 `ctl: 1` 标记形状即可 —— 应用侧走 decodeControlFrame（protocol.ts），认形状不认
+ * 版本。**这三行是本次解耦唯一要重新部署中继的理由，且只需部署这一次。**
+ *
+ * id 固定 'relay'：与业务帧的 id 命名空间分开，日志里一眼可辨。
+ */
+const HOST_LINK_DOWN = '{"ctl":1,"t":"host-link-down","id":"relay"}';
+const HOST_LINK_UP = '{"ctl":1,"t":"host-link-up","id":"relay"}';
 
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
@@ -166,9 +181,21 @@ export class Room extends DurableObject {
     }
   }
 
-  async webSocketClose(ws: WebSocket): Promise<void> {
+  async webSocketClose(ws: WebSocket, code?: number): Promise<void> {
     const role = this.roleOf(ws);
     if (role === 'host') {
+      // host 因**协议版本不匹配**被关（4400）时，把这个 code 原样透传给全体 guest：
+      // guest 那条 socket 还开着，它只能拿到控制帧（host-link-down），拿不到 host 的
+      // close code。不透传的话，「中继与来宾版本不一致，请刷新页面」这句提示在真实
+      // 部署里永远显示不出来——guest 只会看到笼统的「主机已离线」。
+      // 只透传 4400 这一个码：其余关闭原因（room expired / bad code / too many
+      // attempts）都是「对着 guest 说的」，让 guest 自己撞上才算数，转发反而不准。
+      if (code === 4400) {
+        for (const g of this.ctx.getWebSockets()) {
+          if (this.roleOf(g) === 'guest') g.close(4400, 'protocol mismatch');
+        }
+        return;
+      }
       // 只在「最后一个 host 离开」时广播 down 并起宽限 alarm：同码双开的退化场景里
       // 另一个 host 还活着，guest 不该被惊动（正常单 host 房间两者等价）。
       const hasOtherHost = this.ctx
@@ -232,3 +259,11 @@ export class Room extends DurableObject {
 // 已按「最后一个 host」守卫，双 host 时一个离开不会惊动 guest；剩下没解的只有
 // 重复应答与 rid 撞车。）真要支持「一码多主」，该做的是 host 发现/选举，不是
 // 中继里加踢人逻辑。
+//
+// —— 版本不匹配的 4400：中继目前既不合成、也不转发 ——
+// host 在版本不匹配时 close(4400)（protocol.ts 的 CLOSE_PROTOCOL_MISMATCH），但
+// 已知退化场景：host-link-down 只在「最后一个 host 离开」时广播。同码双开（两个 host
+// 同时进同一房间，属退化场景）时先走的那个不广播——另一个 host 还活着，guest 照常能看。
+//
+// 关闭码的中继职责就到这里：只有 4400（协议版本不匹配）会从 host 透传给 guest，因为
+// 那是**来宾需要知道**的信息；其余码都是对着 guest 说的，让它自己撞上更准。

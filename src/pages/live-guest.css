@@ -107,3 +107,23 @@
   padding-top: 4px;
   border-top: 1px solid var(--border-secondary);
 }
+
+/* 待补发操作提示：outbox 里还排着 N 条（进度/时长/停生成）没被主机确认。
+   只在 N > 0 时渲染（见 LiveGuest.tsx 里的注释），所以这里不需要「0 条」的形态。
+   色阶走 tertiary 容器：它是「还没到、但会到」，不是错误 —— 用 error 色会让人以为要处理。 */
+.live-guest__pending {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: var(--mdui-shape-corner-small);
+  background: rgb(var(--mdui-color-tertiary-container));
+  color: rgb(var(--mdui-color-on-tertiary-container));
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.live-guest__pending > mdui-sym-refresh {
+  flex: none;
+}

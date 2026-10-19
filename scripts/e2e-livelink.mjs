@@ -80,6 +80,11 @@ import { createHash } from 'node:crypto';
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { WebSocketServer } from 'ws';
+// ⚠️ 这里**不 import 任何协议版本**：桩中继合成的两帧是控制帧（ctl 形状），与 app 的
+// PROTOCOL_VERSION 无关（见 live-relay/src/index.ts 与 protocol.ts 的 decodeControlFrame）。
+// 在测试里 import PROTOCOL_VERSION 恰好是把两个部署物的生命周期重新绑在一起 ——
+// 上一版就是那么写的，于是每次 app bump 协议，桩和真中继都得跟着改，而忘了改真中继
+// 不会让任何断言变红。
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 /** 桩中继端口。避开 dev(5173)/preview(4173)，也避开本机常见的 8080/3000。 */
@@ -286,7 +291,10 @@ wss.on('connection', (ws, req) => {
       r.host = null;
       // host 断开：向全体 guest 广播 host-link-down（真 DO 的 webSocketClose）。
       // 帧内容与 live-relay/src/index.ts 的 HOST_LINK_DOWN 常量逐字节一致。
-      const payload = JSON.stringify({ v: 1, t: 'host-link-down', id: 'relay' });
+      // ctl: 1 写死：控制帧不跟 app 协议版本走，桩里要是顺手写成
+      // `{ v: PROTOCOL_VERSION, ... }`，guest 的 decodeControlFrame 就解不出它（它不看
+      // 版本），「主机已离线」的提示静默失效，而下面那条帧字节断言还照样绿。
+      const payload = JSON.stringify({ ctl: 1, t: 'host-link-down', id: 'relay' });
       for (const g of r.guests) {
         if (g.readyState === ws.OPEN) {
           g.send(payload);
@@ -1013,7 +1021,9 @@ try {
   console.log(`   停机前共享条存在=${shareBarBefore > 0}，host-link-down 广播次数=${stats.hostLinkDown}`);
   await check('中继广播了 host-link-down（帧内容与真 DO 常量一致）', () => {
     assert.ok(stats.hostLinkDown > 0, '没广播 host-link-down');
-    assert.equal(stats.hostLinkDownPayloads[0], '{"v":1,"t":"host-link-down","id":"relay"}');
+    // 黄金字节：ctl 形状、**没有 v**。真中继改这一行时这里会红（桩与真中继各改一半的
+    // 症状是「新来宾收不到离线条」，而这条断言正好是那条症状的哨兵）。
+    assert.equal(stats.hostLinkDownPayloads[0], '{"ctl":1,"t":"host-link-down","id":"relay"}');
   });
 
   // 页面错误：真错误才红。React 的 StrictMode 双挂载在 dev 下会有无害噪音，
