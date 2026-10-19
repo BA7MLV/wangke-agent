@@ -19,7 +19,9 @@ import { useAppNav } from '../components/appNav';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
-import SkillPicker from '../components/SkillPicker';
+import ChatAddMenu from '../components/ChatAddMenu';
+import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
+import { useChatAttachments } from '../store/chatAttachments';
 import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, ThinkLine, PendingReply, useMessageEnter } from '../components/motion';
 import ReasoningChain from '../components/ReasoningChain';
@@ -282,6 +284,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
     data-collapsed={overflows && !expanded}>{message.content}</span>;
   return (
     <div className="course-chat__user-content">
+    <ChatMessageAttachments files={message.attachments} />
     <div className="course-chat__bubble course-chat__bubble--user">
     {!touchMenu ? content : (
     <Dropdown trigger="longPress">
@@ -560,6 +563,7 @@ export default function CourseChat() {
    */
   const composerRef = useRef<HTMLTextAreaElement>(null);
   const composerHoldRef = useRef<HTMLDivElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
   const voiceDraftBase = useRef('');
   const [voiceEditVersion, setVoiceEditVersion] = useState(0);
   /**
@@ -591,10 +595,26 @@ export default function CourseChat() {
     if (element && stickRef.current) element.scrollTop = element.scrollHeight;
   }, []);
   useViewportResize(pinIfSticking);
+  useLayoutEffect(() => {
+    const composer = composerWrapRef.current;
+    const main = composer?.parentElement;
+    if (!composer || !main) return;
+    const measure = () => {
+      main.style.setProperty('--chat-composer-height', `${composer.getBoundingClientRect().height}px`);
+      pinIfSticking();
+    };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [pinIfSticking]);
   const ready = useCourseChat((s) => s.ready);
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
   const loaded = useCourseChat((s) => s.loaded);
+  useLayoutEffect(() => {
+    useChatAttachments.getState().bind(activeId);
+  }, [activeId]);
   const { open: settingsOpen } = useSettingsDialog();
   useLayoutEffect(() => {
     const sync = () => useChatNotifications.getState().setViewing(
@@ -621,7 +641,9 @@ export default function CourseChat() {
    */
   const runningIds = useCourseChat((s) => s.runningIds);
   const draft = useCourseChat((s) => s.draft);
-  const hasDraft = !!draft.trim();
+  const attachmentItems = useChatAttachments((state) => state.items);
+  const hasDraft = !!draft.trim() || attachmentItems.length > 0;
+  const attachmentsPending = attachmentItems.some((item) => !item.value);
   const courseCount = useCourseChat((s) => s.courseCount);
   const skillIds = useCourseChat((s) => s.skillIds);
   const contextCourses = useCourseChat((s) => s.contextCourses);
@@ -643,7 +665,6 @@ export default function CourseChat() {
   const setArchived = useCourseChat((s) => s.setArchived);
   const setDraft = useCourseChat((s) => s.setDraft);
   const send = useCourseChat((s) => s.send);
-  const setSkillIds = useCourseChat((s) => s.setSkillIds);
   const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
   const answerAsk = useCourseChat((s) => s.answerAsk);
   const stop = useCourseChat((s) => s.stop);
@@ -1471,9 +1492,9 @@ export default function CourseChat() {
             virtualRef={virtualMessagesRef} onNavigate={navigateToQuestion} />
           </div>
 
-          {/* 正文独占上行；底部技能入口固定在左，发送操作固定在右。
+          {/* 正文独占上行；底部添加入口固定在左，发送操作固定在右。
               队列只在有待发消息时出现；长问题仍可自动增高。 */}
-          <div className="course-chat__composer-wrap">
+          <div className="course-chat__composer-wrap" ref={composerWrapRef}>
             {/* 固定在消息可视区下沿，向输入栏方向逐渐加深；不模糊输入控件。 */}
             <div className="page-app-bar__blur course-chat__bottom-blur" aria-hidden="true">
               <span />
@@ -1528,9 +1549,12 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}>
+            <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}
+              onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') && !pendingAsk) event.preventDefault(); }}
+              onDrop={(event) => { if (event.dataTransfer.files.length && !pendingAsk) { event.preventDefault(); useChatAttachments.getState().add(Array.from(event.dataTransfer.files)); } }}>
               {/* 上下文属于这次提问的输入范围，和输入框放在同一张 chat 卡里；
                   不再悬在消息区上方，避免用户误以为它是另一条顶栏。 */}
+              <div className="course-chat__composer-context">
               {contextCourses.length > 0 && (
                 <div className="course-chat__context" data-testid="course-chat-context">
                   <span className="course-chat__context-label">
@@ -1541,6 +1565,8 @@ export default function CourseChat() {
                     {contextCourses.map((course) => (
                       <Chip key={course.id} className="course-chat__context-chip" variant="secondary" size="sm">
                         {course.name}
+                        <Button isIconOnly size="sm" variant="tertiary" aria-label={`移除课程 ${course.name}`} isDisabled={loading}
+                          onPress={() => void useCourseChat.getState().setCourseContext(contextCourses.filter((item) => item.id !== course.id).map((item) => item.id))}><Sym name="close" /></Button>
                       </Chip>
                     ))}
                   </div>
@@ -1550,7 +1576,9 @@ export default function CourseChat() {
                   })}
                 </div>
               )}
-              <SkillPicker value={skillIds} onChange={setSkillIds} />
+              <ChatAttachmentDraft />
+              </div>
+              <ChatAddMenu disabled={!sessionReady || !!pendingAsk} />
               <TextArea
                 ref={composerRef}
                 className="course-chat__input"
@@ -1562,6 +1590,10 @@ export default function CourseChat() {
                 onChange={(event) => {
                   setVoiceEditVersion((version) => version + 1);
                   setDraft(event.target.value);
+                }}
+                onPaste={(event) => {
+                  const files = Array.from(event.clipboardData.files);
+                  if (files.length && !pendingAsk) { event.preventDefault(); useChatAttachments.getState().add(files); }
                 }}
                 /**
                  * 移动端键盘的回车键改成「发送」：Android Chrome 认 enterkeyhint，
@@ -1651,7 +1683,7 @@ export default function CourseChat() {
                 {/* 发送与停止共用最右侧的操作位：生成中有草稿就发送，没有才停止。 */}
                 {generating ? (
                   hasDraft ? iconButton(sendMode === 'queue' ? '排队发送' : '插入发送', <Sym name="arrow_upward" />,
-                    () => void send(draft), { className: 'course-chat__send', testId: 'chat-send', disabled: !sessionReady })
+                    () => void send(draft), { className: 'course-chat__send', testId: 'chat-send', disabled: !sessionReady || attachmentsPending })
                   : iconButton('停止生成（已写出的内容会保留）', <Sym name="stop" filled />, stop, {
                     className: 'course-chat__stop',
                     testId: 'chat-stop',
@@ -1659,7 +1691,7 @@ export default function CourseChat() {
                 ) : <VoiceInput
                   key={activeId ?? 'draft'}
                   holdTargetRef={composerHoldRef}
-                  disabled={!sessionReady || choiceOnly}
+                  disabled={!sessionReady || choiceOnly || attachmentsPending}
                   hasText={hasDraft}
                   editVersion={voiceEditVersion}
                   onStart={() => { voiceDraftBase.current = useCourseChat.getState().draft; }}

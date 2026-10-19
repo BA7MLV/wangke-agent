@@ -64,6 +64,7 @@
 }
 
 .course-chat--empty .course-chat__composer-wrap {
+  position: relative;
   grid-row: 2;
   min-width: 0;
   padding: 0;
@@ -93,6 +94,7 @@
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
 .course-chat__main {
+  position: relative;
   container-type: inline-size;
   min-width: 0;
   min-height: 0;
@@ -204,7 +206,8 @@
   overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset) 8px;
+  padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset)
+    calc(var(--chat-composer-height, 116px) + 8px);
   scrollbar-gutter: stable;
 }
 
@@ -800,7 +803,8 @@
   /* 「回到底部」按钮的定位锚点：它用 `bottom: calc(100% + …)` 停在整块输入区
      正上方，所以锚点必须是一块**高度会跟着内容变**的容器 —— 锚在 main 上的话，
      队列条一出来按钮就压进输入卡里了。 */
-  position: relative;
+  position: absolute;
+  inset: auto 0 0;
   z-index: 1;
   flex: 0 0 auto;
   padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
@@ -1256,7 +1260,7 @@
   .course-chat__messages {
     /* 保留手机原来的 20px 呼吸感，同时叠加动态顶栏高度：不能让窄屏覆盖桌面规则，
        否则消息第一行会钻进顶栏后面。 */
-    padding: calc(var(--app-bar-h, 60px) + 20px) 48px 6px 14px;
+    padding: calc(var(--app-bar-h, 60px) + 20px) 14px calc(var(--chat-composer-height, 116px) + 6px);
     scrollbar-gutter: auto;
   }
 

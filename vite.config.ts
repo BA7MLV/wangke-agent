@@ -241,6 +241,8 @@ export default defineConfig({
   server: {
     host: true,
     port: 5173,
+    // Opt in for full-stack development; static-only mode keeps local attachment storage.
+    proxy: process.env.WANGKE_API_PROXY ? { '/api/v1': { target: process.env.WANGKE_API_PROXY, changeOrigin: false } } : undefined,
     headers: {
       'Cross-Origin-Opener-Policy': 'same-origin',
       'Cross-Origin-Embedder-Policy': 'require-corp',

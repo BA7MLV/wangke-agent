@@ -3,6 +3,11 @@ import { db } from './db';
 import { mergeImportedProviders, useSettings, type Settings } from './settings';
 import { pickSyncSettings } from '../sync/units';
 
+/** 课程助手会话不属于某一门课程，但也应随迁移包一起迁移。 */
+const LIBRARY_ASSISTANT_ID = '__library_assistant__';
+const CHAT_FILE_PREFIX = 'chat-file-';
+const CHAT_FILES = 'chatFiles';
+
 /**
  * 数据迁移：导出 / 导入迁移包（不含视频本体，含讲义帧）。
  *
@@ -16,6 +21,8 @@ import { pickSyncSettings } from '../sync/units';
  * 重新分配，旧 id 经映射重挂（sessionId / folderId / skillId）。
  * 迁入的视频置 fileDeleted: 1，沿用现有「重新导入视频本体」机制。
  *
+ * 课程视频 / 材料本体仍不进入迁移包（体积可能达到 GB）；聊天附件是用户明确附加到
+ * 会话里的小文件，按 `chatFiles` 单独迁移，避免把课程文件一并打进包里。
  * 设计文档：docs/plans/2026-09-09-data-migration-design.md
  */
 
@@ -134,6 +141,13 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
       data[t].push(await encodeRow(row));
     }
   }
+  // `files` 表还保存课程视频 / 材料的 IndexedDB 回退副本，不能整表导出。
+  // 聊天附件使用稳定的 chat-file- 前缀，因此可以只挑出消息真正引用的本机文件。
+  onStep?.('正在序列化聊天附件…');
+  const localChatFiles = (await db.files.toArray()).filter((row) => row.id.startsWith(CHAT_FILE_PREFIX));
+  data[CHAT_FILES] = [];
+  for (const row of localChatFiles) data[CHAT_FILES].push(await encodeRow(row as unknown as Record<string, unknown>));
+  counts[CHAT_FILES] = localChatFiles.length;
 
   const s = useSettings.getState();
   const settings = {
@@ -369,23 +383,71 @@ export async function importMigrationZip(
   // 5) chatSessions → chats：sessionId 链经 旧id→新id 映射重挂
   onStep?.('正在导入问答会话…');
   const sessionIdMap = new Map<number, number>();
+  const sessionSkillIds = new Map<number, number[] | undefined>();
+  const isChatResource = (videoId: unknown) => videoId === LIBRARY_ASSISTANT_ID || newVideoIds.has(videoId as string);
+  const existingChatSessions = await db.chatSessions.toArray();
+  const existingChats = await db.chats.toArray();
+  const chatByIdentity = new Set(
+    existingChats
+      .filter((row) => row.videoId === LIBRARY_ASSISTANT_ID)
+      .map((row) => `${row.sessionId}\u0000${row.role}\u0000${row.createdAt}\u0000${row.content}`),
+  );
+  const sessionByIdentity = new Map(
+    existingChatSessions
+      .filter((row) => row.videoId === LIBRARY_ASSISTANT_ID && row.id != null)
+      .map((row) => [`${row.videoId}\u0000${row.createdAt}\u0000${row.title}`, row.id!]),
+  );
+
+  // 5a) 聊天附件：只恢复聊天附件的本机副本，不触碰课程文件回退存储。
+  onStep?.('正在导入聊天附件…');
+  const chatFileIdMap = new Map<string, string>();
+  for (const raw of data[CHAT_FILES] ?? []) {
+    const row = decodeRow(raw);
+    const oldId = typeof row.id === 'string' ? row.id : '';
+    if (!oldId.startsWith(CHAT_FILE_PREFIX) || !(row.blob instanceof Blob)) continue;
+    const existing = await db.files.get(oldId);
+    if (!existing) await db.files.put({ id: oldId, blob: row.blob });
+    chatFileIdMap.set(oldId, oldId);
+    bump(CHAT_FILES, 1);
+  }
+
   for (const raw of data.chatSessions ?? []) {
     const row = decodeRow(raw);
-    if (!newVideoIds.has(row.videoId as string)) continue;
+    if (!isChatResource(row.videoId)) continue;
     const oldId = row.id as number | undefined;
+    const identity = `${String(row.videoId)}\u0000${String(row.createdAt)}\u0000${String(row.title ?? '')}`;
+    const existingId = row.videoId === LIBRARY_ASSISTANT_ID ? sessionByIdentity.get(identity) : undefined;
+    if (existingId != null) {
+      if (oldId != null) sessionIdMap.set(oldId, existingId);
+      continue;
+    }
     delete row.id;
     const newId = (await db.chatSessions.add(row as never)) as number;
     if (oldId != null) sessionIdMap.set(oldId, newId);
+    if (row.videoId === LIBRARY_ASSISTANT_ID) sessionByIdentity.set(identity, newId);
+    sessionSkillIds.set(newId, Array.isArray(row.skillIds) ? row.skillIds.filter((id): id is number => typeof id === 'number') : undefined);
     bump('chatSessions', 1);
   }
   onStep?.('正在导入聊天记录…');
   const chatBatch: Record<string, unknown>[] = [];
   for (const raw of data.chats ?? []) {
     const row = decodeRow(raw);
-    if (!newVideoIds.has(row.videoId as string)) continue;
+    if (!isChatResource(row.videoId)) continue;
     delete row.id;
     const sid = sessionIdMap.get(row.sessionId as number);
     if (sid != null) row.sessionId = sid;
+    const chatIdentity = `${String(row.sessionId)}\u0000${String(row.role)}\u0000${String(row.createdAt)}\u0000${String(row.content)}`;
+    if (row.videoId === LIBRARY_ASSISTANT_ID && chatByIdentity.has(chatIdentity)) continue;
+    if (Array.isArray(row.attachments)) {
+      row.attachments = row.attachments.map((attachment) => {
+        if (!attachment || typeof attachment !== 'object') return attachment;
+        const next = { ...(attachment as Record<string, unknown>) };
+        const fileId = typeof next.id === 'string' ? chatFileIdMap.get(next.id) : undefined;
+        if (fileId) next.id = fileId;
+        return next;
+      });
+    }
+    if (row.videoId === LIBRARY_ASSISTANT_ID) chatByIdentity.add(chatIdentity);
     chatBatch.push(row);
   }
   if (chatBatch.length) {
@@ -424,6 +486,15 @@ export async function importMigrationZip(
   if (refBatch.length) {
     await db.skillRefs.bulkAdd(refBatch as never[]);
     bump('skillRefs', refBatch.length);
+  }
+  // chatSessions are imported before skills because chats need their session mapping first.
+  // Repair the session-level skill whitelist after the skill id mapping is known.
+  for (const [sessionId, oldIds] of sessionSkillIds) {
+    if (oldIds === undefined) continue;
+    await db.chatSessions.update(sessionId, { skillIds: oldIds.flatMap((id) => {
+      const mapped = skillIdMap.get(id);
+      return mapped == null ? [] : [mapped];
+    }) });
   }
 
   // 6) 设置：勾选时覆盖（凭据保持本机现值，密钥不随包走）

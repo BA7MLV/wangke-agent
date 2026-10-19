@@ -8,7 +8,7 @@ COPY . .
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production DATA_DIR=/data DB_PATH=/data/db/wangke.sqlite
+ENV NODE_ENV=production DATA_DIR=/data DB_PATH=/data/db/wangke.sqlite FILES_DIR=/data/files
 WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json

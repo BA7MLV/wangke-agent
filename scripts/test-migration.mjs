@@ -117,6 +117,13 @@ await db.chats.bulkAdd([
   { videoId: VID_A, sessionId: sidA, role: 'user', content: '间隔增长率公式？', createdAt: 41 },
   { videoId: VID_A, sessionId: sidA, role: 'assistant', content: 'r = r1 + r2 + r1×r2', createdAt: 42, reasoning: '检索到 05:30', quiz: { data: { q: 'x' }, picks: [-1] } },
 ]);
+const librarySid = await db.chatSessions.add({ videoId: '__library_assistant__', title: '资料库问答', createdAt: 45 });
+const chatFileId = 'chat-file-migration-test';
+await db.files.put({ id: chatFileId, blob: new Blob(['本机聊天附件正文'], { type: 'text/plain' }) });
+await db.chats.add({
+  videoId: '__library_assistant__', sessionId: librarySid, role: 'user', content: '分析这个文件', createdAt: 46,
+  attachments: [{ id: chatFileId, name: '本机.txt', mimeType: 'text/plain', size: 24, text: '本机聊天附件正文' }],
+});
 await db.danmakus.add({ videoId: VID_A, time: 330, text: '为什么基期量要除 1+r？' });
 await db.cards.add({ videoId: VID_A, q: '间隔增长率', a: 'r1+r2+r1r2', time: 330, status: 1, createdAt: 50 });
 await db.skills.add({ name: '我的自定义技能', description: 'd', body: '正文', enabled: 1, builtin: 0, updatedAt: 60 });
@@ -144,6 +151,7 @@ await test('zip 含 manifest/db/settings 三件', () => {
   assert.equal(m.counts.subtitleTracks, 1);
   assert.equal(m.counts.frames, 1);
   assert.equal(m.counts.studyDays, 2);
+  assert.equal(m.counts.chatFiles, 1);
 });
 
 await test('settings.json 不含 apiKey', () => {
@@ -223,6 +231,17 @@ await test('全新导入：chat 的 sessionId 已重挂到新会话', async () =
   assert.deepEqual(assistant.quiz.picks, [-1]); // 嵌套 quiz 状态保留
 });
 
+await test('全新导入：资料库会话与本机聊天附件 Blob 一起迁入', async () => {
+  const sessions = await db.chatSessions.where('videoId').equals('__library_assistant__').toArray();
+  assert.equal(sessions.length, 1);
+  const chats = await db.chats.where('videoId').equals('__library_assistant__').toArray();
+  assert.equal(chats.length, 1);
+  assert.equal(chats[0].sessionId, sessions[0].id);
+  assert.equal(chats[0].attachments[0].id, chatFileId);
+  const restored = await db.files.get(chatFileId);
+  assert.equal(await restored.blob.text(), '本机聊天附件正文');
+});
+
 await test('全新导入：folder 重挂、skill+ref 重挂', async () => {
   const a = await db.videos.get(VID_A);
   const folders = await db.folders.toArray();
@@ -253,7 +272,8 @@ await test('二次导入：视频全部跳过，无重复写入', async () => {
   assert.equal(await db.segments.count(), 3);
   assert.equal(await db.subtitleTracks.count(), 1);
   assert.equal(await db.materialInk.count(), 1);
-  assert.equal(await db.chats.count(), 2);
+  assert.equal(await db.chats.count(), 3);
+  assert.equal(await db.chatSessions.where('videoId').equals('__library_assistant__').count(), 1);
   assert.equal(await db.folders.count(), 1); // 同名 folder 合并
   assert.equal(await db.skills.count(), 1); // 同名 skill 跳过
 });

@@ -33,6 +33,17 @@ try {
   });
   await page.waitForFunction(() => document.querySelector('[aria-current="location"]')?.getAttribute('aria-label')?.includes('第 7 条'));
   assert.ok(await page.locator('.course-chat__message').count() < 30);
+  const layers = await page.evaluate(() => {
+    const scroll = document.querySelector('.course-chat__messages');
+    const main = document.querySelector('.course-chat__main');
+    const composer = document.querySelector('.course-chat__composer-wrap');
+    return { scrollBottom: scroll.getBoundingClientRect().bottom, mainBottom: main.getBoundingClientRect().bottom,
+      composerTop: composer.getBoundingClientRect().top, composerHeight: composer.getBoundingClientRect().height,
+      paddingBottom: parseFloat(getComputedStyle(scroll).paddingBottom) };
+  });
+  assert.ok(Math.abs(layers.scrollBottom - layers.mainBottom) < 1, JSON.stringify(layers));
+  assert.ok(layers.scrollBottom > layers.composerTop && layers.paddingBottom >= layers.composerHeight, JSON.stringify(layers));
+  console.log('✓ Message viewport extends behind the floating input instead of ending at a solid-looking strip');
   await page.mouse.move(200, 200);
   await nav.getByRole('button', { name: '第 7 条提问：定位提问 7', exact: true }).hover();
   await page.getByRole('tooltip').waitFor();
@@ -40,18 +51,20 @@ try {
   console.log('✓ Off-screen virtualized messages can be located; current tick and preview work');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await nav.getByRole('button', { name: '第 20 条提问：定位提问 20', exact: true }).click();
-  await page.waitForFunction(() => document.querySelector('[aria-current="location"]')?.getAttribute('aria-label')?.includes('第 20 条'));
-  const geometry = await page.evaluate(() => {
-    const nav = document.querySelector('[data-testid="chat-message-nav"]').getBoundingClientRect();
-    const row = document.querySelector('[data-index="38"]').getBoundingClientRect();
-    const composer = document.querySelector('.course-chat__composer-wrap').getBoundingClientRect();
-    return { navRight: nav.right, navBottom: nav.bottom, rowRight: row.right, navLeft: nav.left, composerTop: composer.top, width: innerWidth };
-  });
-  assert.ok(geometry.navRight <= geometry.width && geometry.rowRight <= geometry.navLeft, JSON.stringify(geometry));
-  assert.ok(geometry.navBottom <= geometry.composerTop, JSON.stringify(geometry));
+  assert.equal(await nav.isVisible(), false);
+  const mobilePadding = await page.locator('.course-chat__messages').evaluate((el) => ({
+    left: getComputedStyle(el).paddingLeft, right: getComputedStyle(el).paddingRight,
+  }));
+  assert.deepEqual(mobilePadding, { left: '14px', right: '14px' });
   await page.screenshot({ path: 'e2e-shots/chat-message-nav-mobile.png' });
-  console.log('✓ Mobile rail does not cover messages or composer');
+  console.log('✓ Mobile rail is hidden and its reserved side spacing is removed');
+  await page.locator('.course-chat__messages').evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await page.waitForFunction(() => {
+    const row = document.querySelector('[data-index="119"]');
+    const composer = document.querySelector('.course-chat__composer-wrap');
+    return row && row.getBoundingClientRect().bottom <= composer.getBoundingClientRect().top;
+  });
+  console.log('✓ Last message can still scroll fully above the floating input');
 
   await page.evaluate(async () => {
     const { useCourseChat } = await import('/src/store/courseChat.ts');

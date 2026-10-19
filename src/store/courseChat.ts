@@ -24,6 +24,11 @@ import type { FolderPlan } from '../harness/folderPlan';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
 import { readPartialWidgetArguments } from '../utils/streamingHtml';
 import type { WidgetPayload } from '../harness/widgetRuntime';
+import { attachmentText, type ChatAttachment } from '../chat/attachments';
+import { attachmentsForModel, messageForModel } from '../chat/attachmentModel';
+import { removeAttachmentFile } from '../chat/prepareAttachment';
+import { useChatAttachments } from './chatAttachments';
+import { normalizeCourseContextIds } from '../harness/courseContext';
 
 /**
  * 课程助手的全局会话状态。
@@ -117,6 +122,7 @@ export interface CourseChatMessage {
   rowId?: number;
   role: 'user' | 'ai';
   content: string;
+  attachments?: ChatAttachment[];
   createdAt?: number;
   reasoning?: string;
   /** 思考耗时（毫秒）：首个思考 token → 末个。落库，历史消息也显示 */
@@ -213,6 +219,7 @@ export type SendMode = 'queue' | 'steer';
 export interface QueuedMessage {
   id: string;
   text: string;
+  attachments?: ChatAttachment[];
 }
 
 export interface CourseChatStore {
@@ -372,7 +379,7 @@ export interface CourseChatStore {
    * 提问卡作答 / 方案确认的**恢复态**用它（活着的循环不走这条，它们 resolve 内存 promise）。
    * 见 docs/plans/2026-10-16-ask-user-resume-design.md。
    */
-  send: (text: string, mode?: SendMode, target?: number, resume?: ResumeRequest) => Promise<void>;
+  send: (text: string, mode?: SendMode, target?: number, resume?: ResumeRequest, attachments?: ChatAttachment[]) => Promise<void>;
   /**
    * 改当前会话的技能范围。
    *
@@ -383,6 +390,7 @@ export interface CourseChatStore {
   setSkillIds: (ids: number[] | undefined) => void;
   /** 恢复自动选课程。草稿态同样只写内存，理由见 `setSkillIds` */
   clearCourseContext: () => void;
+  setCourseContext: (ids: string[]) => Promise<void>;
   /** 提问卡作答（同时把选择落成一条 user 消息） */
   answerAsk: (option: AskUserAnswer | string) => Promise<void>;
   /** 停止生成：中断当前的 LLM 请求与 agent 循环（已流出的内容保留） */
@@ -391,7 +399,7 @@ export interface CourseChatStore {
   /** 切换生成期间的默认投递方式（工具行上那两颗「排队 / 插入」） */
   setSendMode: (mode: SendMode) => void;
   /** 排队：把话挂到队尾。生成中投不出去的插入也会落到这里（见 `steer`） */
-  enqueue: (text: string) => void;
+  enqueue: (text: string, attachments?: ChatAttachment[]) => void;
   removeQueued: (id: string) => void;
   /** 改一条排队消息的文字。**改成空白 = 删掉它**（留一条永远发不出去的空气泡没有意义） */
   updateQueued: (id: string, text: string) => void;
@@ -405,7 +413,7 @@ export interface CourseChatStore {
    * 没有正在跑的一轮时退化成普通发送；等收尾期间新一轮已经跑起来时降级成排队。
    * 两条兜底都是为了同一件事：**这句话不会丢**。
    */
-  steer: (text: string) => Promise<void>;
+  steer: (text: string, attachments?: ChatAttachment[]) => Promise<void>;
   /**
    * 重试一条消息。按这条消息的状态分流：
    *
@@ -470,6 +478,13 @@ let keySeq = 0;
 const nextKey = () => `course-chat-${Date.now()}-${keySeq++}`;
 let queuedSeq = 0;
 const nextQueuedId = () => `queued-${Date.now()}-${queuedSeq++}`;
+
+/** 队列里的附件已经离开草稿区；删掉队列时也要释放本机 / 服务端文件。 */
+function disposeQueuedAttachments(items: QueuedMessage[]): void {
+  const files = new Map<string, ChatAttachment>();
+  for (const item of items) for (const file of item.attachments ?? []) files.set(file.id, file);
+  void Promise.allSettled([...files.values()].map((file) => removeAttachmentFile(file)));
+}
 
 /**
  * 用户中止这一轮时到底**想要什么**。
@@ -891,9 +906,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     /**
      * 只有删掉的正是当前会话时才收 pending —— 那张提问卡 / 确认卡属于当前这轮，
      * 删别的会话不该把用户正在答的题作废掉。
-     */
+    */
     const wasActive = state.activeId === id;
     if (wasActive) releasePending(id);
+    disposeQueuedAttachments(readView(id).queued);
+    void useChatAttachments.getState().discard(id);
 
     await db.transaction('rw', db.chats, db.chatSessions, async () => {
       await db.chats.where('sessionId').equals(id).delete();
@@ -949,6 +966,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     const wasActive = get().activeId === id;
     // 只有「归档掉正在看的那条」才作废提问卡；恢复时那条会话根本不在 Recent 里，谈不上悬着
     if (archived && wasActive) releasePending(id);
+    if (archived) void useChatAttachments.getState().discard(id);
     await patchSession(id, (row) => {
       if (archived) row.archived = true;
       else delete row.archived;
@@ -1023,9 +1041,16 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     });
   },
 
+  setCourseContext: async (ids) => {
+    const key = activeKey();
+    const normalized = normalizeCourseContextIds(ids) ?? [];
+    const courses = (await db.videos.bulkGet(normalized)).filter((row) => row != null).map((row) => ({ id: row.id, name: row.name }));
+    if (key !== 0) await db.chatSessions.update(key, { contextCourseIds: courses.map((course) => course.id) });
+    writeView(key, { contextCourses: courses });
+  },
+
   // ── 发一轮 ────────────────────────────────────────────────────────────────
-  send: async (rawText, mode, target, resume) => {
-    const text = rawText.trim();
+  send: async (rawText, mode, target, resume, suppliedAttachments) => {
     const state = get();
     /**
      * 目标会话：不传 = 当前活动会话（UI 永远走这条）；只有后台会话的队列续发会带 `target`。
@@ -1037,6 +1062,15 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     const key: ViewKey = resume ? resume.sessionId : (target ?? state.activeId ?? 0);
     const view = readView(key);
     const isActive = key === activeKey();
+    const fromComposer = suppliedAttachments === undefined && target === undefined && !resume && !view.pendingAsk;
+    const pendingFiles = fromComposer ? useChatAttachments.getState().items : [];
+    if (pendingFiles.some((item) => !item.value)) {
+      useChatAttachments.setState({ error: '请等待附件就绪，或重试 / 移除失败的附件后发送' });
+      return;
+    }
+    let attachments = suppliedAttachments ?? pendingFiles.flatMap((item) => item.value ? [item.value] : []);
+    const text = rawText.trim() || (attachments.length ? '请分析这些附件。' : '');
+    const consumeAttachments = () => { if (fromComposer) useChatAttachments.getState().consume(attachments.map((file) => file.id)); };
     /**
      * 两道闸。**`loading` 不在其中**：生成期间输入框照常可用（见文件头「流式期间的输入」），
      * 那句话在下面被分流成「排队」或「插入」，而不是被静默吞掉 ——
@@ -1070,9 +1104,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 后台续发走不了这条（`drainQueue` 已判过非 loading），而且不能把用户当前打了一半的字吃掉。
      */
     if (view.loading) {
-      if (isActive) set({ draft: '' });
-      if ((mode ?? state.sendMode) === 'steer') await get().steer(text);
-      else get().enqueue(text);
+      if (isActive && fromComposer) set({ draft: '' });
+      consumeAttachments();
+      if ((mode ?? state.sendMode) === 'steer') await get().steer(text, attachments);
+      else get().enqueue(text, attachments);
       return;
     }
 
@@ -1141,7 +1176,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     if (sessionId == null) {
       try {
         // 草稿态里用户可能已经选过技能范围（那时只写内存，见 setSkillIds），随行一起落库
-        const row = await newSessionRow(view.skillIds);
+        const row = await newSessionRow(view.skillIds, view.contextCourses.map((course) => course.id));
         sessionId = row.id!;
         justCreated = true;
         // 草稿那一轮的登记（key 0）挪到真实 id 上：`stop` / `steer` 按 activeId 找它
@@ -1171,7 +1206,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     markRunning(turnKey, true);
     // 话已经交出去了：清草稿。放在懒创建**之后** —— 创建失败时草稿要原样留着（见 catch）。
     // 续跑走的是卡片作答（answerAsk 已经把选择写进卡片），与草稿无关，别顺手吃掉用户打了一半的字。
-    if (isActive && !resume) set({ draft: '' });
+    if (isActive && fromComposer) set({ draft: '' });
 
     /**
      * 续跑：先把挂起的那条卡片行「结掉」——删检查点、写回选择 / 落库结果。
@@ -1350,7 +1385,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         // 续跑：用户那句「回答」由 resume.userContent 给出（方案确认没有）；
         // 普通一轮：就是这次发的 text。
         ...(resume == null
-          ? [{ key: userKey, role: 'user' as const, content: text, createdAt: userCreatedAt }]
+          ? [{ key: userKey, role: 'user' as const, content: text, attachments, createdAt: userCreatedAt }]
           : resume.userContent != null
             ? [{ key: userKey, role: 'user' as const, content: resume.userContent, createdAt: userCreatedAt }]
             : []),
@@ -1366,13 +1401,22 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
        */
       const userRowContent = resume ? resume.userContent : text;
       if (userRowContent != null) {
-        await db.chats.add({
+        const userRowId = await db.chats.add({
           videoId: LIBRARY_ASSISTANT_ID,
           sessionId: turnKey,
           role: 'user',
           content: userRowContent,
+          ...(attachments.length ? { attachments } : {}),
           createdAt: userCreatedAt,
         });
+        consumeAttachments();
+        writeView(turnKey, { messages: readView(turnKey).messages.map((message) => message.key === userKey ? { ...message, rowId: userRowId as number } : message) });
+        if (attachments.some((file) => file.dataUrl)) {
+          patchAi({ hint: '正在读取图片…' });
+          attachments = await attachmentsForModel(attachments, text, abort.signal);
+          await db.chats.update(userRowId, { attachments });
+          writeView(turnKey, { messages: readView(turnKey).messages.map((message) => message.key === userKey ? { ...message, attachments } : message) });
+        }
       }
 
       if (firstMessage) {
@@ -1420,12 +1464,14 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
        * 找不到卡片行（不该发生）时退回整段历史，宁可多带一点也别把上下文切没了。
        */
       const cut = resume ? history.findIndex((row) => row.id === resume.rowId) : history.length - 1;
-      const baseRows = history.slice(0, cut < 0 ? history.length : cut);
+      const baseRows = history.slice(0, cut < 0 ? history.length : cut).map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) }));
       const tail: ChatMessage = resume
         ? { role: 'tool', tool_call_id: resume.toolCallId, name: resume.toolName, content: resume.toolResult }
-        : { role: 'user', content: text };
-      const tailText = resume ? resume.toolResult : text;
-      const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(tailText) - 4096;
+        : messageForModel({ role: 'user', content: text, attachments });
+      const tailText = resume ? resume.toolResult : attachmentText(text, attachments);
+      const imageBudget = attachments.filter((file) => file.dataUrl).length * 1600;
+      const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(tailText) - imageBudget - 4096;
+      if (budget < 0) throw new Error('附件正文超过当前模型的上下文预算，请减少附件、改用更大上下文模型，或将文件导入课程库后检索');
       // 挂起续跑保持原有历史与工具链，不重新做语义筛选。
       const recent = resume
         ? fitHistoryToBudget(baseRows, Math.max(2000, budget))
@@ -1436,7 +1482,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           });
       const chatMessages: ChatMessage[] = [
         { role: 'system', content: systemPrompt },
-        ...recent.map((row) => ({ role: row.role, content: row.content }) as ChatMessage),
+        ...await historyMessagesWithAttachments(recent, abort.signal),
         // 续跑：把挂起点之前攒下的 assistant tool_calls 与工具结果原样拼回，
         // 于是旧工具一次都不用重跑 —— 结果本来就在里面。
         ...(resume ? resume.midTurn : []),
@@ -1782,32 +1828,41 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   // ── 流式期间的输入：排队 / 插入 ─────────────────────────────────────────────
   setSendMode: (mode) => set({ sendMode: mode }),
 
-  enqueue: (text) => {
+  enqueue: (text, attachments = []) => {
     const next = text.trim();
     if (!next) return;
-    set((s) => ({ queued: [...s.queued, { id: nextQueuedId(), text: next }] }));
+    set((s) => ({ queued: [...s.queued, { id: nextQueuedId(), text: next, attachments }] }));
   },
 
-  removeQueued: (id) => set((s) => ({ queued: s.queued.filter((item) => item.id !== id) })),
+  removeQueued: (id) => {
+      const item = get().queued.find((entry) => entry.id === id);
+      if (!item) return;
+      set((s) => ({ queued: s.queued.filter((entry) => entry.id !== id) }));
+      disposeQueuedAttachments([item]);
+    },
 
   updateQueued: (id, text) => {
     const next = text.trim();
     // 改成空白 = 删掉这条：留一条永远发不出去的空气泡，只会让队列看着还在做事
-    if (!next) return get().removeQueued(id);
+    if (!next && !get().queued.find((item) => item.id === id)?.attachments?.length) return get().removeQueued(id);
     set((s) => ({ queued: s.queued.map((item) => (item.id === id ? { ...item, text: next } : item)) }));
   },
 
-  clearQueue: () => set({ queued: [] }),
+  clearQueue: () => {
+    const items = get().queued;
+    set({ queued: [] });
+    disposeQueuedAttachments(items);
+  },
 
   sendQueuedNow: async (id) => {
     const item = get().queued.find((entry) => entry.id === id);
     if (!item) return;
     // 先出队再插：`steer` 会走 `send`，那条路可能失败 —— 但让它同时留在队里就会出现两条一样的消息
     set((s) => ({ queued: s.queued.filter((entry) => entry.id !== id) }));
-    await get().steer(item.text);
+    await get().steer(item.text || '请分析这些附件。', item.attachments);
   },
 
-  steer: async (rawText) => {
+  steer: async (rawText, attachments = []) => {
     const text = rawText.trim();
     if (!text) return;
     // 只打断**当前在看的那条会话**；别的一条在后台跑不关它的事
@@ -1819,23 +1874,24 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 而界面上的插入按钮只看得到 `loading`。
      */
     if (turn == null) {
-      await get().send(text);
+      await get().send(text, undefined, undefined, undefined, attachments);
       return;
     }
     turn.intent = 'steer';
     turn.abort.abort();
     // 等这一轮收尾（落库写完、loading 置回）。不等的话下面那次 send 会被自己的分发逻辑
     // 当成「生成中」，于是插入变成排队 —— 反了
-    await inflightDone.get(activeKey());
+    const targetKey = activeKey();
+    await inflightDone.get(targetKey);
     /**
      * 等收尾的这几百毫秒里可能又有人插了一条（于是新一轮已经在跑）：
      * 那这条**降级成排队**，绝不让它凭空消失。
      */
-    if (get().loading) {
-      get().enqueue(text);
+    if (readView(targetKey).loading) {
+      writeView(targetKey, { queued: [...readView(targetKey).queued, { id: nextQueuedId(), text, attachments }] });
       return;
     }
-    await get().send(text);
+    await get().send(text, undefined, targetKey, undefined, attachments);
   },
 
   // ── 停止生成 ──────────────────────────────────────────────────────────────
@@ -1883,7 +1939,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
       await db.chats.delete(userRow.id);
       set((s) => ({ messages: s.messages.slice(0, messageIndex - 1) }));
-      await get().send(user.content);
+      await get().send(user.content, undefined, sessionId, undefined, userRow.attachments ?? []);
       return;
     }
 
@@ -1921,7 +1977,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       });
       // 视图同步摘掉这一问一答，剩下的交给 `send` 重新落库并跑完整的一轮
       set((s) => ({ messages: s.messages.slice(0, idx) }));
-      await get().send(message.content);
+      await get().send(message.content, undefined, sessionId, undefined, rows[rowIdx].attachments ?? []);
       return;
     }
 
@@ -1963,7 +2019,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     set((s) => ({
       messages: s.messages.filter((m) => m.rowId !== message.rowId && m.rowId !== userRow.id),
     }));
-    await get().send(userRow.content);
+    await get().send(userRow.content, undefined, sessionId, undefined, userRow.attachments ?? []);
   },
 
   forkSession: async (sessionId, uptoRowId) => {
@@ -2005,6 +2061,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
            */
           createdAt: row.createdAt,
           ...(row.images ? { images: row.images } : {}),
+          ...(row.attachments ? { attachments: row.attachments } : {}),
           ...(row.reasoning ? { reasoning: row.reasoning } : {}),
           ...(row.reasoningMs != null ? { reasoningMs: row.reasoningMs } : {}),
           ...(row.quiz ? { quiz: row.quiz } : {}),
@@ -2288,10 +2345,10 @@ async function continueInterrupted(
     const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
     const systemPrompt = libraryAssistantSystemPrompt(skillBlock, view.contextCourses, hasCourses);
     const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(CONTINUE_INSTRUCTION) - 4096;
-    const recent = fitHistoryToBudget(history, Math.max(2000, budget));
+    const recent = fitHistoryToBudget(history.map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) })), Math.max(2000, budget));
     const chatMessages: ChatMessage[] = [
       { role: 'system', content: systemPrompt },
-      ...recent.map((row) => ({ role: row.role, content: row.content }) as ChatMessage),
+      ...await historyMessagesWithAttachments(recent, abort.signal),
       { role: 'user', content: CONTINUE_INSTRUCTION },
     ];
 
@@ -2392,7 +2449,7 @@ function drainQueue(sessionId: number): void {
   const [next, ...rest] = view.queued;
   writeView(sessionId, { queued: rest });
   // `.catch` 是给「发送本身炸了」兜底：这条已经出队了，别让异常冒成 unhandled rejection
-  void useCourseChat.getState().send(next.text, undefined, sessionId).catch(() => {});
+  void useCourseChat.getState().send(next.text, undefined, sessionId, undefined, next.attachments ?? []).catch(() => {});
 }
 
 /**
@@ -2403,13 +2460,14 @@ function drainQueue(sessionId: number): void {
  * 该字段的 `undefined` 与 `[]` 语义不同（不限定 vs 一个都不给），
  * 老数据里「不限定」的形态就是**字段不存在**。
  */
-async function newSessionRow(skillIds?: number[]): Promise<ChatSessionRow> {
+async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = []): Promise<ChatSessionRow> {
   const now = Date.now();
   const row: ChatSessionRow = {
     videoId: LIBRARY_ASSISTANT_ID,
     title: '新会话',
     createdAt: now,
     ...(skillIds !== undefined ? { skillIds } : {}),
+    ...(contextCourseIds.length ? { contextCourseIds } : {}),
   };
   const id = (await db.chatSessions.add(row)) as number;
   return { ...row, id };
@@ -2475,12 +2533,25 @@ function releasePending(sessionId: number) {
   writeView(sessionId, { pendingAsk: null, pendingPlan: null });
 }
 
+async function historyMessagesWithAttachments(rows: (ChatRow & { originalContent: string })[], signal: AbortSignal): Promise<ChatMessage[]> {
+  const messages: ChatMessage[] = [];
+  for (const row of rows) {
+    const attachments = await attachmentsForModel(row.attachments ?? [], row.originalContent, signal);
+    if (row.id != null && attachments.some((file, i) => file.description !== row.attachments?.[i]?.description)) {
+      await db.chats.update(row.id, { attachments });
+    }
+    messages.push(messageForModel({ ...row, content: row.originalContent, attachments }));
+  }
+  return messages;
+}
+
 function toMessage(row: ChatRow): CourseChatMessage {
   return {
     key: `stored-${row.id}`,
     rowId: row.id!,
     role: row.role === 'assistant' ? 'ai' : 'user',
     content: row.content,
+    attachments: row.attachments,
     createdAt: row.createdAt,
     reasoning: row.reasoning,
     reasoningMs: row.reasoningMs,

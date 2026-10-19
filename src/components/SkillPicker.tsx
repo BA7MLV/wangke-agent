@@ -14,6 +14,9 @@ interface Props {
   value?: number[];
   /** 变更回调。**已归一化**：勾选集等于全部候选时回传 `undefined`（见 `commit`）。 */
   onChange: (next: number[] | undefined) => void;
+  isOpen?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  hideTrigger?: boolean;
 }
 
 /**
@@ -31,8 +34,10 @@ interface Props {
  * `tune` 在 HandoutPanel 已经代表「生成参数（模型 + 技能覆盖）」。同一图标两种含义
  * 会让人以为点开是同一类东西。`extension`（拼图块）是 skill / 插件的通用隐喻。
  */
-export default function SkillPicker({ value, onChange }: Props) {
-  const [open, setOpen] = useState(false);
+export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hideTrigger }: Props) {
+  const [internalOpen, setInternalOpen] = useState(false);
+  const open = isOpen ?? internalOpen;
+  const setOpen = onOpenChange ?? setInternalOpen;
   const [skills, setSkills] = useState<SkillMeta[]>([]);
 
   /**
@@ -85,7 +90,7 @@ export default function SkillPicker({ value, onChange }: Props) {
 
   return (
     <>
-      <Tooltip>
+      {!hideTrigger && <Tooltip>
         <Tooltip.Trigger>
           <Button
             isIconOnly
@@ -103,7 +108,7 @@ export default function SkillPicker({ value, onChange }: Props) {
         <Tooltip.Content>
           <p>{tooltip}</p>
         </Tooltip.Content>
-      </Tooltip>
+      </Tooltip>}
 
       <Modal.Root isOpen={open} onOpenChange={setOpen}>
         <Modal.Backdrop>

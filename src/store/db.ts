@@ -279,6 +279,7 @@ export interface ChatRow {
   createdAt: number;
   /** 用户消息附带的截图（非索引字段，无需升级版本） */
   images?: ChatImage[];
+  attachments?: import('../chat/attachments').ChatAttachment[];
   /** 思考过程（推理模型，历史回放折叠展示） */
   reasoning?: string;
   /**

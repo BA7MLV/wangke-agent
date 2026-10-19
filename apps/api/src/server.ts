@@ -298,6 +298,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   function fileDto(row: any) {
     return { id: row.id, originalName: row.original_name, mimeType: row.mime_type, sizeBytes: row.size_bytes, sha256: row.sha256, createdAt: row.created_at };
   }
+  app.get('/api/v1/files/config', async () => ({ maxFileBytes }));
   app.get('/api/v1/files', async (request, reply) => {
     const user = requireAuth(request, reply); if (!user) return;
     return { files: (store.db.prepare('SELECT * FROM files WHERE owner_id=? ORDER BY created_at DESC LIMIT 500').all(user.id) as any[]).map(fileDto) };

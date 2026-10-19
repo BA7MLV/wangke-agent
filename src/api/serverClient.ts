@@ -62,6 +62,7 @@ export const serverClient = {
   sendMessage: (id: string, content: string, clientNonce: string) => request<MessageDto & { deduplicated?: boolean }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify({ clientNonce, role: 'user', kind: 'text', content }) }),
   sendAttachment: (id: string, content: string, clientNonce: string) => request<MessageDto & { deduplicated?: boolean }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify({ clientNonce, role: 'user', kind: 'attachment', content }) }),
   uploadFile: (file: File) => request<FileDto>('/files', { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), 'X-File-Mime': file.type || 'application/octet-stream' } }),
+  deleteFile: (id: string) => request<{ deleted: true }>(`/files/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   react: (messageId: string, reaction: string) => request<{ messageId: string; reaction: string; active: boolean }>(`/messages/${encodeURIComponent(messageId)}/reactions`, { method: 'POST', body: JSON.stringify({ reaction }) }),
   approvals: (id: string) => request<ApprovalDto>(`/approvals/${encodeURIComponent(id)}`),
   resolveApproval: (id: string, approved: boolean, resolution?: string) => request<ApprovalDto>(`/approvals/${encodeURIComponent(id)}/resolve`, { method: 'POST', body: JSON.stringify({ approved, resolution }) }),

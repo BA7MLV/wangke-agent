@@ -12,6 +12,7 @@ services:
       HOST: "0.0.0.0"
       DATA_DIR: /data
       DB_PATH: /data/db/wangke.sqlite
+      FILES_DIR: /data/files
       BOOTSTRAP_SECRET_FILE: /data/config/bootstrap-secret
       BOOTSTRAP_TTL_MS: "${BOOTSTRAP_TTL_MS:-900000}"
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:${PORT:-3000}}"
@@ -36,3 +37,4 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
+      start_period: 15s

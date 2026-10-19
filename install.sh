@@ -8,21 +8,30 @@ PORT="${WANGKE_PORT:-3000}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NO_START=0
 AGENT=0
+MAX_FILE_MB=""
+usage() { echo "Usage: ./install.sh [--data-dir DIR] [--port PORT] [--max-file-mb 1..512] [--agent] [--version VERSION] [--no-start]"; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || { echo "--version requires a value" >&2; exit 2; }; VERSION="$2"; VERSION_SET=1; shift 2 ;;
-    --data-dir) DATA_DIR="$2"; shift 2 ;;
-    --port) PORT="$2"; shift 2 ;;
+    --data-dir) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; DATA_DIR="$2"; shift 2 ;;
+    --port) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; PORT="$2"; shift 2 ;;
+    --max-file-mb) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; MAX_FILE_MB="$2"; shift 2 ;;
+    -h|--help) usage; exit 0 ;;
     --no-start) NO_START=1; shift ;;
     --agent) AGENT=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+[[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PORT" -le 65535 ] || { echo "--port must be 1..65535" >&2; exit 2; }
+if [ -n "$MAX_FILE_MB" ]; then
+  [[ "$MAX_FILE_MB" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$MAX_FILE_MB" -le 512 ] || { echo "--max-file-mb must be 1..512" >&2; exit 2; }
+fi
 command -v docker >/dev/null || { echo "Docker Engine is required" >&2; exit 1; }
 docker compose version >/dev/null || { echo "Docker Compose plugin is required" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker daemon is not running" >&2; exit 1; }
 command -v openssl >/dev/null || { echo "OpenSSL is required to create the bootstrap secret" >&2; exit 1; }
 mkdir -p "$DATA_DIR"/data/{db,files,config} "$DATA_DIR"/backups
+DATA_DIR="$(cd -- "$DATA_DIR" && pwd)"
 chmod 700 "$DATA_DIR" "$DATA_DIR/data" "$DATA_DIR/backups"
 if [ ! -f "$DATA_DIR/.env" ]; then
   umask 077
@@ -60,6 +69,18 @@ elif [ "$VERSION_SET" -eq 1 ]; then
   mv -f "$tmp" "$DATA_DIR/.env"
 fi
 chmod 600 "$DATA_DIR/.env"
+if [ -n "$MAX_FILE_MB" ]; then
+  tmp="$(mktemp "$DATA_DIR/.env.XXXXXX")"
+  awk -v bytes="$((MAX_FILE_MB * 1024 * 1024))" '
+    /^MAX_FILE_BYTES=/ { next }
+    { print }
+    END { print "MAX_FILE_BYTES=" bytes }
+  ' "$DATA_DIR/.env" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$DATA_DIR/.env"
+elif ! grep -q '^MAX_FILE_BYTES=' "$DATA_DIR/.env"; then
+  printf '\nMAX_FILE_BYTES=52428800\n' >> "$DATA_DIR/.env"
+fi
 if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
   printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
 fi
@@ -83,6 +104,7 @@ if [ "$NO_START" -eq 0 ]; then
     docker build -t wangke-sandbox:0.1.0 -f "$SCRIPT_DIR/infra/sandbox/Dockerfile" "$SCRIPT_DIR"
   fi
   WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" \
-    docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" "${EXTRA[@]}" up -d --build
+    docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" "${EXTRA[@]}" up -d --build --wait --wait-timeout 120
   echo "Wangke is available at http://localhost:$PORT"
+  echo "Uploads persist in $DATA_DIR/data/files; initialize/login at /#/bot, then use + in /#/chat."
 fi

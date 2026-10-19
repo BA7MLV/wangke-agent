@@ -1,0 +1,14 @@
+.chat-attachments { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: 100%; }
+.chat-attachments__item { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 8px; border: 1px solid var(--border); border-radius: 12px; text-align: left; background: var(--background); color: var(--foreground); }
+.chat-attachments__info { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 4px; font-size: 0.875rem; overflow-wrap: anywhere; }
+.chat-attachments__info small { color: var(--muted); font-size: 0.75rem; font-variant-numeric: tabular-nums; }
+.chat-attachments__thumb { width: 48px; height: 48px; border-radius: 8px; object-fit: cover; flex: none; }
+.chat-attachments__error { color: var(--danger); font-size: 0.8125rem; overflow-wrap: anywhere; }
+.chat-course-picker__list { display: flex; flex-direction: column; gap: 12px; max-height: 40dvh; overflow-y: auto; padding-block: 12px; }
+.course-chat__composer-context { grid-column: 1 / -1; min-width: 0; max-height: 28dvh; overflow-y: auto; }
+.course-chat__composer-context:empty { display: none; }
+.course-chat__composer:has(> .course-chat__composer-context:not(:empty)) > .course-chat__input { grid-row: 2; }
+.course-chat__composer:has(> .course-chat__composer-context:not(:empty)) > .course-chat__composer-tools,
+.course-chat__composer:has(> .course-chat__composer-context:not(:empty)) > .chat-add-menu { grid-row: 3; }
+.course-chat__composer > .chat-add-menu { grid-column: 1; grid-row: 2; }
+.course-chat__user-content > .chat-attachments { margin-bottom: 8px; max-width: min(100%, 400px); align-self: flex-end; }
