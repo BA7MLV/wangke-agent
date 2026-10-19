@@ -54,6 +54,24 @@
   outline-offset: -2px;
 }
 
+.settings-module-nav--desktop {
+  flex-direction: column;
+  align-items: stretch;
+  flex: 1 1 auto;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  border-radius: 0;
+}
+
+.settings-module-nav--desktop .settings-module-nav__item {
+  justify-content: flex-start;
+  width: 100%;
+  padding-inline: 12px;
+}
+
 .settings-sheet__dialog[data-placement='bottom'] {
   display: flex;
   flex-direction: column;

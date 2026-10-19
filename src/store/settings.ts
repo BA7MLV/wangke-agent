@@ -95,6 +95,12 @@ export interface ModelRef {
 export interface SavedModel extends ModelRef {
   name: string;
   slots: ModelSlot[];
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  reasoningEffort?: string;
+  inputCapabilities?: string[];
+  outputCapabilities?: string[];
+  toolCalling?: boolean;
 }
 
 /**

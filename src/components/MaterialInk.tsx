@@ -171,7 +171,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
           }}>
           <ToggleButton id="read" aria-label="阅读模式" data-testid="ink-read"><MousePointer2 size={18} /><span>阅读</span></ToggleButton>
           <ToggleButton id="pen" aria-label="画笔" data-testid="ink-pen"><PenLine size={18} /><span>画笔</span></ToggleButton>
-          <ToggleButton id="highlight" aria-label="荧光笔" data-testid="ink-highlight"><Highlighter size={18} /><span>荧光笔</span></ToggleButton>
+          <ToggleButton id="highlight" aria-label="自由荧光笔（画一笔后返回阅读）" data-testid="ink-highlight"><Highlighter size={18} /><span>自由荧光笔</span></ToggleButton>
           <ToggleButton id="erase" aria-label="橡皮擦（整笔）" data-testid="ink-erase"><Eraser size={18} /></ToggleButton>
         </ToggleButtonGroup>
         <Button isIconOnly variant="tertiary" aria-label="撤销批注" data-testid="ink-undo" isDisabled={!ink.canUndo || disabled} onPress={ink.undo}><Undo2 size={18} /></Button>
@@ -192,7 +192,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
         </>}
       </div>
       <div className="ink-toolbar__hint">
-        <span>{ink.tool === 'read' ? '阅读 / 选字；选择画笔进入书写' : ink.finger ? '手指绘制模式；切回阅读可滚动' : '笔写字 · 手指滑动 · 落笔时暂停触摸翻页'}</span>
+        <span>{ink.tool === 'read' ? '手指滚动 / 选字 · 选择手写或荧光笔开始批注' : ink.tool === 'highlight' ? '拖过重点后自动回到阅读 · 手指仍可滚动' : ink.finger ? '兼容模式：手指绘制 · 完成后关闭即可滚动' : '触控笔写字 · 手指上下滑动 · 落笔时暂停滚动'}</span>
         {ink.error ? <span role="alert" className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span>
           : <span role="status">{ink.status}</span>}
       </div>
@@ -309,8 +309,11 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     const g = gesture.current;
     if (!g || g.id !== e.pointerId) return;
     move(e);
+    const oneShotHighlight = g.tool === 'highlight';
     ink.commit(g.tool === 'erase' ? { add: [], remove: strokes.filter((s) => g.erased.has(s.id)) } : { add: [g.stroke], remove: [] });
     cancel();
+    // 荧光笔是一次性动作：否则用户画完后继续滑页，会不断留下新的荧光笔迹。
+    if (oneShotHighlight) ink.setTool('read');
   };
   return <div ref={layer} className="ink-layer" data-active={active || undefined} data-finger={ink.finger || undefined} data-testid="ink-layer" data-ink-surface={surface}
     onPointerDown={down} onPointerMove={move} onPointerUp={up}

@@ -30,6 +30,11 @@ try {
   let selected;
   const library = createResourceExecutor({ library: { onContextChange: (c) => { selected = c; } } });
   const names = new Set([...courseResourceTools(true), ...libraryResourceTools(true)].map((t) => t.function.name));
+  const readSchema = courseResourceTools().find((t) => t.function.name === 'read').function.parameters;
+  assert.equal(readSchema.properties.range, undefined);
+  assert.equal(readSchema.properties.unit, undefined);
+  assert.equal(readSchema.properties.start.type, 'number');
+  assert.equal(readSchema.properties.end.type, 'number');
   assert.deepEqual([...names].sort(), ['ask_user', 'edit', 'grep', 'present_quiz', 'propose_folder_plan', 'read', 'set_course_context', 'show_widget'].sort());
   assert.equal(libraryResourceTools(false).length, 3);
   assert.match(libraryAssistantSystemPrompt(undefined, [], false), /show_widget\(format="html"/);
@@ -43,11 +48,28 @@ try {
   assert.match(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 0 } }), /起点/);
   assert.doesNotMatch(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 0 } }), /后续/);
   assert.doesNotMatch(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 1000 } }), /远处内容/);
+  assert.match(await local('read', { path: '/courses/current/transcript', start: 0, end: 0 }), /起点/);
+  assert.doesNotMatch(await local('read', { path: '/courses/current/transcript', start: 0, end: 0 }), /后续/);
+  assert.match(await local('read', { path: '/courses/current/transcript', start: 0, end: 1000 }), /截断至 600/);
+  assert.match(await local('read', { path: '/courses/current/transcript', start: 0 }), /同时提供 start 和 end/);
+  assert.match(await local('read', { path: '/courses/current/transcript', end: 10 }), /同时提供 start 和 end/);
+  for (const [start, end] of [[-1, 1], [2, 1], ['0', 1], [0, Infinity], [NaN, 1], [null, 1]]) {
+    assert.match(await local('read', { path: '/courses/current/transcript', start, end }), /范围无效/);
+  }
+  assert.match(await local('read', { path: '/courses/current/transcript', range: 'unit=seconds,start=0,end=60' }), /改用顶层 start 和 end/);
+  assert.match(await local('read', { path: '/courses/current/material' }), /请 read \/courses\/v\/transcript/);
   assert.match(await local('read', { path: '/courses/m/material' }), /只能访问当前课程/);
   assert.match(await local('read', { path: '/courses/current/material' }), /没有该类型/);
   assert.match(await material('read', { path: '/courses/current/material', range: { unit: 'seconds', start: 1, end: 3 } }), /必须是 pages/);
   assert.match(await material('read', { path: '/courses/current/material', range: { unit: 'pages', start: 3, end: 3 } }), /第三页/);
   assert.doesNotMatch(await material('read', { path: '/courses/current/material', range: { unit: 'pages', start: 1, end: 100 } }), /远处页/);
+  assert.match(await material('read', { path: '/courses/current/material', start: 3, end: 3 }), /第三页/);
+  assert.match(await material('read', { path: '/courses/current/material', start: 1, end: 100 }), /截断至 20/);
+  assert.match(await material('read', { path: '/courses/current/material', start: 0, end: 1 }), /范围无效/);
+  assert.match(await material('read', { path: '/courses/current/material', start: 1.5, end: 3 }), /范围无效/);
+  await db.materialBlocks.add({ materialId: 'md', idx: 0, unit: 3, text: '第三段正文' });
+  assert.match(await library('read', { path: '/courses/md/material', start: 3, end: 3 }), /第三段正文/);
+  assert.match(await library('read', { path: '/courses/m/transcript' }), /请 read \/courses\/m\/material/);
   assert.match(await library('read', { path: '/courses', limit: 1 }), /offset=1/);
   assert.match(await library('read', { path: '/courses', limit: 1, offset: 1 }), /courseId=m/);
   await library('set_course_context', { courseIds: ['v'] });
@@ -55,6 +77,9 @@ try {
   assert.doesNotMatch(await library('grep', { query: '贝叶斯' }), /courseId=m/);
   const results = await library('grep', { path: '/courses', query: '贝叶斯' });
   assert.match(results, /path=\/courses\/m\/material/);
+  assert.match(results, /start\/end 单位：页码/);
+  assert.doesNotMatch(results, /range\.unit/);
+  assert.doesNotMatch(await library('read', { path: '/courses/v/info' }), /range\.unit/);
   assert.match(await library('read', { path: '/courses/m/material', range: { unit: 'pages', start: 3, end: 3 } }), /第三页/);
   const loaded = await library('read', { path: skillPath('测试/技能') });
   assert.match(loaded, /技能正文/);

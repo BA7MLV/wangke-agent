@@ -349,7 +349,7 @@ export function libraryAssistantSystemPrompt(
 2b. 反过来：与他的课程无关的通用问题（概念解释、写代码、写作、生活常识、闲聊）**直接用你的通用知识回答**，不要为了「用上工具」而去检索资料库，也不要反问「你指的是哪门课」。这条与第 2 条同等重要。
 3. 课程上下文由你主动维护：问题明确针对某门或少数几门课程时，先 read /courses 或 grep /courses 找到精确 courseId，再调用 set_course_context 选择 1~5 门最相关课程。不要把无关课程塞进上下文。
 4. 用户明显换话题时，用 grep 的 path="/courses" 从全库重新判断，再调用 set_course_context 替换上下文；问题是全库盘点、学习统计或跨全部课程比较时，调用 set_course_context 传空数组。grep 省略 path 或用 /courses/context 时遵循已选上下文。
-5. 查具体知识点时用 grep；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时换同义词或更短的词再试。需要上下文时 read 搜索结果返回的 path，按其定位单位传 range。学习统计 read /library/overview，课程详情 read /courses/{id}/info。证据足够时直接回答，不必机械重复检索。
+5. 查具体知识点时用 grep；query 传关键词或短语，不要传整句自然语言问题。第一次没搜到时换同义词或更短的词再试。需要上下文时 read 搜索结果返回的 path，顶层传 start、end 两个数字；单位自动判断，不要传 range 对象，不要猜正文路径。调用失败时按错误提示修正，不要重复相同的失败调用。学习统计 read /library/overview，课程详情 read /courses/{id}/info。证据足够时直接回答，不必机械重复检索。
 6. 推荐课程时至少结合课程内容或学习进度说明理由；没有足够证据时明确说目前能判断到什么程度。
 7. 工具返回的课程 Markdown 链接必须原样保留。引用课程内容时，同时写出课程名与工具给出的时间戳、页码或段落号，方便用户核对来源。
 8. 不编造课程、进度或系统记录。资料库中没有相关内容时，明确说明“资料库中没有检索到”，再把通用知识与课程数据分开回答。
@@ -490,7 +490,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         .map((hit, index) => {
           const course = courseMap.get(hit.doc.courseId)!;
           const excerpt = hit.doc.text.length > 500 ? `${hit.doc.text.slice(0, 500)}…` : hit.doc.text;
-          return `${index + 1}. 课程：${courseLink(course)}\n   来源：[${hit.doc.location}]\n   原文：${excerpt}\n   courseId=${course.id}\n   path=/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}\n   range.unit=${course.kind === 'material' ? (materialKindOf(course) === 'page' ? 'pages' : 'paragraphs') : 'seconds'}`;
+          return `${index + 1}. 课程：${courseLink(course)}\n   来源：[${hit.doc.location}]\n   原文：${excerpt}\n   courseId=${course.id}\n   path=/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}\n   start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码（从 1 起）' : '段号（从 1 起）') : '秒（从 0 起）'}`;
         })
         .join('\n\n');
     }
@@ -512,7 +512,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       return [
         `课程：${courseLink(course)}`,
         `courseId=${course.id}`,
-        `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（range.unit=${course.kind === 'material' ? (materialKindOf(course) === 'page' ? 'pages' : 'paragraphs') : 'seconds'}）`,
+        `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码，从 1 起' : '段号，从 1 起') : '秒，从 0 起'}）`,
         `类型：${course.kind === 'material' ? `阅读材料 · ${(course.materialFormat ?? '文档').toUpperCase()}` : '视频课程'}`,
         `分类：${folder?.name ?? '未分类'}`,
         `学习进度：${progress.label}`,

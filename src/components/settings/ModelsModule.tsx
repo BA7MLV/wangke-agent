@@ -1180,7 +1180,7 @@ export default function ModelsModule() {
                 if (await confirmDialog({ headline: '删除供应商？', description: `删除「${selectedProvider.name || selectedProvider.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(selectedProvider);
               }}
             >
-              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(selectedProvider.id)} />
+              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} />
             </ProviderRow>
           </div>
         ) : (
@@ -1221,7 +1221,7 @@ export default function ModelsModule() {
                   if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
                 }}
               >
-                <ModelLibrary key={p.id} providerId={p.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(p.id)} />
+                <ModelLibrary key={p.id} providerId={p.id} />
               </ProviderRow>
             ))}
           </div>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Chip, EmptyState, Input, Modal, Switch, TextArea, TextField } from '@heroui/react';
 import { Field, SectionCard, Sym, confirmDialog, toast, MODAL_CONTAINER_CLASS } from '../ui';
-import { db, type SkillRow } from '../store/db';
+import { db, type SkillRow, type SkillRefRow } from '../store/db';
 import { ensureBuiltinSkills, importSkillFile } from '../skills/store';
 import { BUILTIN_SKILLS } from '../skills/builtin';
 
@@ -11,6 +11,7 @@ interface Draft {
   name: string;
   description: string;
   body: string;
+  refs: Pick<SkillRefRow, 'path' | 'body'>[];
 }
 
 /** 设置页「写作技能」卡片：管理可注入讲义生成与问答的 skill（SKILL.md 单文件或含 references/ 的 zip 包） */
@@ -19,6 +20,41 @@ export default function SkillsCard() {
   const [refCounts, setRefCounts] = useState<Record<number, number>>({});
   const [draft, setDraft] = useState<Draft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const supportFileRef = useRef<HTMLInputElement>(null);
+  const [draftError, setDraftError] = useState('');
+  const [saving, setSaving] = useState(false);
+
+  const editSkill = async (skill: SkillRow) => {
+    try {
+      const refs = await db.skillRefs.where('skillId').equals(skill.id!).toArray();
+      setDraftError('');
+      setDraft({ ...skill, builtin: !!skill.builtin, refs });
+    } catch {
+      toast.error('读取技能失败，请重试');
+    }
+  };
+
+  const addSupportFiles = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = '';
+    try {
+      const refs = await Promise.all(files.map(async (file) => {
+        if (!/\.(md|markdown|txt|csv|json|ya?ml)$/i.test(file.name)) {
+          throw new Error(`不支持 ${file.name}，请添加文本文件`);
+        }
+        return { path: `references/${file.name}`, body: await file.text() };
+      }));
+      setDraft((current) => {
+        if (!current) return current;
+        const merged = new Map(current.refs.map((ref) => [ref.path, ref]));
+        for (const ref of refs) merged.set(ref.path, ref);
+        return { ...current, refs: [...merged.values()] };
+      });
+      setDraftError('');
+    } catch (error) {
+      setDraftError(error instanceof Error ? error.message : '添加文件失败，请重试');
+    }
+  };
 
   const reload = useCallback(async () => {
     await ensureBuiltinSkills();
@@ -59,23 +95,38 @@ export default function SkillsCard() {
   };
 
   const saveDraft = async () => {
-    if (!draft) return;
+    if (!draft || saving) return;
     const name = draft.name.trim();
     const body = draft.body.trim();
-    if (!name || !body) {
-      toast.warning('名称和正文不能为空');
+    if (!name || !draft.description.trim() || !body) {
+      setDraftError('请填写名称、描述和说明');
       return;
     }
     const row = { name, description: draft.description.trim(), body, updatedAt: Date.now() };
-    if (draft.id != null && !draft.builtin) {
-      await db.skills.update(draft.id, row);
-    } else {
-      // 新建，或编辑内置 skill → 存为副本（内置原版保留可重置）
-      await db.skills.add({ ...row, enabled: 1, builtin: 0 });
+    setSaving(true);
+    try {
+      await db.transaction('rw', [db.skills, db.skillRefs], async () => {
+        let skillId: number;
+        if (draft.id != null && !draft.builtin) {
+          skillId = draft.id;
+          await db.skills.update(skillId, row);
+          await db.skillRefs.where('skillId').equals(skillId).delete();
+        } else {
+          // 编辑内置技能时，正文与支持文件一起保存为副本。
+          skillId = await db.skills.add({ ...row, enabled: 1, builtin: 0 });
+        }
+        if (draft.refs.length) {
+          await db.skillRefs.bulkAdd(draft.refs.map(({ path, body }) => ({ skillId, path, body })));
+        }
+      });
+      setDraft(null);
+      toast.success('已保存');
+      void reload();
+    } catch {
+      setDraftError('保存失败，请重试');
+    } finally {
+      setSaving(false);
     }
-    setDraft(null);
-    toast.success('已保存');
-    void reload();
   };
 
   const removeSkill = async (skill: SkillRow) => {
@@ -111,7 +162,10 @@ export default function SkillsCard() {
           <Button
             variant="primary"
             data-testid="btn-skill-new"
-            onPress={() => setDraft({ builtin: false, name: '', description: '', body: '' })}
+            onPress={() => {
+              setDraftError('');
+              setDraft({ builtin: false, name: '', description: '', body: '', refs: [] });
+            }}
           >
             <Sym name="add" />
             新建
@@ -142,15 +196,7 @@ export default function SkillsCard() {
               skill={skill}
               refCount={refCounts[skill.id!] ?? 0}
               onToggle={(enabled) => void toggle(skill, enabled)}
-              onEdit={() =>
-                setDraft({
-                  id: skill.id,
-                  builtin: !!skill.builtin,
-                  name: skill.name,
-                  description: skill.description,
-                  body: skill.body,
-                })
-              }
+              onEdit={() => void editSkill(skill)}
               onReset={async () => {
                 if (await confirmDialog({ headline: '重置为内置版本？', confirmText: '重置' })) {
                   void resetBuiltin(skill);
@@ -193,18 +239,19 @@ export default function SkillsCard() {
                         内置技能不可直接修改，保存时将创建副本，原版可随时重置恢复。
                       </div>
                     )}
-                    <Field label="名称">
+                    <h3 className="mt-4 text-base font-semibold text-balance">基础信息</h3>
+                    <Field label="名称 *">
                       {/* data-testid 挂在 TextField 包装层上：e2e 用 `[data-testid="skill-name"] input`
                           定位控件（替 mdui-text-field 宿主持有内部 input 的结构）。 */}
-                      <TextField data-testid="skill-name" fullWidth>
+                      <TextField aria-label="名称" isRequired data-testid="skill-name" fullWidth>
                         <Input
                           value={draft.name}
                           onChange={(e) => setDraft({ ...draft, name: e.target.value })}
                         />
                       </TextField>
                     </Field>
-                    <Field label="描述">
-                      <TextField data-testid="skill-desc" fullWidth>
+                    <Field label="描述 *" hint="简要描述技能的用途，以及适合在什么场景下使用。">
+                      <TextField aria-label="描述" isRequired data-testid="skill-desc" fullWidth>
                         <Input
                           value={draft.description}
                           placeholder="一句话说明这个技能的用途"
@@ -212,16 +259,40 @@ export default function SkillsCard() {
                         />
                       </TextField>
                     </Field>
-                    <Field label="正文（Markdown，将作为写作规范注入讲义生成）">
-                      <TextField data-testid="skill-body" fullWidth>
+                    <Field label="说明" hint="支持 Markdown，用于指导 AI 如何执行这个技能。">
+                      <TextField aria-label="说明" isRequired data-testid="skill-body" fullWidth>
                         <TextArea
-                          rows={14}
+                          rows={10}
                           value={draft.body}
                           style={{ fontFamily: 'monospace' }}
                           onChange={(e) => setDraft({ ...draft, body: e.target.value })}
                         />
                       </TextField>
                     </Field>
+                    <section className="py-4" aria-labelledby="skill-support-files">
+                      <div className="flex items-center justify-between gap-3">
+                        <h3 id="skill-support-files" className="text-base font-semibold text-balance">支持文件</h3>
+                        <Button variant="secondary" size="sm" onPress={() => supportFileRef.current?.click()} data-testid="skill-add-files">
+                          <Sym name="add" />添加文件
+                        </Button>
+                        <input ref={supportFileRef} type="file" accept=".md,.markdown,.txt,.csv,.json,.yaml,.yml" multiple hidden onChange={(e) => void addSupportFiles(e)} />
+                      </div>
+                      <p className="mt-2 text-xs text-muted text-pretty">添加参考资料供技能使用，支持 Markdown、TXT、CSV、JSON 和 YAML；同名文件将替换。</p>
+                      {draft.refs.length ? (
+                        <ul className="mt-3 divide-y divide-border rounded-lg border border-border px-3">
+                          {draft.refs.map((ref) => (
+                            <li key={ref.path} className="flex items-center gap-2 py-2">
+                              <Sym name="description" />
+                              <span className="min-w-0 flex-1 truncate text-sm" title={ref.path}>{ref.path}</span>
+                              <Button isIconOnly size="sm" variant="tertiary" aria-label={`移除 ${ref.path}`} onPress={() => setDraft({ ...draft, refs: draft.refs.filter((item) => item.path !== ref.path) })}>
+                                <Sym name="close" />
+                              </Button>
+                            </li>
+                          ))}
+                        </ul>
+                      ) : <p className="mt-3 text-sm text-muted">暂无支持文件</p>}
+                    </section>
+                    {draftError && <p role="alert" className="text-sm text-danger">{draftError}</p>}
                   </>
                 )}
               </Modal.Body>
@@ -229,8 +300,8 @@ export default function SkillsCard() {
                 <Button variant="tertiary" data-testid="skill-cancel" onPress={() => setDraft(null)}>
                   取消
                 </Button>
-                <Button variant="primary" data-testid="skill-save" onPress={() => void saveDraft()}>
-                  {draft?.builtin ? '存为副本' : '保存'}
+                <Button variant="primary" isDisabled={saving} data-testid="skill-save" onPress={() => void saveDraft()}>
+                  {saving ? '保存中…' : draft?.builtin ? '存为副本' : '保存'}
                 </Button>
               </Modal.Footer>
             </Modal.Dialog>

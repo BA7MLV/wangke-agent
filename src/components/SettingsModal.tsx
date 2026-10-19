@@ -16,7 +16,7 @@ import DataModule from './settings/DataModule';
 import SkillsModule from './settings/SkillsModule';
 
 /**
- * 设置模块登记表：顶部横向模块栏，下方只渲染当前模块。
+ * 设置模块登记表：桌面左侧导航，移动端顶部横向模块栏，只渲染当前模块。
  *
  * 为什么是「一次只渲染一个」而不是全渲染 + 隐藏：
  *   - 「模型」模块会在挂载时拉能力元数据，「内容源」模块会探测 B 站登录态 ——
@@ -46,7 +46,7 @@ export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
  * 做成独立页面会把用户的当前位置顶掉，还得再点一次「返回」才回来。
  * （`#/settings` 这条 hash 仍然存在，但它只是**入口**，见 SettingsRoute。）
  *
- * 版式：顶部单行分类栏，空间不足时横向滚动，内容区独立纵向滚动。
+ * 版式：桌面左右排布，移动端顶部分类栏，内容区独立纵向滚动。
  *
  * 版式与配色全部由 HeroUI 组件 + Tailwind 令牌表达（没有 `settings-modal.css`）：
  * 底色/圆角/阴影来自 `Modal`，分隔与画布色读 `bg-background-secondary` /
@@ -151,14 +151,14 @@ export default function SettingsModal() {
               <Sym name="close" />
             </Modal.CloseTrigger>
 
-            {/* 顶部 52px 是给关闭按钮（右上角 ×）预留的：CloseTrigger 绝对定位在容器右上角，
-                不预留的话第一个模块的图标会压在 × 底下。 */}
-            <div className="flex min-h-0 min-w-0 flex-1 flex-col pt-[52px]">
-              {/* 横向单行分类；选中态、左右方向键与焦点滚动交给 React Aria。 */}
+            <div className="flex min-h-0 min-w-0 flex-1">
+              <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-background-secondary p-3">
+                <h2 className="px-3 py-4 text-lg font-semibold text-balance">设置</h2>
+              {/* 纵向分类；选中态、方向键与焦点滚动交给 React Aria。 */}
               <ListBox
-                className="settings-module-nav"
+                className="settings-module-nav settings-module-nav--desktop"
                 aria-label="设置模块"
-                orientation="horizontal"
+                orientation="vertical"
                 selectionMode="single"
                 disallowEmptySelection
                 selectedKeys={[localModule]}
@@ -185,11 +185,12 @@ export default function SettingsModal() {
                   </ListBox.Item>
                 ))}
               </ListBox>
+              </aside>
 
               {/* 最后一张卡的底部留白收掉：卡片之间由 Card 的 mb-4 统一给间距，
                   不收的话内容区末尾会多出一段空白。 */}
               <div
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-background px-5 pt-[18px] pb-6 [&>div:last-of-type]:mb-1 max-[760px]:px-3.5 max-[760px]:pt-3.5 max-[760px]:pb-5"
+                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-background px-6 pt-14 pb-6 [&>div:last-of-type]:mb-1"
                 data-testid={`settings-module-${localModule}`}
               >
                 <ActiveContent />

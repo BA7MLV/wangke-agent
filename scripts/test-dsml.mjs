@@ -90,6 +90,13 @@ await test('裸 tool_call：逐字符分片仍能读取材料，正文不泄漏�
   }
 });
 
+await test('裸 read 的顶层范围恢复为数字，路径保持字符串', () => {
+  const xml = '<tool_call>read<param_key>path</param_key><param_value>/courses/001/material</param_value><param_key>start</param_key><param_value>1</param_value><param_key>end</param_key><param_value>5</param_value></tool_call>';
+  const r = recover([...xml]);
+  assert.equal(r.text, '');
+  assert.deepEqual(JSON.parse(r.calls[0].arguments), { path: '/courses/001/material', start: 1, end: 5 });
+});
+
 await test('扁平 range 只在是 key=value 列表时转对象', () => {
   const r = recover(['<tool_call>read<param_key>path</param_key><param_value>/a,b</param_value><param_key>range</param_key><param_value>all</param_value></tool_call>']);
   assert.equal(r.calls.length, 1);

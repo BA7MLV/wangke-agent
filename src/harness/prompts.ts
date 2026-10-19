@@ -236,7 +236,7 @@ ${transcript}
   ) => {
     const rules = [
       RUNTIME_CAPABILITY_RULE,
-      '回答前先用 grep 检索 /courses/current/transcript。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，range={unit:"seconds",start:开始秒数,end:结束秒数}。',
+      '回答前先用 grep 检索 /courses/current/transcript。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，顶层传 start（开始秒数）、end（结束秒数）两个数字，不需要 range 或 unit。',
       '检索有预算：通常 2~4 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',
       '回答必须基于字幕内容，不要编造。字幕中没有涉及的内容，明确说明"课程中未提及"。',
     ];
@@ -295,7 +295,7 @@ ${rules.map((r, i) => `${i + 1}. ${r}`).join('\n')}`;
     const docType = kind === 'page' ? 'PDF 文档' : '文档';
     const rules = [
       RUNTIME_CAPABILITY_RULE,
-      `回答前先用 grep 检索 /courses/current/material。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，range={unit:"${kind === 'page' ? 'pages' : 'paragraphs'}",start:起始${noun},end:结束${noun}}，范围闭区间、从 1 起。`,
+      `回答前先用 grep 检索 /courses/current/material。query 传关键词或短语，不要传整句问题；一次没搜到时换同义词或更短的词再试。需要更多上下文时用 read 读取返回的 path，顶层传 start（起始${noun}）、end（结束${noun}）两个数字，不需要 range 或 unit；范围闭区间、从 1 起。`,
       MATERIAL_IMAGE_RULE,
       '检索有预算：通常 2~4 次检索即可覆盖问题；已获得足够信息后立即组织回答，不要为追求完美而反复检索。严禁连续多轮只检索不作答。',
       '回答必须基于材料内容，不要编造。材料中没有涉及的内容，明确说明"材料中未提及"。',

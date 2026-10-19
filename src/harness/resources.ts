@@ -12,15 +12,13 @@ export const READ_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'read',
-    description: '读取虚拟资源或列目录。/skills 列可用技能，/skills/{编码后的名称} 加载技能，参考文档路径来自返回结果。/courses 列课程（支持 offset/limit 和 status/kind 筛选）；/courses/{id}/info 详情；/courses/{id}/transcript 字幕；/courses/{id}/material 材料；/courses/{id}/images 原图目录（PDF 为页面图），返回可直接放进回答的图片与查看链接，支持 range、offset/limit；/courses/{id}/frames 视频画面。/library/overview 学习统计，/library/folders 分类。单课程问答可用 /courses/current 指代当前课程。正文按 range 读取，字幕每次最多 600 秒，材料最多 20 页/段；返回原始定位用于引用。',
+    description: '读取检索结果中的 path；需要上下文时传 start、end 两个数字，不要构造 range 对象。单位自动判断：视频为秒（从 0 起），PDF 为页，其他材料为段（从 1 起）。省略范围则读取开头；每次最多 600 秒或 20 页/段。例：{"path":"/courses/current/transcript","start":0,"end":60}。也可列目录：/courses 列课程（offset/limit 分页，status/kind 筛选），/skills 列技能；/courses/{id}/info 课程详情，/library/overview 学习统计，/library/folders 分类。正文路径用检索或详情返回的路径，不要猜测；/courses/{id}/images 列原图（支持 start/end、offset/limit），/courses/{id}/frames 列视频画面。单课程可用 /courses/current。技能及参考文档使用 /skills 返回的路径。',
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string' },
-        range: { type: 'object', properties: {
-          unit: { type: 'string', enum: ['seconds', 'pages', 'paragraphs'] },
-          start: { type: 'number' }, end: { type: 'number' },
-        }, required: ['unit', 'start', 'end'] },
+        path: { type: 'string', description: '复制检索或目录返回的资源路径。' },
+        start: { type: 'number', description: '起始秒数、页码或段号；与 end 一起传。' },
+        end: { type: 'number', description: '结束秒数、页码或段号（含）；与 start 一起传。' },
         offset: { type: 'integer', minimum: 0 },
         limit: { type: 'integer', minimum: 1, maximum: 50 },
         status: { type: 'string', enum: ['all', 'in_progress', 'completed', 'unstarted'] },
@@ -106,6 +104,18 @@ function contentRange(value: unknown, kind?: UnitKind): { start: number; end: nu
   return { start: r.start, end, clipped: end < r.end };
 }
 
+/** Expose only flat arguments to models; accept legacy range for saved conversations. */
+function readRange(args: Record<string, unknown>, kind?: UnitKind) {
+  if (args.start !== undefined || args.end !== undefined) {
+    if (args.start === undefined || args.end === undefined) return '请同时提供 start 和 end 两个数字，例如 start=1、end=5；不需要 range 或 unit。';
+    return contentRange({ unit: kind ? (kind === 'page' ? 'pages' : 'paragraphs') : 'seconds', start: args.start, end: args.end }, kind);
+  }
+  if (args.range != null && (typeof args.range !== 'object' || Array.isArray(args.range))) {
+    return '请改用顶层 start 和 end 两个数字，例如 start=1、end=5；不需要 range 或 unit。';
+  }
+  return contentRange(args.range, kind);
+}
+
 interface ResourceExecutorOptions extends ToolExecutorOptions {
   courseId?: string;
   editable?: boolean;
@@ -160,7 +170,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const leaf = resource.leaf ?? (name === 'grep' ? (kind ? 'material' : 'transcript') : 'info');
     const canonical = `${coursePath(id)}/${leaf}`;
     const execute = local ? executeLocal : createToolExecutor(id, { kind });
-    if ((leaf === 'material' && !kind) || (leaf === 'transcript' && kind)) return '此课程没有该类型的正文资源。';
+    if ((leaf === 'material' && !kind) || (leaf === 'transcript' && kind)) return `此课程没有该类型的正文资源。请 read ${coursePath(id)}/${kind ? 'material' : 'transcript'}。`;
     if (name === 'edit') {
       if (!local || !options.editable || course.materialFormat !== 'md' || leaf !== 'material') return '仅支持修改当前已开放编辑的 Markdown 材料。';
       return execute('edit_markdown', args);
@@ -173,7 +183,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     if (leaf === 'info') return executeLibrary('get_course_details', { courseId: id });
     if (leaf === 'images') {
       if (course.kind !== 'material') return '此课程不是阅读材料。视频画面请 read 对应的 frames 资源。';
-      const range = args.range === undefined ? undefined : contentRange(args.range, kind);
+      const range = args.range === undefined && args.start === undefined && args.end === undefined ? undefined : readRange(args, kind);
       if (typeof range === 'string') return range;
       const { readMaterialImageCatalog } = await import('../materials/images');
       const result = await readMaterialImageCatalog(course, args.offset as number | undefined, args.limit as number | undefined, range);
@@ -183,7 +193,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
       if (kind || (local && !options.hasFrames)) return '此课程没有可用画面。';
       return `path=${canonical}\n${await execute('list_frames', {})}`;
     }
-    const range = contentRange(args.range, kind);
+    const range = readRange(args, kind);
     if (typeof range === 'string') return range;
     const result = await execute(kind ? 'get_material_range' : 'get_transcript_range', kind ? { from: range.start, to: range.end } : { start: range.start, end: range.end });
     return `path=${canonical}\n${result}${range.clipped ? `\n（本次范围已截断至 ${range.end}，可继续分段 read。）` : ''}`;

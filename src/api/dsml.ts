@@ -307,10 +307,12 @@ export function createDsmlRecoverer(): {
               const param = /^\s*<param_key>([^<]+)<\/param_key>\s*<param_value>([\s\S]*?)<\/param_value>\s*/.exec(rest);
               if (!param) break;
               // 这种方言没有 `string="true"`，值一律当裸文本：`path` 里的前导 0
-              // 不能被 JSON 解析改写成数字。只有扁平写法的 range 需要还原成对象。
+              // 不能被 JSON 解析改写成数字。read 的已知数字参数单独还原。
               const key = decodeEntities(param[1].trim());
               const value = decodeEntities(param[2]);
-              args[key] = key === 'range' ? coerceFlatObject(value) : value;
+              args[key] = key === 'range' ? coerceFlatObject(value)
+                : name?.[1] === 'read' && ['start', 'end', 'offset', 'limit'].includes(key) && /^-?\d+(?:\.\d+)?$/.test(value.trim()) && Number.isFinite(Number(value))
+                  ? Number(value) : value;
               rest = rest.slice(param[0].length);
             }
             emitBody(buf.slice(pos, i));
