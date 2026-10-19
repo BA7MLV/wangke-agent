@@ -91,6 +91,10 @@ flowchart TB
 
 ## 🚀 快速开始
 
+### 自主 Agent 沙盒
+
+运行 `./install.sh --agent` 可启用后端多步自主执行和独立 Docker 沙盒。支持持久化工作区、定时唤醒、重启恢复和前端停止任务；浏览器关闭不影响后端执行。部署、网络配置和数据备份边界见 [Agent Runtime 部署说明](docs/agent-runtime.md)。
+
 ### 环境要求
 
 | | |

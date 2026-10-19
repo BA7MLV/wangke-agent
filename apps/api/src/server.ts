@@ -361,6 +361,22 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const approvals = store.db.prepare('SELECT id,message_id AS messageId,run_id AS runId,status,created_at AS createdAt,resolved_at AS resolvedAt,resolution FROM approvals WHERE thread_id=? ORDER BY created_at').all(thread.id);
     return { id: thread.id, mode: thread.mode, title: thread.title, createdAt: thread.created_at, updatedAt: thread.updated_at, participants, approvals, messages: store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? ORDER BY seq').all(thread.id) };
   });
+  app.post<{ Params: { id: string } }>('/api/v1/threads/:id/stop', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const user = requireAuth(request, reply); if (!user) return;
+    const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    const runs = store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_user')").all(thread.id) as Array<{ id: string }>;
+    store.transaction(() => {
+      store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE thread_id=? AND status IN ('queued','running','waiting_user')").run(now(), thread.id);
+    });
+    for (const run of runs) runner.cancel(run.id);
+    return { stopped: runs.length };
+  });
+  app.get<{ Params: { id: string } }>('/api/v1/threads/:id/runs', async (request, reply) => {
+    const user = requireAuth(request, reply); if (!user) return;
+    const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    return { runs: store.db.prepare('SELECT id,status,step_count AS stepCount,wake_at AS wakeAt,error_code AS errorCode FROM runs WHERE thread_id=? ORDER BY created_at DESC LIMIT 50').all(thread.id) };
+  });
   app.post<{ Params: { id: string }; Body: { clientNonce?: string; role?: MessageRole; kind?: string; content?: string; replyTo?: string } }>('/api/v1/threads/:id/messages', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;

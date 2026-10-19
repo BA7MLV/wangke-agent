@@ -531,7 +531,7 @@ export default function BotWorkspace() {
   return (
     <PageShell
       title={active?.title || 'bot'}
-      subtitle="Agent 身份：本机 Bot（能力占位，不执行任意工具）"
+      subtitle="后端持续执行 · 独立沙盒工作区"
       rail={nav}
       recent={{ label: 'Bot 线程', items: recent }}
       actions={(
@@ -557,13 +557,16 @@ export default function BotWorkspace() {
             <Card.Content className="bot-sidebar-card__content">
               <div className="bot-capability">
                 <Chip size="sm" variant="soft" color="accent">文本任务</Chip>
-                <Typography.Paragraph size="sm">基础消息与结构化事件</Typography.Paragraph>
+                <Typography.Paragraph size="sm">多步执行、定时唤醒，关闭页面后任务继续</Typography.Paragraph>
               </div>
               <div className="bot-capability">
                 <Chip size="sm" variant="soft">安全渲染</Chip>
                 <Typography.Paragraph size="sm">不会执行 HTML / widget</Typography.Paragraph>
               </div>
               <div className="bot-sidebar-actions">
+                {active && <Button variant="secondary" fullWidth onPress={() => {
+                  void serverClient.stopThread(active.id).then(() => setPasskeyState('当前线程任务已停止')).catch(() => setError('停止任务失败'));
+                }}><Sym name="stop" />停止当前线程任务</Button>}
                 <Button variant="primary" fullWidth onPress={() => void create()} isDisabled={createBusy}>
                   {createBusy ? <Spinner size="sm" color="current" /> : <Sym name="add" />}
                   {createBusy ? '创建中…' : '新建 Bot 线程'}

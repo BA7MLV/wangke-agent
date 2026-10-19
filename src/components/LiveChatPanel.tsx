@@ -164,14 +164,6 @@ export default function LiveChatPanel({
    */
   const [picks, setPicks] = useState<Record<string, number[]>>({});
 
-  /**
-   * 输入框的值**不走 React 的 onChange**：`mdui-text-field` 的真正 input 在它的 shadow
-   * DOM 里，React 收不到原生 input 事件（这也是 ChatPanel 用 `useMduiEvent` 的原因 ——
-   * 那边还额外复用了它返回的元素 ref）。这里照抄那条：ref 挂上去、值从 `el.value` 取。
-   * 漏了这一步的症状很隐蔽：输入框能打字（那是组件内部的值），但 React 的 state 永远是空串，
-   * 于是「发送」永远发出一条空问题 —— 界面上什么都看不出来。
-   */
-
   // widget 的明暗是 JS 算的（mdui 的 auto 模式要问系统偏好），与 ChatPanel 同一取法
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
 

@@ -162,6 +162,22 @@ const MIGRATIONS: Array<[number, string]> = [
     ALTER TABLE approvals ADD COLUMN run_id TEXT REFERENCES runs(id) ON DELETE SET NULL;
     CREATE INDEX approvals_run_idx ON approvals(run_id, status);
   `],
+  [9, `
+    ALTER TABLE runs ADD COLUMN context_json TEXT;
+    ALTER TABLE runs ADD COLUMN step_count INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE runs ADD COLUMN wake_at TEXT;
+    CREATE TABLE run_steps (
+      id TEXT PRIMARY KEY,
+      run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+      tool TEXT NOT NULL,
+      arguments TEXT NOT NULL,
+      result TEXT,
+      status TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      completed_at TEXT
+    );
+    CREATE INDEX run_steps_run_idx ON run_steps(run_id, created_at);
+  `],
 ];
 
 export class DatabaseStore {

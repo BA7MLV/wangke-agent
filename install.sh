@@ -7,12 +7,14 @@ DATA_DIR="${WANGKE_DATA_DIR:-$HOME/.wangke-agent}"
 PORT="${WANGKE_PORT:-3000}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NO_START=0
+AGENT=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || { echo "--version requires a value" >&2; exit 2; }; VERSION="$2"; VERSION_SET=1; shift 2 ;;
     --data-dir) DATA_DIR="$2"; shift 2 ;;
     --port) PORT="$2"; shift 2 ;;
     --no-start) NO_START=1; shift ;;
+    --agent) AGENT=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
@@ -58,6 +60,9 @@ elif [ "$VERSION_SET" -eq 1 ]; then
   mv -f "$tmp" "$DATA_DIR/.env"
 fi
 chmod 600 "$DATA_DIR/.env"
+if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
+  printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
+fi
 if [ ! -f "$DATA_DIR/data/config/bootstrap-secret" ]; then
   umask 077
   openssl rand -base64 32 > "$DATA_DIR/data/config/bootstrap-secret"
@@ -72,7 +77,12 @@ cp -f "$SCRIPT_DIR/scripts/restore.sh" "$DATA_DIR/bin/restore.sh"
 chmod 700 "$DATA_DIR/bin/backup.sh" "$DATA_DIR/bin/restore.sh"
 echo "Management command: $DATA_DIR/bin/wangke-agent {status|logs|stop|start|restart|update|backup}"
 if [ "$NO_START" -eq 0 ]; then
+  EXTRA=()
+  if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
+    EXTRA=(-f "$SCRIPT_DIR/compose.agent.yaml")
+    docker build -t wangke-sandbox:0.1.0 -f "$SCRIPT_DIR/infra/sandbox/Dockerfile" "$SCRIPT_DIR"
+  fi
   WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" \
-    docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" up -d --build
+    docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" "${EXTRA[@]}" up -d --build
   echo "Wangke is available at http://localhost:$PORT"
 fi

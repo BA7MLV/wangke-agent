@@ -58,6 +58,7 @@ export const serverClient = {
   threads: () => request<{ threads: ThreadDto[] }>('/threads'),
   createThread: (title?: string) => request<ThreadDto>('/threads', { method: 'POST', body: JSON.stringify({ mode: 'bot', title }) }),
   thread: (id: string) => request<ThreadDetail>(`/threads/${encodeURIComponent(id)}`),
+  stopThread: (id: string) => request<{ stopped: number }>(`/threads/${encodeURIComponent(id)}/stop`, { method: 'POST' }),
   sendMessage: (id: string, content: string, clientNonce: string) => request<MessageDto & { deduplicated?: boolean }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify({ clientNonce, role: 'user', kind: 'text', content }) }),
   sendAttachment: (id: string, content: string, clientNonce: string) => request<MessageDto & { deduplicated?: boolean }>(`/threads/${encodeURIComponent(id)}/messages`, { method: 'POST', body: JSON.stringify({ clientNonce, role: 'user', kind: 'attachment', content }) }),
   uploadFile: (file: File) => request<FileDto>('/files', { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream', 'X-File-Name': encodeURIComponent(file.name), 'X-File-Mime': file.type || 'application/octet-stream' } }),

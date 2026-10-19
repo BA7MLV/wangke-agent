@@ -1,0 +1,35 @@
+# Optional autonomous execution layer. The Docker socket belongs only to the broker.
+services:
+  app:
+    environment:
+      SANDBOX_URL: http://sandbox-broker:3001
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
+      BOT_MAX_STEPS: ${BOT_MAX_STEPS:-100}
+    depends_on:
+      sandbox-broker:
+        condition: service_healthy
+  sandbox-broker:
+    build:
+      context: .
+      dockerfile: infra/sandbox/broker.Dockerfile
+    restart: unless-stopped
+    environment:
+      SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
+      SANDBOX_IMAGE: wangke-sandbox:0.1.0
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://localhost:3001/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: infra/sandbox/Dockerfile
+    image: wangke-sandbox:0.1.0
+    profiles: [build]

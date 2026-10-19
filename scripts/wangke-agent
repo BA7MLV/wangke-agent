@@ -17,13 +17,20 @@ done
 command=${1:-}; [ -n "$command" ] && shift || { usage >&2; exit 2; }
 [ -n "$COMPOSE_FILE" ] && [ -f "$COMPOSE_FILE" ] || { echo "compose file is not configured or missing" >&2; exit 1; }
 [ -f "$DATA_DIR/.env" ] || { echo "missing $DATA_DIR/.env" >&2; exit 1; }
-compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$COMPOSE_FILE" "$@"; }
+EXTRA=()
+if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
+  EXTRA=(-f "$(dirname "$COMPOSE_FILE")/compose.agent.yaml")
+fi
+compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$COMPOSE_FILE" "${EXTRA[@]}" "$@"; }
 case "$command" in
   status) compose ps "$@";;
   logs) compose logs "$@";;
   stop|start|restart) compose "$command" "$@";;
   update)
     "$SCRIPT_DIR/backup.sh" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" >/dev/null
+    if [ "${#EXTRA[@]}" -gt 0 ]; then
+      docker build -t wangke-sandbox:0.1.0 -f "$(dirname "$COMPOSE_FILE")/infra/sandbox/Dockerfile" "$(dirname "$COMPOSE_FILE")"
+    fi
     compose up -d --build "$@"
     ;;
   backup) "$SCRIPT_DIR/backup.sh" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" "$@";;

@@ -1,137 +1,185 @@
 import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
+import { executeSandbox, type SandboxExecutor } from './sandbox.js';
 
-type FetchLike = typeof fetch;
-type Run = { id: string; thread_id: string; status: string };
-const outputKinds = new Set(['text', 'progress', 'attachment', 'question', 'approval']);
-const safeErrorText = '模型暂时不可用，请稍后重试。';
-
-const isoNow = () => new Date().toISOString();
+type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
+type Message = { role: string; content: string | null; tool_call_id?: string; tool_calls?: Call[] };
+type Call = { id: string; type: 'function'; function: { name: string; arguments: string } };
+const now = () => new Date().toISOString();
+const tool = (name: string, description: string, properties: object, required: string[]) => ({ type: 'function', function: { name, description, parameters: { type: 'object', additionalProperties: false, properties, required } } });
+const tools = [
+  tool('send_message', 'Send a user-visible message. text completes the task; progress continues; approval waits for user approval.', { kind: { type: 'string', enum: ['text', 'progress', 'question', 'approval', 'attachment'] }, text: { type: 'string' } }, ['kind', 'text']),
+  tool('shell', 'Execute bash in your isolated Linux workspace. Read/write files, run Python/Node, test programs. Files in /workspace persist across commands. Each command starts a fresh container; keep dependencies in /workspace (venv, node_modules). No host access. Maximum 120 seconds per command.', { command: { type: 'string' } }, ['command']),
+  tool('wait', 'Persist this task and wake it later, without keeping a model request or browser open.', { seconds: { type: 'integer', minimum: 1, maximum: 86400 }, reason: { type: 'string' } }, ['seconds', 'reason']),
+];
 
 export class BotRunner {
-  private readonly active = new Map<string, AbortController>();
-  private readonly pending = new Set<string>();
-  private readonly tasks = new Set<Promise<void>>();
+  private active = new Map<string, { threadId: string; controller: AbortController }>();
+  private tasks = new Set<Promise<void>>();
+  private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
   private draining = false;
-  private readonly concurrency: number;
-  private readonly timeoutMs: number;
-  private readonly fetcher: FetchLike;
-
-  constructor(private readonly store: DatabaseStore, options: { fetch?: FetchLike } = {}) {
-    this.concurrency = Math.max(1, Math.min(8, Number(process.env.BOT_CONCURRENCY ?? 1)));
-    this.timeoutMs = Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS ?? 30000));
+  private readonly fetcher: typeof fetch;
+  private readonly sandbox: SandboxExecutor;
+  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor } = {}) {
     this.fetcher = options.fetch ?? fetch;
+    this.sandbox = options.sandbox ?? executeSandbox;
   }
 
   start() {
-    const stale = new Date(Date.now() - this.timeoutMs).toISOString();
+    // One runtime owns this database. Recover all interrupted runs immediately.
+    // A command interrupted by process death has uncertain side effects: do not replay it.
     this.store.transaction(() => {
-      this.store.db.prepare("UPDATE runs SET status='queued', started_at=NULL WHERE mode='bot' AND status='running' AND started_at<?").run(stale);
-      const rows = this.store.db.prepare("SELECT id FROM runs WHERE mode='bot' AND status='queued' ORDER BY created_at").all() as Array<{ id: string }>;
-      for (const row of rows) this.enqueue(row.id);
+      this.store.db.prepare("UPDATE runs SET status='queued',started_at=NULL WHERE mode='bot' AND status='running'").run();
+      this.store.db.prepare("UPDATE run_steps SET status='interrupted',result=?,completed_at=? WHERE status='running'").run('Execution interrupted. Side effects may have happened; inspect the workspace before retrying.', now());
     });
+    this.timer = setInterval(() => this.enqueue(), 1000);
+    this.timer.unref();
+    this.enqueue();
   }
 
-  enqueue(runId: string) {
-    if (this.stopped || this.pending.has(runId) || this.active.has(runId)) return;
-    this.pending.add(runId);
-    queueMicrotask(() => { this.pending.delete(runId); void this.drain(); });
-  }
-
-  cancel(runId: string) { this.active.get(runId)?.abort(); }
-
+  enqueue(_runId?: string) { if (!this.stopped) queueMicrotask(() => void this.drain()); }
+  cancel(id: string) { this.active.get(id)?.controller.abort(); }
   async close() {
     this.stopped = true;
-    for (const controller of this.active.values()) controller.abort();
+    clearInterval(this.timer);
+    for (const task of this.active.values()) task.controller.abort();
     await Promise.allSettled([...this.tasks]);
   }
 
   private async drain() {
-    if (this.draining || this.stopped) return;
+    if (this.stopped || this.draining) return;
     this.draining = true;
     try {
-      while (!this.stopped && this.active.size < this.concurrency) {
-        const run = this.store.db.prepare("SELECT id,thread_id,status FROM runs WHERE mode='bot' AND status='queued' ORDER BY created_at LIMIT 1").get() as Run | undefined;
-        if (!run) break;
-        const claimed = this.store.transaction(() => this.store.db.prepare("UPDATE runs SET status='running',started_at=? WHERE id=? AND status='queued'").run(isoNow(), run.id));
-        if (claimed.changes !== 1) continue;
-         const controller = new AbortController();
-         this.active.set(run.id, controller);
-         const task = this.execute(run.id, run.thread_id, controller);
-         this.tasks.add(task);
-         task.then(() => {
-           this.tasks.delete(task);
-           this.active.delete(run.id);
-           void this.drain();
-         }, () => {
-           this.tasks.delete(task);
-           this.active.delete(run.id);
-           void this.drain();
-         });
+      const concurrency = Math.max(1, Math.min(8, Number(process.env.BOT_CONCURRENCY) || 1));
+      const rows = this.store.db.prepare("SELECT * FROM runs WHERE mode='bot' AND status='queued' AND (wake_at IS NULL OR wake_at<=?) ORDER BY created_at").all(now()) as Run[];
+      for (const run of rows) {
+        if (this.active.size >= concurrency) break;
+        if ([...this.active.values()].some((task) => task.threadId === run.thread_id)) continue;
+        const claimed = this.store.db.prepare("UPDATE runs SET status='running',started_at=?,wake_at=NULL WHERE id=? AND status='queued'").run(now(), run.id);
+        if (!claimed.changes) continue;
+        const controller = new AbortController();
+        this.active.set(run.id, { threadId: run.thread_id, controller });
+        const task = this.execute(run, controller.signal).finally(() => {
+          this.active.delete(run.id); this.tasks.delete(task); this.enqueue();
+        });
+        this.tasks.add(task);
       }
     } finally { this.draining = false; }
   }
 
-  private async execute(runId: string, threadId: string, controller: AbortController) {
+  private initialContext(run: Run): Message[] {
+    const history = this.store.db.prepare(`SELECT role,content FROM messages WHERE thread_id=? AND kind='text' AND role IN ('user','assistant')
+      AND seq <= COALESCE((SELECT seq FROM messages WHERE id=?),9223372036854775807) ORDER BY seq DESC LIMIT 40`).all(run.thread_id, run.trigger_message_id) as Message[];
+    const profiles = this.store.db.prepare('SELECT a.name,a.role,a.system_prompt FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? AND a.enabled=1').all(run.thread_id);
+    return [{ role: 'system', content: `You are an autonomous agent. Work toward the user's goal using multiple tool steps. You have broad autonomy inside your own /workspace sandbox. Do not claim work succeeded without checking tool results. Do not seek access outside your sandbox. Network access depends on deployment configuration. Use wait for scheduled follow-up. Use send_message(kind="text") only when finished; progress continues. Ask the user when essential information is missing. Available tools are the only capabilities you have. Agent profiles: ${JSON.stringify(profiles)}` }, ...history.reverse().map((m) => ({ ...m, content: m.content?.slice(0, 12000) ?? '' }))];
+  }
+
+  private async execute(run: Run, signal: AbortSignal) {
+    let context: Message[] = [];
     try {
-      if (!process.env.MODEL_API_KEY) throw new RunnerError('model_not_configured');
-      const messages = this.store.db.prepare("SELECT role,content FROM messages WHERE thread_id=? AND role IN ('user','assistant') AND kind='text' ORDER BY seq DESC LIMIT 40").all(threadId) as Array<{ role: 'user' | 'assistant'; content: string }>;
-      const participants = this.store.db.prepare("SELECT a.name,a.role,a.system_prompt FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? AND a.enabled=1 ORDER BY p.joined_at").all(threadId) as Array<{ name: string; role: string; system_prompt: string }>;
-      const identity = participants.length ? `Active Agent identities:\n${participants.map((agent) => `- ${agent.name}: ${agent.role}. ${agent.system_prompt.slice(0, 2000)}`).join('\n')}` : 'You are the Wangke Bot learning assistant.';
-      const result = await this.callModel(messages.reverse(), controller.signal, identity);
-      if (controller.signal.aborted) throw new RunnerError('cancelled');
-      if (!result) throw new RunnerError('invalid_structured_response');
-      this.store.transaction(() => {
-        const current = this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId) as { status: string } | undefined;
-        if (!current || current.status === 'cancelled') return;
-        const message = this.appendAssistant(threadId, result.kind, result.text);
-        if (result.kind === 'approval') {
-          this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,status,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), threadId, message.id, runId, 'pending', message.createdAt);
-          this.store.db.prepare("UPDATE runs SET status='waiting_user',completed_at=NULL,error_code=NULL WHERE id=? AND status='running'").run(runId);
-        } else {
-          this.store.db.prepare("UPDATE runs SET status='completed',completed_at=?,error_code=NULL WHERE id=? AND status='running'").run(isoNow(), runId);
+      if (!process.env.MODEL_API_KEY) throw new Error('model_not_configured');
+      context = run.context_json ? JSON.parse(run.context_json) : this.initialContext(run);
+      // Complete a persisted tool-call envelope after a crash, without re-executing the command.
+      const last = context.at(-1);
+      if (last?.tool_calls?.length) {
+        for (const call of last.tool_calls) {
+          const step = this.store.db.prepare('SELECT result FROM run_steps WHERE id=? AND run_id=?').get(call.id, run.id) as { result: string | null } | undefined;
+          context.push({ role: 'tool', tool_call_id: call.id, content: step?.result ?? 'Interrupted before result was saved. Inspect workspace before retrying.' });
         }
-      });
+        this.save(run, context);
+      }
+      const approvals = this.store.db.prepare("SELECT status,resolution FROM approvals WHERE run_id=? AND status!='pending'").all(run.id);
+      if (approvals.length) context.push({ role: 'user', content: `Approval decisions: ${JSON.stringify(approvals)}` });
+      const maxSteps = Math.max(1, Math.min(1000, Number(process.env.BOT_MAX_STEPS) || 100));
+      while (!signal.aborted) {
+        // Keep tool envelopes intact while bounding old command output in long tasks.
+        for (let i = 1; i < context.length - 8; i++) {
+          if (context[i].role === 'tool' && (context[i].content?.length ?? 0) > 2000) {
+            context[i].content = `${context[i].content!.slice(0, 2000)}\n[Older output truncated; inspect workspace for full artifacts.]`;
+          }
+        }
+        if (run.step_count >= maxSteps) {
+          this.append(run.thread_id, 'text', `本次任务已达到 ${maxSteps} 步执行预算。工作区已保存，可以发送消息继续。`);
+          this.finish(run.id, 'completed'); return;
+        }
+        const response = await this.fetcher(`${process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`, {
+          method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS) || 30000))]),
+          headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.MODEL_API_KEY}` },
+          body: JSON.stringify({ model: process.env.MODEL_NAME ?? 'gpt-4o-mini', messages: context, tools, tool_choice: 'required', parallel_tool_calls: false, max_tokens: 4096 }),
+        });
+        if (!response.ok) throw new Error('model_request_failed');
+        const body = await response.json() as any;
+        const calls = body?.choices?.[0]?.message?.tool_calls;
+        if (!Array.isArray(calls) || calls.length !== 1 || !calls[0]?.function) throw new Error('invalid_structured_response');
+        const call: Call = { id: crypto.randomUUID(), type: 'function', function: { name: calls[0].function.name, arguments: calls[0].function.arguments } };
+        if (typeof call.function.arguments !== 'string' || call.function.arguments.length > 20000) throw new Error('invalid_structured_response');
+        let args: any;
+        try { args = JSON.parse(call.function.arguments); } catch { throw new Error('invalid_structured_response'); }
+        if (!args || typeof args !== 'object') throw new Error('invalid_structured_response');
+        signal.throwIfAborted();
+        context.push({ role: 'assistant', content: null, tool_calls: [call] });
+        run.step_count++;
+        this.store.transaction(() => {
+          this.save(run, context);
+          this.store.db.prepare('INSERT INTO run_steps(id,run_id,tool,arguments,status,created_at) VALUES(?,?,?,?,?,?)').run(call.id, run.id, call.function.name, call.function.arguments, 'running', now());
+        });
+        let result = 'Unknown tool or invalid arguments.';
+        let state: 'completed' | 'waiting_user' | 'queued' | undefined;
+        let wake: string | null = null;
+        if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
+          this.append(run.thread_id, 'progress', `执行第 ${run.step_count} 步：\n${args.command.slice(0, 2000)}`);
+          try { result = JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: call.id, command: args.command }, signal)); }
+          catch { if (signal.aborted) throw new Error('cancelled'); throw new Error('sandbox_unavailable'); }
+        } else if (call.function.name === 'wait' && Number.isInteger(args.seconds) && args.seconds >= 1 && args.seconds <= 86400 && typeof args.reason === 'string') {
+          wake = new Date(Date.now() + args.seconds * 1000).toISOString();
+          result = `Scheduled wake: ${wake}`; state = 'queued';
+          this.append(run.thread_id, 'progress', `${args.reason.slice(0, 2000)}（下次运行：${wake}）`);
+        } else if (call.function.name === 'send_message' && ['text', 'progress', 'question', 'approval', 'attachment'].includes(args.kind) && typeof args.text === 'string' && args.text.length > 0 && args.text.length <= 12000) {
+          const message = this.append(run.thread_id, args.kind, args.text);
+          result = 'Message delivered.';
+          if (args.kind === 'approval') {
+            this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,status,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, 'pending', now());
+            state = 'waiting_user';
+          } else if (args.kind !== 'progress') state = 'completed';
+        }
+        signal.throwIfAborted();
+        context.push({ role: 'tool', tool_call_id: call.id, content: result.slice(0, 16000) });
+        this.store.transaction(() => {
+          this.store.db.prepare("UPDATE run_steps SET result=?,status='completed',completed_at=? WHERE id=?").run(result.slice(0, 16000), now(), call.id);
+          this.save(run, context);
+          if (state) this.store.db.prepare("UPDATE runs SET status=?,wake_at=?,completed_at=? WHERE id=? AND status='running'").run(state, wake, state === 'completed' ? now() : null, run.id);
+        });
+        if (state) return;
+      }
     } catch (error) {
-      const code = error instanceof RunnerError ? error.code : 'model_request_failed';
-      if (code === 'cancelled') return;
-      this.store.transaction(() => {
-        const current = this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId) as { status: string } | undefined;
-        if (!current || current.status === 'cancelled') return;
-        this.appendAssistant(threadId, 'progress', safeErrorText);
-        this.store.db.prepare("UPDATE runs SET status='failed',completed_at=?,error_code=? WHERE id=? AND status='running'").run(isoNow(), code, runId);
-      });
+      if (signal.aborted) {
+        this.store.db.prepare("UPDATE run_steps SET status='interrupted',result=?,completed_at=? WHERE run_id=? AND status='running'").run('Interrupted. Inspect workspace before retrying; side effects may have occurred.', now(), run.id);
+        if (this.stopped) this.store.db.prepare("UPDATE runs SET status='queued' WHERE id=? AND status='running'").run(run.id);
+        return;
+      }
+      const code = error instanceof Error && ['model_not_configured', 'sandbox_unavailable', 'invalid_structured_response'].includes(error.message) ? error.message : 'model_request_failed';
+      this.store.db.prepare("UPDATE run_steps SET status='failed',result=?,completed_at=? WHERE run_id=? AND status='running'").run(code, now(), run.id);
+      this.append(run.thread_id, 'progress', code === 'sandbox_unavailable' ? '沙盒服务不可用，任务已停止。请检查后端沙盒配置。' : '模型暂时不可用，请稍后重试。');
+      this.store.db.prepare("UPDATE runs SET status='failed',completed_at=?,error_code=? WHERE id=? AND status='running'").run(now(), code, run.id);
     }
   }
 
-  private async callModel(history: Array<{ role: 'user' | 'assistant'; content: string }>, signal: AbortSignal, identity: string) {
-    const timeout = AbortSignal.timeout(this.timeoutMs);
-    const combined = AbortSignal.any([signal, timeout]);
-    const response = await this.fetcher(`${process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`, {
-      method: 'POST', signal: combined, headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.MODEL_API_KEY}` },
-      body: JSON.stringify({ model: process.env.MODEL_NAME ?? 'gpt-4o-mini', temperature: 0.2, max_tokens: 1200,
-         messages: [{ role: 'system', content: `${identity}\nYou are a safe assistant. Respond only by calling send_message. Never request or emit tools, URLs, files, code execution, or hidden data.` }, ...history.map((m) => ({ role: m.role, content: m.content.slice(0, 12000) }))],
-        tools: [{ type: 'function', function: { name: 'send_message', description: 'Send one safe user-visible message.', parameters: { type: 'object', additionalProperties: false, required: ['kind', 'text'], properties: { kind: { type: 'string', enum: ['text', 'progress', 'attachment', 'question', 'approval'] }, text: { type: 'string', maxLength: 12000 } } } } }], tool_choice: { type: 'function', function: { name: 'send_message' } } }),
-    });
-    if (!response.ok) throw new RunnerError('model_request_failed');
-    const body = await response.json() as any;
-    const call = body?.choices?.[0]?.message?.tool_calls?.find((x: any) => x?.function?.name === 'send_message');
-    if (!call) return null;
-    let args: any; try { args = JSON.parse(call.function.arguments); } catch { return null; }
-    if (!args || !outputKinds.has(args.kind) || typeof args.text !== 'string' || args.text.length < 1 || args.text.length > 12000) return null;
-    return { kind: args.kind, text: args.text };
+  private save(run: Run, context: Message[]) {
+    this.store.db.prepare('UPDATE runs SET context_json=?,step_count=? WHERE id=?').run(JSON.stringify(context), run.step_count, run.id);
   }
-
-  private appendAssistant(threadId: string, kind: string, content: string) {
-    const seq = (this.store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(threadId) as any).seq;
-    const timestamp = isoNow(); const id = crypto.randomUUID();
-    const dto = { id, threadId, clientNonce: null, seq, role: 'assistant', kind, content, replyTo: null, createdAt: timestamp };
-    this.store.db.prepare('INSERT INTO messages(id,thread_id,client_nonce,seq,role,kind,content,reply_to,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, threadId, null, seq, 'assistant', kind, content, null, timestamp);
-    this.store.db.prepare('INSERT INTO message_events(id,thread_id,seq,type,payload,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), threadId, seq, 'message.accepted', JSON.stringify(dto), timestamp);
-    this.store.db.prepare('UPDATE threads SET updated_at=? WHERE id=?').run(timestamp, threadId);
-    return dto;
+  private finish(id: string, status: string) {
+    this.store.db.prepare("UPDATE runs SET status=?,completed_at=? WHERE id=? AND status='running'").run(status, now(), id);
+  }
+  private append(threadId: string, kind: string, content: string) {
+    return this.store.transaction(() => {
+      const seq = (this.store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(threadId) as { seq: number }).seq;
+      const timestamp = now(); const id = crypto.randomUUID();
+      const dto = { id, threadId, clientNonce: null, seq, role: 'assistant', kind, content, replyTo: null, createdAt: timestamp };
+      this.store.db.prepare('INSERT INTO messages(id,thread_id,seq,role,kind,content,created_at) VALUES(?,?,?,?,?,?,?)').run(id, threadId, seq, 'assistant', kind, content, timestamp);
+      this.store.db.prepare('INSERT INTO message_events(id,thread_id,seq,type,payload,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), threadId, seq, 'message.accepted', JSON.stringify(dto), timestamp);
+      this.store.db.prepare('UPDATE threads SET updated_at=? WHERE id=?').run(timestamp, threadId);
+      return dto;
+    });
   }
 }
-
-class RunnerError extends Error { constructor(readonly code: 'model_not_configured' | 'model_request_failed' | 'invalid_structured_response' | 'cancelled') { super(code); } }
