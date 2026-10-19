@@ -1,12 +1,11 @@
 /**
  * 学习页（热力图 + 统计）的样式。
  *
- * ## 配色为什么不用 MD3 令牌、而用 GitHub 那套绿
+ * ## 配色
  *
- * 需求原话是「样式做成类似 GitHub 提交的那样」——**认得出**是这件事的全部意义所在。
- * 用 primary 色的四档透明度虽然更「Material」，但一眼看上去就是另一张图。
- * 于是深浅两套色板照抄 GitHub 的提交图（浅色 #9be9a8→#216e39、深色 #0e4429→#39d353），
- * 只有「空格子」用主题的 surface 令牌，让它和页面底色在深浅两种主题下都不打架。
+ * 保留 GitHub 提交图式的布局，颜色统一跟随主题 accent。
+ * 四档强度由主题色与空格底色混合得到，热力图、图例、时长条和记录指示共用，
+ * 切换强调色或深浅主题时自动更新，不维护独立的固定色板。
  *
  * ## 尺寸常量
  *
@@ -20,25 +19,15 @@
   --heat-pitch: calc(var(--heat-cell) + var(--heat-gap));
   --heat-label-w: 20px;
   --heat-label-gap: 4px;
-  /* 空格子：跟主题走，别用 GitHub 那个偏冷的 #ebedf0 */
+  /* 空格子跟随主题底色；有记录时按强度逐档增加主题色占比。 */
   --heat-l0: var(--default);
-  --heat-l1: #9be9a8;
-  --heat-l2: #40c463;
-  --heat-l3: #30a14e;
-  --heat-l4: #216e39;
+  --heat-l1: color-mix(in oklch, var(--accent) 25%, var(--heat-l0));
+  --heat-l2: color-mix(in oklch, var(--accent) 50%, var(--heat-l0));
+  --heat-l3: color-mix(in oklch, var(--accent) 75%, var(--heat-l0));
+  --heat-l4: var(--accent);
   /* 提示条用反色面（MD3 的 inverse-surface），深浅主题下自动反相 */
   --heat-tip-bg: var(--background-inverse);
   --heat-tip-fg: var(--background-inverse);
-}
-
-/* 深色主题下换深色档：原来的浅绿在深底上会糊成一片白。
-   深浅色统一由 <html> 上的 .dark 类表达（见 ui/theme.ts 的 applyTheme），
-   auto 模式也由 JS 解析系统偏好后落成同一个类，所以这里不需要媒体查询分支。 */
-html.dark .page-study {
-  --heat-l1: #0e4429;
-  --heat-l2: #006d32;
-  --heat-l3: #26a641;
-  --heat-l4: #39d353;
 }
 
 /* ── 统计概览 ───────────────────────────────────────────────────────────── */

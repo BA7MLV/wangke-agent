@@ -208,20 +208,28 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
   return (
     <div className="bot-access" data-mode={initialized ? 'login' : 'initialize'}>
       <div className="bot-access-visual" aria-hidden="true">
-        <div className="bot-access-visual__grid" />
-        <div className="bot-orbit bot-orbit--outer" />
-        <div className="bot-orbit bot-orbit--inner" />
-        <div className="bot-core">
-          <Sym name="neurology" />
-        </div>
-        <div className="bot-signal bot-signal--one"><span />LOCAL</div>
-        <div className="bot-signal bot-signal--two"><span />SANDBOX</div>
-        <div className="bot-signal bot-signal--three"><span />READY</div>
-        <div className="bot-access-visual__copy">
-          <p className="bot-access-visual__kicker">WANGKE / AGENT SYSTEM</p>
-          <h2>进入你的<br /><strong>自主工作空间</strong></h2>
-          <p>后端持续运行，任务在独立沙盒中推进。浏览器只是你的控制台。</p>
-        </div>
+        <span className="bot-terminal-path">~/bot</span>
+        <pre className="bot-ascii">{String.raw`           .
+           |
+      .----+----.
+      |         |
+   .--|  o   o  |--.
+   |  |    _    |  |
+   '  '---------'  '
+        /     \
+   .---'-------'---.
+   |               |
+   |   [ : : : ]   |
+   |               |
+   '---.-------.---'
+       |       |
+     __|       |__
+    '---'     '---'
+
+     b b b   o o o   t t t
+     b   b   o   o     t
+     b b b   o o o     t`}</pre>
+        <span className="bot-terminal-prompt">{initialized ? '> login' : '> setup'}<span className="bot-terminal-cursor">_</span></span>
       </div>
       <Card.Root className="bot-access-card">
         <Card.Header className="bot-access-card__header">

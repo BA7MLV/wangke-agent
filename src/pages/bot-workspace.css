@@ -15,43 +15,57 @@
   min-height: min(640px, calc(100dvh - 132px));
   margin: clamp(24px, 6vh, 72px) auto;
   overflow: hidden;
-  border: 1px solid var(--bot-border);
-  border-radius: 28px;
-  background: color-mix(in srgb, currentColor 2.5%, transparent);
-  box-shadow: 0 24px 80px color-mix(in srgb, #000 14%, transparent);
-  animation: bot-access-enter 500ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
+  border-radius: 8px;
 }
 
 .bot-access-card {
   position: relative;
   z-index: 1;
   align-self: center;
-  width: min(100%, 430px);
+  min-width: 0;
+  width: auto;
   margin: 32px;
   overflow: hidden;
-  border: 1px solid var(--bot-border);
-  box-shadow: 0 18px 50px color-mix(in srgb, #000 12%, transparent);
-  animation: bot-card-enter 600ms 120ms cubic-bezier(0.22, 1, 0.36, 1) both;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
 }
 
-.bot-access-visual { position: relative; display: flex; min-height: 100%; align-items: flex-end; overflow: hidden; padding: 42px; isolation: isolate; background: color-mix(in srgb, var(--accent) 5%, transparent); }
-.bot-access-visual::after { position: absolute; inset: 22px; z-index: -1; border: 1px solid color-mix(in srgb, currentColor 7%, transparent); content: ''; opacity: 0.4; }
-.bot-access-visual__grid { position: absolute; top: 50%; left: 50%; width: 410px; height: 410px; border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent); transform: translate(-50%, -62%) rotate(45deg); opacity: 0.45; }
-.bot-orbit { position: absolute; top: 42%; left: 50%; border: 1px solid color-mix(in srgb, var(--accent) 42%, transparent); border-radius: 50%; transform: translate(-50%, -50%); }
-.bot-orbit::after { position: absolute; top: 50%; left: -4px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 12%, transparent); content: ''; }
-.bot-orbit--outer { width: 270px; height: 270px; animation: bot-orbit-spin 18s linear infinite; }
-.bot-orbit--inner { width: 190px; height: 190px; border-style: dashed; opacity: 0.55; animation: bot-orbit-spin-reverse 12s linear infinite; }
-.bot-core { position: absolute; top: 42%; left: 50%; display: grid; width: 74px; height: 74px; place-items: center; border: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); border-radius: 22px; background: color-mix(in srgb, var(--accent) 13%, transparent); color: var(--accent); font-size: 32px; transform: translate(-50%, -50%); box-shadow: 0 0 0 12px color-mix(in srgb, var(--accent) 5%, transparent), 0 0 0 24px color-mix(in srgb, var(--accent) 2%, transparent); animation: bot-core-pulse 3.2s ease-in-out infinite; }
-.bot-signal { position: absolute; display: flex; align-items: center; gap: 7px; color: var(--muted); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 10px; letter-spacing: 0.08em; }
-.bot-signal span { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px color-mix(in srgb, var(--accent) 10%, transparent); animation: bot-signal-blink 2.2s ease-in-out infinite; }
-.bot-signal--one { top: 22%; left: 17%; }
-.bot-signal--two { top: 31%; right: 13%; }
-.bot-signal--three { top: 58%; left: 12%; }
-.bot-access-visual__copy { position: relative; z-index: 1; max-width: 320px; }
-.bot-access-visual__kicker { margin: 0 0 14px; color: var(--accent); font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; letter-spacing: 0.12em; }
-.bot-access-visual__copy h2 { margin: 0; font-size: clamp(2rem, 4vw, 3.6rem); font-weight: 400; line-height: 1.08; text-wrap: balance; }
-.bot-access-visual__copy h2 strong { font-weight: 700; }
-.bot-access-visual__copy > p:last-child { max-width: 280px; margin: 18px 0 0; color: var(--muted); font-size: 0.9rem; line-height: 1.7; text-wrap: pretty; }
+.bot-access-visual {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 32px;
+  min-width: 0;
+  padding: 32px;
+  border-right: 1px dashed color-mix(in srgb, currentColor 16%, transparent);
+  background: color-mix(in srgb, currentColor 2%, transparent);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+
+.bot-terminal-path,
+.bot-terminal-prompt {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.bot-ascii {
+  align-self: center;
+  justify-self: center;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font-family: inherit;
+  font-size: clamp(11px, 1.3vw, 15px);
+  line-height: 1.45;
+  white-space: pre;
+  user-select: none;
+}
+
+.bot-terminal-cursor { margin-left: 8px; }
 
 .bot-access-card__header {
   gap: 10px;
@@ -99,22 +113,6 @@
   margin-top: 2px;
 }
 
-@keyframes bot-access-enter {
-  from { opacity: 0; transform: translateY(16px) scale(0.98); }
-  to { opacity: 1; transform: translateY(0) scale(1); }
-}
-@keyframes bot-card-enter {
-  from { opacity: 0; transform: translateX(18px); }
-  to { opacity: 1; transform: translateX(0); }
-}
-@keyframes bot-orbit-spin { to { transform: translate(-50%, -50%) rotate(360deg); } }
-@keyframes bot-orbit-spin-reverse { to { transform: translate(-50%, -50%) rotate(-360deg); } }
-@keyframes bot-core-pulse { 50% { transform: translate(-50%, -50%) scale(1.04); } }
-@keyframes bot-signal-blink { 50% { opacity: 0.35; transform: scale(0.72); } }
-
-@media (prefers-reduced-motion: reduce) {
-  .bot-access, .bot-access-card, .bot-orbit, .bot-core, .bot-signal span { animation: none; }
-}
 
 .bot-layout {
   display: flex;
@@ -415,18 +413,20 @@
   .bot-access {
     display: block;
     min-height: 0;
-    margin: 18px 12px 32px;
-    border-radius: 22px;
+    margin: 18px auto 32px;
+    border-radius: 8px;
   }
 
   .bot-access-visual {
-    min-height: 390px;
-    padding: 28px;
+    padding: 24px;
+    gap: 16px;
+    border-right: 0;
+    border-bottom: 1px dashed color-mix(in srgb, currentColor 16%, transparent);
   }
 
   .bot-access-card {
     width: auto;
-    margin: -34px 14px 14px;
+    margin: 16px;
   }
 }
 
