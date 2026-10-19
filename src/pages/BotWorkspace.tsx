@@ -206,7 +206,23 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
   };
 
   return (
-    <div className="bot-access">
+    <div className="bot-access" data-mode={initialized ? 'login' : 'initialize'}>
+      <div className="bot-access-visual" aria-hidden="true">
+        <div className="bot-access-visual__grid" />
+        <div className="bot-orbit bot-orbit--outer" />
+        <div className="bot-orbit bot-orbit--inner" />
+        <div className="bot-core">
+          <Sym name="neurology" />
+        </div>
+        <div className="bot-signal bot-signal--one"><span />LOCAL</div>
+        <div className="bot-signal bot-signal--two"><span />SANDBOX</div>
+        <div className="bot-signal bot-signal--three"><span />READY</div>
+        <div className="bot-access-visual__copy">
+          <p className="bot-access-visual__kicker">WANGKE / AGENT SYSTEM</p>
+          <h2>进入你的<br /><strong>自主工作空间</strong></h2>
+          <p>后端持续运行，任务在独立沙盒中推进。浏览器只是你的控制台。</p>
+        </div>
+      </div>
       <Card.Root className="bot-access-card">
         <Card.Header className="bot-access-card__header">
           <div className="bot-access-card__eyebrow">
@@ -214,7 +230,7 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
             <span>安全入口</span>
           </div>
           <Card.Title render={(props) => <h2 {...props} />} className="bot-access-card__title">
-            {initialized ? '登录 Bot 工作空间' : '首次初始化 Bot 服务'}
+            {initialized ? '欢迎回来' : '建立安全入口'}
           </Card.Title>
           <Card.Description>
             {initialized
