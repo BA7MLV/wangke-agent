@@ -25,13 +25,7 @@ import {
   type Provider,
   type Settings,
 } from '../../store/settings';
-import { listModels } from '../../api/siliconflow';
-import {
-  dropModelList,
-  pruneModelLists,
-  readModelList,
-  writeModelList,
-} from '../../api/modelListCache';
+import { useProviderModels } from '../../utils/useProviderModels';
 import {
   guessContextWindow,
   isVisionModel,
@@ -651,9 +645,9 @@ function ProviderRow({
   }, [shaking]);
 
   const STATUS_HINT: Record<typeof status, string> = {
-    ready: '已连接',
-    unchecked: '未检查',
-    failed: '连接失败',
+    ready: '列表已获取',
+    unchecked: '未获取列表',
+    failed: '列表获取失败',
     unconfigured: '未配置',
   };
 
@@ -873,15 +867,11 @@ function ProviderRow({
 export default function ModelsModule() {
   const settings = useSettings();
   useModelMetaRevision();
-  const [checking, setChecking] = useState(false);
-  /** 每家供应商各自拉到的在架模型（key = provider id）。分家存是因为各家列表互不相干。 */
-  const [modelOptions, setModelOptions] = useState<Record<string, string[]>>({});
-  /** 逐家检查结论（成功/失败），让用户看得见是哪一家出的问题 */
-  const [providerNotes, setProviderNotes] = useState<Record<string, string>>({});
   /** 哪一家的 key 缺失（provider id）。null = 都没问题 */
   const [keyError, setKeyError] = useState<string | null>(null);
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const { modelOptions, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const revertTimerRef = useRef<number | undefined>(undefined);
@@ -897,79 +887,6 @@ export default function ModelsModule() {
     [settings.providers],
   );
   const catalogsKey = catalogs.join('\0');
-
-  /**
-   * 供应商「身份」串：地址 / Key / 名字任一变化都值得重算候选列表。
-   *
-   * 用它而不是 `settings.providers` 本身当依赖：那个数组每次 `update` 都是新引用，
-   * 直接依赖会让这个 effect 在「改个上下文窗口」这种无关操作上白跑一遍。
-   */
-  const providersKey = settings.providers.map((p) => `${p.id}\0${p.baseUrl}\0${p.apiKey}\0${p.protocol ?? 'openai-chat'}`).join('\n');
-
-  /**
-   * 打开设置先读取各家的缓存；仅为当前展开且缓存缺失或过期的供应商拉取列表。
-   *
-   * 这一段的全部意义是「别再让用户每开一次设置就手动点一次拉取」。
-   * 所以顺序必须是「先缓存后网络」：缓存能立刻给出可点的候选，网络回来只是把它刷新。
-   * 反过来的话用户还是要盯着一个空列表等一轮往返 —— 那和没有缓存没区别。
-   *
-   * 自动拉取失败不弹 toast，在当前供应商详情中显示错误。
-   */
-  useEffect(() => {
-    const providers = settings.providers;
-    // 顺手清掉已删供应商的缓存条目：localStorage 里的条目只增不减迟早堆满，
-    // 而配额满了会静默让整份缓存写不进去（表现是「缓存莫名其妙失效」）。
-    pruneModelLists(providers.map((p) => p.baseUrl));
-
-    const cachedIds: Record<string, string[]> = {};
-    const cachedNotes: Record<string, string> = {};
-    const needFetch: Provider[] = [];
-    for (const p of providers) {
-      // 没配好地址或 Key 就没什么可拉的，也不必在缓存里留一条空记录
-      if (!p.baseUrl.trim() || !p.apiKey.trim()) continue;
-      const hit = readModelList(p.baseUrl);
-      if (hit) {
-        cachedIds[p.id] = hit.ids;
-        // 有缓存说明上次拉过：状态点该是「就绪」而不是「尚未检查连通性」
-        cachedNotes[p.id] = `${hit.ids.length} 个模型在架 · 缓存`;
-      }
-       if (p.id === selectedProviderId && (!hit || hit.stale)) needFetch.push(p);
-    }
-    if (Object.keys(cachedIds).length > 0) {
-      // 只补「还没有值」的那些：手动刷新刚拉回来的结果比缓存新，不能被它顶掉
-      setModelOptions((prev) => {
-        const next = { ...prev };
-        for (const [id, ids] of Object.entries(cachedIds)) if (!next[id]) next[id] = ids;
-        return next;
-      });
-      setProviderNotes((prev) => {
-        const next = { ...prev };
-        for (const [id, note] of Object.entries(cachedNotes)) if (!next[id]) next[id] = note;
-        return next;
-      });
-    }
-    if (needFetch.length === 0) return;
-
-    let cancelled = false;
-    void (async () => {
-      for (const p of needFetch) {
-        try {
-          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim(), protocol: p.protocol });
-          if (cancelled) return;
-          writeModelList(p.baseUrl, ids);
-          setModelOptions((prev) => ({ ...prev, [p.id]: ids }));
-          setProviderNotes((prev) => ({ ...prev, [p.id]: `${ids.length} 个模型在架` }));
-        } catch (e) {
-          if (cancelled) return;
-          setProviderNotes((prev) => ({ ...prev, [p.id]: `拉取失败：${e instanceof Error ? e.message : String(e)}` }));
-        }
-      }
-    })();
-    return () => {
-      cancelled = true;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providersKey, selectedProviderId]);
 
   // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
@@ -1027,57 +944,19 @@ export default function ModelsModule() {
    * 手动刷新只请求当前供应商的 `/models`，不检查或修改其他连接。
    */
   const handleCheck = async (providerId: string) => {
-    const providers = settings.providers.filter((p) => p.id === providerId);
-    if (!providers.length) return;
-    const noKey = providers.filter((p) => !p.apiKey.trim() || !p.baseUrl.trim());
-    if (noKey.length === providers.length) {
-      triggerKeyError(noKey[0].id);
-      setProviderNotes((prev) => ({ ...prev, [providerId]: '请先填写当前供应商的 API 地址与 Key' }));
+    const provider = settings.providers.find((p) => p.id === providerId);
+    if (!provider) return;
+    if (!provider.apiKey.trim() || !provider.baseUrl.trim()) {
+      triggerKeyError(providerId);
       toast.warning('请先填写当前供应商的 API 地址与 Key');
       return;
     }
-    setChecking(true);
-    const opts: Record<string, string[]> = {};
-    const notes: Record<string, string> = {};
-    await Promise.all(
-      providers.map(async (p) => {
-        if (!p.apiKey.trim() || !p.baseUrl.trim()) {
-          notes[p.id] = '未填写 API 地址或 Key，已跳过';
-          return;
-        }
-        try {
-          const ids = await listModels({ apiKey: p.apiKey.trim(), baseUrl: p.baseUrl.trim(), protocol: p.protocol });
-          opts[p.id] = ids;
-          notes[p.id] = `${ids.length} 个模型在架`;
-          // 手动刷新是最权威的一次结果，写回缓存 —— 下次开设置就不必再等网络
-          writeModelList(p.baseUrl, ids);
-        } catch (e) {
-          notes[p.id] = `拉取失败：${e instanceof Error ? e.message : String(e)}`;
-        }
-      }),
-    );
-    // 请求期间可能修改或删除连接；旧响应不能覆盖新连接的发现结果。
-    const currentProviders = useSettings.getState().providers;
-    const unchanged = (id: string) => {
-      const before = providers.find((p) => p.id === id);
-      const after = currentProviders.find((p) => p.id === id);
-      return before && after && before.baseUrl === after.baseUrl && before.apiKey === after.apiKey && before.protocol === after.protocol;
-    };
-    setModelOptions((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(opts).filter(([id]) => unchanged(id))) }));
-    setProviderNotes((prev) => ({ ...prev, ...Object.fromEntries(Object.entries(notes).filter(([id]) => unchanged(id))) }));
-
-    const failed = Object.entries(notes).filter(([, note]) => note.startsWith('拉取失败'));
-    const totalModels = Object.values(opts).reduce((n, ids) => n + ids.length, 0);
-    if (failed.length > 0) {
-      const reasons = failed.map(([id, note]) => {
-        const providerName = providers.find((p) => p.id === id)?.name.trim() || id;
-        const reason = note.replace(/^拉取失败：?/, '').trim() || '未知错误';
-        return `${providerName}：${reason}`;
-      });
-      toast.warning(`${failed.length} 家拉取失败：${reasons.join('；')}`);
+    try {
+      const ids = await refreshProviderModels(provider);
+      if (ids) toast.success(ids.length ? `已拉取 ${ids.length} 个模型` : '接口返回空模型列表，可手动添加模型');
+    } catch (error) {
+      toast.warning(`拉取失败：${error instanceof Error ? error.message : String(error)}`);
     }
-    else if (totalModels > 0) toast.success(`已拉取 ${totalModels} 个模型`);
-    setChecking(false);
   };
 
   /** 一家的连通状态：优先看上次检查的结论，其次看配置是否完整 */
@@ -1108,10 +987,6 @@ export default function ModelsModule() {
     const rest = settings.providers.filter((x) => x.id !== p.id);
     const fallback = rest[0].id;
     const patch: Partial<Settings> = { providers: rest, savedModels: savedModelsOf(settings).filter((m) => m.providerId !== p.id) };
-    // 模型列表缓存按 baseUrl 索引，删除是**唯一**一处能确定它再也用不上的时机
-    dropModelList(p.baseUrl);
-    setModelOptions(({ [p.id]: _dropped, ...kept }) => kept);
-    setProviderNotes(({ [p.id]: _dropped, ...kept }) => kept);
     for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
       if (settings[name].providerId === p.id) {
         const slot = name === 'llmModel' ? 'chat' : name === 'visionModel' ? 'vision' : 'asr';
@@ -1144,6 +1019,7 @@ export default function ModelsModule() {
         subtitle={selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
         actions={<>
+          {selectedProvider && <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>拉取模型列表</LoadingButton>}
           <LoadingButton variant="tertiary" loading={metaRefreshing} data-testid="btn-refresh-meta" onPress={() => void handleRefreshMeta()}>刷新能力数据</LoadingButton>
           {!selectedProvider && <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>}
         </>}
@@ -1170,10 +1046,6 @@ export default function ModelsModule() {
               removable={settings.providers.length > 1}
               onToggle={() => undefined}
               onChange={(patch) => {
-                if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
-                  setModelOptions(({ [selectedProvider.id]: _old, ...rest }) => rest);
-                  setProviderNotes(({ [selectedProvider.id]: _old, ...rest }) => rest);
-                }
                 settings.update({ providers: settings.providers.map((x) => (x.id === selectedProvider.id ? { ...x, ...patch } : x)) });
               }}
               onRemove={async () => {
@@ -1211,10 +1083,6 @@ export default function ModelsModule() {
                 removable={settings.providers.length > 1 || i > 0}
                 onToggle={() => setSelectedProviderId(p.id)}
                 onChange={(patch) => {
-                  if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
-                    setModelOptions(({ [p.id]: _old, ...rest }) => rest);
-                    setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
-                  }
                   settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
                 }}
                 onRemove={async () => {

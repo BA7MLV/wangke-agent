@@ -103,11 +103,35 @@ async function request(
 }
 
 /** 拉某家供应商在架的模型 id 列表（用于设置页的候选与「检查模型可用性」） */
-export async function listModels(s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>): Promise<string[]> {
-  const res = await request(s, '/models');
-  const data = await res.json();
-  const models = data.data ?? data.models ?? [];
-  return (models as { id?: string; name?: string }[]).map((m) => m.id ?? m.name).filter((id): id is string => Boolean(id));
+export async function listModels(
+  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  const connection = { ...s, baseUrl: s.baseUrl.trim().replace(/\/+$/, ''), apiKey: s.apiKey.trim() };
+  const ids = new Set<string>();
+  const cursors = new Set<string>();
+  let path = '/models';
+  for (let page = 0; page < 100; page++) {
+    const res = await request(connection, path, { method: 'GET', signal, cache: 'no-store', credentials: 'omit', redirect: 'error' });
+    const data: unknown = await res.json();
+    if (!data || typeof data !== 'object') throw new Error('模型列表响应格式无效');
+    const body = data as { data?: unknown; models?: unknown; has_more?: unknown; last_id?: unknown };
+    const models = body.data ?? body.models;
+    if (!Array.isArray(models)) throw new Error('接口未返回模型列表，可手动添加模型');
+    for (const model of models) {
+      if (!model || typeof model !== 'object') throw new Error('模型列表条目格式无效');
+      const value = model.id ?? model.name;
+      if (typeof value !== 'string' || !value.trim()) throw new Error('模型列表条目缺少有效 ID');
+      ids.add(value.trim());
+    }
+    if (body.has_more === undefined || body.has_more === false) return [...ids].sort();
+    if (body.has_more !== true || typeof body.last_id !== 'string' || !body.last_id || cursors.has(body.last_id)) {
+      throw new Error('模型列表分页信息无效');
+    }
+    cursors.add(body.last_id);
+    path = `/models?after_id=${encodeURIComponent(body.last_id)}`;
+  }
+  throw new Error('模型列表分页超出安全上限');
 }
 
 export interface TranscriptionSegment {
