@@ -141,7 +141,33 @@ try {
   const png = await page.evaluate(() => { const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 64; const ctx = canvas.getContext('2d'); ctx.fillStyle = '#00aa00'; ctx.fillRect(0, 0, 64, 64); return canvas.toDataURL().split(',')[1]; });
   await page.getByTestId('chat-image-input').setInputFiles({ name: '图片.png', mimeType: 'image/png', buffer: Buffer.from(png, 'base64') });
   await page.locator('[data-testid="chat-attachment"][data-state="ready"]').waitFor();
+  const draftImage = page.getByTestId('chat-attachment');
+  assert.equal((await draftImage.innerText()).trim(), '', 'Ready images should not show filename/storage metadata');
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    await page.getByRole('button', { name: '预览图片 图片.png', exact: true }).click();
+    const viewer = page.getByTestId('chat-image-viewer');
+    await viewer.waitFor();
+    await viewer.evaluate(async (element) => { await Promise.allSettled(element.parentElement.getAnimations({ subtree: true }).map((animation) => animation.finished)); });
+    await page.waitForFunction(() => { const image = document.querySelector('[data-testid="chat-image-viewer"] img'); return image?.complete && image.naturalWidth > 0; });
+    const bounds = await viewer.boundingBox();
+    assert.ok(bounds && bounds.x >= -1 && bounds.y >= -1 && bounds.x + bounds.width <= viewport.width + 1 && bounds.y + bounds.height <= viewport.height + 1, `Viewer must fit the visible viewport: ${JSON.stringify({ bounds, viewport })}`);
+    await viewer.getByRole('button', { name: '放大图片', exact: true }).click();
+    assert.match(await viewer.innerText(), /150%/);
+    await viewer.getByRole('button', { name: '适应窗口', exact: true }).click();
+    await page.keyboard.press('Escape');
+    await viewer.waitFor({ state: 'hidden' });
+    assert.equal(await page.getByRole('button', { name: '预览图片 图片.png', exact: true }).evaluate((el) => el === document.activeElement), true, 'Closing restores focus to the thumbnail');
+  }
+  await page.setViewportSize({ width: 1280, height: 900 });
   await bodyInput.press('Enter'); await idle();
+  const imageMessage = page.getByTestId('chat-message-attachments').filter({ has: page.getByRole('button', { name: '预览图片 图片.png', exact: true }) });
+  assert.equal((await imageMessage.innerText()).trim(), '', 'Message images should display without metadata');
+  await imageMessage.getByRole('button', { name: '预览图片 图片.png', exact: true }).click();
+  await page.getByTestId('chat-image-viewer').waitFor();
+  await page.getByRole('button', { name: '关闭图片预览', exact: true }).click();
+  assert.equal(await page.locator('.course-chat__bottom-blur').count(), 0);
+  console.log('✓ Image preview on desktop/tablet/mobile, zoom, Escape, focus restoration, clean message thumbnails, top-only blur');
   assert.ok(await page.evaluate(() => window.__attachmentRequests.some((request) => request.messages.some((m) => Array.isArray(m.content) && m.content.some((part) => part.type === 'image_url')))));
   // Switch to text-only model and verify historical images are described, never silently dropped.
   await page.evaluate(async () => {

@@ -87,7 +87,7 @@ export async function removeAttachmentFile(file: ChatAttachment): Promise<void> 
   else await db.files.delete(file.id);
 }
 
-export async function downloadAttachment(file: ChatAttachment): Promise<void> {
+export async function readAttachmentBlob(file: ChatAttachment): Promise<Blob> {
   let blob: Blob;
   if (file.serverId) {
     const response = await fetch(`/api/v1/files/${encodeURIComponent(file.serverId)}`, { credentials: 'include' });
@@ -98,7 +98,11 @@ export async function downloadAttachment(file: ChatAttachment): Promise<void> {
     if (!saved) throw new Error('本机附件文件已被清理');
     blob = saved.blob;
   }
-  const url = URL.createObjectURL(blob);
+  return blob;
+}
+
+export async function downloadAttachment(file: ChatAttachment): Promise<void> {
+  const url = URL.createObjectURL(await readAttachmentBlob(file));
   const link = document.createElement('a');
   link.href = url;
   link.download = file.name;

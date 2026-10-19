@@ -627,7 +627,7 @@ function ProviderRow({
   const inputRef = useRef<HTMLDivElement>(null);
   const [dupName, setDupName] = useState(false);
   const [showKey, setShowKey] = useState(false);
-  const [showConnection, setShowConnection] = useState(!provider.apiKey.trim() || !provider.baseUrl.trim());
+  const [showConnection, setShowConnection] = useState(open || !provider.apiKey.trim() || !provider.baseUrl.trim());
 
   // 与其他家重名时提示：模型选型都按供应商名显示，重名会让设置与面板都对不上是哪一家
   useEffect(() => {
@@ -674,39 +674,39 @@ function ProviderRow({
 
   return (
     <div
-      className={`overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md md:col-span-2 xl:col-span-3' : 'min-h-[218px] hover:shadow-sm'}`}
+      className={`overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
       data-testid={`provider-card-${provider.id}`}
       data-open={open ? 'true' : undefined}
     >
       <button
         type="button"
-        className={`box-border flex w-full cursor-pointer flex-col items-stretch gap-5 border-0 bg-transparent p-5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${open ? 'min-h-[96px]' : 'min-h-[218px]'}`}
+        className={`box-border flex w-full cursor-pointer flex-col items-stretch gap-5 border-0 bg-transparent p-5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[640px]:gap-2.5 max-[640px]:p-2.5 ${open ? 'min-h-[96px]' : 'min-h-[218px] max-[640px]:min-h-[150px]'}`}
         data-testid={`provider-summary-${provider.id}`}
         aria-expanded={open}
         onClick={onToggle}
       >
         <span className="flex items-start justify-between gap-3">
-          <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm" aria-hidden="true">
+          <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true">
             <Sym name={providerIcon} />
           </span>
-          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
+          <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
             {STATUS_HINT[status]}
           </span>
         </span>
         <span className="flex min-w-0 flex-1 flex-col justify-end gap-1">
-          <span className="flex items-center gap-1.5 truncate text-lg font-semibold text-foreground">
+          <span className="flex items-center gap-1.5 truncate text-lg font-semibold text-foreground max-[640px]:text-xs">
             {provider.name.trim() || '未命名供应商'}
             {dupName && <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">重名</Chip>}
           </span>
-          <span className="truncate font-mono text-xs text-muted" title={provider.baseUrl}>
+          <span className="truncate font-mono text-xs text-muted max-[640px]:text-[9px]" title={provider.baseUrl}>
             {provider.baseUrl.trim() || 'API 地址未配置'}
           </span>
         </span>
-        <span className="flex items-center gap-2 text-sm text-muted">
-          <Sym name="toc" />
+        <span className="flex items-center gap-2 text-sm text-muted max-[640px]:gap-1 max-[640px]:text-[10px]">
+          <Sym name="toc" className="max-[640px]:size-3" />
           <span className="tabular-nums">{modelCount ?? 0}</span>
-          <span>个模型</span>
-          <span className="ml-auto text-xs text-muted">{open ? '收起' : '管理'}</span>
+          <span className="max-[640px]:hidden">个模型</span>
+          <span className="ml-auto text-xs text-muted max-[640px]:hidden">{open ? '详情' : '进入'}</span>
         </span>
       </button>
 
@@ -880,8 +880,8 @@ export default function ModelsModule() {
   const [providerNotes, setProviderNotes] = useState<Record<string, string>>({});
   /** 哪一家的 key 缺失（provider id）。null = 都没问题 */
   const [keyError, setKeyError] = useState<string | null>(null);
-  /** 展开编辑的供应商（provider id）。null = 全折叠 */
-  const [openProvider, setOpenProvider] = useState<string | null>(null);
+  /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
+  const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const revertTimerRef = useRef<number | undefined>(undefined);
@@ -933,7 +933,7 @@ export default function ModelsModule() {
         // 有缓存说明上次拉过：状态点该是「就绪」而不是「尚未检查连通性」
         cachedNotes[p.id] = `${hit.ids.length} 个模型在架 · 缓存`;
       }
-      if (p.id === openProvider && (!hit || hit.stale)) needFetch.push(p);
+       if (p.id === selectedProviderId && (!hit || hit.stale)) needFetch.push(p);
     }
     if (Object.keys(cachedIds).length > 0) {
       // 只补「还没有值」的那些：手动刷新刚拉回来的结果比缓存新，不能被它顶掉
@@ -969,7 +969,7 @@ export default function ModelsModule() {
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [providersKey, openProvider]);
+  }, [providersKey, selectedProviderId]);
 
   // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
@@ -1012,7 +1012,7 @@ export default function ModelsModule() {
   const triggerKeyError = (providerId: string) => {
     setKeyError(providerId);
     // 出错的那家必须露出来，否则抖动发生在折叠区里，用户看不到
-    setOpenProvider(providerId);
+    setSelectedProviderId(providerId);
     if (revertTimerRef.current) clearTimeout(revertTimerRef.current);
     const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
     revertTimerRef.current = window.setTimeout(() => {
@@ -1098,7 +1098,7 @@ export default function ModelsModule() {
       ],
     });
     // 新加的那家没有地址没有 Key，不摊开就是一行没用的空壳
-    setOpenProvider(id);
+    setSelectedProviderId(id);
   };
 
   const removeProvider = (p: Provider) => {
@@ -1126,66 +1126,106 @@ export default function ModelsModule() {
     }
     patch.favorites = favs;
     settings.update(patch);
-    if (openProvider === p.id) setOpenProvider(null);
+    if (selectedProviderId === p.id) setSelectedProviderId(null);
     toast.info(`已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」`);
   };
 
   const currentLlm = settings.llmModel;
   const currentLlmCatalog = catalogOf(settings, currentLlm.providerId);
   const currentMeta = getModelMeta(currentLlmCatalog, currentLlm.model);
+  const selectedProvider = selectedProviderId
+    ? settings.providers.find((p) => p.id === selectedProviderId) ?? null
+    : null;
 
   return (
     <>
       <SectionCard
-        title="模型供应商"
-        subtitle="先选择供应商，再管理连接和模型。模型列表从该供应商的 API 拉取。"
+        title={selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : '模型供应商'}
+        subtitle={selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
         actions={<>
           <LoadingButton variant="tertiary" loading={metaRefreshing} data-testid="btn-refresh-meta" onPress={() => void handleRefreshMeta()}>刷新能力数据</LoadingButton>
-          <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>
+          {!selectedProvider && <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>}
         </>}
       >
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
-          <button
-            type="button"
-            className="flex min-h-[218px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted transition-colors duration-200 hover:border-accent/55 hover:bg-background-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
-            data-testid="provider-add-card"
-            aria-label="添加供应商"
-            onClick={addProvider}
-          >
-            <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm">
-              <Sym name="add" />
-            </span>
-            <span className="text-lg font-semibold text-foreground">连接提供商</span>
-            <span className="text-sm">API 密钥或登录</span>
-          </button>
-          {settings.providers.map((p, i) => (
+        {selectedProvider ? (
+          <div className="flex flex-col gap-4">
+            <Button
+              variant="tertiary"
+              className="self-start"
+              data-testid="provider-back"
+              onPress={() => setSelectedProviderId(null)}
+            >
+              <Sym name="arrow_back" />返回供应商列表
+            </Button>
             <ProviderRow
-              key={p.id}
-              provider={p}
-              others={settings.providers.filter((x) => x.id !== p.id)}
-              note={providerNotes[p.id]}
-              status={statusOf(p)}
-              modelCount={modelOptions[p.id]?.length ?? null}
-              open={openProvider === p.id}
-              shaking={keyError === p.id}
-              removable={settings.providers.length > 1 || i > 0}
-              onToggle={() => setOpenProvider(openProvider === p.id ? null : p.id)}
+              key={selectedProvider.id}
+              provider={selectedProvider}
+              others={settings.providers.filter((x) => x.id !== selectedProvider.id)}
+              note={providerNotes[selectedProvider.id]}
+              status={statusOf(selectedProvider)}
+              modelCount={modelOptions[selectedProvider.id]?.length ?? null}
+              open
+              shaking={keyError === selectedProvider.id}
+              removable={settings.providers.length > 1}
+              onToggle={() => undefined}
               onChange={(patch) => {
                 if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
-                  setModelOptions(({ [p.id]: _old, ...rest }) => rest);
-                  setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
+                  setModelOptions(({ [selectedProvider.id]: _old, ...rest }) => rest);
+                  setProviderNotes(({ [selectedProvider.id]: _old, ...rest }) => rest);
                 }
-                settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
+                settings.update({ providers: settings.providers.map((x) => (x.id === selectedProvider.id ? { ...x, ...patch } : x)) });
               }}
               onRemove={async () => {
-                if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
+                if (await confirmDialog({ headline: '删除供应商？', description: `删除「${selectedProvider.name || selectedProvider.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(selectedProvider);
               }}
             >
-              <ModelLibrary key={p.id} providerId={p.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(p.id)} />
+              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(selectedProvider.id)} />
             </ProviderRow>
-          ))}
-        </div>
+          </div>
+        ) : (
+          <div className="grid grid-cols-3 gap-4 max-[640px]:gap-1.5">
+            <button
+              type="button"
+              className="flex min-h-[218px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted transition-colors duration-200 hover:border-accent/55 hover:bg-background-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[640px]:min-h-[150px] max-[640px]:gap-2 max-[640px]:rounded-xl max-[640px]:p-2"
+              data-testid="provider-add-card"
+              aria-label="添加供应商"
+              onClick={addProvider}
+            >
+              <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg">
+                <Sym name="add" />
+              </span>
+              <span className="text-lg font-semibold text-foreground max-[640px]:text-[10px]">连接提供商</span>
+              <span className="text-sm max-[640px]:text-[9px]">API 密钥或登录</span>
+            </button>
+            {settings.providers.map((p, i) => (
+              <ProviderRow
+                key={p.id}
+                provider={p}
+                others={settings.providers.filter((x) => x.id !== p.id)}
+                note={providerNotes[p.id]}
+                status={statusOf(p)}
+                modelCount={modelOptions[p.id]?.length ?? null}
+                open={false}
+                shaking={keyError === p.id}
+                removable={settings.providers.length > 1 || i > 0}
+                onToggle={() => setSelectedProviderId(p.id)}
+                onChange={(patch) => {
+                  if (patch.protocol !== undefined || patch.baseUrl !== undefined || patch.apiKey !== undefined) {
+                    setModelOptions(({ [p.id]: _old, ...rest }) => rest);
+                    setProviderNotes(({ [p.id]: _old, ...rest }) => rest);
+                  }
+                  settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
+                }}
+                onRemove={async () => {
+                  if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
+                }}
+              >
+                <ModelLibrary key={p.id} providerId={p.id} options={modelOptions} checking={checking} onFetch={() => handleCheck(p.id)} />
+              </ProviderRow>
+            ))}
+          </div>
+        )}
         <p className="mt-3 text-xs leading-relaxed text-muted">
           {metaInfo ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）` : '能力数据未拉取，可在供应商详情中更新'}
           。models.dev 仅补充能力与定价，不作为供应商可用模型列表；接口未提供列表时可手动添加。

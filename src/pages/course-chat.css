@@ -24,7 +24,7 @@
 }
 
 /* 模糊贴着聊天可视区，不随消息滚走；顶栏下方再留一段柔和的衰减区。 */
-.page-course-chat .page-app-bar__blur:not(.course-chat__bottom-blur) {
+.page-course-chat .page-app-bar__blur {
   bottom: -24px;
 }
 
@@ -810,18 +810,6 @@
   padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
     max(12px, env(safe-area-inset-bottom));
   background: transparent;
-}
-
-/* 复用顶栏的四层渐进模糊与透明度降级，翻转后从上方透明过渡到下方模糊。
-   只覆盖消息区末尾 56px，不改变滚动高度，也不挡住选择、点击或回到底部按钮。 */
-.course-chat__bottom-blur {
-  inset: auto 0 100%;
-  height: 56px;
-  transform: rotate(180deg);
-}
-
-.course-chat--empty .course-chat__bottom-blur {
-  display: none;
 }
 
 /* ── 回到底部 ─────────────────────────────────────────────────────────────

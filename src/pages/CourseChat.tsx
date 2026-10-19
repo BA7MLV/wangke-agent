@@ -1495,13 +1495,6 @@ export default function CourseChat() {
           {/* 正文独占上行；底部添加入口固定在左，发送操作固定在右。
               队列只在有待发消息时出现；长问题仍可自动增高。 */}
           <div className="course-chat__composer-wrap" ref={composerWrapRef}>
-            {/* 固定在消息可视区下沿，向输入栏方向逐渐加深；不模糊输入控件。 */}
-            <div className="page-app-bar__blur course-chat__bottom-blur" aria-hidden="true">
-              <span />
-              <span />
-              <span />
-              <span />
-            </div>
             {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
                 默认隐藏，显隐由消息流的 scroll 监听直接写 `data-show`（见组件里的
                 onScroll）—— 它每滚一下都在变，不挂 state、不带动整棵消息树重渲。
