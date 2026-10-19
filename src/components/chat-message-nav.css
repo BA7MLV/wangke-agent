@@ -1,0 +1,67 @@
+.chat-message-nav {
+  position: absolute;
+  z-index: 2;
+  inset-inline-end: max(8px, env(safe-area-inset-right));
+  top: 50%;
+  transform: translateY(-50%);
+  display: flex;
+  flex-direction: column;
+  width: 32px;
+  max-height: min(60%, 384px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: none;
+}
+
+.chat-message-nav::-webkit-scrollbar { display: none; }
+
+.chat-message-nav .chat-message-nav__item {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 24px;
+  width: 32px;
+  min-width: 32px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  cursor: pointer;
+}
+
+.chat-message-nav__item:focus-visible { outline: 2px solid var(--foreground); outline-offset: -2px; }
+
+.chat-message-nav__tick {
+  width: 16px;
+  height: 3px;
+  border-radius: 999px;
+  background: var(--muted);
+  opacity: 0.35;
+}
+
+.chat-message-nav__item[aria-current='location'] .chat-message-nav__tick,
+.chat-message-nav__item:hover .chat-message-nav__tick,
+.chat-message-nav__item:focus-visible .chat-message-nav__tick {
+  background: var(--foreground);
+  opacity: 1;
+}
+
+.chat-message-nav__item[aria-current='location'] .chat-message-nav__tick { width: 24px; }
+
+.chat-message-nav__preview {
+  max-width: 256px;
+  overflow-wrap: anywhere;
+}
+
+.chat-message-nav__ordinal {
+  display: block;
+  color: var(--muted);
+  font-size: 0.75rem;
+  font-variant-numeric: tabular-nums;
+}
+
+@media (pointer: coarse) {
+  .chat-message-nav .chat-message-nav__item { flex-basis: 32px; min-height: 32px; }
+}

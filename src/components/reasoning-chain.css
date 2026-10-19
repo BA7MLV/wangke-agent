@@ -79,9 +79,23 @@
 
 .reasoning-chain .reasoning-chain__body--live {
   max-height: min(240px, 35dvh);
-  overflow: auto;
+  /* A stable, explicitly styled gutter avoids the OS overlay scrollbar flashing
+     on every streamed scroll update. Keep it usable without hover as well. */
+  overflow-x: hidden;
+  overflow-y: scroll;
+  scrollbar-gutter: stable;
+  scrollbar-width: thin;
+  scrollbar-color: var(--border-secondary) transparent;
+  padding-right: 8px;
   overscroll-behavior: contain;
 }
+
+.reasoning-chain__body--live::-webkit-scrollbar { width: 6px; }
+.reasoning-chain__body--live::-webkit-scrollbar-thumb {
+  background: var(--border-secondary);
+  border-radius: 999px;
+}
+.reasoning-chain__body--live::-webkit-scrollbar-track { background: transparent; }
 
 /* 渐隐长度与 transitions.css 的 --reason-fade 同一个 token
    （29 Reasoning stream 的蒙版）。通用 .t-reason 默认上下都淡；

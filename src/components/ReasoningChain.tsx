@@ -159,7 +159,13 @@ export default function ReasoningChain({
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     const observer = new ResizeObserver(() => {
-      if (live && stickRef.current) el.scrollTop = el.scrollHeight;
+      if (live && stickRef.current) {
+        // Disclosure can resize during an in-flight scroll tween. Cancel its
+        // stale starting position before snapping, or its next frame scrolls
+        // upward and is mistaken for the user opting out of follow mode.
+        stopStream();
+        el.scrollTop = el.scrollHeight;
+      }
       lastTop.current = el.scrollTop;
       syncFade(el);
     });

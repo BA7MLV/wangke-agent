@@ -5,6 +5,7 @@ import { db } from '../store/db';
 import { hitsInk, inkPath, inkOpacity, type InkNib, type InkPoint, type InkStroke, type InkTool } from '../materials/ink';
 import { useSelectionAsk } from '../store/selectionAsk';
 import { uuid } from '../utils/uuid';
+import { InkInput } from '../materials/inkInput';
 import './material-ink.css';
 
 interface Change { add: InkStroke[]; remove: InkStroke[] }
@@ -34,7 +35,7 @@ interface InkContextValue {
   redo: () => void;
   canUndo: boolean;
   canRedo: boolean;
-  pen: React.RefObject<{ active: boolean; until: number }>;
+  input: InkInput;
 }
 const InkContext = createContext<InkContextValue | null>(null);
 export const useMaterialInk = () => useContext(InkContext)!;
@@ -57,7 +58,12 @@ export function MaterialInkProvider({ materialId, children }: { materialId: stri
   const queue = useRef<Change[]>([]);
   const saving = useRef(false);
   const mounted = useRef(false);
-  const pen = useRef({ active: false, until: 0 });
+  const [input] = useState(() => new InkInput());
+  const inputRoot = useRef<HTMLDivElement>(null);
+  const writing = ready && tool !== 'read';
+  useEffect(() => {
+    if (writing && inputRoot.current) return input.attach(inputRoot.current, finger);
+  }, [input, writing, finger]);
 
   const load = useCallback(async () => {
     try {
@@ -140,7 +146,9 @@ export function MaterialInkProvider({ materialId, children }: { materialId: stri
     nib, setNib, opacity: tool === 'highlight' ? highlightOpacity : penOpacity,
     setOpacity: tool === 'highlight' ? setHighlightOpacity : setPenOpacity, smoothing, setSmoothing,
     ready, status, error, retry: () => void (ready ? flush() : load()), strokes, commit, undo, redo,
-    canUndo: history.past.length > 0, canRedo: history.future.length > 0, pen }}>{children}</InkContext>;
+    canUndo: history.past.length > 0, canRedo: history.future.length > 0, input }}>
+    <div ref={inputRoot} className="ink-input-root" data-writing={writing || undefined}>{children}</div>
+  </InkContext>;
 }
 
 export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolean; onActivate?: () => void }) {
@@ -184,7 +192,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
         </>}
       </div>
       <div className="ink-toolbar__hint">
-         <span>{ink.tool === 'read' ? '手指滚动 · 触控笔可直接书写' : ink.finger ? '兼容模式：手指也可绘制' : '手指上下滚动 · 触控笔直接书写'}</span>
+        <span>{ink.tool === 'read' ? '阅读 / 选字；选择画笔进入书写' : ink.finger ? '手指绘制模式；切回阅读可滚动' : '笔写字 · 手指滑动 · 落笔时暂停触摸翻页'}</span>
         {ink.error ? <span role="alert" className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span>
           : <span role="status">{ink.status}</span>}
       </div>
@@ -206,20 +214,22 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
   const preview = useRef<SVGPathElement>(null);
   const layer = useRef<HTMLDivElement>(null);
   const previewSvg = useRef<SVGSVGElement>(null);
-  const gesture = useRef<{ id: number; isPen: boolean; stroke: InkStroke; erased: Set<string>; last: InkPoint; rect: DOMRect; tool: InkTool } | null>(null);
-  const pan = useRef<{ id: number; x: number; y: number; scroll: HTMLElement } | null>(null);
+  const gesture = useRef<{ id: number; stroke: InkStroke; erased: Set<string>; last: InkPoint; rect: DOMRect; tool: InkTool } | null>(null);
   const frame = useRef(0);
 
   const cancel = useCallback(() => {
     if (frame.current) cancelAnimationFrame(frame.current);
     frame.current = 0;
     // 抬笔后的掌触保护只属于触控笔，不能吞掉电容笔/手指连续书写的下一笔。
-    if (gesture.current?.isPen) { ink.pen.current.active = false; ink.pen.current.until = performance.now() + 250; }
+    const id = gesture.current?.id;
+    if (id !== undefined) {
+      ink.input.endPen(id);
+      if (ink.input.drawing?.id === id) ink.input.drawing = null;
+    }
     gesture.current = null;
-    pan.current = null;
     preview.current?.setAttribute('d', '');
     layer.current?.querySelectorAll<SVGSVGElement>('[data-ink-stroke]').forEach((el) => { el.style.visibility = ''; });
-  }, [ink.pen]);
+  }, [ink.input]);
   useEffect(() => cancel, [cancel, active, ink.tool, ink.finger]);
 
   const point = (e: Pick<PointerEvent, 'clientX' | 'clientY' | 'pressure' | 'pointerType'>, rect: DOMRect, height = rect.height / rect.width * 1000): InkPoint => ({
@@ -240,20 +250,11 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
   };
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (!active || e.button !== 0) return;
-    if (e.pointerType === 'touch' && (ink.pen.current.active || performance.now() < ink.pen.current.until || e.width > 40 || e.height > 40)) return;
-    if (e.pointerType === 'touch' && !ink.finger) {
-      // 日用默认：手指只负责滚动，触控笔才负责书写。让浏览器原生滚动，
-      // 同时保留一个指针捕获兜底，兼容部分 WebView 不会为绝对定位覆盖层
-      // 触发原生滚动的情况。这里不调用 preventDefault，不会阻断系统手势。
-      if (!e.isPrimary || pan.current) return;
-      const scroll = e.currentTarget.closest<HTMLElement>('.mr-scroll');
-      if (scroll) { pan.current = { id: e.pointerId, x: e.clientX, y: e.clientY, scroll }; capture(e); }
-      return;
-    }
-    if (gesture.current || (e.pointerType === 'touch' && !e.isPrimary)) return;
+    if (e.pointerType === 'touch' && ink.input.isBlockedTouch(e.pointerId)) return;
+    if (e.pointerType === 'touch' && !ink.finger) return;
+    if (gesture.current || ink.input.drawing || (e.pointerType === 'touch' && !e.isPrimary)) return;
     e.preventDefault();
     e.stopPropagation();
-    pan.current = null;
     const rect = e.currentTarget.getBoundingClientRect();
     const p = point(e, rect);
     const stroke: InkStroke = {
@@ -264,8 +265,8 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
       renderer: 'freehand-v1', nib: ink.nib, opacity: ink.opacity, smoothing: ink.smoothing,
       input: e.pointerType === 'touch' ? 'touch' : e.pointerType === 'pen' ? 'pen' : 'mouse',
     };
-    gesture.current = { id: e.pointerId, isPen: e.pointerType === 'pen', stroke, erased: new Set(), last: p, rect, tool: ink.tool };
-    ink.pen.current.active = e.pointerType === 'pen';
+    gesture.current = { id: e.pointerId, stroke, erased: new Set(), last: p, rect, tool: ink.tool };
+    ink.input.drawing = { id: e.pointerId, type: e.pointerType, cancel };
     previewSvg.current?.setAttribute('viewBox', `0 0 1000 ${stroke.height}`);
     preview.current?.setAttribute('fill', stroke.color);
     preview.current?.setAttribute('opacity', String(inkOpacity(stroke)));
@@ -286,15 +287,6 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     g.last = p;
   };
   const move = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const drag = pan.current;
-    if (drag?.id === e.pointerId) {
-      if (!ink.pen.current.active && performance.now() >= ink.pen.current.until) {
-        drag.scroll.scrollTop += drag.y - e.clientY;
-        drag.scroll.scrollLeft += drag.x - e.clientX;
-      }
-      drag.x = e.clientX; drag.y = e.clientY;
-      return;
-    }
     const g = gesture.current;
     if (!g || g.id !== e.pointerId) return;
     e.preventDefault();
@@ -314,7 +306,6 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     paint();
   };
   const up = (e: ReactPointerEvent<HTMLDivElement>) => {
-    if (pan.current?.id === e.pointerId) pan.current = null;
     const g = gesture.current;
     if (!g || g.id !== e.pointerId) return;
     move(e);
@@ -323,8 +314,8 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
   };
   return <div ref={layer} className="ink-layer" data-active={active || undefined} data-finger={ink.finger || undefined} data-testid="ink-layer" data-ink-surface={surface}
     onPointerDown={down} onPointerMove={move} onPointerUp={up}
-    onPointerCancel={(e) => { if (gesture.current?.id === e.pointerId || pan.current?.id === e.pointerId) cancel(); }}
-    onLostPointerCapture={(e) => { if (gesture.current?.id === e.pointerId || pan.current?.id === e.pointerId) cancel(); }}
+    onPointerCancel={(e) => { if (gesture.current?.id === e.pointerId) cancel(); }}
+    onLostPointerCapture={(e) => { if (gesture.current?.id === e.pointerId) cancel(); }}
     onContextMenu={(e) => { if (active) e.preventDefault(); }}>
     {strokes.map((stroke) => <SavedStroke key={stroke.id} stroke={stroke} />)}
     <svg ref={previewSvg} preserveAspectRatio="none" aria-hidden="true"><path ref={preview} /></svg>

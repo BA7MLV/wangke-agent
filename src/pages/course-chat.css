@@ -23,6 +23,11 @@
   --course-chat-column: 820px;
 }
 
+/* 模糊贴着聊天可视区，不随消息滚走；顶栏下方再留一段柔和的衰减区。 */
+.page-course-chat .page-app-bar__blur:not(.course-chat__bottom-blur) {
+  bottom: -24px;
+}
+
 .course-chat {
   box-sizing: border-box;
   width: 100%;
@@ -45,6 +50,7 @@
     max(24px, env(safe-area-inset-bottom));
 }
 
+.course-chat--empty .course-chat__timeline,
 .course-chat--empty .course-chat__messages,
 .course-chat--empty .course-chat__empty {
   display: contents;
@@ -94,6 +100,14 @@
   display: flex;
   flex-direction: column;
   background: transparent;
+}
+
+.course-chat__timeline {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
 }
 
 /* ── 回答设置 ─────────────────────────────────────────────────────────────
@@ -184,7 +198,7 @@
   /* 首屏消息让出浮动顶栏，再留 28px 阅读间距；吸顶标题单独贴顶栏下沿，
      不继承首屏的阅读间距。 */
   --reasoning-sticky-gap: 28px;
-  --course-chat-message-inset: max(20px, calc((100cqw - var(--course-chat-column)) / 2));
+  --course-chat-message-inset: max(48px, calc((100cqw - var(--course-chat-column)) / 2));
   flex: 1 1 auto;
   min-height: 0;
   overflow-x: hidden;
@@ -787,10 +801,23 @@
      正上方，所以锚点必须是一块**高度会跟着内容变**的容器 —— 锚在 main 上的话，
      队列条一出来按钮就压进输入卡里了。 */
   position: relative;
+  z-index: 1;
   flex: 0 0 auto;
   padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
     max(12px, env(safe-area-inset-bottom));
   background: transparent;
+}
+
+/* 复用顶栏的四层渐进模糊与透明度降级，翻转后从上方透明过渡到下方模糊。
+   只覆盖消息区末尾 56px，不改变滚动高度，也不挡住选择、点击或回到底部按钮。 */
+.course-chat__bottom-blur {
+  inset: auto 0 100%;
+  height: 56px;
+  transform: rotate(180deg);
+}
+
+.course-chat--empty .course-chat__bottom-blur {
+  display: none;
 }
 
 /* ── 回到底部 ─────────────────────────────────────────────────────────────
@@ -1229,7 +1256,7 @@
   .course-chat__messages {
     /* 保留手机原来的 20px 呼吸感，同时叠加动态顶栏高度：不能让窄屏覆盖桌面规则，
        否则消息第一行会钻进顶栏后面。 */
-    padding: calc(var(--app-bar-h, 60px) + 20px) 14px 6px;
+    padding: calc(var(--app-bar-h, 60px) + 20px) 48px 6px 14px;
     scrollbar-gutter: auto;
   }
 

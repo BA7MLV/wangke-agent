@@ -1,7 +1,8 @@
 import type { MediaKeyShortcuts, MediaKeysCallback } from '@vidstack/react';
+import { defaultShortcutSettings, type ShortcutSettings } from './shortcutSettings';
 
 /**
- * YouTube 式键盘映射。
+ * YouTube 式默认键盘映射；按键与跳转步长可在「设置 → 快捷键」覆盖。
  *
  * vidstack 自带的默认表（`MEDIA_KEY_SHORTCUTS`）与 YouTube 有四处差异，这里逐一对齐；
  * 另外 `keyShortcuts` 这个 prop 是**整体替换**而不是深合并，所以默认项必须一条条照抄回来。
@@ -19,12 +20,6 @@ import type { MediaKeyShortcuts, MediaKeysCallback } from '@vidstack/react';
  * 代价是这两组键不再写 `lastKeyboardAction`，因此不触发中央的按键反馈动画
  * （播放/音量/全屏/字幕那几档仍走默认方法，动画照旧）。
  */
-
-/** ← / → 的步长（YouTube 是 5 秒） */
-const ARROW_SEEK = 5;
-
-/** j / l 的步长（YouTube 是 10 秒） */
-const KEY_SEEK = 10;
 
 /**
  * 逐帧步长。YouTube 是「一帧」，但本地文件拿不到真实帧率，
@@ -79,11 +74,13 @@ function mediaTime(player: Player): number {
   return typeof current === 'number' && Number.isFinite(current) ? current : player.currentTime;
 }
 
-export function createYoutubeKeyShortcuts(): MediaKeyShortcuts {
+export function createYoutubeKeyShortcuts(settings: ShortcutSettings = defaultShortcutSettings()): MediaKeyShortcuts {
+  const keys = settings.bindings;
   // 连按累加的游标。本项目同页只有一个播放器，闭包单例足够；
   // 700ms 窗口一过就以「当前时间」为基准，所以不需要在换视频时重置。
   let seekTarget = Number.NaN;
   let until = 0;
+  let pendingSeek = false;
 
   const armAccumulator = (target: number) => {
     seekTarget = target;
@@ -92,13 +89,19 @@ export function createYoutubeKeyShortcuts(): MediaKeyShortcuts {
 
   /** 按住时只发「正在拖动」请求，松手才落定 —— 与 vidstack 自己那套累加逻辑同款。 */
   const seekBy = (delta: number, { event, player, remote }: KeyDownContext) => {
+    event.preventDefault();
+    event.stopPropagation();
     const base = Date.now() < until && Number.isFinite(seekTarget) ? seekTarget : mediaTime(player);
     armAccumulator(Math.min(Math.max(0, base + delta), mediaDuration(player)));
+    pendingSeek = true;
     remote.seeking(seekTarget, event);
   };
 
   const commitSeek = ({ event, remote }: KeyUpContext) => {
-    if (!Number.isFinite(seekTarget)) return;
+    if (!pendingSeek || !Number.isFinite(seekTarget)) return;
+    pendingSeek = false;
+    event.preventDefault();
+    event.stopPropagation();
     remote.seek(seekTarget, event);
   };
 
@@ -113,6 +116,8 @@ export function createYoutubeKeyShortcuts(): MediaKeyShortcuts {
   const seekOnce = (keys: string, resolve: (player: Player, event: KeyboardEvent) => number): MediaKeysCallback => ({
     keys,
     onKeyDown: ({ event, player, remote }) => {
+      event.preventDefault();
+      event.stopPropagation();
       const time = resolve(player, event);
       if (!Number.isFinite(time)) return;
       // 把跳转目标也当成累加基准：紧跟着按方向键时不会被「还没落地的旧位置」带偏
@@ -123,26 +128,26 @@ export function createYoutubeKeyShortcuts(): MediaKeyShortcuts {
 
   return {
     // ── 与 vidstack 默认一致（整体替换后必须显式写回） ─────────────
-    togglePaused: 'k Space',
-    toggleMuted: 'm',
-    toggleFullscreen: 'f',
-    togglePictureInPicture: 'i',
-    toggleCaptions: 'c',
-    volumeUp: 'ArrowUp',
-    volumeDown: 'ArrowDown',
+    togglePaused: keys.togglePaused,
+    toggleMuted: keys.toggleMuted,
+    toggleFullscreen: keys.toggleFullscreen,
+    togglePictureInPicture: keys.togglePictureInPicture,
+    toggleCaptions: keys.toggleCaptions,
+    volumeUp: keys.volumeUp,
+    volumeDown: keys.volumeDown,
     // '>' / '<' 就是 Shift+. / Shift+,（vidstack 的按键匹配对这两个字符隐含要求 Shift）
-    speedUp: '>',
-    slowDown: '<',
+    speedUp: keys.speedUp,
+    slowDown: keys.slowDown,
     // 0-9 跳到百分比由 vidstack 内部处理（mediaKeyboardController），无需也无法在这里覆盖
 
     // ── 与 YouTube 对齐的部分 ────────────────────────────────────
-    seekForward: holdSeek('l L', KEY_SEEK),
-    seekBackward: holdSeek('j J', -KEY_SEEK),
-    arrowSeekForward: holdSeek('ArrowRight', ARROW_SEEK),
-    arrowSeekBackward: holdSeek('ArrowLeft', -ARROW_SEEK),
-    seekToStart: seekOnce('Home', () => 0),
-    seekToEnd: seekOnce('End', (player) => mediaDuration(player)),
-    frameForward: seekOnce('.', (player) => (player.paused ? player.currentTime + FRAME_STEP : Number.NaN)),
-    frameBackward: seekOnce(',', (player) => (player.paused ? Math.max(0, player.currentTime - FRAME_STEP) : Number.NaN)),
+    seekForward: holdSeek(keys.seekForward, settings.keySeek),
+    seekBackward: holdSeek(keys.seekBackward, -settings.keySeek),
+    arrowSeekForward: holdSeek(keys.arrowSeekForward, settings.arrowSeek),
+    arrowSeekBackward: holdSeek(keys.arrowSeekBackward, -settings.arrowSeek),
+    seekToStart: seekOnce(keys.seekToStart, () => 0),
+    seekToEnd: seekOnce(keys.seekToEnd, (player) => mediaDuration(player)),
+    frameForward: seekOnce(keys.frameForward, (player) => (player.paused ? Math.min(mediaDuration(player), mediaTime(player) + FRAME_STEP) : Number.NaN)),
+    frameBackward: seekOnce(keys.frameBackward, (player) => (player.paused ? Math.max(0, mediaTime(player) - FRAME_STEP) : Number.NaN)),
   };
 }

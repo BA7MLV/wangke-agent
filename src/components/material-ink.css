@@ -10,8 +10,10 @@
 .ink-range input { width: 80px; accent-color: var(--foreground); }
 .ink-range span { min-width: 36px; font-variant-numeric: tabular-nums; }
 .ink-layer { position: absolute; inset: 0; z-index: 10; pointer-events: none; overflow: hidden; }
-.ink-layer[data-active] { pointer-events: auto; touch-action: pan-y; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
-.ink-layer[data-active][data-finger] { touch-action: none; }
+.ink-input-root { display: contents; }
+/* 笔和手指共享 touch-action；书写态必须在接触前关闭 UA 滚动，不能在 pointerdown 临时改。 */
+.ink-input-root[data-writing] .mr-scroll { touch-action: none; }
+.ink-layer[data-active] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
 .ink-toolbar__tools [data-testid="ink-finger"] { color: var(--muted); }
 .mr-shell { position: relative; }
 .mr-shell__actions { display: flex; justify-content: flex-end; padding: 4px 8px 0; }

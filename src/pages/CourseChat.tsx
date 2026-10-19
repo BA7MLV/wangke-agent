@@ -23,7 +23,8 @@ import SkillPicker from '../components/SkillPicker';
 import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, ThinkLine, PendingReply, useMessageEnter } from '../components/motion';
 import ReasoningChain from '../components/ReasoningChain';
-import VirtualMessages from '../components/VirtualMessages';
+import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
+import ChatMessageNav from '../components/ChatMessageNav';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
 import ToolTrace from '../components/ToolTrace';
@@ -825,6 +826,8 @@ export default function CourseChat() {
   );
 
   const lastMessage = messages[messages.length - 1];
+  const virtualMessagesRef = useRef<VirtualMessagesHandle>(null);
+  const navigateToQuestion = useCallback(() => { stickRef.current = false; }, []);
   const scrollSignal = [
     messages.length,
     lastMessage?.key ?? '',
@@ -1207,6 +1210,7 @@ export default function CourseChat() {
         data-testid="course-chat-page"
       >
         <section className="course-chat__main" aria-label="AI 助手聊天">
+          <div className="course-chat__timeline">
           <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
             {!loaded && <ChatHistorySkeleton />}
             {loaded && messages.length === 0 && (
@@ -1272,7 +1276,8 @@ export default function CourseChat() {
                 </button>
               )}
             </div>}
-            {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}>{(message, index) => {
+            {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}
+              ref={virtualMessagesRef} scrollPaddingStart={88}>{(message, index) => {
               const user = message.role === 'user';
               const htmlPreview = !user ? htmlPreviewSource(message.content) : undefined;
               /**
@@ -1462,9 +1467,20 @@ export default function CourseChat() {
             }}</VirtualMessages>}
           </div>
 
+          <ChatMessageNav key={activeId} messages={messages} scrollRef={listRef}
+            virtualRef={virtualMessagesRef} onNavigate={navigateToQuestion} />
+          </div>
+
           {/* 正文独占上行；底部技能入口固定在左，发送操作固定在右。
               队列只在有待发消息时出现；长问题仍可自动增高。 */}
           <div className="course-chat__composer-wrap">
+            {/* 固定在消息可视区下沿，向输入栏方向逐渐加深；不模糊输入控件。 */}
+            <div className="page-app-bar__blur course-chat__bottom-blur" aria-hidden="true">
+              <span />
+              <span />
+              <span />
+              <span />
+            </div>
             {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
                 默认隐藏，显隐由消息流的 scroll 监听直接写 `data-show`（见组件里的
                 onScroll）—— 它每滚一下都在变，不挂 state、不带动整棵消息树重渲。

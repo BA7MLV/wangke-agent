@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ReasoningEffort } from '../api/siliconflow';
 import { normalizeThinkingEffort } from '../api/modelCaps';
+import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
@@ -166,6 +167,7 @@ export interface Settings {
   danmakuEnabled: boolean;
   /** 用户自定义的倍速档位（0.25–4，按控制栏「自定义」录入；与内置档位一起去重升序展示） */
   customRates: number[];
+  shortcuts: ShortcutSettings;
   /** 界面主题：跟随系统 / 强制浅色 / 强制深色（MD3 令牌体系下深浅两套色板都已就位） */
   theme: AppTheme;
   /** HeroUI 强调色预设 */
@@ -272,6 +274,7 @@ function initialSettings(): Settings {
     bilibiliCookie: '',
     danmakuEnabled: true,
     customRates: [],
+    shortcuts: defaultShortcutSettings(),
     theme: 'auto',
     accentColor: 'blue',
     fontScale: 'standard',
@@ -301,6 +304,7 @@ export const useSettings = create<SettingsStore>()(
        * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
        */
       update: (patch) => {
+        if (patch.shortcuts !== undefined) patch = { ...patch, shortcuts: normalizeShortcutSettings(patch.shortcuts) };
         if (patch.thinkingEffort === undefined) {
           set(patch);
           return;
@@ -319,6 +323,7 @@ export const useSettings = create<SettingsStore>()(
         ...current,
         ...(persisted as Partial<Settings>),
         jev: normalizeJevSettings((persisted as Partial<Settings> | undefined)?.jev),
+        shortcuts: normalizeShortcutSettings((persisted as Partial<Settings> | undefined)?.shortcuts),
       }),
       /**
        * v2 → v3：思考档位从 3 档（low / high / max）扩成 6 档
@@ -369,6 +374,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   if (Array.isArray(persisted.providers)) {
     const current = { ...initialSettings(), ...(persisted as unknown as Settings) };
     current.jev = normalizeJevSettings(persisted.jev);
+    current.shortcuts = normalizeShortcutSettings(persisted.shortcuts);
     // v2 → v3：档位从 3 档扩成 6 档，`max` 改名 `xhigh`。hydrate **不经过 store 的
     // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
@@ -414,6 +420,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     bilibiliCookie: s.bilibiliCookie ?? base.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled ?? base.danmakuEnabled,
     customRates: Array.isArray(s.customRates) ? s.customRates : base.customRates,
+    shortcuts: normalizeShortcutSettings(s.shortcuts),
     theme: s.theme ?? base.theme,
     accentColor: isAccentColor(s.accentColor) ? s.accentColor : base.accentColor,
     fontScale: isFontScale(s.fontScale) ? s.fontScale : base.fontScale,
@@ -468,6 +475,7 @@ export function getSettings(): Settings {
     bilibiliCookie: s.bilibiliCookie,
     danmakuEnabled: s.danmakuEnabled,
     customRates: [...s.customRates],
+    shortcuts: { ...s.shortcuts, bindings: { ...s.shortcuts.bindings } },
     theme: s.theme,
     accentColor: s.accentColor,
     fontScale: s.fontScale,

@@ -14,6 +14,7 @@ import type { Cue } from '../utils/vtt';
 import { PageShell, EmptyState, Sym, useDynamicColor, toast } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { SettingsButton } from '../components/SettingsModal';
+import { useSettingsDialog } from '../components/settingsDialogStore';
 import type { MaterialReaderHandle } from '../materials/types';
 import SubtitlePanel from '../components/SubtitlePanel';
 import HandoutPanel from '../components/HandoutPanel';
@@ -86,6 +87,8 @@ function PlayerResource({ id }: { id: string | undefined }) {
   const [currentTime, setCurrentTime] = useState(0);
   const playerRef = useRef<MediaPlayerInstance>(null);
   const captionScale = useSettings((s) => s.captionScale);
+  const shortcuts = useSettings((s) => s.shortcuts);
+  const { open: settingsOpen } = useSettingsDialog();
   const dynamicColor = useSettings((s) => s.dynamicColor);
   /** 当前面板。宽屏与窄屏共用同一套 Tabs，横竖屏不再分叉。 */
   const [activeTab, setActiveTab] = useState<PanelKey>('subs');
@@ -355,9 +358,8 @@ function PlayerResource({ id }: { id: string | undefined }) {
   // 讲义/弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
   const hasSubtitles = subsLoaded ? segments.length > 0 && !subsRunning : null;
 
-  // YouTube 式键盘映射（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。
-  // 单例：里面的连按累加游标要跨按键保留，所以不能每次渲染重建。见 utils/playerKeys.ts。
-  const keyShortcuts = useMemo(() => createYoutubeKeyShortcuts(), []);
+  // 默认 YouTube 式映射，设置改变时重建；其余渲染保留连按累加游标。
+  const keyShortcuts = useMemo(() => createYoutubeKeyShortcuts(shortcuts), [shortcuts]);
 
   /**
    * 布局槽位。
@@ -540,6 +542,16 @@ function PlayerResource({ id }: { id: string | undefined }) {
               controlsDelay={CONTROLS_IDLE_DELAY}
               // YouTube 式快捷键（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。见 utils/playerKeys.ts
               keyShortcuts={keyShortcuts}
+              keyTarget="player"
+              keyDisabled={!shortcuts.enabled || settingsOpen}
+              onKeyDownCapture={(event) => {
+                // 输入法候选字和嵌套编辑器内的按键不触发媒体动作。
+                const target = event.target;
+                if (event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229 ||
+                  (target instanceof Element && target.closest('input, textarea, select, [contenteditable="true"], [role="textbox"]'))) {
+                  event.stopPropagation();
+                }
+              }}
               // 学习时长追踪：播放中不做「人走开了」的空闲判定（看课不用一直操作键鼠）。
               // 暂停/播完/卸载都恢复普通判定，见 store/studyTime.ts。
               onPlay={() => setStudyMediaPlaying(true)}
@@ -561,10 +573,9 @@ function PlayerResource({ id }: { id: string | undefined }) {
               <PlayerBigPlayButton />
               <SeekFeedback />
               <DanmakuLayer videoId={id} />
-              {/* seekStep 只影响「时间滑块自己拿到方向键」那条路（滑块被 Tab 聚焦时，
-                  或方向键在滑块上合成的事件）：标成 5s 才能和 playerKeys 里的 ←/→ 一致。
-                  j/l 走的是 playerKeys 的回调，不受这里影响。 */}
-              <DefaultVideoLayout icons={defaultLayoutIcons} slots={layoutSlots} seekStep={5} />
+              {/* 滑块方向键跟随小幅跳转步长。映射改变时重挂布局，刷新 vidstack 在控件
+                  挂载时生成的 aria-keyshortcuts，避免旧映射反向覆盖新配置。只重挂控制栏，不重载视频。 */}
+              <DefaultVideoLayout key={JSON.stringify(shortcuts.bindings)} icons={defaultLayoutIcons} slots={layoutSlots} seekStep={shortcuts.arrowSeek} />
             </MediaPlayer>
           )}
 

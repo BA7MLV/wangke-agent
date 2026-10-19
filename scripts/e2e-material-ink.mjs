@@ -63,6 +63,20 @@ async function penStroke(layer, yOffset = 70) {
   await cdp.send('Input.dispatchMouseEvent', { type: 'mouseReleased', x: x + 72, y: y + Math.sin(6) * 10, button: 'left', buttons: 0, pointerType: 'pen', force: 0, clickCount: 1 });
 }
 
+// CDP 触摸会触发浏览器真正的手势仲裁 / pointercancel；dispatchEvent 无法覆盖这一层。
+async function touchAt(type, x, y) {
+  await cdp.send('Input.dispatchTouchEvent', { type, touchPoints: type === 'touchEnd' || type === 'touchCancel' ? [] : [{ x, y, id: 1, radiusX: 4, radiusY: 4, force: .5 }] });
+}
+
+async function touchSwipe(x, y, distance = 90) {
+  await touchAt('touchStart', x, y);
+  for (let i = 1; i <= 6; i++) {
+    await touchAt('touchMove', x, y - distance * i / 6);
+    await delay(16);
+  }
+  await touchAt('touchEnd');
+}
+
 try {
   const pdfId = await importFile('scripts/fixtures/sample-zh.pdf');
   assert.equal(await byId('study-assistant-panel').isVisible(), false);
@@ -74,13 +88,17 @@ try {
   await page.getByLabel('笔迹粗细').fill('4.5');
   const first = page.locator('[data-page="1"] [data-testid="ink-layer"]');
   await first.waitFor();
+  await page.locator('[data-page="1"] .textLayer span').first().waitFor();
+  await first.evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+  await first.evaluate(() => new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve))));
   const box = await first.boundingBox();
-  const touch = { pointerId: 32, pointerType: 'touch', isPrimary: true, button: 0, width: 8, height: 8, clientX: box.x + 100, clientY: box.y + 180 };
-  await first.dispatchEvent('pointerdown', touch);
-  await first.dispatchEvent('pointermove', { ...touch, clientY: touch.clientY - 60 });
-  await first.dispatchEvent('pointerup', { ...touch, clientY: touch.clientY - 60 });
+  const scrollTop = () => page.locator('.mr-scroll').evaluate((e) => e.scrollTop);
+  await touchSwipe(box.x + 100, box.y + 220);
   assert.equal((await inkRows()).length, 0, '手指翻阅不留笔迹');
-  assert.ok(await page.locator('.mr-scroll').evaluate((e) => e.scrollTop > 0), '批注态手指能翻阅');
+  assert.ok(await scrollTop() > 0, '真实触摸在批注态能翻阅');
+  // 接触即停止惯性，随后取消这个触摸，回到起点。
+  await touchAt('touchStart', box.x + 100, box.y + 220);
+  await touchAt('touchCancel');
   await page.locator('.mr-scroll').evaluate((e) => e.scrollTop = 0);
 
   await penStroke(first);
@@ -98,6 +116,74 @@ try {
   await byId('ink-undo').click(); await waitSaved(0);
   await byId('ink-redo').click(); await waitSaved(1);
   assert.deepEqual((await inkRows())[0], saved, '重做恢复原笔迹');
+
+  // 竖直笔画 + 同时发生的真实触摸：浏览器不能把笔画接管为滚动。
+  await first.evaluate((el) => el.scrollIntoView({ block: 'start', behavior: 'instant' }));
+  const r = await first.boundingBox();
+  const px = r.x + 130, py = r.y + 70;
+  const pen = async (type, y) => cdp.send('Input.dispatchMouseEvent', {
+    type, x: px, y, button: 'left', buttons: type === 'mouseReleased' ? 0 : 1,
+    pointerType: 'pen', force: type === 'mouseReleased' ? 0 : .5, clickCount: 1,
+  });
+  const beforePen = await scrollTop();
+  await pen('mousePressed', py);
+  await pen('mouseMoved', py + 35);
+  await touchSwipe(px + 80, py + 180);
+  await pen('mouseMoved', py + 140);
+  assert.equal(await scrollTop(), beforePen, '落笔期间手指不能拖动页面');
+  await pen('mouseReleased', py + 140);
+  await waitSaved(2);
+  const vertical = (await inkRows()).find((s) => s.id !== saved.id);
+  assert.ok((vertical.points.at(-1).y - vertical.points[0].y) * r.width / 1000 > 130, '长竖笔没有被 UA 取消');
+  await byId('ink-undo').click(); await waitSaved(1);
+
+  // 跨页面共享仲裁：先触摸再落笔，触摸 cancel / lostcapture 不能清空笔画。
+  await delay(300);
+  await first.evaluate(async (el) => {
+    const r = el.getBoundingClientRect();
+    const scroll = el.closest('.mr-scroll');
+    const fire = (target, type, id, pointerType, x, y) => target.dispatchEvent(new PointerEvent(type,
+      { bubbles: true, cancelable: true, isPrimary: true, pointerId: id, pointerType, button: 0,
+        clientX: r.left + x, clientY: r.top + y, width: 8, height: 8, pressure: .5 }));
+    fire(scroll, 'pointerdown', 501, 'touch', 100, 200);
+    fire(el, 'pointerdown', 502, 'pen', 100, 80);
+    fire(el, 'pointermove', 502, 'pen', 100, 100);
+    fire(scroll, 'pointercancel', 501, 'touch', 100, 200);
+    fire(scroll, 'lostpointercapture', 501, 'touch', 100, 200);
+    fire(el, 'pointermove', 502, 'pen', 100, 150);
+    fire(el, 'pointerup', 502, 'pen', 100, 150);
+  });
+  await waitSaved(2);
+  await byId('ink-undo').click(); await waitSaved(1);
+
+  // 抬笔后手掌还未离屏：超过保护时间也不能把这一触摸重新认成翻页。
+  await delay(300);
+  const heldPalm = await first.evaluate(async (el) => {
+    const r = el.getBoundingClientRect(), scroll = el.closest('.mr-scroll');
+    const fire = (type, id, pointerType, y) => el.dispatchEvent(new PointerEvent(type,
+      { bubbles: true, cancelable: true, isPrimary: true, pointerId: id, pointerType, button: 0,
+        clientX: r.left + 100, clientY: r.top + y, width: 8, height: 8, pressure: .5 }));
+    fire('pointerdown', 601, 'touch', 200);
+    fire('pointerdown', 602, 'pen', 80);
+    fire('pointerup', 602, 'pen', 100);
+    const before = scroll.scrollTop;
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    fire('pointermove', 601, 'touch', 100);
+    fire('pointerup', 601, 'touch', 100);
+    return { before, after: scroll.scrollTop };
+  });
+  assert.equal(heldPalm.before, heldPalm.after, '掌触直到离屏都不会转为滚动');
+  await waitSaved(2);
+  await byId('ink-undo').click(); await waitSaved(1);
+  console.log('✓ 真实触摸滚动、竖直笔画与触屏并发、独立取消、掌触生命周期');
+
+  await byId('ink-read').click();
+  await page.locator('.mr-scroll').evaluate((el) => el.scrollTop = 0);
+  const readBox = await page.locator('.mr-scroll').boundingBox();
+  await touchSwipe(readBox.x + 100, readBox.y + 240);
+  await page.waitForFunction(() => document.querySelector('.mr-scroll').scrollTop > 0);
+  assert.equal((await inkRows()).length, 1, '阅读态保留原生滚动且不落墨');
+  await byId('ink-pen').click();
 
   // 模拟空间不足：笔迹留在画面、错误可见、重试后只写一次。
   await page.evaluate(() => {
@@ -127,6 +213,16 @@ try {
     el.dispatchEvent(new PointerEvent('pointerup', event));
   });
   assert.equal(await first.locator('[data-ink-stroke]').count(), 1);
+  // 掌触在兼容绘制模式下也不能被当成一笔。
+  await first.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    const palm = new PointerEvent('pointerdown', { bubbles: true, pointerId: 89, pointerType: 'touch', isPrimary: true,
+      button: 0, width: 70, height: 70, clientX: r.left + 60, clientY: r.top + 90 });
+    el.dispatchEvent(palm);
+    el.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, pointerId: 89, pointerType: 'touch', isPrimary: true,
+      button: 0, width: 70, height: 70, clientX: r.left + 60, clientY: r.top + 90 }));
+  });
+  assert.equal(await first.locator('[data-ink-stroke]').count(), 1, '掌触不会落墨');
   await first.evaluate((el) => {
     const r = el.getBoundingClientRect();
     const event = { bubbles: true, pointerId: 91, pointerType: 'touch', isPrimary: true, button: 0, clientX: r.left + 60, clientY: r.top + 90, width: 8, height: 8 };
@@ -140,6 +236,12 @@ try {
   });
   await waitSaved(3); // 连续手指/电容笔笔画不进入触控笔的掌触保护窗口
   assert.equal((await inkRows()).filter((s) => s.input === 'touch').length, 2);
+  const fingerBox = await first.boundingBox();
+  const beforeFinger = await scrollTop();
+  await touchSwipe(fingerBox.x + 150, Math.max(fingerBox.y + 150, 450));
+  await waitSaved(4);
+  assert.equal(await scrollTop(), beforeFinger, '手指绘制开关打开时真实触摸只绘制不滚动');
+  await byId('ink-undo').click(); await waitSaved(3);
   // 增强美化下快速触摸转折：预览端点不能落后，抬手也不能突然变形。
   const precision = await first.evaluate(async (el) => {
     const { inkPath } = await import('/src/materials/ink.ts');

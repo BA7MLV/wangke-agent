@@ -287,6 +287,8 @@ export const SYNC_SETTINGS_KEYS = [
  * 不能因为白名单里没有 apiKey 就以为凭据安全了。
  */
 export const NON_SYNC_SETTINGS_KEYS = [
+  // 键盘布局与操作习惯按设备独立，避免另一台设备覆盖当前按键映射。
+  'shortcuts',
   // Jev 包含 API Key 与向第三方发送历史的授权；两者都必须在每台设备单独配置。
   'jev',
   'bilibiliCookie',

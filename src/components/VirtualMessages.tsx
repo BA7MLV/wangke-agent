@@ -1,11 +1,17 @@
-import { useCallback, useLayoutEffect, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { useCallback, useImperativeHandle, useLayoutEffect, useRef, useState, type ReactNode, type Ref, type RefObject } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 
+export interface VirtualMessagesHandle {
+  scrollToIndex: (index: number) => void;
+}
+
 /** Shared dynamic-height window. Stable keys preserve the reading anchor on prepend. */
-export default function VirtualMessages<T extends { key: string }>({ items, scrollRef, children }: {
+export default function VirtualMessages<T extends { key: string }>({ items, scrollRef, children, ref, scrollPaddingStart = 0 }: {
   items: T[];
   scrollRef: RefObject<HTMLDivElement | null>;
   children: (item: T, index: number) => ReactNode;
+  ref?: Ref<VirtualMessagesHandle>;
+  scrollPaddingStart?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const positioned = useRef(false);
@@ -18,10 +24,14 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     estimateSize: () => 180,
     overscan: 4,
     scrollMargin: margin,
+    scrollPaddingStart,
     anchorTo: 'end',
     followOnAppend: true,
     scrollEndThreshold: 80,
   });
+  useImperativeHandle(ref, () => ({
+    scrollToIndex: (index) => virtualizer.scrollToIndex(index, { align: 'start', behavior: 'auto' }),
+  }), [virtualizer]);
   useLayoutEffect(() => {
     const host = hostRef.current;
     const scroll = scrollRef.current;

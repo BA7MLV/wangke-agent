@@ -57,11 +57,11 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    UI["界面层 · React 19 + MD3 / mdui<br/>课程库 · 播放器 · 学习 · 设置"]
+    UI["界面层 · React 19 + HeroUI v3 + Tailwind CSS 4<br/>课程库 · 播放器 · 学习 · 设置"]
     PIPE["流水线层 · pipelines/<br/>转写 · 讲义 · 弹幕 · 制卡<br/>重试 / 并发池 / 断点续做"]
     AGENT["agent 层 · harness/<br/>function calling 检索工具"]
     STORE["Linux 服务存储<br/>SQLite WAL · 文件卷 · 备份"]
-    API["版本化 API<br/>认证 · 消息 · Agent · SSE"]
+    API["Fastify API<br/>Passkey · 消息 · Agent · SSE"]
     UI --> PIPE --> AGENT
     PIPE --> STORE
     AGENT --> STORE
@@ -504,15 +504,10 @@ Markdown 是唯一能改的材料。点工具条上的「**编辑**」进入所�
 ### 2️⃣ 写代码
 
 - **注释解释取舍**，不写代码复述。踩过的坑与被证伪的假设要留在注释里，否则下一个人会再踩一次
-- **UI 一律走 MD3 / mdui 令牌**，不自造颜色与间距；组件从 `src/ui/` 的统一入口进，业务代码不要各自深链 `node_modules`
-- **图标只改一个地方**：`src/ui/symbols.ts`（写 Material Symbols 官方 snake_case 名），然后**按顺序**重跑两个生成器：
+- **UI 一律走 HeroUI 主题令牌**，不自造颜色与间距；通用布局、反馈和主题逻辑从 `src/ui/` 的统一入口进，业务代码不要各自复制设计令牌
+- **图标统一使用 Lucide**：业务组件通过 `src/ui/icons.tsx` 的 `<Sym name="..." />` 映射使用，避免在页面里散落图标实现。新增图标时只需在映射表中登记，不需要生成额外的 Web Component 类型文件
 
-  ```bash
-  node scripts/gen-material-symbols.mjs   # 1 → src/ui/symbols.generated.ts
-  node scripts/gen-mdui-types.mjs         # 2 → src/types/mdui-*.d.ts
-  ```
-
-  顺序不能反（第二个脚本要读第一个的清单才知道有哪些图标）。两个产物都是生成物，**勿手改**。升级 `mdui` 后重跑第二个即可。
+`src/ui/icons.tsx` 是唯一的图标适配层；升级 HeroUI 或 Lucide 后直接运行类型检查和测试即可。
 
 ### 3️⃣ 两层测试
 
@@ -653,8 +648,9 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 
 | 层 | 用了什么 |
 |---|---|
-| 框架 | React 19 + Vite 5 + TypeScript |
-| UI | **MD3 / mdui**（Web Components + 设计令牌，46 个自定义元素，类型由 `gen-mdui-types.mjs` 生成） |
+| 前端框架 | React 19 + Vite 5 + TypeScript 5.9 |
+| UI | **HeroUI v3**（React Aria 基础组件 + 主题令牌）· Tailwind CSS 4 |
+| 图标与字体 | Lucide React · Roboto（拉丁字符自托管，中文使用系统字体） |
 | Markdown | @ant-design/x-markdown（流式渲染）· DOMPurify（模型直出 SVG 净化） |
 | 播放与媒体 | Vidstack · mediabunny（抽音频 / DASH 重封装） |
 | 音频与视觉 | @ricky0123/vad-web + onnxruntime-web（wasm 自托管） |
@@ -663,9 +659,12 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 | 存储与状态 | Dexie(IndexedDB) · zustand · OPFS |
 | 导出 | sql.js + fflate（.apkg） |
 | PWA | vite-plugin-pwa |
+| 后端 | Fastify 5 · better-sqlite3（SQLite WAL）· `@fastify/helmet` / `@fastify/static` |
+| 认证与实时通信 | SimpleWebAuthn（Passkey）· Cookie / Bearer Token · SSE |
+| 部署 | Node.js 22+ · Docker Compose · Linux volume |
 
 > [!NOTE]
-> 组件库已从 antd 迁到 mdui（`@ant-design/x-markdown` 作为流式 Markdown 渲染保留）；React 已升到 19。`e2e-mdui-adapter.mjs` 是这条迁移的守门员。
+> 当前界面组件已统一到 HeroUI v3，样式基础由 Tailwind CSS v4 提供；`@ant-design/x-markdown` 仅作为流式 Markdown 渲染器保留。React 已升到 19，前端与 API 分别由 Vite 和 Fastify 构建。
 
 <details>
 <summary><b>目录结构</b></summary>
@@ -708,15 +707,16 @@ src/
   pages/        Library(课程库) Player(播放) Study(热力图) Settings(设置) LiveGuest(实时链路镜像页)
   store/        db.ts(Dexie schema) settings.ts(zustand persist) studyTime.ts fileStore.ts(OPFS)
                 storageStats.ts jobs.ts covers.ts subtitles.ts selectionAsk.ts migration.ts
-  ui/           mdui.ts(注册元素/语言包/函数式 API) theme.ts layout.tsx panel.tsx
-                symbols.ts(图标清单，只改这里) symbols.generated.ts(生成物) locale.ts feedback.ts
-  types/        mdui-jsx.d.ts mdui-elements.d.ts（生成物，勿手改）
+  ui/           theme.ts(dynamic color) layout.tsx panel.tsx feedback.tsx
+                 icons.tsx(Lucide 映射) loading-button.tsx skeleton.tsx rail.tsx
   utils/        studyLog.ts videoProgress.ts buildInfo.ts rate.ts cues.ts vtt.ts bilingual.ts
                 linkify.ts chatExport.ts clipboard.ts concurrency.ts cancel.ts wakeLock.ts
                 useMobile.ts errorText.ts format.ts
 scripts/        playwright e2e（真实 API）+ Node 单测，见下「测试」
   fixtures/     make-pdf.py make-docx.mjs + 确定性样本
-  gen-material-symbols.mjs / gen-mdui-types.mjs    代码生成器
+  migrate-mdui-tokens.py    迁移历史样式令牌的维护脚本（非运行时依赖）
+apps/api/                    Fastify API、Agent runner、SQLite 存储与沙盒运行时
+packages/contracts/          前后端共享的 API / 消息契约
 cloudflare-worker/   B 站导入代理（油猴不可用时的回退）
 userscript/          油猴桥：wangke-bili-bridge.user.js
 public/              _headers(COOP/COEP) icon.svg ort/ vad/ fonts/
@@ -844,7 +844,6 @@ node scripts/e2e-chat-export.mjs          # 会话复制 / 导出 Markdown
 node scripts/e2e-settings-skills.mjs      # 设置页写作技能列表 + 新建对话框
 node scripts/e2e-storage-card.mjs         # 存储占用卡片
 node scripts/e2e-build-info.mjs           # 构建信息注入链路 + commit 对得上仓库 HEAD
-node scripts/e2e-mdui-adapter.mjs         # mdui 基建验收（React 19 / 46 个自定义元素 / 设计令牌）
 
 # 需要 dev 档（要从模块 URL 拿应用同一份 Dexie 实例）
 BASE_URL=http://localhost:5173 node scripts/e2e-chat-mermaid.mjs   # 问答 Mermaid 渲染

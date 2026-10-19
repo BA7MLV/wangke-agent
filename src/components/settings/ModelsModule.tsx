@@ -651,18 +651,19 @@ function ProviderRow({
   }, [shaking]);
 
   const STATUS_HINT: Record<typeof status, string> = {
-    ready: `${modelCount ?? 0} 个模型在架`,
-    unchecked: '尚未检查连通性',
-    failed: note ?? '拉取失败',
-    unconfigured: '缺少 API Key 或地址',
+    ready: '已连接',
+    unchecked: '未检查',
+    failed: '连接失败',
+    unconfigured: '未配置',
   };
 
-  const dotColor =
-    status === 'ready'
-      ? 'bg-success shadow-[0_0_0_3px_rgba(var(--success)/0.18)]'
-      : status === 'failed'
-        ? 'bg-danger shadow-[0_0_0_3px_rgba(var(--danger)/0.18)]'
-        : 'bg-muted/55 shadow-none';
+  const providerIcon = /deepseek/i.test(provider.name)
+    ? 'neurology'
+    : /anthropic|claude/i.test(provider.name)
+      ? 'bolt'
+      : /openai/i.test(provider.name)
+        ? 'code'
+        : 'dns';
 
   const statusColor =
     status === 'ready'
@@ -673,56 +674,44 @@ function ProviderRow({
 
   return (
     <div
-      className={`overflow-hidden rounded-xl bg-background-secondary transition-shadow ${open ? 'bg-background shadow-sm' : ''}`}
+      className={`overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md md:col-span-2 xl:col-span-3' : 'min-h-[218px] hover:shadow-sm'}`}
       data-testid={`provider-card-${provider.id}`}
       data-open={open ? 'true' : undefined}
     >
       <button
         type="button"
-        className="box-border flex min-h-[56px] w-full cursor-pointer items-center gap-3 border-0 bg-transparent px-3.5 py-2.5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[720px]:flex-wrap max-[720px]:gap-y-1.5"
+        className={`box-border flex w-full cursor-pointer flex-col items-stretch gap-5 border-0 bg-transparent p-5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus ${open ? 'min-h-[96px]' : 'min-h-[218px]'}`}
         data-testid={`provider-summary-${provider.id}`}
         aria-expanded={open}
         onClick={onToggle}
       >
-        {/* 状态点：一眼看出哪家能用，不点开也不用读文字 */}
-        <span className={`h-2 w-2 shrink-0 rounded-full ${dotColor}`} aria-hidden="true" />
-        <span className="flex min-w-0 max-w-[20rem] shrink flex-col gap-0.5 max-[720px]:max-w-none max-[720px]:flex-1">
-          <span className="flex items-center gap-1.5 truncate text-[13px] font-semibold text-foreground">
+        <span className="flex items-start justify-between gap-3">
+          <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm" aria-hidden="true">
+            <Sym name={providerIcon} />
+          </span>
+          <span className={`rounded-full px-3 py-1 text-xs font-medium ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
+            {STATUS_HINT[status]}
+          </span>
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col justify-end gap-1">
+          <span className="flex items-center gap-1.5 truncate text-lg font-semibold text-foreground">
             {provider.name.trim() || '未命名供应商'}
-            {dupName && (
-              <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">
-                重名
-              </Chip>
-            )}
+            {dupName && <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">重名</Chip>}
           </span>
-          <span className="truncate font-mono text-xs text-muted">
-            {provider.baseUrl.trim() || '未填写 API 地址'}
+          <span className="truncate font-mono text-xs text-muted" title={provider.baseUrl}>
+            {provider.baseUrl.trim() || 'API 地址未配置'}
           </span>
         </span>
-        <span className="flex shrink-0 items-center gap-1 max-[720px]:order-3 max-[720px]:flex-1 max-[720px]:basis-full">
-          {ALL_SLOTS.map((slot) => (
-            <Chip
-              key={slot}
-              size="sm"
-              variant="soft"
-              color={provider.serves.includes(slot) ? 'accent' : 'default'}
-              className={`h-[19px] px-[7px] text-[11px] ${provider.serves.includes(slot) ? 'font-medium' : 'opacity-70'}`}
-            >
-              {SLOT_LABEL[slot]}
-            </Chip>
-          ))}
+        <span className="flex items-center gap-2 text-sm text-muted">
+          <Sym name="toc" />
+          <span className="tabular-nums">{modelCount ?? 0}</span>
+          <span>个模型</span>
+          <span className="ml-auto text-xs text-muted">{open ? '收起' : '管理'}</span>
         </span>
-        <span className={`min-w-0 flex-1 truncate text-right text-xs max-[720px]:order-4 max-[720px]:flex-1 max-[720px]:basis-full max-[720px]:text-left ${statusColor}`}>
-          {STATUS_HINT[status]}
-        </span>
-        <Sym
-          name="keyboard_arrow_down"
-          className={`shrink-0 text-lg text-muted transition-transform duration-200 max-[720px]:order-5 ${open ? 'rotate-180' : ''}`}
-        />
       </button>
 
       {open && (
-        <div className="flex flex-col gap-3 border-t border-border/70 px-3.5 pt-3.5 pb-4">
+        <div className="flex flex-col gap-3 border-t border-border/70 px-5 pt-4 pb-5">
           <details open={showConnection} onToggle={(event) => setShowConnection(event.currentTarget.open)}>
             <summary className="cursor-pointer py-2 text-sm font-medium">连接设置 · 地址、密钥与协议</summary>
             <div className="flex flex-col gap-3 pt-3">
@@ -1079,7 +1068,14 @@ export default function ModelsModule() {
 
     const failed = Object.entries(notes).filter(([, note]) => note.startsWith('拉取失败'));
     const totalModels = Object.values(opts).reduce((n, ids) => n + ids.length, 0);
-    if (failed.length > 0) toast.warning(`${failed.length} 家拉取失败，详见供应商列表`);
+    if (failed.length > 0) {
+      const reasons = failed.map(([id, note]) => {
+        const providerName = providers.find((p) => p.id === id)?.name.trim() || id;
+        const reason = note.replace(/^拉取失败：?/, '').trim() || '未知错误';
+        return `${providerName}：${reason}`;
+      });
+      toast.warning(`${failed.length} 家拉取失败：${reasons.join('；')}`);
+    }
     else if (totalModels > 0) toast.success(`已拉取 ${totalModels} 个模型`);
     setChecking(false);
   };
@@ -1149,7 +1145,20 @@ export default function ModelsModule() {
           <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>
         </>}
       >
-        <div className="flex flex-col gap-2">
+        <div className="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-3">
+          <button
+            type="button"
+            className="flex min-h-[218px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted transition-colors duration-200 hover:border-accent/55 hover:bg-background-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus"
+            data-testid="provider-add-card"
+            aria-label="添加供应商"
+            onClick={addProvider}
+          >
+            <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm">
+              <Sym name="add" />
+            </span>
+            <span className="text-lg font-semibold text-foreground">连接提供商</span>
+            <span className="text-sm">API 密钥或登录</span>
+          </button>
           {settings.providers.map((p, i) => (
             <ProviderRow
               key={p.id}

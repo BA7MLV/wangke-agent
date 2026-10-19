@@ -10,8 +10,10 @@ import AppearanceModule from './settings/AppearanceModule';
 import SourcesModule from './settings/SourcesModule';
 import LiveModule from './settings/LiveModule';
 import PlaybackModule from './settings/PlaybackModule';
+import ShortcutsModule from './settings/ShortcutsModule';
 import StudyModule from './settings/StudyModule';
 import DataModule from './settings/DataModule';
+import SkillsModule from './settings/SkillsModule';
 
 /**
  * 设置模块登记表：顶部横向模块栏，下方只渲染当前模块。
@@ -28,7 +30,9 @@ const MODULES: { key: SettingsModule; label: string; icon: string; Component: Co
   { key: 'sources', label: '内容源', icon: 'cloud_upload', Component: SourcesModule },
   { key: 'live', label: '实时', icon: 'link', Component: LiveModule },
   { key: 'playback', label: '播放', icon: 'play_circle', Component: PlaybackModule },
+  { key: 'shortcuts', label: '快捷键', icon: 'keyboard', Component: ShortcutsModule },
   { key: 'study', label: '学习', icon: 'calendar_month', Component: StudyModule },
+  { key: 'skills', label: '技能', icon: 'extension', Component: SkillsModule },
   { key: 'data', label: '数据', icon: 'folder', Component: DataModule },
 ];
 
