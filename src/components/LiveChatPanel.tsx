@@ -55,7 +55,7 @@ import { useResolvedDark } from '../ui/theme';
 import { ThinkLine, StreamParagraph, Collapse } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import QuizCard from './QuizCard';
-import WidgetBlock from './WidgetBlock';
+import WidgetMessage from './WidgetMessage';
 import './live-chat-panel.css';
 
 /** QuizCard 要的形状。**本地定义而不是 import store/db 的 QuizState**：guest 不碰 db
@@ -290,6 +290,7 @@ export default function LiveChatPanel({
         {turns.map((t) => {
           const quiz = toQuiz(t.quiz);
           const widget = toWidget(t.widget);
+          const widgets = t.widgets?.map(toWidget).filter((item): item is WidgetPayload => item != null);
           const localPicks = picks[t.turnId] ?? quiz?.picks ?? [];
           // 错误轮的正文：已流出一半就保留并补一句中断说明，否则整体换成失败提示
           // （与 ChatPanel 的 catch 分支同一套形状）
@@ -317,11 +318,14 @@ export default function LiveChatPanel({
                   ) : (
                     <>
                       {t.reasoning && <ReasoningChain reasoning={t.reasoning} active={t.state === 'streaming' && !t.content} />}
-                      <XMarkdown
-                        content={linkify(body)}
+                      <WidgetMessage message={{ widget: widget ?? undefined, widgets }} content={body} dark={widgetDark}
+                        disabled={t.state === 'streaming' || !online} onPrompt={(text) => send(text)}>
+                      {(markdown) => <XMarkdown
+                        content={linkify(markdown)}
                         components={components}
                         streaming={{ hasNextChunk: t.state === 'streaming', tail: t.state === 'streaming' }}
-                      />
+                      />}
+                      </WidgetMessage>
                       {quiz && (
                         <QuizCard
                           quiz={quiz.data}
@@ -337,13 +341,6 @@ export default function LiveChatPanel({
                           }
                           {...(onSeek && !isMaterial ? { onSeek } : {})}
                           seekable={seekable}
-                        />
-                      )}
-                      {widget && (
-                        <WidgetBlock
-                          payload={widget}
-                          dark={widgetDark}
-                          onPrompt={(text) => send(text)}
                         />
                       )}
                     </>

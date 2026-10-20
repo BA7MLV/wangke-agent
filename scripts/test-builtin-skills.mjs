@@ -36,8 +36,8 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 8 个内置 skill', () => {
-  assert.equal(skills.length, 8);
+test('恰好 9 个内置 skill', () => {
+  assert.equal(skills.length, 9);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -58,7 +58,7 @@ test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科�
   assert.ok(names.includes('资料整理'));
 });
 
-test('「讲解配图」写死两种围栏名、五类图种、节点上限，并划清不用于讲义', () => {
+test('「讲解配图」约定 JSON 图种与 Mermaid 专用图种、节点上限，并划清不用于讲义', () => {
   const s = skills.find((x) => x.name === '讲解配图');
   assert.ok(s, '缺讲解配图');
   // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这三个，
@@ -67,8 +67,8 @@ test('「讲解配图」写死两种围栏名、五类图种、节点上限，�
   assert.ok(!s.body.includes('```svg'), 'svg 围栏已退场（历史数据兼容），技能不该再教');
   // 前端不认的围栏名要明确列为反例
   for (const kw of ['dot', 'plantuml']) assert.ok(s.body.includes(kw), `缺反例围栏名：${kw}`);
-  // 五类图种
-  for (const kw of ['flowchart', 'sequenceDiagram', 'stateDiagram-v2', 'mindmap', 'pie']) {
+  // 结构、函数和数据图已迁移到 diagram JSON，专用时序/状态语义保留 Mermaid。
+  for (const kw of ['graph', 'plot', 'chart', 'sequenceDiagram', 'stateDiagram-v2', 'pie']) {
     assert.ok(s.body.includes(kw), `缺图种：${kw}`);
   }
   // 数量上限与防滥画
@@ -87,6 +87,18 @@ test('「讲解配图」的 description 点明适用范围（路由靠它决定�
   const s = skills.find((x) => x.name === '讲解配图');
   assert.match(s.description, /问答|解析/);
   assert.match(s.description, /讲义/);
+});
+
+test('「交互式讲解」区分本地调参与确认追问，附带运行时及示例参考', () => {
+  const s = skills.find((x) => x.name === '交互式讲解');
+  assert.ok(s);
+  for (const kw of ['show_widget', 'modelContent', 'privateContent', '16 KiB', '用户确认', '本地重绘', 'diagram']) {
+    assert.ok(s.body.includes(kw), `缺约定：${kw}`);
+  }
+  assert.match(s.description, /问答/);
+  assert.match(s.description, /不用于讲义/);
+  assert.deepEqual(s.refs.map((r) => r.path).sort(), ['references/examples.md', 'references/runtime.md']);
+  assert.ok(s.body.length < 4000, '正文保持精简，细节放参考文件');
 });
 
 test('「公文讲义写作」含四步流程、负面清单、自检清单、IR 范文', () => {

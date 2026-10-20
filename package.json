@@ -6,7 +6,7 @@
     "apps/api",
     "packages/contracts"
   ],
-  "license": "MIT",
+  "license": "GPL-2.0-only",
   "type": "module",
   "scripts": {
     "dev": "vite --host",
@@ -48,6 +48,7 @@
     "dompurify": "^3.4.15",
     "fastify": "^5.12.7",
     "fflate": "^0.8.3",
+    "html-to-image": "^1.11.13",
     "katex": "^0.16.47",
     "lucide-react": "^0.550.0",
     "marked": "^15.0.12",

@@ -330,6 +330,7 @@ export interface GuestTurn {
   /** 题卡 / 图卡（chat.card 随流推送，不阻塞主流程 —— 不变量 5） */
   quiz: unknown;
   widget: unknown;
+  widgets?: unknown[];
   /** chat.done 带回来的最终正文（权威）。流式 content 在 done 时也被它覆盖（与 ChatPanel 一致） */
   finalContent: string;
   reasoningMs?: number;
@@ -799,7 +800,10 @@ export class GuestCore {
   private onChatCard(f: Frame): void {
     const turn = this.pickTurn(f);
     if (!turn) return;
-    if (String(f.kind) === 'widget') turn.widget = f.payload;
+    if (String(f.kind) === 'widget') {
+      turn.widget = f.payload;
+      turn.widgets = [...(turn.widgets ?? []), f.payload];
+    }
     else if (String(f.kind) === 'quiz') turn.quiz = f.payload;
     else return;
     this.emitTurn(turn);
@@ -816,6 +820,7 @@ export class GuestCore {
     if (Number.isFinite(f.reasoningMs)) turn.reasoningMs = Number(f.reasoningMs);
     if (f.quiz !== undefined) turn.quiz = f.quiz;
     if (f.widget !== undefined) turn.widget = f.widget;
+    if (Array.isArray(f.widgets)) turn.widgets = f.widgets;
     turn.state = 'done';
     this.emitTurn(turn);
   }

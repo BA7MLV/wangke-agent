@@ -1,0 +1,17 @@
+Telegram Android Thanos effect
+Copyright Telegram contributors. Distributed under GNU GPL version 2.
+No warranty. Full license: /licenses/telegram-thanos-GPL-2.0.txt
+
+Source: https://github.com/DrKLO/Telegram/tree/68c6775ac373f4bdb30ae9986282dd5ec0407756
+Original files:
+  TMessagesProj/src/main/res/raw/thanos_vertex.glsl
+  TMessagesProj/src/main/res/raw/thanos_fragment.glsl
+  TMessagesProj/src/main/java/org/telegram/ui/Components/ThanosEffect.java
+
+Modified 2026-10-20: Java GLES host translated to TypeScript/WebGL2;
+DOM snapshot and browser lifecycle integration. GLSL shaders unchanged except
+for the final newline. See src/third-party/telegram-thanos/NOTICE.md in source.
+
+The combined application includes GPL code and must be distributed in compliance
+with GPL-2.0, including complete corresponding application source and build scripts.
+The root MIT notice for independently authored portions does not override GPL.

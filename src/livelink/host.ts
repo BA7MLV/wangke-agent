@@ -209,6 +209,7 @@ export function chatDoneFor(to: string, turnId: string, res: QaRunResult): ChatD
     ...(res.reasoningMs !== undefined ? { reasoningMs: res.reasoningMs } : {}),
     ...(res.quiz ? { quiz: res.quiz } : {}),
     ...(res.widget ? { widget: res.widget } : {}),
+    ...(res.widgets ? { widgets: res.widgets } : {}),
   };
 }
 

@@ -45,6 +45,7 @@ import {
 import { ThinkLine, StreamParagraph, PendingReply, useMessageEnter } from './motion';
 import ReasoningChain from './ReasoningChain';
 import VirtualMessages from './VirtualMessages';
+import { useMessageDeletion } from './useMessageDeletion';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
 import { readChatPage } from '../store/chatHistory';
 import { framePatch } from '../utils/framePatch';
@@ -55,8 +56,9 @@ import { MarkdownStreamingProvider } from './markdown/streaming';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
-import WidgetBlock from './WidgetBlock';
+import WidgetMessage from './WidgetMessage';
 import StreamingHtmlPreview from './StreamingHtmlPreview';
+import ArtifactEditor, { ArtifactEditProvider } from './ArtifactEditor';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { htmlPreviewSource, readPartialWidgetArguments } from '../utils/streamingHtml';
@@ -118,6 +120,7 @@ interface ChatMsg {
   quiz?: QuizState;
   /** 沙箱图形卡（show_widget 的 html 形态产出） */
   widget?: WidgetPayload;
+  widgets?: WidgetPayload[];
   /** show_widget 参数尚未完整到达时的静态安全预览（不落库） */
   widgetPreview?: { html: string };
   /** 落库后的 chats 行 id（作答状态回写用） */
@@ -257,6 +260,7 @@ function MessageActions({
   onRetry,
   onFork,
   onExport,
+  onDelete,
 }: {
   content: string;
   isUser: boolean;
@@ -266,6 +270,7 @@ function MessageActions({
   onRetry: () => void;
   onFork: () => void;
   onExport: () => void;
+  onDelete: () => void;
 }) {
   const copy = (text: string, okMsg: string) => {
     void (async () => {
@@ -317,6 +322,7 @@ function MessageActions({
       {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
 
       {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
+      {action('删除这条消息', <Sym name="delete" />, onDelete, 'chat-delete-message', busy)}
 
       {!isUser && (
         <Dropdown>
@@ -350,12 +356,13 @@ function MessageActions({
 }
 
 /** 长消息默认展示六行；触屏长按可查看时间、复制完整提问与操作。 */
-function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
+function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete }: {
   message: ChatMsg;
   busy: boolean;
   canRetry: boolean;
   onRetry: () => void;
   onFork: () => void;
+  onDelete: () => void;
 }) {
   const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
   const textRef = useRef<HTMLSpanElement>(null);
@@ -373,7 +380,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
   const content = (
     <span ref={textRef} id={`chat-user-text-${message.key}`} className="chat-user-text"
       data-collapsed={overflows && !expanded}>
-      <UserContent content={message.content} />
+      <UserContent content={message.content || '图片消息'} />
     </span>
   );
   return (
@@ -394,10 +401,11 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
               )}
               <Dropdown.Menu
                 aria-label="提问操作"
-                disabledKeys={busy || message.rowId == null ? ['retry', 'fork'] : canRetry ? [] : ['retry']}
+                disabledKeys={busy || message.rowId == null ? ['retry', 'fork', 'delete'] : canRetry ? [] : ['retry']}
                 onAction={(key) => {
                   if (key === 'retry') onRetry();
                   else if (key === 'fork') onFork();
+                  else if (key === 'delete') onDelete();
                   else if (key === 'copy') void copyText(message.content).then((ok) => {
                     if (ok) toast.success('已复制这条提问（Markdown）');
                     else toast.error('复制失败：剪贴板不可用');
@@ -412,6 +420,9 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
                 </Dropdown.Item>
                 <Dropdown.Item id="fork" textValue="分支出新会话" data-testid="chat-user-fork">
                   <Sym name="fork" />分支出新会话
+                </Dropdown.Item>
+                <Dropdown.Item id="delete" textValue="删除这条消息" data-testid="chat-user-delete">
+                  <Sym name="delete" />删除这条消息
                 </Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown.Popover>
@@ -535,6 +546,24 @@ export default function ChatPanel({
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
   // 消息流滚动容器（原 Bubble.List 的 ref 只暴露 scrollTo，现在自己持有真实元素）
   const listRef = useRef<HTMLDivElement | null>(null);
+  const deletionState = useRef({ loading, activeId });
+  deletionState.current = { loading, activeId };
+  const { deleteMessage, deleting } = useMessageDeletion(listRef, activeId, async (key) => {
+    const message = msgs.find((item) => item.key === key);
+    if (deletionState.current.loading || deletionState.current.activeId !== activeId
+      || activeId == null || !message || message.streaming || message.rowId == null) return false;
+    const deleted = await db.transaction('rw', db.chats, async () => {
+      const row = await db.chats.get(message.rowId!);
+      if (!row || row.sessionId !== activeId) return false;
+      await db.chats.delete(message.rowId!);
+      return true;
+    });
+    if (!deleted) return false;
+    if (deletionState.current.activeId === activeId) {
+      setMsgs((current) => current.filter((item) => item.key !== key));
+    }
+    return true;
+  });
   /**
    * 消息流吸底。新消息 / 流式追加 / 键盘弹收 / 聚焦输入框都走它 ——
    * 键盘弹出时面板被顶矮一截，停在原 scrollTop 的最新消息会掉出可视区，
@@ -812,6 +841,7 @@ export default function ChatPanel({
           tools: r.tools,
           quiz: r.quiz,
           widget: r.widget,
+          widgets: r.widgets,
           rowId: r.id,
         })));
         setLoadedSessionId(activeId);
@@ -1039,6 +1069,7 @@ export default function ChatPanel({
     const stopped: AgentStopInfo[] = [];
     let widgetPreview: { html: string } | undefined;
     let widgetState: WidgetPayload | undefined;
+    const widgets: WidgetPayload[] = [];
     const abort = new AbortController();
     inflightAbort = abort;
     const updates = framePatch<ChatMsg>((patch) =>
@@ -1255,8 +1286,7 @@ export default function ChatPanel({
 
       // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
       let quizState: QuizState | undefined;
-      // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
-      // 与「一段回答最多一张图」的出图规范一致。
+      // Keep every validated visual; the returned references place them in the explanation.
       const executeTool = createResourceExecutor({
         courseId: videoId,
         editable: canEditMd,
@@ -1270,10 +1300,11 @@ export default function ChatPanel({
         },
         onWidget: (w) => {
           widgetState = w;
+          widgets.push(w);
           // 工具校验完成后切换到最终的隔离 iframe。清掉预览，避免同一张
           // 图短暂出现两份；中间帧从未执行过模型提供的脚本。
           widgetPreview = undefined;
-          patchAi({ widget: w, widgetPreview: undefined, hint: undefined });
+          patchAi({ widget: w, widgets: [...widgets], widgetPreview: undefined, hint: undefined });
         },
       });
       /**
@@ -1384,6 +1415,7 @@ export default function ChatPanel({
           ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
           ...(quizState ? { quiz: quizState } : {}),
           ...(widgetState ? { widget: widgetState } : {}),
+          ...(widgets.length ? { widgets } : {}),
         })) as number;
         patchAi({ rowId });
       } else {
@@ -1432,6 +1464,7 @@ export default function ChatPanel({
           reasoningMs,
           ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
           ...(widgetState ? { widget: widgetState } : {}),
+          ...(widgets.length ? { widgets } : {}),
         })) as number;
         patchAi({ rowId });
       } else {
@@ -1460,6 +1493,7 @@ export default function ChatPanel({
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             widget: widgetState,
+            widgets,
           })) as number;
           patchAi({ rowId });
         } else {
@@ -1557,7 +1591,8 @@ export default function ChatPanel({
         ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
       })) as number;
       for (const row of kept) {
-        const { id: _id, sessionId: _sessionId, ...rest } = row;
+        // Interaction snapshots belong to the original message; a fork starts from defaults.
+        const { id: _id, sessionId: _sessionId, widgetState: _widgetState, widgetStates: _widgetStates, ...rest } = row;
         await db.chats.add({ ...rest, videoId, sessionId: sid });
       }
       return sid;
@@ -1767,6 +1802,7 @@ export default function ChatPanel({
               data-testid={isUser ? 'chat-msg-user' : 'chat-msg-ai'}
               data-streaming={m.streaming ? 'true' : undefined}
               data-error={m.error ? 'true' : undefined}
+              data-chat-message={m.key}
             >
               {isUser ? (
                 <>
@@ -1796,26 +1832,30 @@ export default function ChatPanel({
                   )}
                   <UserMessageBubble
                     message={m}
-                    busy={loading}
+                    busy={loading || deleting}
                     canRetry={canRetryAsk}
                     onRetry={() => void retryMessage(m.key)}
                     onFork={() => void forkMessage(m)}
+                    onDelete={() => void deleteMessage(m.key)}
                   />
-                  {!m.streaming && m.content && (m.rowId != null || m.error) && (
+                  {!m.streaming && m.rowId != null && (
                     <MessageActions
                       content={m.content}
                       isUser
-                      busy={loading}
+                      busy={loading || deleting}
                       canRetry={canRetryAsk}
                       retryHint="重新回答这句话（删掉这一问一答，用同样的问题重跑一次）"
                       onRetry={() => void retryMessage(m.key)}
                       onFork={() => void forkMessage(m)}
                       onExport={downloadSession}
+                      onDelete={() => void deleteMessage(m.key)}
                     />
                   )}
                 </>
               ) : (
                 <>
+                  <ArtifactEditProvider rowId={m.rowId} content={m.content} disabled={loading || !!m.streaming || !!m.error}
+                    onSaved={(row) => setMsgs((prev) => prev.map((item) => item.rowId === row.id ? { ...item, content: row.content, widget: row.widget, widgets: row.widgets } : item))}>
                   <div className="chat-bubble chat-bubble--ai">
                     {/* 思考链与工具链都**独立于正文**渲染：它们是这一轮的过程记录。
                         此前这里的条件是「有 hint 就只显示那一行状态字」，于是模型一调工具
@@ -1838,12 +1878,16 @@ export default function ChatPanel({
                       <PendingReply />
                     ) : (
                       <>
-                        {htmlPreview !== undefined ? (
+                        <WidgetMessage message={m} content={m.content} dark={widgetDark} rowId={m.rowId}
+                          disabled={loading || !!m.streaming || !!m.error} onPrompt={(text) => void send(text)}>
+                        {(markdown) => htmlPreview !== undefined ? (
+                          <ArtifactEditor kind="html" location="html" source={htmlPreview}>
                           <StreamingHtmlPreview
                             html={htmlPreview}
                             isStreaming={!!m.streaming}
                             statusText="正在解析 HTML"
                           />
+                          </ArtifactEditor>
                         ) : (
                           <MarkdownStreamingProvider value={!!m.streaming}>
                             <XMarkdown
@@ -1852,14 +1896,15 @@ export default function ChatPanel({
                               // #frame- 画面引用同理（材料没有抽帧）。
                               content={
                                 isMaterial && materialKind
-                                  ? linkifyUnits(m.content, materialKind)
-                                  : linkifyTimestamps(linkifyFrames(m.content))
+                                  ? linkifyUnits(markdown, materialKind)
+                                  : linkifyTimestamps(linkifyFrames(markdown))
                               }
                               components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
                               streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
                             />
                           </MarkdownStreamingProvider>
                         )}
+                        </WidgetMessage>
                         {m.quiz && (
                           <QuizCard
                             quiz={m.quiz.data}
@@ -1870,29 +1915,24 @@ export default function ChatPanel({
                             seekable={!isMaterial}
                           />
                         )}
-                        {m.widget && (
-                          <WidgetBlock
-                            payload={m.widget}
-                            dark={widgetDark}
-                            onPrompt={(t) => void send(t)}
-                          />
-                        )}
-                        {!m.widget && m.widgetPreview && (
+                        {m.widgetPreview && (
                           <StreamingHtmlPreview html={m.widgetPreview.html} />
                         )}
                       </>
                     )}
                   </div>
+                  </ArtifactEditProvider>
                   {!m.streaming && m.content && m.rowId != null && (
                     <MessageActions
                       content={m.content}
                       isUser={false}
-                      busy={loading}
+                      busy={loading || deleting}
                       canRetry={canRetry}
                       retryHint={m.error ? '继续回答这句话' : '重新生成这条回答'}
                       onRetry={() => void retryMessage(m.key)}
                       onFork={() => void forkMessage(m)}
                       onExport={downloadSession}
+                      onDelete={() => void deleteMessage(m.key)}
                     />
                   )}
                 </>

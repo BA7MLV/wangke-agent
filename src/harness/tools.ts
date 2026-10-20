@@ -29,6 +29,7 @@ import { renderDiagram } from '../components/mermaid/diagramRender';
 import { validateDiagram } from '../components/mermaid/diagramSchema';
 import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText, MAX_WIDGET_DOC } from './widget';
 import { buildWidgetDocument, type WidgetPayload } from './widgetRuntime';
+import { uuid } from '../utils/uuid';
 
 /** 一次范围取数的单元数上限：防止模型一次要 200 页把上下文吃光 */
 const MAX_RANGE_UNITS = 20;
@@ -201,7 +202,7 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
     description:
       '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 mermaid 源码、diagram JSON 或 SVG 源码，' +
       '通过后会把一段可直接放进回答正文的 ```mermaid / ```diagram / ```svg 围栏原样返回给你（带了 title 就会写成 ```diagram title="…"）；' +
-      'format="html" 则会把安全通过的 HTML 片段直接显示成下方隔离的交互卡，不要把它再贴进正文。' +
+      'format="html" 会返回不含源码的 wbw-widget 引用围栏，将引用原样放在正文需要看图的位置；多次调用不会覆盖前图，不要贴 HTML 源码。' +
       '不通过会告诉你具体哪里不合规，改完再试。svg / mermaid / diagram 仍必须把返回的围栏放进正文，且要放在它解释的那句话旁边、前后各配一句说明。',
     parameters: {
       type: 'object',
@@ -211,7 +212,7 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
           enum: ['mermaid', 'diagram', 'svg', 'html'],
           description:
             '源码类型。优先 diagram JSON：流程/结构/层级用 graph，函数/几何用 plot，柱/折/饼用 chart。模型只描述结构与数据，布局由渲染器算；时序/ER 等未覆盖图种用 mermaid。' +
-            '界面原型或确实需要滑块、筛选、stepper 的自定义交互件用 html。svg 仅兼容历史内容，新图优先使用受约束 JSON',
+            '参数变化、算法单步、教学模拟器或交互原型用 html，先加载「交互式讲解」技能；不要把所有图做成网页。svg 仅兼容历史内容，新图优先使用受约束 JSON',
         },
         code: {
           type: 'string',
@@ -221,7 +222,7 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
             'mermaid 需以图种声明开头（flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie）；' +
             'svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
             'html 只给**片段**（不要 <html>/<head>/<body>），可以带内联 <script>，' +
-            '但不能引外部脚本或外链资源（网络已禁用）',
+            '但不能引外部脚本或外链资源（网络已禁用）。宿主提供主题变量、原生控件样式和 window.__wbw：widgetState 读取快照，setWidgetState({modelContent,privateContent}) 保存 JSON 参数，sendPrompt(text) 经用户确认后携带 modelContent 追问。调参只本地重绘，不请求模型；完整约定见「交互式讲解」技能',
         },
         title: {
           type: 'string',
@@ -373,7 +374,7 @@ export interface ToolExecutorOptions {
    * show_widget 的 html 形态校验通过后的图形透传回调。
    *
    * 只有 html 走这里：svg / mermaid 仍然由模型自己把围栏放进正文，
-   * 在正文里按讲解顺序定位。html 是独立卡片，放在正文末尾（与 quiz / ask / folderPlan 同位）。
+    * 在正文里按讲解顺序定位。html 的载荷旁路保存，回执引用决定正文位置。
    */
   onWidget?: (w: WidgetPayload) => void;
   /**
@@ -529,8 +530,9 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
         const doc = await buildWidgetDocument({ html: v.args.code, libs: v.args.libs });
         if (doc.length > MAX_WIDGET_DOC)
           throw new Error(`拼好的文档过大（${doc.length} 字，上限 ${MAX_WIDGET_DOC}）。拆成几张图，或去掉不需要的内联库`);
-        onWidget?.({ html: v.args.code, libs: v.args.libs });
-        return widgetAcceptedText(v.args);
+        const id = uuid();
+        onWidget?.({ id, ref: id, html: v.args.code, libs: v.args.libs });
+        return widgetAcceptedText(v.args, id);
       } catch (e) {
         // 净化 / 解析失败**不回退源码**：这里是工具调用，返回的是给模型看的诊断信息，
         // 模型据此改完重试。真到渲染那步失败才是「静默降级成显示源码」，也正是这里要挡掉的。

@@ -23,11 +23,12 @@
  * （见 ChatPanel），图只能掉在整段回答末尾。而出图规范要求「图的前后各用一句
  * 说明，不要只丢一张图」「图与图之间要有正文过渡」—— 图必须活在正文里才做得到，
  * 唯一的载体就是围栏。所以 svg / mermaid / diagram 刻意不建第二条渲染通道；
- * html 是必须执行脚本的交互例外，才使用独立沙箱卡片。
+ * html 是必须执行脚本的交互例外：载荷单独保存，正文引用负责定位隔离沙箱。
  */
 
 import type { WidgetLib } from './widgetRuntime';
 import { MAX_FENCE_TITLE } from '../components/mermaid/fence.ts';
+import { widgetReference } from './widgetLayout.ts';
 
 export type WidgetFormat = 'svg' | 'mermaid' | 'diagram' | 'html';
 
@@ -189,14 +190,11 @@ function normalizeLibs(raw: unknown): { ok: true; libs?: WidgetLib[] } | { ok: f
  * 措辞上要盯住两件事，否则模型会把这段代码当成「已经画完了」而不写进正文：
  * 它只是预检，**图还没上屏**；以及围栏要**放在讲解中间**、前后各配一句说明。
  */
-export function widgetAcceptedText(args: WidgetArgs): string {
-  // html 形态**不走围栏**：它渲染成独立的图形卡片，围栏会被当成源码显示。
+export function widgetAcceptedText(args: WidgetArgs, ref?: string): string {
+  // The reference contains no executable source. Only this message's registered payload can render it.
   if (args.format === 'html') {
-    return [
-      '图形已渲染。**它已经在回答下方显示了**，不要再把 HTML 贴进正文 —— 那样只会显示成一坨源码。',
-      '请只用一两句话说明这张图在讲什么（结论、关键取值、以及用户该看哪里）；',
-      '交互控件的说明也写在正文里，不要塞进图里。',
-    ].join('\n');
+    if (!ref) throw new Error('HTML 预检缺少宿主引用');
+    return `图形预检通过。把下面的引用原样放在正文中需要看图的位置，单独成块，不要贴 HTML 源码。只补充必要的观察或结论，不重复图中的内容。\n\n${widgetReference(ref)}`;
   }
   return [
     `预检通过（${args.format}）。**图还没有上屏** —— 请把下面这段围栏原样放进你的回答正文，`,

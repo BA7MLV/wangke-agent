@@ -9,6 +9,9 @@ import codingWriting from './builtin/subject-coding/references/coding-writing.md
 import gongkaoXingce from './builtin/gongkao-xingce/SKILL.md?raw';
 import gongkaoShenlun from './builtin/gongkao-shenlun/SKILL.md?raw';
 import diagramming from './builtin/diagramming/SKILL.md?raw';
+import interactiveExplainer from './builtin/interactive-explainer/SKILL.md?raw';
+import interactiveApi from './builtin/interactive-explainer/references/runtime.md?raw';
+import interactiveExamples from './builtin/interactive-explainer/references/examples.md?raw';
 import libraryOrganizer from './builtin/library-organizer/SKILL.md?raw';
 
 /** 内置 skill：标准 SKILL.md 文件（?raw 导入）+ 可选 references */
@@ -32,6 +35,7 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
   fromMd(gongkaoShenlun),
   // 出图规范：服务问答讲解与题目解析（讲义走公文 IR，不渲染图表围栏）
   fromMd(diagramming),
+  fromMd(interactiveExplainer, [ref('references/runtime.md', interactiveApi), ref('references/examples.md', interactiveExamples)]),
   // 资料目录整理：方法与命名规范；真正的写入仍由 propose_folder_plan 的确认闸门把关
   fromMd(libraryOrganizer),
 ];

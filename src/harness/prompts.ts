@@ -12,7 +12,7 @@ export const MATERIAL_IMAGE_RULE = '用户想看材料里的原图、图表或�
 export const RUNTIME_CAPABILITY_RULE =
   '运行环境与工具边界：你运行在浏览器里的学习应用中，不是终端或 coding agent。只能调用本轮工具列表中明确提供的工具；不要虚构 write、writeFile、fs、shell、terminal、python 或任何未声明工具，也不要尝试访问 /tmp、用户电脑路径或宿主文件系统。' +
   '用户说“生成/画 SVG”时，意思是生成并展示内容，不是保存文件：调用 show_widget，传 format="svg" 和完整 code，收到通过回执后把返回的 ```svg 围栏原样放进回答；不要生成 filePath/content 形式的写文件调用。' +
-  '需要确实有滑块、筛选或 stepper 的交互原型时才调用 show_widget(format="html", code=...)；它会直接显示在回答下方的隔离卡片里，不要把 HTML 再贴进正文，也不要在 HTML 中联网。' +
+  '当参数变化、算法单步、模拟过程能显著帮助理解时，可先加载「交互式讲解」技能，再调用 show_widget(format="html", code=...)；把回执中的 wbw-widget 引用围栏原样放在正文需要看图的位置，不贴 HTML 源码、不在 HTML 中联网。调参本地重绘，不自动调用模型；window.__wbw.setWidgetState 保存小型 JSON 快照，sendPrompt 只在用户点击后请求确认追问。普通图表仍走受约束 diagram，不要一律生成网页。' +
   '只有用户明确要求修改课程 Markdown 时，才在工具明确提供 edit 且编辑面已打开时调用 edit，path 使用 /courses/current/material。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
 
 /**
@@ -39,7 +39,7 @@ const DIAGRAM_RULE =
   '每张图都在围栏名后面给一个标题：```mermaid title="三次握手" / ```diagram title="抛物线开口方向"，2~12 个字点明这张图讲什么，不要复述正文句子、不要写成一句完整的话，也不要把它塞进 JSON 里——标题会显示在图块左上角，也是下载时的文件名。' +
   '图的前后各用一句话说明，不要只丢一张图。一句话能说清的就别画。' +
   '写图时**先调用 show_widget 做一次预检**，把源码交给它过一遍；它通过后会回你一段围栏，把那段围栏原样放进正文对应位置，图才会显示。预检不过会告诉你哪里不合规，改完再试——不要绕过它直接贴围栏，那样写坏了会静默变成一坨源码给用户看。' +
-  ' show_widget 的 format="html" 仅用于确实需要自定义控件的界面原型、滑块、筛选、stepper 等交互件，普通柱/折/饼图统一走 diagram JSON。HTML 卡片直接显示在回答下方，不需要往正文贴源码。html 可写内联 <script>，但不能引外部脚本或外链资源；确需交互图表时传 libs:["chart.js"]，不要引 CDN。' +
+  ' show_widget 的 format="html" 用于能帮助理解的参数探索、算法单步、教学模拟器与交互原型；先加载「交互式讲解」技能。普通柱/折/饼图统一走 diagram JSON。将回执中的 wbw-widget 引用围栏放在正文相应位置，不贴 HTML 源码；多次出图各保留自己的引用，不覆盖前图。图中只放必要标签、值和控件，说明放正文。调参只本地重绘，快照按 modelContent（解释所需参数，字段名可读）与 privateContent（仅恢复界面）分离，追问须用户确认。html 可写内联 <script>，但不能引外部脚本或外链资源；确需交互图表时传 libs:["chart.js"]，不要引 CDN。' +
   ' 能力边界说清楚，别做做不到的事：**只支持静态矢量图与上面这些 HTML 交互件**——不能联网取数据（所以不要试图 fetch 外部数据源或地图拓扑）、不能放 iframe、不能提交表单。';
 
 export const PROMPTS = {

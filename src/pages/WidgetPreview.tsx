@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import type { WidgetPayload } from '../harness/widgetRuntime';
+import type { WidgetTheme } from '../harness/widgetTheme';
 import WidgetBlock, {
   WIDGET_PREVIEW_MSG,
   type WidgetPreviewMessage,
@@ -28,8 +29,13 @@ export default function WidgetPreview() {
   const [searchParams] = useSearchParams();
   const token = searchParams.get('token')?.trim() ?? '';
   const channelRef = useRef<BroadcastChannel | null>(null);
+  const sequence = useRef(0);
+  const pending = useRef(new Map<number, { resolve(): void; reject(error: Error): void; timer: ReturnType<typeof setTimeout> }>());
   const [payload, setPayload] = useState<WidgetPayload | null>(null);
   const [dark, setDark] = useState(false);
+  const [appearance, setAppearance] = useState<WidgetTheme>();
+  const [rowId, setRowId] = useState<number | undefined>();
+  const [canPrompt, setCanPrompt] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -49,19 +55,44 @@ export default function WidgetPreview() {
     channelRef.current = channel;
     channel.onmessage = (event: MessageEvent<WidgetPreviewMessage>) => {
       const message = event.data;
+      if (message?.type === WIDGET_PREVIEW_MSG.result) {
+        const task = pending.current.get(message.requestId);
+        if (!task) return;
+        pending.current.delete(message.requestId);
+        clearTimeout(task.timer);
+        if (message.error) task.reject(new Error(message.error)); else task.resolve();
+        return;
+      }
       if (message?.type !== WIDGET_PREVIEW_MSG.payload || !isWidgetPayload(message.payload)) return;
       setPayload(message.payload);
       setDark(message.dark === true);
+      setAppearance(message.appearance);
+      setRowId(Number.isSafeInteger(message.rowId) ? message.rowId : undefined);
+      setCanPrompt(message.canPrompt === true);
     };
     channel.postMessage({ type: WIDGET_PREVIEW_MSG.ready } satisfies WidgetPreviewMessage);
     return () => {
       channel.close();
       channelRef.current = null;
+      for (const task of pending.current.values()) {
+        clearTimeout(task.timer);
+        task.reject(new Error('独立预览已关闭'));
+      }
+      pending.current.clear();
     };
   }, [token]);
 
   const sendPrompt = useCallback((text: string) => {
-    channelRef.current?.postMessage({ type: WIDGET_PREVIEW_MSG.prompt, text } satisfies WidgetPreviewMessage);
+    return new Promise<void>((resolve, reject) => {
+      if (!channelRef.current) { reject(new Error('请从原会话重新打开预览')); return; }
+      const requestId = ++sequence.current;
+      const timer = setTimeout(() => {
+        pending.current.delete(requestId);
+        reject(new Error('原会话没有响应，请回到聊天页面重试'));
+      }, 5000);
+      pending.current.set(requestId, { resolve, reject, timer });
+      channelRef.current.postMessage({ type: WIDGET_PREVIEW_MSG.prompt, text, requestId } satisfies WidgetPreviewMessage);
+    });
   }, []);
 
   return (
@@ -79,7 +110,7 @@ export default function WidgetPreview() {
           </div>
         ) : payload ? (
           <div className="widget-preview-page__widget">
-            <WidgetBlock payload={payload} dark={dark} allowPopout={false} onPrompt={sendPrompt} />
+            <WidgetBlock payload={payload} dark={dark} appearance={appearance} rowId={rowId} disabled={!canPrompt} allowPopout={false} onPrompt={sendPrompt} />
           </div>
         ) : (
           <div className="widget-preview-page__message" role="status" data-testid="widget-preview-loading">

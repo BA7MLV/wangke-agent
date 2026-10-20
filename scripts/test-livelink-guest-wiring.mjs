@@ -477,6 +477,19 @@ await test('问答：to 是别人的帧一律忽略（不变量 7：两台设备
   assert.equal(t.core.turn(mine).content, '我的答案');
 });
 
+await test('问答：多图随流保留、done 权威载荷补齐，不覆盖前图', async () => {
+  const t = setup();
+  const turnId = t.core.ask('v1', '比较两种情况');
+  const widgets = [1, 2].map((index) => ({ id: `widget-${index}`, ref: `widget-${index}`, html: `<p>图 ${index}</p>` }));
+  for (const payload of widgets) t.core.dispatch(encodeFrame({ v: PROTOCOL_VERSION, t: FRAME.chatCard, id: turnId, to: GUEST, turnId, kind: 'widget', payload }));
+  assert.deepEqual(t.core.turn(turnId).widgets, widgets);
+  assert.deepEqual(t.core.turn(turnId).widget, widgets[1]);
+  const final = [...widgets, { id: 'final', ref: 'final', html: '<p>收尾补齐</p>' }];
+  t.core.dispatch(encodeFrame({ v: PROTOCOL_VERSION, t: FRAME.chatDone, id: turnId, to: GUEST, turnId, content: '比较结果', widget: final[2], widgets: final }));
+  assert.deepEqual(t.core.turn(turnId).widgets, final);
+  assert.deepEqual(t.core.turn(turnId).widget, final[2]);
+});
+
 await test('问答：chat.err → 该轮转 error，不影响已完成的那一轮', async () => {
   const t = setup();
   const first = t.core.ask('v1', '第一问');

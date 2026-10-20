@@ -1,6 +1,12 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { Button, Dropdown, Label, Modal, TextArea } from '@heroui/react';
 import { buildWidgetDocument, WIDGET_MSG, type WidgetPayload } from '../harness/widgetRuntime';
-import { Sym } from '../ui';
+import { normalizeWidgetPrompt, widgetFollowUp, type WidgetState } from '../harness/widgetState';
+import { observeWidgetState, openWidgetSession, readWidgetState, saveWidgetState, type WidgetSession } from '../store/widgetState';
+import { MODAL_CONTAINER_CLASS, Sym } from '../ui';
+import { observeWidgetTheme, readWidgetTheme, type WidgetTheme } from '../harness/widgetTheme';
+import type { ArtifactActions } from './ArtifactEditor';
+import WidgetStateSummary from './WidgetStateSummary';
 import './widget-block.css';
 
 /**
@@ -15,10 +21,10 @@ import './widget-block.css';
  * 对比 `HtmlReader.tsx` 的阅读视图 —— 那边是 `allow-same-origin` 且不给 `allow-scripts`，
  * 因为它要显示用户导入的材料、只需要样式。两个方向各自成立，**别把两个搞混**。
  *
- * ## 宿主只做两件事
+ * ## 宿主的受限能力
  *
- * 收高度（决定 iframe 高度）、收 prompt（把用户点击转成新一轮提问）。
- * 两者都会校验 `event.source === iframe.contentWindow` 与 opaque origin
+ * 高度、主题、绑定此消息的 JSON 快照，以及必须由用户确认的追问。
+ * 消息都校验 `event.source === iframe.contentWindow` 与 opaque origin
  * `event.origin === "null"`，所以外部页面不能伪造同名消息。
  */
 
@@ -27,9 +33,16 @@ interface Props {
   /** 深色模式（宿主的主题设置，不是系统偏好） */
   dark: boolean;
   /** widget 请求继续对话时调用（文本就是用户在 widget 里点的那句话） */
-  onPrompt?: (text: string) => void;
+  onPrompt?: (text: string) => void | Promise<void>;
+  /** 只有已持久保存的消息才能写快照。行号由宿主传入，iframe 永远拿不到。 */
+  rowId?: number;
+  /** 生成中或入口只读时，不能发起付费追问。 */
+  disabled?: boolean;
   /** 独立预览页不再显示「在新窗口展开」，避免从新窗口继续打开新窗口。 */
   allowPopout?: boolean;
+  editActions?: ArtifactActions | null;
+  /** Popouts inherit the originating surface's locally scoped palette and typography. */
+  appearance?: WidgetTheme;
 }
 
 /**
@@ -40,12 +53,14 @@ export const WIDGET_PREVIEW_MSG = {
   ready: 'widget-preview:ready',
   payload: 'widget-preview:payload',
   prompt: 'widget-preview:prompt',
+  result: 'widget-preview:result',
 } as const;
 
 export type WidgetPreviewMessage =
   | { type: typeof WIDGET_PREVIEW_MSG.ready }
-  | { type: typeof WIDGET_PREVIEW_MSG.payload; payload: WidgetPayload; dark: boolean }
-  | { type: typeof WIDGET_PREVIEW_MSG.prompt; text: string };
+  | { type: typeof WIDGET_PREVIEW_MSG.payload; payload: WidgetPayload; dark: boolean; appearance?: WidgetTheme; rowId?: number; canPrompt?: boolean }
+  | { type: typeof WIDGET_PREVIEW_MSG.prompt; text: string; requestId: number }
+  | { type: typeof WIDGET_PREVIEW_MSG.result; requestId: number; error?: string };
 
 const WIDGET_PREVIEW_CHANNEL_PREFIX = 'wangke-widget-preview:';
 
@@ -67,8 +82,19 @@ function createPreviewToken(): string {
 const MIN_H = 80;
 const MAX_H = 2000;
 
-export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = true }: Props) {
+export default function WidgetBlock(props: Props) {
+  // A new source revision owns a new bridge and pending requests. State/theme updates do not remount it.
+  const libsKey = JSON.stringify(props.payload.libs ?? []);
+  const key = useMemo(() => JSON.stringify([props.rowId ?? null, props.payload.id ?? null, props.payload.html, libsKey]),
+    [props.rowId, props.payload.id, props.payload.html, libsKey]);
+  return <WidgetSessionBlock key={key} {...props} />;
+}
+
+function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, allowPopout = true, editActions, appearance }: Props) {
+  const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const themeRef = useRef<WidgetTheme | undefined>(appearance);
+  const questionId = useId();
   const previewTokenRef = useRef<string | null>(null);
   const previewChannelRef = useRef<BroadcastChannel | null>(null);
   if (!previewTokenRef.current) previewTokenRef.current = createPreviewToken();
@@ -76,28 +102,89 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
   const payloadRef = useRef(payload);
   const darkRef = useRef(dark);
   const onPromptRef = useRef(onPrompt);
+  const disabledRef = useRef(disabled);
   payloadRef.current = payload;
   darkRef.current = dark;
   onPromptRef.current = onPrompt;
+  disabledRef.current = disabled;
   const [height, setHeight] = useState(MIN_H);
   const [doc, setDoc] = useState('');
   const [failed, setFailed] = useState('');
+  const [session, setSession] = useState<WidgetSession | null | undefined>(rowId == null ? null : undefined);
+  const stateRef = useRef<WidgetState | null>(null);
+  const activeRef = useRef(true);
+  const [stateMessage, setStateMessage] = useState('');
+  const [actionError, setActionError] = useState('');
+  const [followUp, setFollowUp] = useState<{ requestId?: number; state: WidgetState | null } | null>(null);
+  const followUpRef = useRef(false);
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState(false);
+  const [question, setQuestion] = useState('');
+
+  const post = useCallback((type: string, value: unknown) => {
+    frameRef.current?.contentWindow?.postMessage({ __wbw: type, payload: value }, '*');
+  }, []);
+  const reply = useCallback((requestId: number | undefined, error?: string) => {
+    if (requestId != null && activeRef.current) post(WIDGET_MSG.result, { requestId, ok: !error, error });
+  }, [post]);
 
   useEffect(() => {
+    activeRef.current = true;
+    if (rowId == null) return () => { activeRef.current = false; };
+    let cancelled = false;
+    let subscription: { unsubscribe(): void } | undefined;
+    void openWidgetSession(rowId, payload).then(async (binding) => {
+      const state = await readWidgetState(binding);
+      if (cancelled) return;
+      stateRef.current = state;
+      setSession(binding);
+      subscription = observeWidgetState(binding).subscribe({
+        next: (next) => {
+          if (cancelled) return;
+          stateRef.current = next;
+          post(WIDGET_MSG.sync, next);
+        },
+        error: (error) => { if (!cancelled) setFailed(String(error instanceof Error ? error.message : error)); },
+      });
+    }).catch((error) => { if (!cancelled) setFailed(error instanceof Error ? error.message : String(error)); });
+    return () => {
+      cancelled = true;
+      activeRef.current = false;
+      subscription?.unsubscribe();
+    };
+    // Source identity is the enclosing component key; callback and theme changes must not reopen it.
+  }, [rowId, payload.html, payload.id, post]);
+
+  useEffect(() => {
+    if (session === undefined) return;
     let cancelled = false;
     setDoc('');
     setFailed('');
-    buildWidgetDocument(payload)
+    if (!appearance && hostRef.current) themeRef.current = readWidgetTheme(hostRef.current, darkRef.current);
+    buildWidgetDocument(payload, { dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null })
       .then((d) => !cancelled && setDoc(d))
       .catch((e) => !cancelled && setFailed(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
-  }, [payload]);
+  }, [session, payload.html]);
 
-  // 主题变化后要重新挂载才能拿到新的 srcdoc —— 不透明源下拿不到 document，
-  // 所以只能整份换掉。（代价是重跑一次脚本，对图表 widget 是可接受的。）
-  useEffect(() => setHeight(MIN_H), [dark]);
+  // Observe actual computed host tokens, including local course palettes and root font scale.
+  // Messages never replace srcdoc: parameter values and local execution survive.
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const sync = () => {
+      const next = appearance ?? readWidgetTheme(host, dark);
+      if (JSON.stringify(next) === JSON.stringify(themeRef.current)) return;
+      themeRef.current = next;
+      post(WIDGET_MSG.theme, next);
+      previewChannelRef.current?.postMessage({ type: WIDGET_PREVIEW_MSG.payload, payload: payloadRef.current,
+        dark: darkRef.current, appearance: next, rowId, canPrompt: !!onPromptRef.current && !disabledRef.current } satisfies WidgetPreviewMessage);
+    };
+    sync();
+    return appearance ? undefined : observeWidgetTheme(host, sync);
+  }, [dark, appearance, post, rowId, doc]);
 
   // 新窗口本身只拿到随机 token；它准备好后向这里请求 payload。这样既不把源码放进
   // URL，也不需要给新窗口 opener，展开后的 widget 仍然可以通过同一条桥接继续提问。
@@ -113,17 +200,33 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
           type: WIDGET_PREVIEW_MSG.payload,
           payload: payloadRef.current,
           dark: darkRef.current,
+          appearance: themeRef.current,
+          rowId,
+          canPrompt: !!onPromptRef.current && !disabledRef.current,
         } satisfies WidgetPreviewMessage);
       } else if (message.type === WIDGET_PREVIEW_MSG.prompt) {
         const text = typeof message.text === 'string' ? message.text.trim() : '';
-        if (text) onPromptRef.current?.(text);
+        // The preview's own host already showed the confirmation dialog. Still reject stale sources.
+        void (async () => {
+          let error: string | undefined;
+          try {
+            if (!text || disabledRef.current || !session || !onPromptRef.current)
+              throw new Error('原会话暂不能追问，请回到聊天页面');
+            await readWidgetState(session);
+            if (!activeRef.current || disabledRef.current) throw new Error('原会话已关闭或正在生成');
+            await onPromptRef.current(text);
+          } catch (reason) {
+            error = reason instanceof Error ? reason.message : String(reason);
+          }
+          if (activeRef.current) channel.postMessage({ type: WIDGET_PREVIEW_MSG.result, requestId: message.requestId, error } satisfies WidgetPreviewMessage);
+        })();
       }
     };
     return () => {
       if (previewChannelRef.current === channel) previewChannelRef.current = null;
       channel.close();
     };
-  }, [allowPopout, previewToken]);
+  }, [allowPopout, previewToken, rowId, session]);
 
   // 预览页打开后，主题切换或 payload 替换也要同步过去；打开前的消息会被忽略，
   // 因为预览页随后一定会发 ready，ready 分支会再发送当前值。
@@ -133,8 +236,34 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
       type: WIDGET_PREVIEW_MSG.payload,
       payload,
       dark,
+      appearance: themeRef.current,
+      rowId,
+      canPrompt: !!onPrompt && !disabled,
     } satisfies WidgetPreviewMessage);
-  }, [allowPopout, dark, payload]);
+  }, [allowPopout, dark, payload, rowId, onPrompt, disabled]);
+
+  const requestFollowUp = useCallback(async (raw: unknown, requestId?: number) => {
+    let acquired = false;
+    try {
+      if (!onPromptRef.current || disabledRef.current) throw new Error('请等当前回答结束后再追问');
+      if (document.visibilityState !== 'visible' || !frameRef.current?.getClientRects().length)
+        throw new Error('请在可见的交互讲解中发起追问');
+      if (followUpRef.current) throw new Error('请先处理已打开的追问');
+      const text = normalizeWidgetPrompt(raw);
+      followUpRef.current = true;
+      acquired = true;
+      const state = session ? await readWidgetState(session) : null;
+      if (!activeRef.current) return;
+      setQuestion(text);
+      setActionError('');
+      setFollowUp({ requestId, state });
+    } catch (error) {
+      if (acquired) followUpRef.current = false;
+      const message = error instanceof Error ? error.message : String(error);
+      setActionError(message);
+      reply(requestId, message);
+    }
+  }, [session, reply]);
 
   const onMessage = useCallback(
     (e: MessageEvent) => {
@@ -149,12 +278,39 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
         const h = Number(d.payload);
         if (Number.isFinite(h)) setHeight(Math.min(MAX_H, Math.max(MIN_H, h)));
       } else if (d.__wbw === WIDGET_MSG.prompt) {
-        const t = typeof d.payload === 'string' ? d.payload.trim() : '';
-        if (t) onPrompt?.(t);
+        // Old data-wbw-prompt widgets keep working, but no iframe can silently start a model turn.
+        const request = d.payload as { requestId?: number; value?: unknown } | null;
+        const id = Number.isSafeInteger(request?.requestId) ? request!.requestId : undefined;
+        void requestFollowUp(typeof d.payload === 'string' ? d.payload : request?.value, id);
+      } else if (d.__wbw === WIDGET_MSG.state) {
+        const request = d.payload as { requestId?: number; value?: unknown } | null;
+        if (!Number.isSafeInteger(request?.requestId)) return;
+        const id = request!.requestId;
+        void (async () => {
+          try {
+            if (!session) throw new Error('请等回答保存完成后再保存参数');
+            setStateMessage('正在保存参数…');
+            await saveWidgetState(session, request?.value);
+            const state = await readWidgetState(session);
+            if (!activeRef.current) return;
+            stateRef.current = state;
+            post(WIDGET_MSG.sync, state);
+            setStateMessage('参数已保存在本机');
+            setActionError('');
+            reply(id);
+          } catch (error) {
+            const message = error instanceof Error ? error.message : String(error);
+            if (activeRef.current) { setStateMessage(''); setActionError(message); }
+            reply(id, message);
+          }
+        })();
+      } else if (d.__wbw === WIDGET_MSG.ready) {
+        post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
+        post(WIDGET_MSG.sync, stateRef.current);
       }
       // ready / theme 之外的一律忽略：widget 不能借消息通道做别的事
     },
-    [onPrompt],
+    [session, post, reply, requestFollowUp],
   );
 
   useEffect(() => {
@@ -162,14 +318,6 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
     return () => window.removeEventListener('message', onMessage);
   }, [onMessage]);
 
-  // 主题直接随 srcdoc 首屏注入，不靠消息通道 —— 省一次往返，也少一个能被伪造的面
-  // The runtime stylesheet scopes dark colors to html[data-wbw-theme]. Keep
-  // the marker on the document root rather than body so it matches that
-  // contract (and so a widget's own body markup cannot shadow it).
-  const themed = useMemo(
-    () => doc.replace('<html lang="zh-CN">', `<html lang="zh-CN" data-wbw-theme="${dark ? 'dark' : 'light'}">`),
-    [doc, dark],
-  );
   const canPopout = allowPopout && typeof BroadcastChannel !== 'undefined';
   const previewHref = useMemo(() => {
     if (!canPopout) return '#';
@@ -179,41 +327,55 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
     return url.toString();
   }, [canPopout, previewToken]);
 
+  const cancelFollowUp = () => {
+    if (sendingRef.current || !followUp) return;
+    reply(followUp.requestId, '用户取消了追问');
+    setFollowUp(null);
+    followUpRef.current = false;
+  };
+  const sendFollowUp = async () => {
+    if (!followUp || sendingRef.current) return;
+    sendingRef.current = true;
+    setSending(true);
+    try {
+      if (disabledRef.current || !onPromptRef.current) throw new Error('当前暂不能追问');
+      if (session) await readWidgetState(session);
+      if (!activeRef.current) return;
+      if (disabledRef.current || !onPromptRef.current) throw new Error('当前暂不能追问');
+      // Send the exact snapshot shown in the dialog, not parameters changed in another window meanwhile.
+      await onPromptRef.current(widgetFollowUp(question, followUp.state));
+      reply(followUp.requestId);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (activeRef.current) setActionError(message);
+      reply(followUp.requestId, message);
+    } finally {
+      sendingRef.current = false;
+      if (activeRef.current) {
+        setSending(false);
+        setFollowUp(null);
+        followUpRef.current = false;
+      }
+    }
+  };
+
   if (failed) {
     return (
-      <div className="widget-block widget-block--error" data-testid="widget-error">
+      <div ref={hostRef} className="widget-block widget-block--error" data-testid="widget-error">
         这个图形没能加载起来：{failed}
       </div>
     );
   }
-  if (!themed) {
+  if (!doc) {
     return (
-      <div className="widget-block widget-block--loading" data-testid="widget-loading">
+      <div ref={hostRef} className="widget-block widget-block--loading" data-testid="widget-loading" role="status">
         正在准备图形…
       </div>
     );
   }
 
   return (
-    <div className="widget-block" data-testid="widget-block" data-h={Math.round(height)}>
-      {allowPopout && (
-        <div className="widget-block__toolbar">
-          {canPopout ? (
-            <a
-              className="widget-block__open"
-              href={previewHref}
-              target="_blank"
-              rel="noopener noreferrer"
-              data-testid="widget-open"
-            >
-              <Sym name="open_in_full" />
-              <span>在新窗口展开</span>
-            </a>
-          ) : (
-            <span className="widget-block__open widget-block__open--disabled">当前浏览器不支持独立预览</span>
-          )}
-        </div>
-      )}
+    <div ref={hostRef} className="widget-block" data-testid="widget-block" data-h={Math.round(height)}>
       <iframe
         ref={frameRef}
         className="widget-block__frame"
@@ -221,10 +383,59 @@ export default function WidgetBlock({ payload, dark, onPrompt, allowPopout = tru
         /* 只有 allow-scripts。**绝不要**加 allow-same-origin：给了就等于把
            IndexedDB / localStorage / 父页面 DOM 一起交出去。 */
         sandbox="allow-scripts"
-        srcDoc={themed}
+        srcDoc={doc}
         style={{ height }}
         data-testid="widget-frame"
       />
+      {stateMessage && <p className="sr-only" role="status">{stateMessage}</p>}
+      {(canPopout || editActions) && <div className="widget-block__tools">
+        <Dropdown>
+          <Button isIconOnly size="sm" variant="tertiary" aria-label="更多交互图形操作" data-testid="widget-more"><Sym name="more_horiz" size={18} /></Button>
+          <Dropdown.Popover placement="bottom end">
+            <Dropdown.Menu aria-label="交互图形操作" disabledKeys={editActions?.busy ? ['edit', 'undo'] : []} onAction={(key) => {
+              if (key === 'edit') editActions?.edit();
+              if (key === 'undo') editActions?.undo?.();
+            }}>
+              {canPopout ? <Dropdown.Item id="expand" href={previewHref} target="_blank" rel="noopener noreferrer" textValue="在新窗口展开" data-testid="widget-open"><Sym name="open_in_full" /><Label>在新窗口展开</Label></Dropdown.Item> : null}
+              {editActions ? <Dropdown.Item id="edit" textValue="修改这幅图" data-testid="widget-edit"><Sym name="edit" /><Label>修改这幅图</Label></Dropdown.Item> : null}
+              {editActions?.undo ? <Dropdown.Item id="undo" textValue="撤销上次修改"><Sym name="undo" /><Label>撤销上次修改</Label></Dropdown.Item> : null}
+            </Dropdown.Menu>
+          </Dropdown.Popover>
+        </Dropdown>
+      </div>}
+      {actionError && <p className="m-0 text-sm text-danger" role="alert">{actionError}</p>}
+      {followUp && <Modal.Root isOpen onOpenChange={(open) => {
+        if (!open) cancelFollowUp();
+      }}>
+        <Modal.Backdrop>
+          <Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
+            <Modal.Dialog data-testid="widget-follow-up-dialog">
+              <Modal.Header><Modal.Heading className="text-balance">解释当前情况</Modal.Heading></Modal.Header>
+              <Modal.Body>
+                <div className="flex min-w-0 flex-col gap-4">
+                  <p className="m-0 text-pretty text-sm text-muted">可以改写问题，也可以取消。发送后，AI 会结合下方情况继续讲解。</p>
+                  <div className="flex flex-col gap-2">
+                    <label htmlFor={questionId} className="text-sm font-medium">你想了解什么？</label>
+                    <TextArea id={questionId} aria-label="交互讲解追问" value={question} disabled={sending} maxLength={2000} onChange={(event) => setQuestion(event.target.value)} />
+                  </div>
+                  {followUp.state?.modelContent != null && <section aria-label="当前情况" className="flex min-w-0 flex-col gap-2 text-sm">
+                    <h3 className="m-0 text-balance text-sm font-medium">当前情况</h3>
+                    <div className="max-h-48 overflow-auto break-words" data-testid="widget-follow-up-state"><WidgetStateSummary value={followUp.state.modelContent} /></div>
+                    <details className="text-muted"><summary>查看将发送的参数</summary>
+                      <pre className="max-h-32 overflow-auto whitespace-pre-wrap break-all text-xs">{JSON.stringify(followUp.state.modelContent, null, 2)}</pre>
+                    </details>
+                  </section>}
+                  {actionError && <p className="m-0 text-sm text-danger" role="alert">{actionError}</p>}
+                </div>
+              </Modal.Body>
+              <Modal.Footer>
+                <Button variant="tertiary" isDisabled={sending} onPress={cancelFollowUp}>取消</Button>
+                <Button isDisabled={disabled || sending || !question.trim()} onPress={() => void sendFollowUp()}>{sending ? '正在发送…' : '发送追问'}</Button>
+              </Modal.Footer>
+            </Modal.Dialog>
+          </Modal.Container>
+        </Modal.Backdrop>
+      </Modal.Root>}
     </div>
   );
 }

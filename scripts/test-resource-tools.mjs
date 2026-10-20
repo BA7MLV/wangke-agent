@@ -85,15 +85,25 @@ try {
   assert.match(loaded, /技能正文/);
   const widgets = [];
   const libraryWithWidget = createResourceExecutor({ onWidget: (value) => { widgets.push(value); } });
-  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>继续</button>' }), /已渲染/);
-  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>第二张</button>' }), /已渲染/);
-  assert.deepEqual(widgets, [
+  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>继续</button>' }), /wbw-widget/);
+  assert.match(await libraryWithWidget('show_widget', { format: 'html', code: '<button>第二张</button>' }), /wbw-widget/);
+  assert.ok(widgets.every((widget) => typeof widget.id === 'string' && widget.id.length > 0));
+  assert.notEqual(widgets[0].id, widgets[1].id, 'each generated widget has a host-owned ID');
+  assert.ok(widgets.every((widget) => widget.ref === widget.id));
+  assert.deepEqual(widgets.map(({ id, ref, ...payload }) => payload), [
     { html: '<button>继续</button>', libs: undefined },
     { html: '<button>第二张</button>', libs: undefined },
   ]);
+  const { ensureBuiltinSkills } = await server.ssrLoadModule('/src/skills/store.ts');
+  await ensureBuiltinSkills();
+  const interactive = await library('read', { path: skillPath('交互式讲解') });
+  assert.match(interactive, /调参/);
+  const apiPath = interactive.split('\n').find((line) => line.startsWith('- /skills/') && line.includes('runtime.md')).slice(2);
+  assert.match(await library('read', { path: apiPath }), /setWidgetState/);
   const refPath = loaded.split('\n').find((line) => line.startsWith('- /skills/')).slice(2);
   assert.equal(await library('read', { path: refPath }), '参考正文');
   const restricted = createResourceExecutor({ allowedSkillIds: [] });
+  assert.match(await restricted('read', { path: apiPath }), /不在本次会话/);
   assert.match(await restricted('read', { path: skillPath('测试/技能') }), /不在本次会话/);
   assert.match(await restricted('read', { path: refPath }), /不在本次会话/);
   assert.doesNotMatch(await restricted('read', { path: '/skills' }), /测试/);

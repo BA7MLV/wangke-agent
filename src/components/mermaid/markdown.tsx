@@ -4,8 +4,19 @@ import MermaidBlock from './MermaidBlock';
 import JsonDiagramBlock from './JsonDiagramBlock';
 import SvgBlock from './SvgBlock';
 import { diagramKindOf, fenceTitleOf } from './fence';
+import ArtifactEditor from '../ArtifactEditor';
+import StreamingHtmlPreview from '../StreamingHtmlPreview';
+import { InlineWidget } from '../WidgetMessage';
 
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
+
+function isHtmlFence(props: CodeLikeProps): boolean {
+  return !!props.block && /^\s*html?\b/i.test(String(props.lang ?? ''));
+}
+
+function isWidgetFence(props: CodeLikeProps): boolean {
+  return !!props.block && String(props.lang ?? '').trim().toLowerCase() === 'wbw-widget';
+}
 
 /**
  * 替换 XMarkdown 的 `code` 元素。
@@ -20,15 +31,26 @@ type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
  * 那时图还没画完，所以标题是流式期间最早可见的那点信息。
  */
 export function MarkdownCode({ block, lang, streamStatus, className, children }: ComponentProps) {
+  if (isWidgetFence({ block, lang })) {
+    return <InlineWidget reference={String(children ?? '')} closed={streamStatus !== 'loading'} />;
+  }
+  if (isHtmlFence({ block, lang })) {
+    const source = String(children ?? '').replace(/\s+$/, '');
+    const closed = streamStatus !== 'loading';
+    return <ArtifactEditor kind="html" source={source} closed={closed}>
+      <StreamingHtmlPreview html={source} isStreaming={!closed} statusText="正在解析 HTML" />
+    </ArtifactEditor>;
+  }
   const kind = diagramKindOf({ block, lang });
   if (kind) {
     const code = typeof children === 'string' ? children : String(children ?? '');
     // 未闭合（流式中）时只停在等待态，不解析半截内容 —— 见 MermaidBlock / SvgBlock 的说明
     const closed = streamStatus !== 'loading';
     const title = fenceTitleOf(lang);
-    if (kind === 'mermaid') return <MermaidBlock code={code} closed={closed} title={title} />;
-    if (kind === 'diagram') return <JsonDiagramBlock code={code} closed={closed} title={title} />;
-    return <SvgBlock code={code} closed={closed} title={title} />;
+    const diagram = kind === 'mermaid' ? <MermaidBlock code={code} closed={closed} title={title} />
+      : kind === 'diagram' ? <JsonDiagramBlock code={code} closed={closed} title={title} />
+      : <SvgBlock code={code} closed={closed} title={title} />;
+    return <ArtifactEditor kind={kind} source={code.replace(/\s+$/, '')} closed={closed}>{diagram}</ArtifactEditor>;
   }
   return <code className={typeof className === 'string' ? className : undefined}>{children as React.ReactNode}</code>;
 }
@@ -47,7 +69,8 @@ export function MarkdownPre({ children }: ComponentProps) {
   const items = React.Children.toArray(children as React.ReactNode).filter(
     (c) => !(typeof c === 'string' && c.trim() === ''),
   );
-  if (items.length === 1 && React.isValidElement(items[0]) && diagramKindOf(items[0].props as CodeLikeProps)) {
+  if (items.length === 1 && React.isValidElement(items[0]) && (diagramKindOf(items[0].props as CodeLikeProps) || isHtmlFence(items[0].props as CodeLikeProps)
+    || isWidgetFence(items[0].props as CodeLikeProps))) {
     return <>{children as React.ReactNode}</>;
   }
   return <pre>{children as React.ReactNode}</pre>;

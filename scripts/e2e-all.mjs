@@ -36,6 +36,7 @@ mkdirSync(CACHE_DIR, { recursive: true });
 //             而 runScript 是按退出码判 passed/failed 的 —— 所以探针挂了同样会让整轮
 //             跑分变红。这是有意保留的：探针坏掉值得显式看见，不该被「仅供参考」掩盖。
 // base:    读取 BASE_URL（编排器会按服务注入正确地址）
+// tsx:     用 TS loader 运行包含无扩展名 TypeScript 导入的测试
 // timeout:  单脚本超时（秒）
 // video:   优先注入的测试视频
 // skip:     非空的跳过原因（整脚本跳过）
@@ -165,6 +166,10 @@ const META = {
   // 净化层的报错原文（已阻止渲染）对模型没有可操作性，那这工具就只是一块会说「不行」的牌子。
   // 「它是否真的走了渲染层同一个净化函数」由 probe-svg-sanitize 守（要真浏览器）。
   'test-widget': { service: 'none', antd: false, timeout: 120 },
+  // 小型 JSON 快照、消息/源码绑定、隐私边界与过期写入拒绝。
+  'test-widget-state': { service: 'none', antd: false, timeout: 120, tsx: true },
+  'e2e-widget-state': { service: 'dev', antd: false, timeout: 180, base: true },
+  'e2e-widget-layout': { service: 'dev', antd: false, timeout: 180, base: true },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。
@@ -447,7 +452,7 @@ const META = {
   'probe-json-diagram': { service: 'dev', antd: false, diagnostic: true, timeout: 180 },
   // 沙箱 widget 的隔离边界：Node 里没有同源策略 / sandbox / CSP，
   // 「widget 里的脚本到底能碰到什么」这个问题只有真浏览器能作证。
-  // 证明的是**碰不到什么**：不透明源读不到父页面、CSP 断掉一切外发、桥接只有两个能力。
+  // 证明的是**碰不到什么**：不透明源读不到父页面、CSP 禁外网，桥接不提供课程读取或工具执行。
   'probe-widget-sandbox': { service: 'dev', antd: false, diagnostic: true, timeout: 180 },
 };
 
@@ -612,7 +617,7 @@ function runScript(name, meta, svc) {
     // 只有声明了 base 的脚本才读 BASE_URL；服务复用与否端口都一样，无需分支
     if (svc && meta.base) env.BASE_URL = `http://localhost:${svc.port}`;
 
-    const child = spawn('node', [file], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
+    const child = spawn('node', [...(meta.tsx ? ['--import', 'tsx'] : []), file], { cwd: ROOT, env, stdio: ['ignore', 'pipe', 'pipe'] });
     let out = '';
     const onData = (d) => { out += d.toString(); };
     child.stdout.on('data', onData);

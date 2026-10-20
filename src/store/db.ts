@@ -1,6 +1,7 @@
 import Dexie, { type Table } from 'dexie';
 import type { QuizData } from '../harness/quiz';
 import type { WidgetPayload } from '../harness/widgetRuntime';
+import type { WidgetState } from '../harness/widgetState';
 import type { AskUserData, AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import type { CommentRole } from '../harness/comments';
@@ -337,6 +338,11 @@ export interface ChatRow {
    * 存进库里会让每条历史消息凭空多出几百 KB。
    */
   widget?: WidgetPayload;
+  /** Ordered inline visuals. widget remains a last-item alias for older clients. */
+  widgets?: WidgetPayload[];
+  /** 本机交互快照，绑定此消息及此版 widget；privateContent 不进入模型上下文。 */
+  widgetState?: { widgetId: string; value: WidgetState };
+  widgetStates?: Record<string, WidgetState>;
 }
 
 /** 提问卡状态（`ChatRow.ask`）：题面与选项 + 用户的选择 */

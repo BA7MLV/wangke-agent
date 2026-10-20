@@ -33,8 +33,12 @@
  *    Chart.js 由宿主把源码**内联**进去。第三方 CDN 既是供应链面，也是绕过 CSP 的洞。
  *
  * 与宿主的唯一通道是 `postMessage`，且宿主侧会校验 iframe window 与 opaque origin，
- * 拿到的只是一个字符串（prompt 文本）或一个数字（高度）。
+ * 仅交换高度、主题、受限 JSON 状态和待用户确认的追问，不暴露检索或执行工具。
  */
+
+import { WIDGET_STYLES } from './widgetStyles.ts';
+import { normalizeWidgetState, type WidgetState } from './widgetState.ts';
+import type { WidgetTheme } from './widgetTheme.ts';
 
 /** widget 可以声明需要的宿主库；只有被声明的才会内联进去，避免每张图都背上 200KB */
 export type WidgetLib = 'chart.js';
@@ -50,6 +54,10 @@ const LIBS: Record<WidgetLib, () => Promise<string>> = {
 };
 
 export interface WidgetPayload {
+  /** 宿主生成的实例 ID，旧消息第一次打开时补齐；模型不能指定。 */
+  id?: string;
+  /** Stable inline reference; source revisions rotate id but retain this placement. */
+  ref?: string;
   /** widget 的 HTML 片段（不含 <html>/<body>） */
   html: string;
   /** 声明需要的宿主库 */
@@ -66,24 +74,62 @@ export const WIDGET_MSG = {
   theme: 'wbw:theme',
   /** iframe → 宿主：文档就绪 */
   ready: 'wbw:ready',
+  state: 'wbw:state',
+  sync: 'wbw:sync',
+  result: 'wbw:result',
 } as const;
 
 /**
  * 注入 iframe 的桥接脚本。
  *
- * 它是 widget 唯一能碰到宿主的方式，且只能做两件事：报高度、发一句话。
- * 刻意**不**暴露任何别的能力（没有读数据、没有弹窗、没有跳转）。
+ * 它是 widget 唯一能碰到宿主的方式。状态写入等待持久化 ACK，追问等待用户确认；
+ * 没有读取课程、调用工具、跳转或直接请求模型的能力。
  */
 const BRIDGE = `
 (function () {
-  // ⚠️ 必须排在 widget 自己的 <script> **之前**（本函数被插在 <head> 里）。
-  // 经典脚本按文档顺序同步执行：bridge 放在 body 里的话，widget 脚本运行时
-  // window.__wbw 还不存在，于是 sendPrompt / reportHeight 直接抛 undefined。
-  // 这里的初始 report() 测不到 body（还没建）也没关系 —— clamp 到下限，
-  // 随后的 load 与 ResizeObserver 会把真实高度补上。
+  var initial = __WBW_INITIAL__;
+  var state = initial.state;
+  var pending = new Map(), sequence = 0, saves = Promise.resolve();
+  function copy(value) { return JSON.parse(JSON.stringify(value)); }
   var post = function (type, payload) {
     try { parent.postMessage({ __wbw: type, payload: payload }, '*'); } catch (e) {}
   };
+  function request(type, payload) {
+    return new Promise(function (resolve, reject) {
+      var id = ++sequence;
+      var timer = setTimeout(function () {
+        pending.delete(id); reject(new Error('宿主没有确认此操作，请重试'));
+      }, type === ${JSON.stringify(WIDGET_MSG.prompt)} ? 300000 : 15000);
+      pending.set(id, { resolve: resolve, reject: reject, timer: timer });
+      post(type, { requestId: id, value: payload });
+    });
+  }
+  function setTheme(value) {
+    var dark = typeof value === 'object' && value ? value.dark === true : value === true;
+    var tokens = value && value.tokens;
+    if (tokens) Object.keys(tokens).forEach(function (name) {
+      if (/^--wbw-[a-z-]+$/.test(name) && typeof tokens[name] === 'string')
+        document.documentElement.style.setProperty(name, tokens[name]);
+    });
+    document.documentElement.setAttribute('data-wbw-theme', dark ? 'dark' : 'light');
+    window.dispatchEvent(new CustomEvent('wbw:themechange', { detail: { dark: dark } }));
+  }
+  window.addEventListener('message', function (event) {
+    if (event.source !== parent || !event.data) return;
+    var data = event.data, value = data.payload;
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.theme)}) setTheme(value);
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.sync)}) {
+      if (JSON.stringify(state) === JSON.stringify(value)) return;
+      state = copy(value);
+      window.dispatchEvent(new CustomEvent('wbw:statechange', { detail: { state: copy(state) } }));
+    }
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.result)} && value) {
+      var task = pending.get(value.requestId);
+      if (!task) return;
+      pending.delete(value.requestId); clearTimeout(task.timer);
+      if (value.ok) task.resolve(); else task.reject(new Error(value.error || '操作未完成'));
+    }
+  });
   var raf = 0;
   function report() {
     raf = 0;
@@ -92,27 +138,51 @@ const BRIDGE = `
     post(${JSON.stringify(WIDGET_MSG.height)}, Math.max(80, Math.ceil(h)));
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(report); }
-  window.__wbw = {
+  var api = {
+    get widgetState() { return copy(state); },
+    get persistent() { return initial.persistent; },
     reportHeight: report,
-    sendPrompt: function (text) {
-      post(${JSON.stringify(WIDGET_MSG.prompt)}, String(text == null ? '' : text).slice(0, 2000));
+    setWidgetState: function (next) {
+      var snapshot;
+      try {
+        if (!initial.persistent) throw new Error('请等回答保存完成后再保存参数');
+        var json = JSON.stringify(next, function (key, value) {
+          if (typeof value === 'undefined' || typeof value === 'function' || typeof value === 'symbol'
+            || (typeof value === 'number' && !Number.isFinite(value))) throw new Error('状态必须是 JSON');
+          return value;
+        });
+        if (new TextEncoder().encode(json).length > 16384) throw new Error('状态超过 16 KiB');
+        snapshot = JSON.parse(json);
+      } catch (error) { return Promise.reject(error); }
+      saves = saves.catch(function () {}).then(function () {
+        return request(${JSON.stringify(WIDGET_MSG.state)}, snapshot);
+      });
+      return saves;
     },
-    theme: function (dark) {
-      document.documentElement.setAttribute('data-wbw-theme', dark ? 'dark' : 'light');
-      try { window.matchMedia('(prefers-color-scheme: dark)').matches; } catch (e) {}
-    }
+    sendPrompt: function (text) {
+      if (!navigator.userActivation || !navigator.userActivation.isActive)
+        return Promise.reject(new Error('请通过点击或键盘操作发起追问'));
+      return saves.then(function () { return request(${JSON.stringify(WIDGET_MSG.prompt)}, text); });
+    },
+    theme: setTheme
   };
+  Object.defineProperty(window, '__wbw', { value: Object.freeze(api), writable: false, configurable: false });
+  setTheme(initial.theme || initial.dark);
   new ResizeObserver(schedule).observe(document.documentElement);
   window.addEventListener('load', function () { report(); schedule(); post(${JSON.stringify(WIDGET_MSG.ready)}, 1); });
   document.addEventListener('click', function (e) {
     var t = e.target;
     while (t && t !== document.body) {
       if (t.hasAttribute && t.hasAttribute('data-wbw-prompt')) {
-        window.__wbw.sendPrompt(t.getAttribute('data-wbw-prompt'));
+        window.__wbw.sendPrompt(t.getAttribute('data-wbw-prompt')).catch(function () {});
         return;
       }
       t = t.parentNode;
     }
+  });
+  window.addEventListener('pagehide', function () {
+    pending.forEach(function (task) { clearTimeout(task.timer); task.reject(new Error('交互讲解已关闭')); });
+    pending.clear();
   });
   report();
 })();
@@ -144,9 +214,11 @@ const CSP = [
  * 拼出 iframe 的完整 HTML 文档。
  *
  * 外壳样式只做「让内容看得清」：透明背景交给宿主（与 SVG 那条一致的取向），
- * 字号不低于 12px，字重只有 400/500 —— 免得 widget 里没写样式时出现 10px 细字。
+ * 正文字号跟随宿主，次要标注不低于 11px，字重只有 400/500。
  */
-export async function buildWidgetDocument(payload: WidgetPayload): Promise<string> {
+export async function buildWidgetDocument(payload: WidgetPayload, options: {
+  dark?: boolean; theme?: WidgetTheme; state?: WidgetState | null; persistent?: boolean;
+} = {}): Promise<string> {
   const libs = payload.libs ?? [];
   const sources = await Promise.all(
     libs.map(async (name) => {
@@ -156,41 +228,20 @@ export async function buildWidgetDocument(payload: WidgetPayload): Promise<strin
     }),
   );
 
+  // Escape '<' as well as line separators: saved strings must never terminate the bootstrap script.
+  const initial = JSON.stringify({ dark: options.dark === true, theme: options.theme, persistent: options.persistent === true,
+    state: options.state == null ? null : normalizeWidgetState(options.state) })
+    .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   return `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="${CSP}">
 <style>
-  html { color-scheme: light dark; }
-  body {
-    margin: 0; padding: 4px 2px;
-    font-family: Roboto, -apple-system, BlinkMacSystemFont, 'PingFang SC', 'Hiragino Sans GB', sans-serif;
-    font-size: 13px; font-weight: 400; line-height: 1.6;
-    color: #2C2C2A; background: transparent;
-    -webkit-font-smoothing: antialiased;
-  }
-  html[data-wbw-theme="dark"] body { color: #D3D1C7; }
-  html[data-wbw-theme="dark"] body :where(input,select,textarea,button) {
-    background: #2C2C2A; color: #D3D1C7; border-color: #5F5E5A;
-  }
-  /* 控件默认继承宿主观感，widget 不必各自描边设色 */
-  input, select, textarea, button { font: inherit; color: inherit; }
-  button { cursor: pointer; padding: 4px 12px; border-radius: 8px;
-           border: 1px solid #B4B2A9; background: #F1EFE8; }
-  input, select, textarea { padding: 4px 8px; border-radius: 8px;
-           border: 1px solid #B4B2A9; background: transparent; }
-  /* 表格走三线表，口径与正文的 markdown 表格一致（见 src/md-table.css）：
-     只有顶线 / 栏目线 / 底线，无竖线、无底纹。线色取 currentColor —— 深浅两套
-     （#2C2C2A / #D3D1C7）自动跟着上面 body 的文字色走，不必再补一条 dark 规则。
-     宽度仍由 widget 自己决定：widget 是模型写的小应用，表格可能只是其中一块，
-     这里不替它撑满。 */
-  table { border-collapse: collapse;
-          border-top: 2px solid currentColor; border-bottom: 2px solid currentColor; }
-  th, td { border: 0 none; padding: 4px 8px; text-align: left; }
-  th { border-bottom: 1px solid currentColor; }
+${WIDGET_STYLES}
 </style>
-<script>${BRIDGE}</script>
+<script>${BRIDGE.replace('__WBW_INITIAL__', () => initial)}</script>
 ${sources.join('\n')}
 </head>
 <body>

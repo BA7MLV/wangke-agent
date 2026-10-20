@@ -157,6 +157,7 @@ export interface CourseChatMessage {
   folderPlan?: FolderPlanState;
   /** 沙箱图形卡（show_widget 的 html 形态产出） */
   widget?: WidgetPayload;
+  widgets?: WidgetPayload[];
   /** show_widget 参数尚未完整到达时的静态安全预览（不落库） */
   widgetPreview?: { html: string };
 }
@@ -427,6 +428,8 @@ export interface CourseChatStore {
    *   （那是一次不可见的批量删除，用户会看到一条会话凭空少了一段）。
    */
   retryMessage: (key: string) => Promise<void>;
+  /** Delete only the selected persisted message, never its following turns. */
+  deleteMessage: (key: string, sessionId: number | null) => Promise<boolean>;
   /**
    * 从某条消息处 fork 出一条新会话，返回新会话 id（失败/被拒返回 null）。
    *
@@ -672,6 +675,13 @@ function writeView(key: ViewKey, patch: Partial<SessionView>): void {
   const next = { ...readView(key), ...patch };
   parked.set(key, next);
   syncAwaiting(key, next);
+}
+
+/** Reflect a committed block edit in its own session, even after switching tabs. */
+export function reflectArtifactEdit(row: ChatRow): void {
+  const view = readView(row.sessionId);
+  writeView(row.sessionId, { messages: view.messages.map((message) => message.rowId === row.id
+    ? { ...message, content: row.content, widget: row.widget, widgets: row.widgets } : message) });
 }
 
 /** 把当前顶层的活动视图存回它那条会话（切走前调）。草稿态不 park：它每次由「新会话」重开 */
@@ -1282,6 +1292,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         createdAt: Date.now(),
         reasoning: message.reasoning,
         ...(message.widget ? { widget: message.widget } : {}),
+        ...(message.widgets ? { widgets: message.widgets } : {}),
         ...(message.ask ? { ask: message.ask } : {}),
         ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         resume: { toolName, toolCallId: call?.id ?? '', midTurn },
@@ -1312,6 +1323,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           else delete row.reasoning;
           if (message.widget) row.widget = message.widget;
           else delete row.widget;
+          if (message.widgets) row.widgets = message.widgets;
+          else delete row.widgets;
           if (message.ask) row.ask = message.ask;
           else delete row.ask;
           if (message.folderPlan) row.folderPlan = message.folderPlan;
@@ -1327,6 +1340,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           createdAt: Date.now(),
           reasoning: message.reasoning,
           ...(message.widget ? { widget: message.widget } : {}),
+          ...(message.widgets ? { widgets: message.widgets } : {}),
           ...(message.ask ? { ask: message.ask } : {}),
           ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         })) as number;
@@ -1497,7 +1511,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           // 校验与文档预检通过后才切换到真正的隔离 iframe。流式中间帧
           // 始终由 StreamingHtmlPreview 以静态白名单方式显示。
           widgetPreview = undefined;
-          patchAi({ widget: w, widgetPreview: undefined });
+          updates.flush();
+          const current = readView(turnKey).messages.find((message) => message.key === currentKey);
+          const widgets = current?.widgets ?? (current?.widget ? [current.widget] : []);
+          patchAi({ widget: w, widgets: [...widgets, w], widgetPreview: undefined });
         },
         library: {
           contextCourseIds: contextCourses.map((course) => course.id),
@@ -1626,6 +1643,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         reasoningMs,
         ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
         ...(finalMessage?.widget ? { widget: finalMessage.widget } : {}),
+        ...(finalMessage?.widgets ? { widgets: finalMessage.widgets } : {}),
         ...(finalMessage?.ask ? { ask: finalMessage.ask } : {}),
         ...(finalMessage?.folderPlan ? { folderPlan: finalMessage.folderPlan } : {}),
       })) as number;
@@ -1638,6 +1656,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       if (abort.signal.aborted) {
         const partial = answer.trim() || lastNarration.trim();
         const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
+        const currentWidgets = readView(turnKey).messages.find((m) => m.key === currentKey)?.widgets;
         // 停在思考中途照样计时：那正是用户中止时最想知道的一个数
         const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
         const bySteer = record.intent === 'steer';
@@ -1690,6 +1709,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
+            ...(currentWidgets ? { widgets: currentWidgets } : {}),
             interrupted: true,
             interruptReason: STEER_INTERRUPT_REASON,
           })) as number;
@@ -1714,6 +1734,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
+            ...(currentWidgets ? { widgets: currentWidgets } : {}),
           })) as number;
           patchAi({ rowId });
         }
@@ -1733,6 +1754,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         const reason = error instanceof Error ? error.message : String(error);
         const partial = answer.trim();
         const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
+        const currentWidgets = readView(turnKey).messages.find((m) => m.key === currentKey)?.widgets;
         if (!partial) {
           // 一个字都没流出来（多半是请求压根没发出去）：没有可续写的东西，照旧报错。
           // 不落库 —— 一条空的 assistant 在历史里没有意义（发请求时也会被 messageHygiene 丢掉）。
@@ -1759,6 +1781,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
               reasoning: reasoning || undefined,
               ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
               widget: currentWidget,
+              widgets: currentWidgets,
               interrupted: true,
               interruptReason: reason,
             })) as number;
@@ -1792,6 +1815,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
+            ...(currentWidgets ? { widgets: currentWidgets } : {}),
             interrupted: true,
             interruptReason: reason,
           })) as number;
@@ -1904,6 +1928,23 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   },
 
   // ── 重试 / 分支 ───────────────────────────────────────────────────────────
+  deleteMessage: async (key, sessionId) => {
+    if (sessionId == null || get().activeId !== sessionId) return false;
+    const view = readView(sessionId);
+    const message = view.messages.find((item) => item.key === key);
+    if (view.loading || !message || message.streaming || message.rowId == null) return false;
+    const deleted = await db.transaction('rw', db.chats, async () => {
+      if (readView(sessionId).loading) return false;
+      const row = await db.chats.get(message.rowId!);
+      if (!row || row.sessionId !== sessionId) return false;
+      await db.chats.delete(message.rowId!);
+      return true;
+    });
+    if (!deleted) return false;
+    writeView(sessionId, { messages: readView(sessionId).messages.filter((item) => item.key !== key) });
+    return true;
+  },
+
   retryMessage: async (key) => {
     const state = get();
     if (state.loading) return;
@@ -2068,6 +2109,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           ...(row.ask ? { ask: { ...row.ask } } : {}),
           ...(row.folderPlan ? { folderPlan: { ...row.folderPlan } } : {}),
           ...(row.widget ? { widget: row.widget } : {}),
+          ...(row.widgets ? { widgets: row.widgets } : {}),
           ...(row.interrupted ? { interrupted: true } : {}),
           ...(row.interruptReason ? { interruptReason: row.interruptReason } : {}),
         });
@@ -2562,6 +2604,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
     ask: row.ask,
     folderPlan: row.folderPlan,
     widget: row.widget,
+    widgets: row.widgets,
   };
 }
 

@@ -289,6 +289,7 @@ export interface ChatDoneFrame extends Frame {
   reasoningMs?: number;
   quiz?: unknown;
   widget?: unknown;
+  widgets?: unknown[];
 }
 
 /** chat.err（host→guest）：这一轮失败了。失败也要落库成一条 assistant（设计 §3.3）。 */

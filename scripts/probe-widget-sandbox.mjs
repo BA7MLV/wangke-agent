@@ -7,7 +7,7 @@
 //
 //   A. 不透明源：widget 里的 JS 读不到父页面的 DOM / IndexedDB / localStorage / cookie
 //   B. 文档内 CSP：fetch / XHR / WebSocket / sendBeacon / 外链脚本 / 外链资源 全被断
-//   C. 桥接通道：只有「报高度」与「发一句话」两件事可用，且宿主校验 event.source
+//   C. 桥接通道：高度、主题、小型快照和需用户确认的追问，没有通用读写或工具能力
 //   D. 正常能力没被误伤：内联脚本能跑、控件能用、Chart.js 能画、canvas 有像素
 //
 // 用法：node scripts/probe-widget-sandbox.mjs   （需先 npm run dev）
@@ -185,7 +185,7 @@ check(!finished.some((u) => u.includes('/navigate')), '外部导航没有拿到�
 page.removeAllListeners('request');
 page.removeAllListeners('websocket');
 
-console.log('\n=== C. 桥接通道：只报高度 / 只发字符串 ===');
+console.log('\n=== C. 桥接通道：受限状态与追问 ===');
 const c = await mount(`<div id="box" style="height:300px">tall</div>
 <button id="go" data-wbw-prompt="继续讲第二步">go</button>
 <script>
@@ -194,7 +194,7 @@ const c = await mount(`<div id="box" style="height:300px">tall</div>
 check(c, '桥接回报');
 if (c) {
   check(c.h === 1, '桥接对象 __wbw 已注入');
-  check(c.keys === 'reportHeight,sendPrompt,theme', `桥接只暴露三个方法（实测 ${c.keys}）—— 没有读数据/弹窗/跳转`);
+  check(c.keys === 'persistent,reportHeight,sendPrompt,setWidgetState,theme,widgetState', `桥接只有受限能力（实测 ${c.keys}）—— 没有读课程/调用工具/跳转`);
 }
 
 console.log('\n=== D. 正常能力没被误伤 ===');

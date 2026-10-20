@@ -27,17 +27,19 @@ import { StreamParagraph, ThinkLine, PendingReply, useMessageEnter } from '../co
 import ReasoningChain from '../components/ReasoningChain';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
+import { useMessageDeletion } from '../components/useMessageDeletion';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
 import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
-import WidgetBlock from '../components/WidgetBlock';
+import ArtifactEditor, { ArtifactEditProvider } from '../components/ArtifactEditor';
+import WidgetMessage from '../components/WidgetMessage';
 import ContextUsageButton from '../components/ContextUsageButton';
 import { useContextCompression } from '../components/useContextCompression';
 import { EMPTY_COMPRESSION, retainedContext, useContextCompressionStore } from '../store/contextCompression';
-import { useCourseChat, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
+import { useCourseChat, reflectArtifactEdit, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
 import { useChatNotifications } from '../store/chatNotifications';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useSettings } from '../store/settings';
@@ -153,6 +155,7 @@ function MessageActions({
   onRetry,
   onFork,
   onExport,
+  onDelete,
 }: {
   content: string;
   /** 用户消息：复制 / 重试 / 分支三颗（重试是「重新回答这句话」，见 store 的 `retryMessage`）。
@@ -167,6 +170,7 @@ function MessageActions({
   onRetry: () => void;
   onFork: () => void;
   onExport: () => void;
+  onDelete: () => void;
 }) {
   const copy = (text: string, okMsg: string) => {
     void (async () => {
@@ -222,6 +226,7 @@ function MessageActions({
       {action(retryHint, <Sym name="refresh" />, onRetry, 'chat-retry-message', busy || !canRetry)}
 
       {action('从这条消息分叉出新会话', <Sym name="fork" />, onFork, 'chat-fork-message', busy)}
+      {action('删除这条消息', <Sym name="delete" />, onDelete, 'chat-delete-message', busy)}
 
       {!isUser && (
         <Dropdown>
@@ -260,12 +265,13 @@ function MessageActions({
 }
 
 /** 长消息默认展示六行；触屏长按仍可查看时间、复制完整提问与操作。 */
-function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
+function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete }: {
   message: CourseChatMessage;
   busy: boolean;
   canRetry: boolean;
   onRetry: () => void;
   onFork: () => void;
+  onDelete: () => void;
 }) {
   const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
   const textRef = useRef<HTMLSpanElement>(null);
@@ -281,7 +287,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
     return () => observer.disconnect();
   }, [message.content, touchMenu]);
   const content = <span ref={textRef} id={`user-text-${message.key}`} className="course-chat__user-text"
-    data-collapsed={overflows && !expanded}>{message.content}</span>;
+    data-collapsed={overflows && !expanded}>{message.content || '图片消息'}</span>;
   return (
     <div className="course-chat__user-content">
     <ChatMessageAttachments files={message.attachments} />
@@ -298,10 +304,11 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
             {messageTime(message.createdAt)}
           </time>
         )}
-        <Dropdown.Menu aria-label="提问操作" disabledKeys={busy || message.rowId == null ? ['retry', 'fork'] : canRetry ? [] : ['retry']}
+        <Dropdown.Menu aria-label="提问操作" disabledKeys={busy || message.rowId == null ? ['retry', 'fork', 'delete'] : canRetry ? [] : ['retry']}
           onAction={(key) => {
             if (key === 'retry') onRetry();
             else if (key === 'fork') onFork();
+            else if (key === 'delete') onDelete();
             else if (key === 'copy') void copyText(message.content).then((ok) => {
               if (ok) toast.success('已复制这条提问（Markdown）');
               else toast.error('复制失败：剪贴板不可用');
@@ -310,6 +317,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork }: {
           <Dropdown.Item id="copy" textValue="复制" data-testid="chat-user-copy"><Sym name="content_copy" />复制</Dropdown.Item>
           <Dropdown.Item id="retry" textValue="重试" data-testid="chat-user-retry"><Sym name="refresh" />重试</Dropdown.Item>
           <Dropdown.Item id="fork" textValue="分支出新会话" data-testid="chat-user-fork"><Sym name="fork" />分支出新会话</Dropdown.Item>
+          <Dropdown.Item id="delete" textValue="删除这条消息" data-testid="chat-user-delete"><Sym name="delete" />删除这条消息</Dropdown.Item>
         </Dropdown.Menu>
       </Dropdown.Popover>
     </Dropdown>
@@ -660,6 +668,8 @@ export default function CourseChat() {
   const createSession = useCourseChat((s) => s.createSession);
   // 「删当前会话」的 `deleteSession` 也已不再订阅：入口收进 Recent 行尾菜单后走 `deleteSessionById`。
   const deleteSessionById = useCourseChat((s) => s.deleteSessionById);
+  const removeMessage = useCourseChat((s) => s.deleteMessage);
+  const { deleteMessage, deleting } = useMessageDeletion(listRef, activeId, (key) => removeMessage(key, activeId));
   const renameSession = useCourseChat((s) => s.renameSession);
   const setPinned = useCourseChat((s) => s.setPinned);
   const setArchived = useCourseChat((s) => s.setArchived);
@@ -1232,7 +1242,7 @@ export default function CourseChat() {
       >
         <section className="course-chat__main" aria-label="AI 助手聊天">
           <div className="course-chat__timeline">
-          <div className="course-chat__messages" ref={listRef} data-testid="course-chat-messages">
+          <div className="course-chat__messages" ref={listRef} tabIndex={-1} data-testid="course-chat-messages">
             {!loaded && <ChatHistorySkeleton />}
             {loaded && messages.length === 0 && (
               <div className="course-chat__empty">
@@ -1324,12 +1334,14 @@ export default function CourseChat() {
                     + (entering.has(message.key) ? ' t-msg-enter' : '')
                   }
                   data-error={message.error ? 'true' : undefined}
+                  data-chat-message={message.key}
                 >
                   {/* AI 侧不挂头像气泡：showcase 里助手的回答是**直接铺在正文流里**的，
                       加一个头像就把每条回答切成了「卡片」，长回答读起来很累。 */}
                   {user ? (
-                    <UserMessageBubble message={message} busy={loading} canRetry={canRetryAsk}
-                      onRetry={() => void retryMessage(message.key)} onFork={() => void onForkMessage(message)} />
+                    <UserMessageBubble message={message} busy={loading || deleting} canRetry={canRetryAsk}
+                      onRetry={() => void retryMessage(message.key)} onFork={() => void onForkMessage(message)}
+                      onDelete={() => void deleteMessage(message.key)} />
                   ) : (
                     <div className="course-chat__bubble course-chat__bubble--ai">
                       <>
@@ -1378,16 +1390,24 @@ export default function CourseChat() {
                             </Button>
                           </div>
                         )}
-                        {message.content && !message.error && (
+                        <ArtifactEditProvider rowId={message.rowId} content={message.content}
+                          disabled={loading || !!message.streaming || !!message.error || !!message.interrupted || !!message.ask && !message.ask.picked}
+                          onSaved={reflectArtifactEdit}>
+                        <WidgetMessage message={message} content={message.error ? '' : message.content} dark={widgetDark} rowId={message.rowId}
+                          disabled={loading || !!message.streaming || !!message.error || !!message.interrupted || !!message.ask && !message.ask.picked}
+                          onPrompt={(text) => void send(text)}>
+                        {(markdown) => message.content && !message.error ? (
                           htmlPreview !== undefined ? (
+                            <ArtifactEditor kind="html" location="html" source={htmlPreview}>
                             <StreamingHtmlPreview
                               html={htmlPreview}
                               isStreaming={!!message.streaming}
                               statusText="正在解析 HTML"
                             />
+                            </ArtifactEditor>
                           ) : (
                             <XMarkdown
-                              content={message.content}
+                              content={markdown}
                               components={{
                                 a: CourseLink,
                                 p: StreamParagraph,
@@ -1410,17 +1430,12 @@ export default function CourseChat() {
                               }}
                             />
                           )
-                        )}
-                        {message.widget && (
-                          <WidgetBlock
-                            payload={message.widget}
-                            dark={widgetDark}
-                            onPrompt={(text) => void send(text)}
-                          />
-                        )}
-                        {!message.widget && message.widgetPreview && (
+                        ) : null}
+                        </WidgetMessage>
+                        {message.widgetPreview && (
                           <StreamingHtmlPreview html={message.widgetPreview.html} />
                         )}
+                        </ArtifactEditProvider>
                         {/* 操作行与来源都只在**这一轮写完**之后出现：流式进行中时正文还在变，
                             这两个块的计数与内容每一帧都不一样，闪得人没法读。 */}
                         {/* 中断提示条。正文里**不嵌**「回答中断：xxx」那句（与「已停止生成」
@@ -1451,13 +1466,14 @@ export default function CourseChat() {
                           <MessageActions
                             content={message.content}
                             isUser={false}
-                            busy={loading}
+                            busy={loading || deleting}
                             canRetry={canRetry}
                             /* 两种语义必须说得不一样，否则用户不知道点下去会得到什么 */
                             retryHint={message.interrupted ? '接着写（从断点继续，不重复已写内容）' : '重新生成这条回答'}
                             onRetry={() => void retryMessage(message.key)}
                             onFork={() => void onForkMessage(message)}
                             onExport={exportSession}
+                            onDelete={() => void deleteMessage(message.key)}
                           />
                         )}
                         {!message.streaming && message.content && (
@@ -1475,12 +1491,13 @@ export default function CourseChat() {
                     <MessageActions
                       content={message.content}
                       isUser
-                      busy={loading}
+                      busy={loading || deleting}
                       canRetry={canRetryAsk}
                       retryHint="重新回答这句话（删掉这一问一答，用同样的问题重跑一次）"
                       onRetry={() => void retryMessage(message.key)}
                       onFork={() => void onForkMessage(message)}
                       onExport={exportSession}
+                      onDelete={() => void deleteMessage(message.key)}
                     />
                   )}
                 </article>

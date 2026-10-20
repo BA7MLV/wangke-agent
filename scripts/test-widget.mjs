@@ -115,11 +115,12 @@ test('html 形态：超长被拒；内联 script 不误伤', () => {
   assert.ok(ok.ok, '内联 script 应放行');
 });
 
-test('html 回执：说明「已渲染、在下方」，并劝阻把 HTML 贴进正文', () => {
-  const t = widgetAcceptedText({ format: 'html', code: '<div/>' });
-  assert.match(t, /已渲染/);
-  assert.match(t, /不要再把 HTML 贴进正文/);
-  assert.ok(!t.includes('```'), 'html 回执不该含围栏（那会被当源码显示）');
+test('html 回执：给出正文位置引用，不重复源码或宣称在下方', () => {
+  const t = widgetAcceptedText({ format: 'html', code: '<div/>' }, 'host-ref');
+  assert.match(t, /预检通过/);
+  assert.match(t, /不要贴 HTML 源码/);
+  assert.ok(t.includes('```wbw-widget\nhost-ref\n```'));
+  assert.ok(!t.includes('<div/>') && !t.includes('下方'));
 });
 
 test('拒绝非法 format / 空 code / 超长 code', () => {

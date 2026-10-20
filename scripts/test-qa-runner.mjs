@@ -369,6 +369,50 @@ await test('present_quiz：sink.onCard({kind:"quiz"}) 被调，quiz 落进助手
 
 // ── 6. 技能范围：提示词与工具两侧同时收窄（本次修的那条）──────────────────────
 
+await test('show_widget：多图各有正文引用，回调、结果与落库保留全部载荷', async () => {
+  const sessionId = await newSession();
+  const seen = serve([
+    { toolCalls: ['第一幅', '第二幅'].map((text, index) => call(`widget-${index}`, 'show_widget', { format: 'html', code: `<p>${text}</p>` })), finish: 'tool_calls' },
+    { content: '对照两幅图。' },
+  ]);
+  const { r, sink } = recorder();
+  const res = await runQa(ASK({ sessionId, text: '比较两种情况' }), sink);
+  assertRequestsLegal(seen, '多图');
+  assert.equal(r.cards.length, 2);
+  assert.ok(r.cards.every((card) => card.kind === 'widget'));
+  assert.deepEqual(res.widgets, r.cards.map((card) => card.widget));
+  assert.equal(res.widget.id, res.widgets[1].id);
+  const results = seen[1].messages.filter((message) => message.role === 'tool');
+  res.widgets.forEach((widget, index) => {
+    assert.equal(widget.ref, widget.id);
+    assert.ok(results[index].content.includes('```wbw-widget\n' + widget.ref + '\n```'));
+  });
+  const row = await db.chats.get(res.rowId);
+  assert.deepEqual(row.widgets, res.widgets);
+  assert.equal(row.widget.id, row.widgets[1].id);
+});
+
+await test('show_widget 后停止：保留已完成图形，刷新与远端收尾不丢图', async () => {
+  const sessionId = await newSession();
+  const controller = new AbortController();
+  serve([
+    { toolCalls: [call('widget-stop', 'show_widget', { format: 'html', code: '<p>已完成图形</p>' })], finish: 'tool_calls' },
+    { content: '继续说明' },
+  ]);
+  const fetch = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    init.signal?.throwIfAborted();
+    return fetch(url, init);
+  };
+  const res = await runQa(ASK({ sessionId, text: '画一幅图' }), {
+    signal: controller.signal,
+    onCard: () => controller.abort(),
+  });
+  assert.match(res.content, /已停止生成/);
+  assert.equal(res.widgets.length, 1);
+  assert.deepEqual((await db.chats.get(res.rowId)).widgets, res.widgets);
+});
+
 await test('技能范围：提示词只列范围内技能，use_skill 也真的拒绝范围外的', async () => {
   const sessionId = await newSession();
   const seen = serve([

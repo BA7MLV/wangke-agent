@@ -108,6 +108,7 @@ export interface QaRunResult {
   reasoningMs?: number;
   quiz?: QuizState;
   widget?: WidgetPayload;
+  widgets?: WidgetPayload[];
   /** 护栏停下时的停因（正常收工没有） */
   stopped?: AgentStopInfo;
 }
@@ -192,8 +193,8 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   // ── 卡片旁路 + 工具执行器（照搬 ChatPanel）─────────────────────────────────
   // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
   let quizState: QuizState | undefined;
-  // show_widget 的 html 形态：图形卡上屏。一条消息只挂一张（后画的覆盖先画的），
-  // 与「一段回答最多一张图」的出图规范一致。
+  // Every validated visual is retained; Markdown references determine its inline position.
+  const widgets: WidgetPayload[] = [];
   let widgetState: WidgetPayload | undefined;
   const executeTool = createResourceExecutor({
     courseId: videoId,
@@ -216,6 +217,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
     },
     onWidget: (w) => {
       widgetState = w;
+      widgets.push(w);
       sink.onCard?.({ kind: 'widget', widget: w });
     },
   });
@@ -316,8 +318,12 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
         content,
         createdAt: Date.now(),
         reasoning: reasoning || undefined,
+        ...(widgetState ? { widget: widgetState } : {}),
+        ...(widgets.length ? { widgets } : {}),
       })) as number;
-      return { rowId, content, reasoning: reasoning || undefined, reasoningMs, ...(stopped[0] ? { stopped: stopped[0] } : {}) };
+      return { rowId, content, reasoning: reasoning || undefined, reasoningMs,
+        ...(widgetState ? { widget: widgetState } : {}), ...(widgets.length ? { widgets } : {}),
+        ...(stopped[0] ? { stopped: stopped[0] } : {}) };
     }
     // 真错误原样抛给调用方：让它渲染错误气泡、决定要不要再提示一次。
     // （链路 host 侧据此发 chat.err —— 设计 §3.1 说失败也要落库成一条 assistant，
@@ -339,6 +345,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       reasoning: reasoning || undefined,
       ...(quizState ? { quiz: quizState } : {}),
       ...(widgetState ? { widget: widgetState } : {}),
+      ...(widgets.length ? { widgets } : {}),
     })) as number;
     return {
       rowId,
@@ -347,6 +354,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       ...(reasoningMs !== undefined ? { reasoningMs } : {}),
       ...(quizState ? { quiz: quizState } : {}),
       ...(widgetState ? { widget: widgetState } : {}),
+      ...(widgets.length ? { widgets } : {}),
       ...(closeOut ? { stopped: closeOut } : {}),
     };
   }
