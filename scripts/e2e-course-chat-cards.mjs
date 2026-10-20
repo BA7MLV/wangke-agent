@@ -217,8 +217,9 @@ await check('ask_user 出卡，且列出候选方案', async () => {
   assert.match(text, /优先按什么/, '卡上要有题面');
   assert.match(text, /按考试时间紧迫度/, '卡上要有选项');
   await page.screenshot({ path: 'scripts/out/ask-composer-desktop.png' });
-  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 0, '问题属于助手，不放在输入区');
-  assert.equal(await page.locator('.course-chat__bubble--ai [data-testid="ask-card"]').count(), 1);
+  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 1, '待回答问题接管 Chat 输入栏');
+  assert.equal(await page.locator('.course-chat__bubble--ai [data-testid="ask-card"]').count(), 0, '消息流不重复显示作答入口');
+  assert.equal(await page.locator('textarea.course-chat__input').count(), 0, '不保留第二个回答输入框');
   await card.locator('[data-testid="ask-custom"]').click();
   assert.ok(await card.getByRole('textbox', { name: '你的回答' }).isVisible());
   await card.getByRole('button', { name: '返回选项' }).click();
@@ -542,6 +543,8 @@ await check('手机端卡内自由作答，数字 / 中文不快选，提交后�
   await card.waitFor();
   const box = await card.boundingBox();
   assert.ok(box && box.x >= 0 && box.x + box.width <= 390, '问题卡在手机端不横向溢出');
+  assert.ok(box && box.y >= 0 && box.y + box.height <= 844, '底部问题卡完整留在手机可视区内');
+  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 1);
   await page.screenshot({ path: 'scripts/out/ask-composer-mobile.png' });
   await card.locator('[data-testid="ask-custom"]').click();
   const field = card.getByRole('textbox', { name: '你的回答' });
@@ -558,13 +561,13 @@ await check('手机端卡内自由作答，数字 / 中文不快选，提交后�
   await page.setViewportSize({ width: 1440, height: 900 });
 });
 
-await check('只允许选项时禁用自由输入，选择后恢复输入', async () => {
+await check('只允许选项时由提问组件接管输入栏，选择后恢复输入', async () => {
   await resetChats();
   await push(toolChunks('ask_user', { question: '请选择学习方式', options: ['先复习', '先预习'], allowCustom: false }));
   await typeAndSend('继续学习');
   const card = page.locator('[data-testid="ask-card"]');
   await card.waitFor();
-  assert.ok(await page.locator('textarea.course-chat__input').isDisabled());
+  assert.equal(await page.locator('textarea.course-chat__input').count(), 0);
   assert.equal(await card.locator('[data-testid="ask-custom"]').count(), 0);
   await push(textChunks('我们先复习。'));
   await card.getByRole('button', { name: '先复习' }).click();
@@ -585,6 +588,7 @@ await check('多选刷新恢复：数量限制、补充、结构化答案持久�
   await page.reload();
   const card = page.locator('[data-testid="ask-card"]');
   await card.locator('[data-testid="ask-restored"]').waitFor();
+  assert.equal(await page.locator('.course-chat__composer [data-testid="ask-card"]').count(), 1, '刷新后的多选仍在 Chat 栏作答');
   assert.ok(await card.getByRole('button', { name: '提交选择' }).isDisabled());
   await card.locator('.ask-option', { hasText: '数学' }).click();
   assert.ok(await card.getByRole('checkbox', { name: '数学' }).isChecked());
@@ -616,6 +620,7 @@ await check('文本问题无需候选，空回答不可提交', async () => {
   const card = page.locator('[data-testid="ask-card"]');
   await card.waitFor();
   assert.equal(await card.locator('.ask-option').count(), 0);
+  assert.equal(await page.locator('.course-chat__composer textarea').count(), 1, '文本题只有一个回答输入框');
   assert.ok(await card.getByRole('button', { name: '提交回答' }).isDisabled());
   await card.getByRole('textbox', { name: '你的回答' }).fill('两个月内通过考试');
   await push(textChunks('好的，按两个月来安排。'));

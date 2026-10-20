@@ -211,7 +211,7 @@ export default function MdReader({ blob, materialId, initialUnit, handleRef, onU
     return () => {
       cancelled = true;
     };
-  }, [materialId, savedAt]);
+  }, [materialId, savedAt, blob]);
 
   /**
    * 切段。纯函数，所以可以放 useMemo 而不是「setState + effect」那一套：

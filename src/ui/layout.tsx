@@ -14,7 +14,7 @@ import {
 import { Sym } from './icons';
 import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
-import { DotBadge, IconSwap } from '../components/motion';
+import { DotBadge, IconSwap, MatrixDots } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
 import './layout.css';
@@ -107,7 +107,7 @@ export interface RecentAction {
   isDisabled?: boolean;
 }
 
-/** 侧栏「Recent」分组里的历史项（会话等），与主导航项结构不同：没有图标库约定，只有气泡图标 */
+/** 侧栏「Recent」分组里的历史项（会话等）。 */
 export interface RecentItem {
   id: string;
   label: string;
@@ -115,6 +115,8 @@ export interface RecentItem {
   testId?: string;
   /** 当前正在看的那一条。为 true 时渲染成高亮 pill（见 Sidebar 里 Recent 的说明） */
   active?: boolean;
+  /** 正在等待助手回复，优先以点阵代替普通 / 置顶图标。 */
+  pendingReply?: boolean;
   pinned?: boolean;
   onUnpin?: () => void;
   /**
@@ -380,7 +382,12 @@ function Sidebar({
                       }
                       className="recent-item group min-h-9 gap-2.5 rounded-full px-2.5 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
                     >
-                      {item.pinned && item.onUnpin ? (
+                      {item.pendingReply ? (
+                        <span className="grid size-6 shrink-0 place-items-center text-sm"
+                          role="status" aria-label="正在等待回复…">
+                          <MatrixDots />
+                        </span>
+                      ) : item.pinned && item.onUnpin ? (
                         <span className="shrink-0" title="取消置顶"
                           onPointerDown={(event) => event.stopPropagation()}
                           onMouseDown={(event) => event.stopPropagation()}

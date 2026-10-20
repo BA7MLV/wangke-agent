@@ -18,6 +18,7 @@ import SettingsModal from './components/SettingsModal';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
 
+
 export default function App() {
   useMobileGlobals();
 

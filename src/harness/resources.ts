@@ -18,6 +18,7 @@ export const READ_TOOL: ToolDef = {
       type: 'object',
       properties: {
         path: { type: 'string', description: '复制检索或目录返回的资源路径。' },
+        raw: { type: 'boolean', description: 'Markdown 原文（含注释），按行读取；offset 从 0 起。根目录 /wrongbook.md 等文件默认读原文。' },
         start: { type: 'number', description: '起始秒数、页码或段号；与 end 一起传。' },
         end: { type: 'number', description: '结束秒数、页码或段号（含）；与 start 一起传。' },
         offset: { type: 'integer', minimum: 0 },
@@ -34,9 +35,10 @@ export const GREP_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'grep',
-    description: '按关键词或短语搜索正文（不是正则表达式）。path 为 /courses（全库）、/courses/context（当前选中的课程）、/courses/{id} 或具体 transcript/material 路径。单课程问答用 /courses/current。省略 path 时搜索当前课程上下文。返回可交给 read 的路径与原始定位。没命中时换同义词或更短的关键词。',
+    description: '按关键词搜索正文。Markdown 原文件可用 raw=true；也可直接传 /wrongbook.md 等根目录 .md 文件路径，支持 regex=true、flags 正则逐行检索。其他资料按关键词检索。返回可交给 read 的路径与定位。',
     parameters: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string' },
+      raw: { type: 'boolean' }, regex: { type: 'boolean' }, flags: { type: 'string' },
       limit: { type: 'integer', minimum: 1, maximum: 15 },
     }, required: ['query'] },
   },
@@ -47,30 +49,36 @@ export const EDIT_TOOL: ToolDef = {
   function: {
     ...EDIT_MARKDOWN_TOOL.function,
     name: 'edit',
-    description: '精确替换当前打开编辑面的 Markdown 材料正文。path 必须是当前课程的 material 路径。改动立即显示，可撤销。old_string 必须逐字复制原文；默认要求唯一命中，多处替换需 replace_all。',
+    description: '修改普通 Markdown 文件。path 可为 /wrongbook.md 等根目录文件或 /courses/{id}/material。先 read(raw=true) 读原文，再以 edits 中 old_string/new_string 替换；new_string 为空即删除，匹配相邻正文可插入。默认精确唯一匹配；regex=true 支持正则，flags 支持 i/m/s/u，replace_all=true 替换多处。正则 new_string 按字面文本插入，不展开捕获组。无需打开编辑面。create=true、content 可创建不存在的根目录 .md 文件，不覆盖已有文件。',
     parameters: {
       ...EDIT_MARKDOWN_TOOL.function.parameters,
       properties: {
         ...(EDIT_MARKDOWN_TOOL.function.parameters.properties as Record<string, unknown>),
         path: { type: 'string' },
+        create: { type: 'boolean' }, content: { type: 'string' },
+        edits: { type: 'array', items: { type: 'object', properties: {
+          old_string: { type: 'string' }, new_string: { type: 'string' },
+          regex: { type: 'boolean' }, flags: { type: 'string' }, replace_all: { type: 'boolean' },
+        }, required: ['old_string', 'new_string'] } },
       },
-      required: ['path', 'edits'],
+      required: ['path'],
     },
   },
 };
 
-export function courseResourceTools(editable = false): ToolDef[] {
-  return [GREP_TOOL, READ_TOOL, ...QA_TOOLS.filter((t) => ['present_quiz', 'show_widget'].includes(t.function.name)), ...(editable ? [EDIT_TOOL] : [])];
+export function courseResourceTools(_editable = false): ToolDef[] {
+  return [GREP_TOOL, READ_TOOL, EDIT_TOOL, ...QA_TOOLS.filter((t) => ['present_quiz', 'show_widget'].includes(t.function.name))];
 }
 
 export function libraryResourceTools(hasCourses: boolean): ToolDef[] {
-  return [READ_TOOL, SHOW_WIDGET_TOOL, ...(hasCourses ? [GREP_TOOL] : []), ...libraryAssistantTools(hasCourses).filter((t) =>
+  return [READ_TOOL, EDIT_TOOL, GREP_TOOL, SHOW_WIDGET_TOOL, ...libraryAssistantTools(hasCourses).filter((t) =>
     ['ask_user', 'set_course_context', 'propose_folder_plan'].includes(t.function.name))];
 }
 
 type RootResource = 'courses' | 'skills' | 'overview' | 'folders' | 'context';
 type Resource = { [K in RootResource]: { type: K } }[RootResource]
   | { type: 'course'; id: string; leaf?: string }
+  | { type: 'markdown'; id: string }
   | { type: 'skill'; name: string; reference?: string };
 
 export function parseResource(path: unknown): Resource | undefined {
@@ -79,6 +87,7 @@ export function parseResource(path: unknown): Resource | undefined {
   try {
     const p = parts.map(decodeURIComponent);
     if (p.some((s) => !s || s === '.' || s === '..')) return;
+    if (p.length === 1 && /^[^/\\]+\.md$/.test(p[0])) return { type: 'markdown', id: p[0] };
     if (p.length === 1 && p[0] === 'courses') return { type: 'courses' };
     if (p.length === 1 && p[0] === 'skills') return { type: 'skills' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'overview') return { type: 'overview' };
@@ -146,6 +155,12 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const path = args.path ?? (name === 'grep' ? (local ? '/courses/current' : '/courses/context') : undefined);
     const resource = parseResource(path);
     if (!resource) return '无效资源路径。请使用工具描述中的路径，或复制上次 read/grep 返回的路径。';
+    if (resource.type === 'markdown') {
+      try {
+        const { executeMarkdownResource } = await import('./markdownResource');
+        return await executeMarkdownResource(name, resource.id, String(path), args);
+      } catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
+    }
     if (resource.type === 'skills' || resource.type === 'skill') {
       if (name !== 'read') return '技能资源只支持 read。';
       if (resource.type === 'skills') {
@@ -173,8 +188,16 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const execute = local ? executeLocal : createToolExecutor(id, { kind });
     if ((leaf === 'material' && !kind) || (leaf === 'transcript' && kind)) return `此课程没有该类型的正文资源。请 read ${coursePath(id)}/${kind ? 'material' : 'transcript'}。`;
     if (name === 'edit') {
-      if (!local || !options.editable || course.materialFormat !== 'md' || leaf !== 'material') return '仅支持修改当前已开放编辑的 Markdown 材料。';
-      return execute('edit_markdown', args);
+      if (course.materialFormat !== 'md' || leaf !== 'material') return '仅支持修改 Markdown 材料。';
+      if (local && options.editable && Array.isArray(args.edits) && !args.edits.some((e) => e?.regex === true)) return execute('edit_markdown', args);
+      const { executeMarkdownResource } = await import('./markdownResource');
+      try { return await executeMarkdownResource(name, id, canonical, args); }
+      catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
+    }
+    if (leaf === 'material' && course.materialFormat === 'md' && (args.raw === true || args.regex === true)) {
+      const { executeMarkdownResource } = await import('./markdownResource');
+      try { return await executeMarkdownResource(name, id, canonical, args); }
+      catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
     }
     if (name === 'grep') {
       if (!['material', 'transcript'].includes(leaf)) return 'grep 只支持课程正文。';

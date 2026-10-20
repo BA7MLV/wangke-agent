@@ -22,10 +22,7 @@
  * 那 2MB+ 不能为了一篇 md 拖进编辑器链路（见 reindex.ts 开头的理由）。
  */
 
-import { db } from '../store/db';
-import { saveMaterialFile } from '../store/fileStore';
-import { extractMdUnits, MD_MIME } from '../materials/md';
-import { reindexMaterial, type MaterialParseResult } from '../materials/reindex';
+import type { MaterialParseResult } from '../materials/reindex';
 
 /** 停止输入多久后落盘。见文件开头：CM6 逐键回调 + 全量重建，不能逐键执行 */
 export const MD_SAVE_DEBOUNCE_MS = 1200;
@@ -50,6 +47,8 @@ export interface MdSaveState {
 }
 
 export interface MdSaverOptions {
+  /** Editor's original snapshot, used to detect concurrent wrongbook reviews. */
+  initialText?: string;
   /** 状态变化回调（UI 拿它 setState）。每次变化都带一份新快照 */
   onState?: (state: MdSaveState) => void;
   /** 防抖毫秒，默认 MD_SAVE_DEBOUNCE_MS。留给测试缩短 */
@@ -130,6 +129,7 @@ export function mdSaveLabel(s: MdSaveState): string {
 export function createMdSaver(materialId: string, opts: MdSaverOptions = {}): MdSaver {
   const debounceMs = opts.debounceMs ?? MD_SAVE_DEBOUNCE_MS;
   const onState = opts.onState;
+  let expectedMarkdown = opts.initialText;
 
   // 状态一律「换新对象」而不是原地改：onState 的接收方多半直接 setState，
   // 原地改同一个引用会让他们按值比较时看不出变化。
@@ -172,7 +172,8 @@ export function createMdSaver(materialId: string, opts: MdSaverOptions = {}): Md
     try {
       // 结果（块数/字数）不入状态：UI 只需要「有没有存成」，
       // 块数对用户没有意义，反而多一个会被别处读歪的字段
-      await persistMd(materialId, job.text);
+      await persistMd(materialId, job.text, expectedMarkdown);
+      expectedMarkdown = job.text;
       // savedAt 除了当「已保存」的时间戳，还是「块集换过了」的信号：
       // 阅读视图靠它判断要不要重查 materialBlocks（每次成功保存必变，够用）。
       //
@@ -279,21 +280,11 @@ export function createMdSaver(materialId: string, opts: MdSaverOptions = {}): Md
  * 三步都以文本为准，最后一步失败也不回滚前两步：内容已经对上了，
  * 剩下的只是「阅读位置记的是哪一段」这个派生状态，标成失败提示用户即可。
  */
-async function persistMd(materialId: string, text: string): Promise<MaterialParseResult> {
+async function persistMd(materialId: string, text: string, expectedMarkdown?: string): Promise<MaterialParseResult> {
   let stage: MdSaveStage = 'blob';
   try {
-    await saveMaterialFile(materialId, new Blob([text], { type: MD_MIME }));
-    stage = 'blocks';
-    const res = await reindexMaterial(materialId, 'md', extractMdUnits(text), null);
-    stage = 'pos';
-    /**
-     * 清掉断点续读位置。**段号会漂移**：编辑后「第 12 段」可能指向完全不同的内容
-     * （插入/删除一个空行就够），`lastUnit` 记的「第几段」在重建之后语义已变 ——
-     * 留着会让下次打开直接跳到一段无关的文字上，看起来像阅读器坏了。
-     * 交给阅读器回落（`initialUnit` 为空 → 从头读）比跳错位置诚实。
-     */
-    await db.videos.update(materialId, { lastUnit: undefined });
-    return res;
+    const { saveMarkdownMaterial } = await import('../materials/markdownFile');
+    return await saveMarkdownMaterial(materialId, text, expectedMarkdown);
   } catch (e) {
     throw new MdSaveError(stage, e);
   }

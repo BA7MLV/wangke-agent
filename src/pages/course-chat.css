@@ -906,30 +906,21 @@
 /* 确认问题与回答共用输入卡，不在消息流里再放第二个输入入口。 */
 .course-chat__composer[data-asking='true'] {
   border-color: var(--accent);
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .course-chat__composer > .ask-card {
   grid-column: 1 / -1;
   grid-row: 1;
   min-width: 0;
-  max-height: min(360px, 36dvh);
+  max-height: min(480px, 50dvh);
   overflow-y: auto;
   overscroll-behavior: contain;
   margin: 0;
   padding: 8px 0;
   border: 0;
-  border-bottom: 1px solid var(--border-secondary);
   border-radius: 0;
   background: transparent;
-}
-
-.course-chat__composer[data-asking='true'] > .course-chat__input {
-  grid-row: 2;
-}
-
-.course-chat__composer[data-asking='true'] > .course-chat__composer-tools,
-.course-chat__composer[data-asking='true'] > [data-testid='skill-picker'] {
-  grid-row: 3;
 }
 
 .course-chat__composer:has(> .course-chat__context) > .course-chat__input {

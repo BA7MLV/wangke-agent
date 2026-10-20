@@ -1,4 +1,8 @@
-import { useCallback, useMemo } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
+import { Button } from '@heroui/react';
+import { useQuestionTimer } from '../study/useQuestionTimer';
+import type { Attempt, QuestionSource } from '../study/wrongbook';
+import { uuid } from '../utils/uuid';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { QuizData } from '../harness/quiz';
@@ -29,6 +33,9 @@ interface Props {
    * 会变成一个点了没反应的死链（与 ChatPanel 材料模式不跑 linkifyTimestamps 是同一条理由）。
    */
   seekable?: boolean;
+  /** Only local course cards opt in; live guest answers never enter the host notebook. */
+  notebookSource?: QuestionSource;
+  onAttempt?: (qIdx: number, optIdx: number, durationSeconds: number) => void;
 }
 
 /**
@@ -44,7 +51,38 @@ interface Props {
  * ⚠️ 已知限制：XMarkdown 依赖 DOMPurify，Node 环境（SSR / 单测）没有 window，它会直接不产出内容，
  * 所以「解析渲染」的契约由浏览器 e2e（scripts/e2e-quiz-mermaid.mjs）守着，单测只覆盖数据层。
  */
-export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = true }: Props) {
+export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = true, notebookSource, onAttempt }: Props) {
+  const { root, finish } = useQuestionTimer(picks);
+  const answered = useRef(new Set<number>());
+  const [saveErrors, setSaveErrors] = useState<Record<number, string>>({});
+  const [collected, setCollected] = useState<Set<number>>(() => new Set());
+  const pending = useRef(new Map<number, Attempt>());
+  const saveAttempt = async (qi: number, attempt: Attempt) => {
+    if (!notebookSource) return;
+    try {
+      const { recordWrongbookAttempt } = await import('../store/wrongbook');
+      await recordWrongbookAttempt(quiz.questions[qi], notebookSource, attempt);
+      pending.current.delete(qi);
+      if (!attempt.correct) setCollected((old) => new Set([...old, qi]));
+      setSaveErrors((old) => { const next = { ...old }; delete next[qi]; return next; });
+    } catch (error) {
+      setSaveErrors((old) => ({ ...old, [qi]: `错题记录保存失败：${error instanceof Error ? error.message : '请重试'}` }));
+    }
+  };
+  const answer = (qi: number, oi: number) => {
+    if ((picks[qi] ?? -1) >= 0 || answered.current.has(qi)) return;
+    answered.current.add(qi);
+    const durationSeconds = finish(qi);
+    onAnswer(qi, oi);
+    onAttempt?.(qi, oi, durationSeconds);
+    if (notebookSource) {
+      const correct = oi === quiz.questions[qi].answer;
+      const attempt: Attempt = { id: uuid(), at: new Date().toISOString(), answer: oi, correct,
+        durationSeconds, rating: correct ? 3 : 1 };
+      pending.current.set(qi, attempt);
+      void saveAttempt(qi, attempt);
+    }
+  };
   const done = quiz.questions.every((_, i) => (picks[i] ?? -1) >= 0);
   const score = quiz.questions.reduce((s, q, i) => s + (picks[i] === q.answer ? 1 : 0), 0);
 
@@ -82,12 +120,12 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = tru
   );
 
   return (
-    <div data-testid="quiz-card" className="quiz-card">
+    <div ref={root} data-testid="quiz-card" className="quiz-card">
       {quiz.questions.map((q, qi) => {
         const pick = picks[qi] ?? -1;
         const isDone = pick >= 0;
         return (
-          <div key={qi} className="quiz-q">
+          <div key={qi} className="quiz-q" data-question-index={qi}>
             <div className="quiz-stem">
               {quiz.questions.length > 1 ? `${qi + 1}. ` : ''}
               {q.stem}
@@ -115,7 +153,7 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = tru
                     type="button"
                     className={`quiz-option${state}`}
                     disabled={isDone}
-                    onClick={() => onAnswer(qi, oi)}
+                    onClick={() => answer(qi, oi)}
                   >
                     <b className="quiz-option__letter">{LETTERS[oi]}.</b>
                     {opt}
@@ -132,6 +170,16 @@ export default function QuizCard({ quiz, picks, onAnswer, onSeek, seekable = tru
                 );
               })}
             </div>
+            {collected.has(qi) && <p className="mt-2 text-sm text-muted">已记录到 <a className="underline" href="#/player/wrongbook.md">/wrongbook.md</a>。</p>}
+            {saveErrors[qi] && (
+              <div role="alert" className="mt-2 text-sm text-danger">
+                {saveErrors[qi]}
+                <Button size="sm" variant="tertiary" onPress={() => {
+                  const attempt = pending.current.get(qi);
+                  if (attempt) void saveAttempt(qi, attempt);
+                }}>重试保存</Button>
+              </div>
+            )}
             {isDone && (
               <div className="quiz-explain" data-testid="quiz-explain">
                 <span className={pick === q.answer ? 'quiz-result quiz-result--ok' : 'quiz-result quiz-result--bad'}>

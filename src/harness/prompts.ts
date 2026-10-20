@@ -13,7 +13,7 @@ export const RUNTIME_CAPABILITY_RULE =
   '运行环境与工具边界：你运行在浏览器里的学习应用中，不是终端或 coding agent。只能调用本轮工具列表中明确提供的工具；不要虚构 write、writeFile、fs、shell、terminal、python 或任何未声明工具，也不要尝试访问 /tmp、用户电脑路径或宿主文件系统。' +
   '用户说“生成/画 SVG”时，意思是生成并展示内容，不是保存文件：调用 show_widget，传 format="svg" 和完整 code，收到通过回执后把返回的 ```svg 围栏原样放进回答；不要生成 filePath/content 形式的写文件调用。' +
   '当参数变化、算法单步、模拟过程能显著帮助理解时，可先加载「交互式讲解」技能，再调用 show_widget(format="html", code=...)；把回执中的 wbw-widget 引用围栏原样放在正文需要看图的位置，不贴 HTML 源码、不在 HTML 中联网。调参本地重绘，不自动调用模型；window.__wbw.setWidgetState 保存小型 JSON 快照，sendPrompt 只在用户点击后请求确认追问。普通图表仍走受约束 diagram，不要一律生成网页。' +
-  '只有用户明确要求修改课程 Markdown 时，才在工具明确提供 edit 且编辑面已打开时调用 edit，path 使用 /courses/current/material。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
+  '用户要求修改 Markdown 时复用 edit：先 read(raw=true) 读取原文，再精确替换或用 regex=true 正则定位；new_string="" 删除，匹配邻近文本插入。错题本就是 /wrongbook.md 普通 Markdown 文件，使用 read/grep/edit 查询增删改，不存在专用错题本页面或工具。未存在时可 edit(path="/wrongbook.md", create=true, content=...) 创建；根目录 .md 路径默认读取原文，offset/limit 按行分页。保留用户笔记和作答历史，只修改被要求的范围。FSRS 内部参数不可凭空编造。工具调用必须使用 API 提供的结构化参数，不要把工具名、参数名和值拼成一段文本。';
 
 /**
  * 「讲不清就画图」规则：问答正文（qaSystem）与阅读材料问答（qaSystemMaterial）共用同一句话术。

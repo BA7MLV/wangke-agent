@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { ChevronLeft, ChevronRight, LayoutGrid, List, ArrowDownWideNarrow, MoreHorizontal, FolderPlus, Upload, Info, Check } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import {
@@ -7,6 +8,7 @@ import {
   Chip,
   Dropdown,
   Input,
+  ListBox,
   Modal,
   ProgressBar,
   Radio,
@@ -37,7 +39,6 @@ import {
 import { useAppNav } from '../components/appNav';
 import { useCourseChat } from '../store/courseChat';
 import { SettingsButton } from '../components/SettingsModal';
-import { IconSwap, NumberPop } from '../components/motion';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
@@ -239,7 +240,6 @@ const MATERIAL_MIME: Record<'pdf' | 'docx' | 'md' | 'html', string> = {
 
 /** 「未分类」虚拟组的 key（折叠状态持久化用） */
 const UNCAT_KEY = '__uncat__';
-const COLLAPSE_STORE_KEY = 'library.collapsedGroups';
 const LIBRARY_FILTERS = [
   { value: 'all', label: '全部' },
   { value: 'video', label: '视频' },
@@ -248,17 +248,7 @@ const LIBRARY_FILTERS = [
 ] as const;
 type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['value'];
 
-/* ── 版式常量（Tailwind） ──────────────────────────────────────────────────────
-   资料页原先的几何全写在 `library.css` / `layout.css` 的 `.video-row` / `.drop-zone`
-   等自写类里。HeroUI 化之后这些规则整段删掉，几何改由下面这串工具类表达 ——
-   配色只读 HeroUI 语义令牌（`bg-surface` / `text-muted` / `bg-default-soft` …）。
-
-   **真卡片与骨架共用同一串类**：迁移前靠「骨架复用真类名 + 自写 CSS 给真类定几何」
-   保持同形；现在类名只作量测钩子（无样式），同形改由这些常量承担。谁改了这里，
-   真内容与骨架一起变，`scripts/probe-loading-latency.mjs` 的 H 组仍按 ±4px 守着。
-   ──────────────────────────────────────────────────────────────────────────── */
-const GRID_CLS =
-  'video-grid mt-2 mb-1 grid grid-cols-[repeat(auto-fill,minmax(260px,1fr))] gap-x-4 gap-y-5 max-[640px]:grid-cols-1 max-[640px]:gap-4';
+/** 简介弹窗复用原资料卡片；主画布使用 Finder 的图标 / 列表布局。 */
 /** 卡片根：表面 / 圆角 / 阴影由 HeroUI `Card` 自带，这里只补内边距与纵向排布 */
 const CARD_CLS = 'video-row group relative gap-0 p-1.5 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]';
 const THUMB_CLS =
@@ -271,106 +261,31 @@ const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap
 /** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
 const SKEL_CLS = 'skel-breathe block rounded-md bg-background-tertiary';
 
-function loadCollapsed(): Set<string> {
-  try {
-    const arr = JSON.parse(localStorage.getItem(COLLAPSE_STORE_KEY) ?? '[]') as unknown;
-    return new Set(Array.isArray(arr) ? arr.filter((x): x is string => typeof x === 'string') : []);
-  } catch {
-    return new Set();
-  }
+function FolderIcon() {
+  const id = useId();
+  return (
+    <svg className="finder-folder-icon" viewBox="0 0 120 96" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={`${id}-back`} x1="60" y1="10" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#48b8e8" /><stop offset=".3" stopColor="#168dc3" /><stop offset="1" stopColor="#56bce4" /></linearGradient>
+        <linearGradient id={`${id}-front`} x1="60" y1="29" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#87ddfa" /><stop offset="1" stopColor="#50bfe8" /></linearGradient>
+      </defs>
+      <path d="M8 18a8 8 0 0 1 8-8h23c4 0 6 2 10 5l7 5h48a8 8 0 0 1 8 8v53a7 7 0 0 1-7 7H15a7 7 0 0 1-7-7Z" fill={`url(#${id}-back)`} />
+      <rect x="12" y="25" width="96" height="55" rx="5" fill="#c5eeff" />
+      <rect x="8" y="25" width="104" height="63" rx="7" fill={`url(#${id}-front)`} stroke="#39afe0" />
+      <path d="M15 32h90M12 82h96" stroke="#a2e2fa" strokeLinecap="round" />
+    </svg>
+  );
 }
 
-/**
- * 资料库首屏骨架：**与真内容同形**。
- *
- * 做法不是「自画灰条去示意」，而是**把真内容那一套包裹类原样搬过来**
- * （`.library-browse` / `.library-toolbar` / `.group-header` / `.video-grid` /
- * `.video-row` / `.video-row__main` / `__tags` / `__actions`），只把「该是文字 / 按钮」
- * 的位置换成灰块。间距、圆角、外边距全部继承真类，骨架不需要抄一遍像素 ——
- * 「同形」因此是结构上成立的，而不是靠一堆手写的 height 恰好凑对。
- *
- * ⚠️ 上一版就是靠手写高度去凑的，并且这一版之前的注释还写着「逐像素对齐」——
- * 而量出来是卡片矮 49px（少整条操作按钮行）、列表起点高 144px（工具栏那段没留占位）。
- * **「同形」不能靠看截图判断**，所以现在它由 `scripts/probe-loading-latency.mjs` 的
- * H 组按 ±4px 断言（卡片高 / 列表起点 / 缩略图高 / 操作行高）。改这里之后请跑那个脚本。
- *
- * 会呼吸的灰由 `.skel-breathe` 单独加，它不设背景也不设任何几何属性，
- * 所以不会覆盖真类的任何一条样式。
- *
- * ⚠️ 刻意**不**挂 `data-testid="video-item"`：e2e 拿它判断「列表出来了」，
- * 骨架冒充它会让所有等待列表的断言在骨架阶段就误判为通过。
- * 它自己的 testid 只有一个用途：量测脚本判断「这一屏到底出没出过骨架」
- * （见 scripts/probe-loading-latency.mjs 的 G 组）。
- */
+/** 首屏骨架复用 Finder 网格尺寸；工具栏与路径栏在加载期间保留。 */
 function LibrarySkeleton({ count }: { count: number }) {
   return (
-    <div className="skel-library" data-testid="library-skeleton" aria-hidden="true">
-      {/*
-       * 工具栏 / 筛选行 / 分组头这一段，在真页面上挂在「有没有数据」上
-       * （render 里 `(videos.length > 0 || folders.length > 0) && <section className="library-browse">`）。
-       * 首屏加载中它整段不存在，而骨架已经在它下面了 —— 不留等高占位的话，数据一到
-       * 这一段会从**上面**插进来，把骨架连同后面的卡片一起往下推。
-       *
-       * 这里复用真类名（**不带任何 data-testid**）就是为了直接继承高度与间距。
-       * 代价是一条必须守住的前提：骨架只在「首屏 + 还没有任何数据」时出现
-       * （见 render 里的 isFirstLoad）。刷新时库里有旧数据、那一段真元素本来就在场，
-       * 若那时再挂这份占位就会两套叠在一起。
-       */}
-      {/* 外面这层 `<section className="library-browse">` 不能省：它的 `margin-top: 28px`
-          就是真页面里工具栏与上方投放区之间的距离（窄屏是 24px）。少了它整条链路会高 28px。 */}
-      <section className="library-browse mt-7 max-[640px]:mt-6">
-        <div className="library-toolbar mb-1 flex flex-wrap items-center gap-4 max-[640px]:gap-3">
-          <div className="library-toolbar__summary min-w-40 flex-1">
-            <div className={`${SKEL_CLS} h-[31px] w-[150px]`} />
-            <div className={`${SKEL_CLS} mt-1 h-5 w-[180px]`} />
-          </div>
-          <div className={`${SKEL_CLS} h-12 w-[380px] rounded-field max-[900px]:flex-1 max-[640px]:order-3 max-[640px]:w-full`} />
-          <div className={`${SKEL_CLS} h-10 w-[104px] rounded-3xl`} />
-        </div>
-        <div className="library-filter-row mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 max-[640px]:mt-4">
-          <div className="library-filters flex flex-wrap gap-2 max-[640px]:flex-nowrap max-[640px]:gap-1.5">
-            {LIBRARY_FILTERS.map((item) => (
-              <div key={item.value} className={`${SKEL_CLS} h-10 w-[72px] rounded-3xl max-[640px]:h-12`} />
-            ))}
-          </div>
-        </div>
-      </section>
-      <div className="group-header mt-6 mb-1 flex min-h-12 items-center gap-2 px-1">
-        {/* 真高度来自 `.group-header__toggle` 的 min-height + padding，
-            所以占位照抄那两条，而不是猜一个数字 */}
-        <div className="skel-library__group-toggle flex min-h-12 items-center px-1">
-          <div className={`${SKEL_CLS} h-[18px] w-24`} />
-        </div>
-      </div>
-
-      <div className={GRID_CLS}>
-        {Array.from({ length: count }, (_, i) => (
-          <Card.Root className={`${CARD_CLS} skel-library`} key={i}>
-            {/* 缩略图 + 右下角时长徽标：真卡片上最显眼的两个块 */}
-            <div className={`${THUMB_CLS} mb-2 skel-breathe`}>
-              <span className="absolute right-1.5 bottom-1.5 h-4 w-10 rounded bg-foreground/15" />
-            </div>
-            {/* 卡内三层沿用真类的包裹（__main / __tags / __actions）——
-                它们各自的 margin / gap 就是真卡片的间距，骨架不需要自己再抄一遍像素。
-                「同形」因此是结构上成立的，而不是靠一堆手写的 height 恰好凑对。 */}
-            <div className={MAIN_CLS}>
-              <h3 className={NAME_CLS}>
-                <span className={`${SKEL_CLS} h-[21px] w-full`} />
-              </h3>
-              <div className={META_CLS}>
-                <span className={`${SKEL_CLS} h-4 w-3/5`} />
-              </div>
-            </div>
-            <div className={TAGS_CLS}>
-              <span className="skel-breathe h-5 w-14 rounded bg-background-tertiary" />
-            </div>
-            <div className={ACTIONS_CLS}>
-              <span className="h-9 w-[84px] rounded-3xl bg-background-tertiary" />
-              <span className="h-9 w-9 rounded-3xl bg-background-tertiary" />
-            </div>
-          </Card.Root>
-        ))}
-      </div>
+    <div className="finder-items finder-items--icons" data-testid="library-skeleton" aria-hidden="true">
+      {Array.from({ length: count }, (_, index) => <div className="finder-item" key={index}>
+        <span className="finder-item__icon"><span className={`${SKEL_CLS} h-20 w-24`} /></span>
+        <span className={`${SKEL_CLS} h-4 w-20`} />
+        <span className={`${SKEL_CLS} mt-1 h-3 w-12`} />
+      </div>)}
     </div>
   );
 }
@@ -412,7 +327,17 @@ export default function Library() {
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<LibraryFilter>('all');
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(() => loadCollapsed());
+  const [folderHistory, setFolderHistory] = useState<{ entries: (string | null)[]; index: number }>({ entries: [null], index: 0 });
+  const folderKey = folderHistory.entries[folderHistory.index];
+  const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [view, setView] = useState<'icons' | 'list'>('icons');
+  const [sort, setSort] = useState<'name' | 'recent'>('name');
+  const [importOpen, setImportOpen] = useState(false);
+  const [details, setDetails] = useState<VideoRow | null>(null);
+  const [dropFolder, setDropFolder] = useState<string | null>(null);
+  const [actionMenuOpen, setActionMenuOpen] = useState(false);
+  const [contextPoint, setContextPoint] = useState<{ x: number; y: number } | null>(null);
+  const contextAnchor = useRef<HTMLSpanElement>(null);
   const [tasks, setTasks] = useState<ImportTask[]>([]);
   // 重命名视频弹窗状态：renaming 为 null 时弹窗关闭
   const [renaming, setRenaming] = useState<VideoRow | null>(null);
@@ -493,7 +418,11 @@ export default function Library() {
   };
 
   useEffect(() => {
-    reload();
+    void db.files.get('wrongbook.md').then(async (file) => {
+      if (file) await (await import('../store/wrongbook')).ensureWrongbookMaterial();
+    })
+      .catch((error) => toast.error(`错题本迁移失败：${formatCaughtError(error)}`))
+      .then(() => reload());
   }, []);
 
   /**
@@ -589,8 +518,16 @@ export default function Library() {
     })).filter((group) => group.videos.length > 0 || (!hasFilters && group.folder != null)),
     [groups, searchQuery, filter, hasFilters],
   );
-  const visibleCount = visibleGroups.reduce((count, group) => count + group.videos.length, 0);
-  const materialCount = videos.filter((video) => video.kind === 'material').length;
+  const currentFolder = groups.find((group) => group.key === folderKey && group.folder != null);
+  const scopedGroups = currentFolder ? visibleGroups.filter((group) => group.key === currentFolder.key) : visibleGroups;
+  const folderTiles = (currentFolder ? [] : groups.filter((group) => group.folder && (!hasFilters || scopedGroups.some((visible) => visible.key === group.key) || (filter === 'all' && group.name.toLocaleLowerCase().includes(searchQuery)))))
+    .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : (b.folder?.createdAt ?? 0) - (a.folder?.createdAt ?? 0));
+  const displayedVideos = scopedGroups.flatMap((group) => currentFolder || hasFilters || group.folder == null ? group.videos : [])
+    .sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0) || (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.createdAt - a.createdAt));
+  const visibleCount = displayedVideos.length + folderTiles.length;
+  const selectedKey = [...selection][0];
+  const selectedFolder = folderTiles.find((group) => `folder:${group.key}` === selectedKey);
+  const selectedVideo = displayedVideos.find((video) => `file:${video.id}` === selectedKey);
 
   /**
    * 首次读库要不要出骨架。
@@ -622,14 +559,21 @@ export default function Library() {
     searchInputRef.current?.focus();
   };
 
-  const toggleCollapse = (key: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      localStorage.setItem(COLLAPSE_STORE_KEY, JSON.stringify([...next]));
-      return next;
-    });
+  const openFolder = (key: string | null) => {
+    setFolderHistory((history) => ({ entries: [...history.entries.slice(0, history.index + 1), key], index: history.index + 1 }));
+    setSelection(new Set());
+    setSearchText('');
+    setFilter('all');
+  };
+  const travelFolder = (delta: number) => {
+    setFolderHistory((history) => ({ ...history, index: Math.max(0, Math.min(history.entries.length - 1, history.index + delta)) }));
+    setSelection(new Set());
+    setSearchText('');
+    setFilter('all');
+  };
+  const openItem = (key: string) => {
+    if (key.startsWith('folder:')) openFolder(key.slice(7));
+    else if (key.startsWith('file:')) navigate(`/player/${key.slice(5)}`);
   };
 
   const patchTask = (key: string, patch: Partial<ImportTask>) => {
@@ -660,6 +604,7 @@ export default function Library() {
     await saveMaterialFile(id, file, (ratio) => patchTask(key, { percent: Math.round(ratio * 100) }));
     await db.videos.put({
       id,
+      ...(currentFolder?.folder?.id != null ? { folderId: currentFolder.folder.id } : {}),
       name: file.name.replace(/\.[^.]+$/, ''),
       size: file.size,
       mimeType: file.type || MATERIAL_MIME[format],
@@ -702,6 +647,7 @@ export default function Library() {
       const [duration] = await Promise.all([durationPromise, savePromise]);
       await db.videos.put({
         id,
+        ...(currentFolder?.folder?.id != null ? { folderId: currentFolder.folder.id } : {}),
         name: file.name.replace(/\.[^.]+$/, ''),
         size: file.size,
         mimeType: file.type || 'video/mp4',
@@ -909,6 +855,7 @@ export default function Library() {
     const skipped = files.filter((f) => !isImportable(f));
     if (skipped.length > 0) toast.warning(`已跳过 ${skipped.length} 个不支持的文件（只支持视频与 PDF/Word/Markdown）`);
     if (files.length > 1) toast.info(`已选择 ${accepted.length} 个文件，开始逐个导入`);
+    if (accepted.length > 0) setImportOpen(false);
     for (const f of accepted) enqueue(f);
   };
 
@@ -918,6 +865,7 @@ export default function Library() {
     setDropActive(false);
     const files = Array.from(e.dataTransfer?.files ?? []);
     if (files.length === 0) return;
+    setImportOpen(false);
     for (const f of files) {
       if (!isImportable(f)) {
         toast.warning(`《${f.name}》不是支持的格式（只支持视频与 PDF/Word/Markdown），已跳过`);
@@ -1137,6 +1085,16 @@ export default function Library() {
     await reload();
   };
 
+  const moveFinderFile = async (id: string, target: number | null) => {
+    try {
+      await setVideoFolder(id, target);
+      setSelection(new Set());
+      await reload();
+    } catch (error) {
+      toast.error(`移动失败：${formatCaughtError(error)}`);
+    }
+  };
+
   /** 移动弹窗内当场新建文件夹并选中 */
   const createFolderInMove = async () => {
     const name = moveNewName.trim();
@@ -1247,89 +1205,40 @@ export default function Library() {
   // ---------- 渲染 ----------
 
   const renderGroupHeader = (g: (typeof groups)[number]) => {
-    const isCollapsed = collapsed.has(g.key) && !hasFilters;
-    const isDropTarget = drag?.overKey === g.key;
-    const headerClass = `group-header mt-6 mb-1 flex min-h-12 items-center gap-1.5 rounded-2xl border border-transparent px-1 transition-colors max-[640px]:mt-4 ${drag ? 'group-header--dragging border-dashed border-border' : ''} ${isDropTarget ? 'group-header--over border-accent bg-accent-soft' : ''}`;
     return (
-      <div
-        key={g.key}
-        ref={(el) => {
-          if (el) headerRefs.current.set(g.key, el);
-          else headerRefs.current.delete(g.key);
-        }}
-        className={headerClass}
+      <ListBox.Item
+        key={`folder:${g.key}`}
+        id={`folder:${g.key}`}
+        textValue={g.name}
+        className="finder-item"
         data-testid="group-header"
         data-group-key={g.key}
-        onClick={(e) => {
-          // 点 ⋯ 菜单本身不折叠：HeroUI 的 dropdown 触发器带 data-slot="dropdown-trigger"
-          if (!hasFilters && !(e.target as HTMLElement).closest('[data-slot="dropdown-trigger"]')) {
-            toggleCollapse(g.key);
+        data-drop-target={dropFolder === g.key || undefined}
+      >
+        <span className="finder-item__icon"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('application/x-library-file')) {
+            event.preventDefault();
+            event.stopPropagation();
+            event.dataTransfer.dropEffect = 'move';
+            setDropFolder(g.key);
           }
         }}
-      >
-        <button
-          type="button"
-          className="group-header__toggle flex min-h-12 min-w-0 flex-1 items-center gap-2 rounded-2xl px-1 text-left text-foreground outline-none focus-visible:ring-2 focus-visible:ring-accent disabled:cursor-default"
-          aria-expanded={!isCollapsed}
-          aria-controls={`library-group-${g.key}`}
-          aria-label={`${g.name}，${g.videos.length} 项`}
-          onClick={(e) => {
-            e.stopPropagation();
-            toggleCollapse(g.key);
-          }}
-          disabled={hasFilters}
-        >
-          <span className="group-header__icon inline-flex shrink-0 text-muted" aria-hidden="true">
-            {/* icon-swap：两个箭头同时在 DOM 里叠在同一格，交叉淡入淡出。
-                之前是条件渲染，展开 / 收起时箭头是硬跳的。 */}
-            <IconSwap
-              active={isCollapsed ? 'a' : 'b'}
-              a={<Sym name="chevron-right" />}
-              b={<Sym name="keyboard_arrow_down" />}
-            />
-          </span>
-          <span className="group-header__icon inline-flex shrink-0 text-muted" aria-hidden="true"><Sym name="folder" /></span>
-          <span className="group-header__name min-w-0 truncate text-sm font-medium">{g.name}</span>
-          <span className="group-header__count text-xs tabular-nums text-muted">
-            {/* number-pop-in：导入 / 删除后数量变化时逐位重新入场 */}
-            <NumberPop text={g.videos.length} />
-          </span>
-        </button>
-        {g.folder && (
-          // mdui-dropdown + mdui-menu → HeroUI Dropdown。
-          // 菜单项用 id 标识、onAction 收 key（不再逐项挂 onClick）；
-          // 触发器就是那个图标按钮本身，用 buttonVariants 拿到与库内其它图标按钮一致的观感。
-          <Dropdown>
-            <Dropdown.Trigger
-              className={buttonVariants({ isIconOnly: true, variant: 'tertiary', size: 'sm' })}
-              data-testid="btn-folder-more"
-              aria-label={`${g.name}的文件夹操作`}
-            >
-              <Sym name="more_vert" />
-            </Dropdown.Trigger>
-            <Dropdown.Popover placement="bottom end">
-              <Dropdown.Menu
-                aria-label={`${g.name}的文件夹操作`}
-                onAction={(key) => {
-                  if (key === 'rename') openFolderModal('rename', g.folder!);
-                  else if (key === 'delete') {
-                    confirmDeleteFolder(g.folder!, groups.find((group) => group.key === g.key)?.videos.length ?? 0);
-                  }
-                }}
-              >
-                <Dropdown.Item id="rename" textValue="重命名文件夹" data-testid="menu-folder-rename">
-                  <Sym name="edit" />
-                  重命名文件夹
-                </Dropdown.Item>
-                <Dropdown.Item id="delete" textValue="删除文件夹" data-testid="menu-folder-delete">
-                  <Sym name="delete" />
-                  删除文件夹
-                </Dropdown.Item>
-              </Dropdown.Menu>
-            </Dropdown.Popover>
-          </Dropdown>
-        )}
-      </div>
+        onDragLeave={() => setDropFolder(null)}
+        onDrop={(event) => {
+          const id = event.dataTransfer.getData('application/x-library-file');
+          if (!id) return;
+          event.preventDefault();
+          event.stopPropagation();
+          setDropFolder(null);
+          if (videos.some((video) => video.id === id)) void moveFinderFile(id, g.folder!.id!);
+        }}
+        ><FolderIcon /></span>
+        <span className="finder-item__name" title={g.name}>{g.name}</span>
+        <span className="finder-item__meta">{g.videos.length} 个项目</span>
+        <span className="finder-item__date">{new Date(g.folder!.createdAt).toLocaleDateString()}</span>
+        <span className="finder-item__kind">文件夹</span>
+      </ListBox.Item>
     );
   };
 
@@ -1337,7 +1246,7 @@ export default function Library() {
     <VideoRow
       key={v.id}
       video={v}
-      isMobile={isMobile}
+      isMobile={true}
       dragging={drag?.video.id === v.id}
       onPlay={() => navigate(`/player/${v.id}`)}
       onRename={() => openRename(v)}
@@ -1356,6 +1265,7 @@ export default function Library() {
     <PageShell
       title="资料"
       wide
+      fill
       rootClassName="page-library"
       rail={nav}
       recent={{
@@ -1397,8 +1307,10 @@ export default function Library() {
         />
       )}
 
-      {/* 导入投放区：替 antd Upload.Dragger（mdui 没有上传组件，自己搭）。
-          整块是可投放目标，点击任意空白处打开系统文件选择器。 */}
+      <Modal.Root isOpen={importOpen} onOpenChange={setImportOpen}>
+        <Modal.Backdrop><Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
+          <Modal.Header><Modal.Heading>导入资料</Modal.Heading><Modal.CloseTrigger /></Modal.Header>
+          <Modal.Body>
       <Card.Root
         className={`drop-zone relative mt-3 flex cursor-pointer flex-row items-center gap-4 border border-dashed border-border bg-surface-secondary p-4 text-left transition-colors hover:bg-surface-tertiary max-[640px]:flex-col max-[640px]:items-center max-[640px]:gap-3 max-[640px]:p-4 max-[640px]:text-center ${dropActive ? 'border-accent bg-accent-soft' : ''}`}
         data-testid="drop-zone"
@@ -1449,6 +1361,7 @@ export default function Library() {
             data-testid="btn-bili-import"
             variant="secondary"
             onPress={() => {
+              setImportOpen(false);
               setBiliError(null);
               setBiliOpen(true);
             }}
@@ -1458,18 +1371,11 @@ export default function Library() {
             从 B 站导入
           </Button>
         </div>
-        {/* iOS 上隐藏 input 需可聚焦，不能用 display:none */}
-        <input
-          ref={nativeInputRef}
-          data-testid="import-input"
-          type="file"
-          multiple
-          tabIndex={-1}
-          aria-label="选择要导入的视频或阅读材料"
-          onChange={handleNativePick}
-          style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }}
-        />
       </Card.Root>
+          </Modal.Body>
+        </Modal.Dialog></Modal.Container></Modal.Backdrop>
+      </Modal.Root>
+      <input ref={nativeInputRef} data-testid="import-input" type="file" multiple tabIndex={-1} aria-label="选择要导入的视频或阅读材料" onChange={handleNativePick} style={{ position: 'absolute', width: 1, height: 1, opacity: 0, overflow: 'hidden' }} />
 
       {tasks.length > 0 && (
         <Card.Root variant="secondary" className="import-tasks mt-3 flex flex-col gap-2 p-3" data-testid="import-tasks">
@@ -1523,80 +1429,91 @@ export default function Library() {
         </Card.Root>
       )}
 
-      {(videos.length > 0 || folders.length > 0) && (
-        <section className="library-browse mt-7 max-[640px]:mt-6" aria-label="浏览资料">
-          <div className="library-toolbar mb-1 flex flex-wrap items-center gap-4 max-[640px]:gap-3">
-            <div className="library-toolbar__summary min-w-40 flex-1 max-[640px]:min-w-0">
-              <h2 className="m-0 text-[22px] font-medium leading-8 text-foreground max-[640px]:text-xl">你的课程与资料</h2>
-              <p className="mt-1 text-[13px] text-muted">{videos.length - materialCount} 个视频 · {materialCount} 份阅读材料</p>
-            </div>
-            <SearchField
-              className="library-search order-none w-[380px] max-[900px]:flex-1 max-[640px]:order-3 max-[640px]:w-full"
-              variant="secondary"
-              fullWidth
-              data-testid="library-search-field"
-              aria-label="搜索课程或资料名称"
-              value={searchText}
-              onChange={(value) => setSearchText(value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Escape' && searchText) {
-                  e.preventDefault();
-                  setSearchText('');
-                }
-              }}
-            >
-              <SearchField.Group className="h-12 rounded-3xl border border-border bg-surface px-2 shadow-sm focus-within:border-accent">
-                <SearchField.SearchIcon className="ms-2 size-5" />
-                <SearchField.Input
-                  ref={searchInputRef}
-                  data-testid="library-search"
-                  placeholder="搜索课程或资料"
-                />
-                <SearchField.ClearButton data-testid="library-search-clear" />
-              </SearchField.Group>
-            </SearchField>
-            <Button
-              data-testid="btn-new-folder"
-              variant="tertiary"
-              onPress={() => openFolderModal('create')}
-            >
-              <Sym name="create_new_folder" />
-              新建文件夹
-            </Button>
+      <section className="finder-window" aria-label="资料访达"
+        onDragOver={(event) => {
+          if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDropActive(true); }
+          else if (event.dataTransfer.types.includes('application/x-library-file')) event.preventDefault();
+        }}
+        onDragLeave={(event) => { if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropActive(false); }}
+        onDrop={(event) => {
+          const id = event.dataTransfer.getData('application/x-library-file');
+          if (id) {
+            event.preventDefault();
+            setDropFolder(null);
+            if (videos.some((video) => video.id === id)) void moveFinderFile(id, currentFolder?.folder?.id ?? null);
+          } else handleDrop(event);
+        }}
+        data-drop-active={dropActive || undefined}
+      >
+        <header className="finder-toolbar">
+          <div className="finder-navigation">
+            <Button isIconOnly variant="ghost" aria-label="后退" isDisabled={folderHistory.index === 0} onPress={() => travelFolder(-1)}><ChevronLeft /></Button>
+            <Button isIconOnly variant="ghost" aria-label="前进" isDisabled={folderHistory.index === folderHistory.entries.length - 1} onPress={() => travelFolder(1)}><ChevronRight /></Button>
           </div>
-          <div className="library-filter-row mt-5 flex flex-wrap items-center gap-x-4 gap-y-2 max-[640px]:mt-4">
-            <ToggleButtonGroup
-              className="library-filters flex-wrap gap-1.5 max-[640px]:flex-nowrap"
-              isDetached
-              selectionMode="single"
-              disallowEmptySelection
-              selectedKeys={[filter]}
-              onSelectionChange={(keys) => {
-                const selected = [...keys][0] as LibraryFilter | undefined;
-                if (selected) setFilter(selected);
-              }}
-              aria-label="按内容筛选"
-            >
-              {LIBRARY_FILTERS.map((item) => (
-                <ToggleButton
-                  key={item.value}
-                  id={item.value}
-                  className="library-filter min-h-10 px-3 max-[640px]:min-h-12 max-[640px]:px-2.5 max-[640px]:text-[13px]"
-                  data-testid={`library-filter-${item.value}`}
-                >
-                  {filter === item.value && <Sym name="check" className="size-4" />}
-                  {item.label}
-                </ToggleButton>
-              ))}
+          <h2 className="finder-title">{currentFolder?.name ?? '全部资料'}</h2>
+          <div className="finder-tools">
+            <ToggleButtonGroup className="finder-view-switch" selectionMode="single" disallowEmptySelection selectedKeys={[view]} onSelectionChange={(keys) => { const key = [...keys][0]; if (key === 'icons' || key === 'list') setView(key); }} aria-label="显示方式">
+              <ToggleButton id="icons" aria-label="图标视图"><LayoutGrid /></ToggleButton>
+              <ToggleButton id="list" aria-label="列表视图"><List /></ToggleButton>
             </ToggleButtonGroup>
-            <span className="library-results ml-auto text-xs text-muted max-[640px]:ml-0" role="status" aria-live="polite">
-              {hasFilters ? `${visibleCount} 项结果` : '最近导入优先'}
-            </span>
+            <Dropdown>
+              <Dropdown.Trigger className="finder-tool" aria-label="排序与筛选"><ArrowDownWideNarrow /></Dropdown.Trigger>
+              <Dropdown.Popover><Dropdown.Menu aria-label="排序与筛选" onAction={(key) => {
+                if (key === 'name' || key === 'recent') setSort(key);
+                else { setFilter(key as LibraryFilter); setSelection(new Set()); }
+              }}>
+                <Dropdown.Item id="name" textValue="按名称排序">按名称排序 {sort === 'name' && <Check className="size-4" />}</Dropdown.Item>
+                <Dropdown.Item id="recent" textValue="最近导入优先">最近导入优先 {sort === 'recent' && <Check className="size-4" />}</Dropdown.Item>
+                <Dropdown.Section>
+                  {LIBRARY_FILTERS.map((item) => <Dropdown.Item key={item.value} id={item.value} textValue={item.label}>{item.label} {filter === item.value && <Check className="size-4" />}</Dropdown.Item>)}
+                </Dropdown.Section>
+              </Dropdown.Menu></Dropdown.Popover>
+            </Dropdown>
+            <span className="finder-tool-divider" />
+            <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" onPress={() => openFolderModal('create')}><FolderPlus /></Button>
+            <Button isIconOnly variant="ghost" aria-label="导入资料" onPress={() => setImportOpen(true)}><Upload /></Button>
+            <Dropdown isOpen={actionMenuOpen} onOpenChange={(open) => { setActionMenuOpen(open); if (!open) setContextPoint(null); }}>
+              <Dropdown.Trigger className="finder-tool" aria-label="所选项目的操作" isDisabled={!selectedFolder && !selectedVideo}><MoreHorizontal /></Dropdown.Trigger>
+              <Dropdown.Popover {...(contextPoint ? { triggerRef: contextAnchor, placement: 'bottom start' as const } : {})}><Dropdown.Menu aria-label="项目操作" onAction={(key) => {
+                if (key === 'open' && selectedKey) openItem(selectedKey);
+                if (selectedFolder?.folder) {
+                  if (key === 'rename') openFolderModal('rename', selectedFolder.folder);
+                  if (key === 'delete') void confirmDeleteFolder(selectedFolder.folder, selectedFolder.videos.length);
+                }
+                if (selectedVideo) {
+                  if (key === 'rename') openRename(selectedVideo);
+                  if (key === 'move') openMove(selectedVideo);
+                  if (key === 'pin') void togglePin(selectedVideo);
+                  if (key === 'details') setDetails(selectedVideo);
+                  if (key === 'delete') askDeleteVideo(selectedVideo);
+                }
+              }}>
+                <Dropdown.Item id="open" textValue="打开">打开</Dropdown.Item>
+                <Dropdown.Item id="rename" textValue="重命名">重命名</Dropdown.Item>
+                {selectedVideo && <Dropdown.Item id="move" textValue="移动到文件夹">移动到文件夹</Dropdown.Item>}
+                {selectedVideo && <Dropdown.Item id="pin" textValue="置顶">{selectedVideo.pinned === 1 ? '取消置顶' : '置顶'}</Dropdown.Item>}
+                {selectedVideo && <Dropdown.Item id="details" textValue="显示简介">显示简介</Dropdown.Item>}
+                <Dropdown.Item id="delete" textValue="删除" className="text-danger">删除</Dropdown.Item>
+              </Dropdown.Menu></Dropdown.Popover>
+            </Dropdown>
           </div>
-        </section>
-      )}
-
-      <div data-testid="video-list">
+          <SearchField className="finder-search" aria-label={currentFolder ? '搜索此文件夹' : '搜索全部资料'} value={searchText} onChange={(value) => { setSearchText(value); setSelection(new Set()); }}>
+            <SearchField.Group><SearchField.SearchIcon /><SearchField.Input ref={searchInputRef} data-testid="library-search" placeholder="搜索" /><SearchField.ClearButton /></SearchField.Group>
+          </SearchField>
+        </header>
+        {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
+      <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
+        onContextMenu={(event) => {
+          const item = (event.target as HTMLElement).closest<HTMLElement>('[data-video-id], [data-group-key]');
+          if (!item) return;
+          event.preventDefault();
+          const key = item.dataset.videoId ? `file:${item.dataset.videoId}` : `folder:${item.dataset.groupKey}`;
+          setSelection(new Set([key]));
+          setContextPoint({ x: event.clientX, y: event.clientY });
+          setActionMenuOpen(true);
+        }}
+      >
+        <span ref={contextAnchor} aria-hidden="true" style={{ position: 'fixed', left: contextPoint?.x ?? 0, top: contextPoint?.y ?? 0, width: 1, height: 1, pointerEvents: 'none' }} />
         <SkeletonReveal show={showSkeleton} skeleton={<LibrarySkeleton count={isMobile ? 3 : 6} />}>
           {/* 只在首屏把内容让给骨架；其余任何时刻（包括将来真给刷新加了 loading 态）
               都要继续渲染手上的列表，不能把已有内容清空 —— 这是「台上至少有一层」那条
@@ -1628,7 +1545,7 @@ export default function Library() {
           ) : videos.length === 0 && folders.length === 0 ? (
             // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
             // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
-            <EmptyState testId="empty-state" icon={<Sym name="video_library" />} title="还没有课程或资料" />
+            <EmptyState testId="empty-state" icon={<Sym name="folder_open" />} title="还没有资料" action={<Button variant="secondary" onPress={() => setImportOpen(true)}>导入文件</Button>} />
           ) : hasFilters && visibleCount === 0 ? (
             <EmptyState
               testId="library-no-results"
@@ -1638,19 +1555,39 @@ export default function Library() {
               action={<Button variant="secondary" onPress={clearFilters}>清除搜索和筛选</Button>}
             />
           ) : (
-            visibleGroups.map((g) => (
-              <div key={g.key}>
-                {renderGroupHeader(g)}
-                <div id={`library-group-${g.key}`} hidden={collapsed.has(g.key) && !hasFilters}>
-                  {(!collapsed.has(g.key) || hasFilters) && (
-                    <div className={GRID_CLS}>{g.videos.map(renderVideoItem)}</div>
-                  )}
-                </div>
-              </div>
-            ))
+            <>
+              {view === 'list' && <div className="finder-list-heading" aria-hidden="true"><span>名称</span><span>项目 / 大小</span><span>添加日期</span><span>种类</span></div>}
+              <ListBox aria-label={currentFolder?.name ?? '全部资料'} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="single" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
+                {folderTiles.map(renderGroupHeader)}
+                {displayedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id}>
+                  <span className="finder-item__icon"
+                  draggable
+                  onDragStart={(event) => { event.dataTransfer.setData('application/x-library-file', video.id); event.dataTransfer.effectAllowed = 'move'; setSelection(new Set([`file:${video.id}`])); }}
+                  onDragEnd={() => setDropFolder(null)}
+                  ><FinderFileIcon video={video} /></span>
+                  <span className="finder-item__name" title={video.name}>{video.name}{video.kind === 'material' && video.materialFormat && !video.name.toLowerCase().endsWith(`.${video.materialFormat}`) ? `.${video.materialFormat}` : ''}</span>
+                  <span className="finder-item__meta">{formatSize(video.size)}</span>
+                  <span className="finder-item__date">{new Date(video.createdAt).toLocaleDateString()}</span>
+                  <span className="finder-item__kind">{video.kind === 'material' ? video.materialFormat?.toUpperCase() ?? '文档' : '视频'}</span>
+                </ListBox.Item>)}
+              </ListBox>
+              {currentFolder && visibleCount === 0 && <EmptyState icon={<Sym name="folder_open" />} title="文件夹还是空的" description="通过资料的更多菜单，将已有资料移动到这里。" action={<Button variant="secondary" onPress={() => openFolder(null)}>浏览全部资料</Button>} />}
+            </>
           )}
         </SkeletonReveal>
       </div>
+        <footer className="finder-footer">
+          <nav aria-label="资料路径" className="finder-path"><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button>{currentFolder && <><ChevronRight /><span aria-current="page">{currentFolder.name}</span></>}{(selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+          <div className="finder-status"><span role="status">{selectedVideo || selectedFolder ? `已选择 1 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '单击选择 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
+        </footer>
+        {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
+      </section>
+      <Modal.Root isOpen={!!details} onOpenChange={(open) => { if (!open) setDetails(null); }}>
+        <Modal.Backdrop><Modal.Container placement="center" size="sm" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
+          <Modal.Header><Modal.Heading>资料简介</Modal.Heading><Modal.CloseTrigger /></Modal.Header>
+          <Modal.Body>{details && renderVideoItem(videos.find((video) => video.id === details.id) ?? details)}</Modal.Body>
+        </Modal.Dialog></Modal.Container></Modal.Backdrop>
+      </Modal.Root>
 
       {/* 拖拽悬浮卡片：跟随指针，位于指针上方避免被手指遮挡；pointerEvents:none 不影响命中检测 */}
       {drag && (
@@ -2094,6 +2031,19 @@ function useThumb(videoId: string): string | null {
   return url;
 }
 
+function FinderFileIcon({ video }: { video: VideoRow }) {
+  const cover = useThumb(video.id);
+  const isMaterial = video.kind === 'material';
+  const extension = isMaterial ? (video.materialFormat ?? 'doc').toUpperCase() : 'VIDEO';
+  return (
+    <span className={isMaterial ? 'finder-document' : 'finder-video'}>
+      {cover ? <img src={cover} alt="" loading="lazy" decoding="async" /> : <span className="finder-file-placeholder" aria-hidden="true">{isMaterial ? <><i /><i /><i /><i /><i /><i /></> : <Sym name="play_circle" />}</span>}
+      <span className="finder-file-extension">{extension}</span>
+      {video.pinned === 1 && <span className="finder-file-pin" aria-label="已置顶"><Sym name="pin" /></span>}
+    </span>
+  );
+}
+
 function VideoRow({
   video: v,
   isMobile,
@@ -2233,6 +2183,7 @@ function VideoRow({
       className={`${CARD_CLS} ${dragging ? 'video-row--dragging opacity-40' : ''}`}
       data-testid="video-item"
       data-video-id={v.id}
+      data-kind={isMaterial ? 'material' : 'video'}
       data-pinned={v.pinned === 1 ? '1' : undefined}
       aria-describedby={`library-drag-hint-${v.id}`}
       aria-labelledby={`library-title-${v.id}`}
@@ -2355,7 +2306,7 @@ function VideoRow({
           {jobCopy ? jobCopy.tag : status.text}
         </Chip>
       </div>
-      <p id={`library-drag-hint-${v.id}`} className="m-0 flex items-center gap-1 text-xs text-muted" data-testid="card-drag-hint"><Sym name="drag_indicator" />按住整张卡片拖动 · 触屏长按</p>
+      <p id={`library-drag-hint-${v.id}`} className="sr-only" data-testid="card-drag-hint">按住整张卡片拖动 · 触屏长按</p>
       <div className={ACTIONS_CLS}>
         <Button data-testid="btn-play" variant="secondary" onPress={onPlay}>
           <Sym name="play_circle" />

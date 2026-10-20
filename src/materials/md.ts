@@ -35,6 +35,32 @@ interface Piece {
   gap: boolean;
 }
 
+/** Comments are invisible Markdown, not searchable paragraphs or cover previews. */
+function withoutComments(src: string): string {
+  let comment = false;
+  let fence: string | null = null;
+  return src.replace(/\r\n?/g, '\n').split('\n').map((line) => {
+    if (fence) {
+      if (new RegExp(`^${fence[0]}{${fence.length},}\\s*$`).test(line)) fence = null;
+      return line;
+    }
+    if (!comment) {
+      const open = FENCE_RE.exec(line);
+      if (open) { fence = open[1]; return line; }
+    }
+    let visible = '';
+    let offset = 0;
+    while (offset < line.length) {
+      const index = line.indexOf(comment ? '-->' : '<!--', offset);
+      if (index < 0) { if (!comment) visible += line.slice(offset); break; }
+      if (!comment) visible += line.slice(offset, index);
+      offset = index + (comment ? 3 : 4);
+      comment = !comment;
+    }
+    return visible;
+  }).join('\n');
+}
+
 /**
  * 按块切：围栏整段保留，ATX / setext 标题单独成段，其余按空行成段。
  * 列表项之间没有空行时合并成一段，避免「一行一项」把段号打散。
@@ -110,7 +136,7 @@ function piecesOf(src: string): Piece[] {
  * 标题仍写入 `section`，供位置标签使用；块本身 `kind` 为 `title` 时表示这一段以标题开头。
  */
 export function extractMdUnits(src: string): RawUnit[] {
-  const body = stripFrontmatter(src.replace(/^\uFEFF/, ''));
+  const body = withoutComments(stripFrontmatter(src.replace(/^\uFEFF/, '')));
   const pieces = piecesOf(body);
   const units: RawUnit[] = [];
   let section: string | undefined;
@@ -209,7 +235,7 @@ function flattenMd(text: string): string {
  * 预览取**第一个正文条目**，前面的标题条目自然被跳过（连续两行标题的写法很常见）。
  */
 export function mdCoverText(src: string): MdCoverText {
-  const pieces = piecesOf(stripFrontmatter(src.replace(/^\uFEFF/, '')));
+  const pieces = piecesOf(withoutComments(stripFrontmatter(src.replace(/^\uFEFF/, ''))));
   let title = '';
   let preview = '';
   // 不 break：标题取**全文**首个、预览取**首个正文条目**，两者位置未必挨着

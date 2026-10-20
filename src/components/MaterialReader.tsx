@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { liveQuery } from 'dexie';
 import { Button } from '@heroui/react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
@@ -87,6 +88,17 @@ export default function MaterialReader({ material, handleRef }: Props) {
       cancelled = true;
       if (url) URL.revokeObjectURL(url);
     };
+  }, [materialId, format]);
+
+  // Reviews change this same Markdown file. The editor keeps its draft and checks its
+  // original snapshot before saving, rather than overwriting concurrent answers.
+  useEffect(() => {
+    if (format !== 'md') return;
+    const subscription = liveQuery(() => db.files.get(materialId)).subscribe({
+      next: (row) => { if (row) setBlob(row.blob); },
+      error: (error) => toast.error(`资料更新失败：${formatCaughtError(error)}`),
+    });
+    return () => subscription.unsubscribe();
   }, [materialId, format]);
 
   /** 断点续读：阅读位置写回 videos.lastUnit（与视频的 lastPosition 对称） */

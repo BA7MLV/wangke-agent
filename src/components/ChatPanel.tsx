@@ -1908,6 +1908,7 @@ export default function ChatPanel({
                         </WidgetMessage>
                         {m.quiz && (
                           <QuizCard
+                            notebookSource={{ courseId: videoId, name: videoName }}
                             quiz={m.quiz.data}
                             picks={m.quiz.picks}
                             onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)}

@@ -648,6 +648,7 @@ export default function CourseChat() {
    * **只禁那条在跑的**：别的会话在后台跑不影响你操作一条空闲会话。
    */
   const runningIds = useCourseChat((s) => s.runningIds);
+  const awaitingIds = useCourseChat((s) => s.awaitingIds);
   const draft = useCourseChat((s) => s.draft);
   const attachmentItems = useChatAttachments((state) => state.items);
   const hasDraft = !!draft.trim() || attachmentItems.length > 0;
@@ -658,7 +659,6 @@ export default function CourseChat() {
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
   const pendingQuestion = pendingAsk ? messages.find((message) => message.key === pendingAsk.messageKey)?.ask : undefined;
   const composerAsk = pendingQuestion?.picked == null ? pendingQuestion : undefined;
-  const choiceOnly = !!composerAsk && composerAsk.type !== 'text' && (composerAsk.allowCustom === false || composerAsk.type === 'confirm');
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
@@ -1112,12 +1112,11 @@ export default function CourseChat() {
 
   const renderCards = (message: CourseChatMessage) => (
     <>
-      {message.ask && (
+      {message.ask && pendingAsk?.messageKey !== message.key && (
         <AskCard
           key={message.key}
           ask={message.ask}
-          active={pendingAsk?.messageKey === message.key}
-          restored={pendingAsk?.messageKey === message.key && pendingAsk.restored}
+          active={false}
           onPick={answerAsk}
         />
       )}
@@ -1153,6 +1152,7 @@ export default function CourseChat() {
           id: String(session.id),
           label: session.title,
           active: session.id === activeId,
+          pendingReply: runningIds.includes(session.id!) && !awaitingIds.includes(session.id!),
           pinned: !!session.pinned,
           onUnpin: () => void setPinned(session.id!, false),
           /**
@@ -1562,6 +1562,15 @@ export default function CourseChat() {
             <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}
               onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') && !pendingAsk) event.preventDefault(); }}
               onDrop={(event) => { if (event.dataTransfer.files.length && !pendingAsk) { event.preventDefault(); useChatAttachments.getState().add(Array.from(event.dataTransfer.files)); } }}>
+              {composerAsk && pendingAsk ? (
+                <AskCard
+                  key={`${activeId}:${pendingAsk.messageKey}`}
+                  ask={composerAsk}
+                  active
+                  restored={pendingAsk.restored}
+                  onPick={answerAsk}
+                />
+              ) : <>
               {/* 上下文属于这次提问的输入范围，和输入框放在同一张 chat 卡里；
                   不再悬在消息区上方，避免用户误以为它是另一条顶栏。 */}
               <div className="course-chat__composer-context">
@@ -1592,7 +1601,7 @@ export default function CourseChat() {
               <TextArea
                 ref={composerRef}
                 className="course-chat__input"
-                aria-label={composerAsk ? '回答助手的确认问题' : '给 AI 助手发送消息'}
+                aria-label="给 AI 助手发送消息"
                 aria-description="长按输入栏说话，松开完成，上滑取消；识别后可编辑再发送"
                 rows={1}
                 fullWidth
@@ -1633,15 +1642,11 @@ export default function CourseChat() {
                  * 用户真正的意图往往只是「等它答完，接着问下一句」—— 那条路现在是
                  * **排队**（Enter），输入框全程可打。
                  *
-                 * 历史没就绪或问题只允许候选项时禁用；其他时候都可以继续输入。
+                 * 历史没就绪时禁用；等待作答时由 AskCard 接管输入栏。
                  */
-                disabled={!sessionReady || choiceOnly}
+                disabled={!sessionReady}
                 placeholder={
-                  choiceOnly
-                    ? '请在上方问题卡中作答'
-                    : pendingAsk
-                      ? '在这里说说你的想法，回车继续…'
-                      : generating
+                  generating
                         ? sendMode === 'queue'
                           ? '说一句排队，答完这轮自动接着问…'
                           : '说一句立刻插入，打断这轮换个问法…'
@@ -1701,7 +1706,7 @@ export default function CourseChat() {
                 ) : <VoiceInput
                   key={activeId ?? 'draft'}
                   holdTargetRef={composerHoldRef}
-                  disabled={!sessionReady || choiceOnly || attachmentsPending}
+                  disabled={!sessionReady || attachmentsPending}
                   hasText={hasDraft}
                   editVersion={voiceEditVersion}
                   onStart={() => { voiceDraftBase.current = useCourseChat.getState().draft; }}
@@ -1710,13 +1715,14 @@ export default function CourseChat() {
                     setDraft(base ? `${base} ${text}` : text);
                   }}
                   onSend={() => void send(useCourseChat.getState().draft)}
-                  sendLabel={pendingAsk ? '确认回答并继续' : loading
+                  sendLabel={loading
                     ? sendMode === 'queue'
                       ? '排队发送：等这一轮答完自动发出去'
                       : '插入发送：立刻打断这一轮，换成这句'
                     : '发送'}
                 />}
               </Toolbar>
+              </>}
             </div>
           </div>
         </section>

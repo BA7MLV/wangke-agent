@@ -247,14 +247,11 @@
   color: var(--foreground);
 }
 
-/* 未读角标：transitions.dev 03 的圆点形态（t-badge / t-badge-dot）。
-   位置从 .t-badge 默认的 -6/-8 收回到按钮内缘的 4px；尺寸取原来那颗
-   8px 圆点，颜色跟主色 —— 外形没变，变的是「出现 / 消失」有了方向感：
-   从边缘滑进来、圆点弹开，读完后缩回去（见 DotBadge）。 */
-.nav-unread {
-  /* 点要落在汉堡 / panel_left 图标的圆形按钮内，不贴着外圈边框。 */
-  top: 12px;
-  right: 12px;
+/* 导航红点完整落在圆形按钮内部，避开中央图标。
+   两个类提高优先级，避免后加载的通用 .t-badge 负偏移覆盖这里。 */
+.t-badge.nav-unread {
+  top: 8px;
+  right: 8px;
 }
 
 .nav-unread .t-badge-dot {

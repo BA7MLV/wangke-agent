@@ -194,6 +194,7 @@ export default function MdEditor({
      * 建在 effect 里，每次挂载都是干净的，cleanup 销毁的也一定是这一次建的那一个。
      */
     const saver = createMdSaver(materialId, {
+      initialText: initial,
       // 不传就是 save.ts 的默认 1.2s
       debounceMs: debounceRef.current,
       onState: (s) => {
