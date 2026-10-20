@@ -377,6 +377,8 @@ export default function Library() {
   const [biliLangItems, setBiliLangItems] = useState<BiliSubtitleItem[]>([]);
   /** biliLangItems 是哪个分 P 的（用来判断切 P 后要不要重新拉） */
   const [biliLangPage, setBiliLangPage] = useState<number | null>(null);
+  const [biliSubtitleError, setBiliSubtitleError] = useState<string | null>(null);
+  const [biliSubtitleLoading, setBiliSubtitleLoading] = useState(false);
   /** 勾选的分 P 序号 */
   const [biliPagesSel, setBiliPagesSel] = useState<number[]>([]);
   const [biliImporting, setBiliImporting] = useState(false);
@@ -686,6 +688,9 @@ export default function Library() {
 
   /** 清空 B 站导入弹窗的草稿（关弹窗 / 导入成功后都调） */
   function resetBiliDraft() {
+    ++langReqRef.current;
+    setBiliSubtitleError(null);
+    setBiliSubtitleLoading(false);
     setBiliUrl('');
     setBiliTarget(null);
     setBiliLangs([]);
@@ -709,8 +714,15 @@ export default function Library() {
   async function refreshLangsForPage(target: BiliTarget, page: number) {
     const { bilibiliProxy, bilibiliCookie } = getSettings();
     const seq = ++langReqRef.current;
-    const items = await fetchPageSubtitles({ proxy: bilibiliProxy, cookie: bilibiliCookie }, target, page);
+    setBiliSubtitleLoading(true);
+    setBiliSubtitleError(null);
+    let subtitleError: string | null = null;
+    const items = await fetchPageSubtitles({ proxy: bilibiliProxy, cookie: bilibiliCookie }, target, page, (message) => {
+      subtitleError = message;
+    });
     if (seq !== langReqRef.current) return; // 又有新的切换，丢弃这次结果
+    setBiliSubtitleError(subtitleError);
+    setBiliSubtitleLoading(false);
     setBiliLangItems(items);
     setBiliLangPage(page);
     setBiliLangs((prev) => {
@@ -755,11 +767,12 @@ export default function Library() {
     try {
       const target = await resolveBiliTarget({ proxy: bilibiliProxy, cookie: bilibiliCookie }, raw);
       setBiliTarget(target);
+      setBiliSubtitleError(target.subtitleError ?? null);
       setBiliPagesSel(target.defaultPages);
       setBiliLangItems(target.subtitles);
       setBiliLangPage(target.defaultPages[0] ?? null);
       setBiliLangs(defaultSelectedLangs(target.subtitles));
-      if (target.subtitles.length === 0) {
+      if (target.subtitles.length === 0 && !target.subtitleError) {
         // 分两种：真没字幕 vs 旧版脚本不支持 POST（否则会误以为「这视频没字幕」）
         if (isBiliBridgeAvailable() && !isBridgePostCapable()) {
           toast.warning('油猴脚本版本过旧，读不到 B 站自带字幕；到「设置」重新安装一次脚本即可');
@@ -1801,6 +1814,9 @@ export default function Library() {
                     onChange={(e) => {
                       setBiliUrl(e.target.value);
                       setBiliTarget(null); // 改链接后旧的解析结果（含字幕列表）作废
+                      ++langReqRef.current;
+                      setBiliSubtitleError(null);
+                      setBiliSubtitleLoading(false);
                     }}
                   />
                 </TextField>
@@ -1873,7 +1889,17 @@ export default function Library() {
                         </TagGroup>
                       </>
                     )}
-                    {biliLangItems.length > 0 ? (
+                    {biliSubtitleLoading ? (
+                      <p className="text-secondary mt-2 text-sm" role="status">正在读取字幕…</p>
+                    ) : biliSubtitleError ? (
+                      <div className="mt-2 flex flex-col gap-2" data-testid="bili-subtitle-error">
+                        <Banner variant="warning" title="字幕读取失败，并非已确认没有字幕" description={biliSubtitleError} />
+                        <Button variant="tertiary" isDisabled={biliImporting} onPress={() => {
+                          const page = firstSelectedPage(biliTarget, biliPagesSel);
+                          if (page != null) void refreshLangsForPage(biliTarget, page);
+                        }}>重试读取字幕</Button>
+                      </div>
+                    ) : biliLangItems.length > 0 ? (
                       <>
                         <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
                           {multiPage ? `字幕语言（按${biliTarget.kind === 'season' ? `第${biliLangPage ?? ''}集` : ` P${biliLangPage ?? ''}`}上可用的语言）` : '自带字幕'}
@@ -1912,16 +1938,25 @@ export default function Library() {
                   </div>
                 )}
                 {biliImporting && (
-                  <div style={{ marginTop: 12 }}>
-                    <div className="text-secondary" style={{ fontSize: 12, marginBottom: 6 }} data-testid="bili-label">
+                  <div className="mt-3 flex flex-col gap-2" data-testid="bili-download-status">
+                    <div className="text-secondary truncate text-sm" data-testid="bili-label" title={biliLabel}>
                       {biliLabel ? `正在下载 ${biliLabel}` : '正在下载…'}
                     </div>
                     <ProgressBar
                       data-testid="bili-progress"
                       maxValue={100}
                       value={biliProgress}
-                      aria-label="下载进度"
-                    />
+                      aria-label="总体下载进度"
+                    >
+                      <div className="flex items-center justify-between gap-2 text-sm">
+                        <span>总体进度</span>
+                        <ProgressBar.Output className="tabular-nums" data-testid="bili-progress-value" />
+                      </div>
+                      <ProgressBar.Track>
+                        <ProgressBar.Fill data-testid="bili-progress-fill" />
+                      </ProgressBar.Track>
+                    </ProgressBar>
+                    <p className="text-secondary text-xs">包含所选视频的下载、封装和字幕处理，完成后自动加入资料库。</p>
                   </div>
                 )}
                 {biliError && (

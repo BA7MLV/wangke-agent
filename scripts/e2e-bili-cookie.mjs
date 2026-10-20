@@ -74,7 +74,7 @@ console.log('\n1. 油猴脚本 getCookie()：domain 过滤与能力判定');
 
   await installStub(ALL_COOKIES, 'normal');
   const version = await runScript();
-  check(version === '2.1.1', `脚本注入成功（v${version}）`);
+  check(version === '2.1.2', `脚本注入成功（v${version}）`);
   const cookie = await getCookie();
   check(
     cookie === 'SESSDATA=sess; bili_jct=jct; buvid3=buv',

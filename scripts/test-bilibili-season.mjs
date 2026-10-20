@@ -38,6 +38,7 @@ test('合集跨分区展示所有集数，默认仅选链接对应的视频', as
   const target = await resolveBiliTarget(opts, `https://www.bilibili.com/video/${second}/`);
   assert.equal(target.kind, 'season');
   assert.equal(target.title, '申论系统课');
+  assert.equal(target.subtitleError, 'no subtitles');
   assert.deepEqual(target.defaultPages, [2]);
   assert.deepEqual(target.pages.map(p => [p.page, p.bvid, p.aid, p.cid]), [
     [1, first, 101, 111], [2, second, 202, 222],

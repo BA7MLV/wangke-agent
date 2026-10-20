@@ -61,7 +61,9 @@ export function buildDmViewRequest(aid: number, cid: number): Uint8Array {
 export function unframeGrpc(data: Uint8Array): { compressed: boolean; message: Uint8Array } {
   if (data.byteLength < 5) throw new Error('gRPC 响应过短');
   const size = new DataView(data.buffer, data.byteOffset, data.byteLength).getUint32(1, false);
-  const end = 5 + size <= data.byteLength ? 5 + size : data.byteLength;
+  if (data[0] !== 0 && data[0] !== 1) throw new Error('字幕接口返回的不是有效 gRPC 数据帧');
+  if (5 + size > data.byteLength) throw new Error('字幕接口响应不完整');
+  const end = 5 + size;
   return { compressed: data[0] === 1, message: data.subarray(5, end) };
 }
 
@@ -109,6 +111,10 @@ export async function fetchBiliSubtitleList(
     headers: { 'Content-Type': 'application/grpc', 'grpc-accept-encoding': 'identity,gzip' },
   });
   if (!resp.ok) throw new Error(`字幕列表接口失败 HTTP ${resp.status}`);
+  const grpcStatus = resp.headers.get('grpc-status');
+  if (grpcStatus && grpcStatus !== '0') {
+    throw new Error(`字幕列表接口失败 gRPC ${grpcStatus}：${resp.headers.get('grpc-message') || '服务返回错误'}`);
+  }
   const { compressed, message } = unframeGrpc(new Uint8Array(await resp.arrayBuffer()));
   return parseSubtitleList(compressed ? await gunzip(message) : message);
 }

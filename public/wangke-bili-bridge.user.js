@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         网课学习助手 · B 站导入桥
 // @namespace    https://wangke.local
-// @version      2.1.1
+// @version      2.1.2
 // @description  在网课学习助手页面注入 B 站请求桥：用本机 IP 直连 API/CDN，带 Referer，绕过 CORS。不经过 Cloudflare。
 // @author       wangke
 // @match        *://*/*
@@ -20,7 +20,7 @@
   'use strict';
 
   const TAG = '[网课助手·B站桥]';
-  const VERSION = '2.1.1';
+  const VERSION = '2.1.2';
 
   function isWangkePage() {
     try {
@@ -77,7 +77,18 @@
         timeout: 0,
         onload(res) {
           const ok = res.status >= 200 && res.status < 300;
-          const buf = res.response instanceof ArrayBuffer ? res.response : new ArrayBuffer(0);
+          // 扩展沙箱与页面可能属于不同 realm，instanceof 会把有效 ArrayBuffer 误判为空。
+          let buf;
+          try {
+            if (ArrayBuffer.isView(res.response)) {
+              buf = new Uint8Array(res.response.buffer, res.response.byteOffset, res.response.byteLength).slice().buffer;
+            } else {
+              buf = ArrayBuffer.prototype.slice.call(res.response, 0);
+            }
+          } catch {
+            reject(new Error('油猴返回了无法识别的二进制响应，请检查扩展兼容性'));
+            return;
+          }
           const decoder = new TextDecoder('utf-8');
           let textCache;
           const text = () => {

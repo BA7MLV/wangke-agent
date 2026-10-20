@@ -30,6 +30,7 @@ export interface BiliTarget {
   defaultPages: number[];
   /** 首个选中分 P 上可用的自带字幕（切分 P 时用 fetchPageSubtitles 刷新） */
   subtitles: BiliSubtitleItem[];
+  subtitleError?: string;
 }
 
 /**
@@ -47,12 +48,14 @@ export async function fetchPageSubtitles(
   opts: BiliApiOptions,
   target: BiliTarget,
   page: number,
+  onError?: (message: string) => void,
 ): Promise<BiliSubtitleItem[]> {
   const info = target.pages.find((p) => p.page === page);
   if (!info) return [];
   try {
     return await fetchBiliSubtitleList(opts, info.aid ?? target.aid, info.cid);
-  } catch {
+  } catch (error) {
+    onError?.(error instanceof Error ? error.message : String(error));
     return [];
   }
 }
@@ -77,7 +80,9 @@ export async function resolveBiliTarget(opts: BiliApiOptions, raw: string): Prom
     defaultPages,
     subtitles: [],
   };
-  target.subtitles = await fetchPageSubtitles(opts, target, defaultPages[0]);
+  target.subtitles = await fetchPageSubtitles(opts, target, defaultPages[0], (message) => {
+    target.subtitleError = message;
+  });
   return target;
 }
 

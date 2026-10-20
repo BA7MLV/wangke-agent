@@ -77,9 +77,9 @@ console.log('grpc frame');
   eq(wire.getNumber(wire.decodeFields(message), 1), 116211161497788, '请求体里的 aid');
 }
 {
-  // 声明长度大于实际（被截断的响应）时退化为取到末尾，不抛
-  const { message } = dmview.unframeGrpc(new Uint8Array([0, 0, 0, 1, 0, 7]));
-  eq(message.byteLength, 1, '长度越界时截到末尾');
+  let message = '';
+  try { dmview.unframeGrpc(new Uint8Array([0, 0, 0, 1, 0, 7])); } catch (error) { message = error.message; }
+  ok(message.includes('响应不完整'), '截断响应明确报错，不误判为无字幕');
 }
 {
   let threw = false;
