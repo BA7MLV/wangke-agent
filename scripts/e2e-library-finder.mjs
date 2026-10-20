@@ -28,6 +28,37 @@ try {
   });
   await page.reload();
   const folder = page.locator('[data-group-key="1"]');
+  await folder.waitFor();
+  // Blank-space marquee works in either layout and survives the release click.
+  const marqueeAll = async () => {
+    const canvas = await page.getByTestId('video-list').boundingBox();
+    const items = await page.locator('.finder-item').all();
+    const rects = await Promise.all(items.map((item) => item.boundingBox()));
+    const x = Math.max(...rects.map((rect) => rect.x + rect.width)) + 2;
+    const y = Math.max(...rects.map((rect) => rect.y + rect.height)) + 2;
+    await page.mouse.move(canvas.x + 3, canvas.y + 3);
+    await page.mouse.down();
+    await page.mouse.move(x, y, { steps: 12 });
+    await page.getByTestId('selection-box').waitFor();
+    await page.mouse.up();
+    assert.equal(await page.locator('.finder-item[aria-selected="true"]').count(), items.length);
+    assert.match(await page.locator('.finder-status').innerText(), new RegExp(`已选择 ${items.length} 项`));
+    await page.getByTestId('selection-box').waitFor({ state: 'detached' });
+    assert.equal(await page.getByRole('button', { name: '所选项目的操作', exact: true }).isDisabled(), true, 'multi-selection must not silently act on the first item');
+  };
+  await marqueeAll();
+  await page.getByLabel('列表视图', { exact: true }).click();
+  await marqueeAll();
+  // Escape cancels the gesture, restoring the original selection.
+  const canvas = await page.getByTestId('video-list').boundingBox();
+  await page.mouse.move(canvas.x + 3, canvas.y + 3);
+  await page.mouse.down();
+  await page.mouse.move(canvas.x + 10, canvas.y + 15, { steps: 3 });
+  await page.getByTestId('selection-box').waitFor();
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  assert.equal(await page.locator('.finder-item[aria-selected="true"]').count(), 5);
+  await page.getByLabel('图标视图', { exact: true }).click();
   await folder.click();
   assert.equal(await folder.getAttribute('aria-selected'), 'true');
   assert.equal(await page.locator('.finder-title').innerText(), '全部资料', 'single click must select, not open');

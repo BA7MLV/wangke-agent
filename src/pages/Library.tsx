@@ -46,6 +46,7 @@ import { acquireWakeLock, releaseWakeLock } from '../utils/wakeLock';
 import { formatSize } from '../utils/format';
 import { progressRatio } from '../utils/videoProgress';
 import { useIsMobile } from '../utils/useMobile';
+import { useMarqueeSelection } from '../utils/useMarqueeSelection';
 // 课程/材料 id 的生成（降级实现与理由见 utils/uuid.ts 的文件头，仓库里只有那一份）
 import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget } from '../bilibili';
 import type { BiliSubtitleItem } from '../bilibili/dmview';
@@ -330,6 +331,7 @@ export default function Library() {
   const [folderHistory, setFolderHistory] = useState<{ entries: (string | null)[]; index: number }>({ entries: [null], index: 0 });
   const folderKey = folderHistory.entries[folderHistory.index];
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const marquee = useMarqueeSelection(selection, setSelection);
   const [view, setView] = useState<'icons' | 'list'>('icons');
   const [sort, setSort] = useState<'name' | 'recent'>('name');
   const [importOpen, setImportOpen] = useState(false);
@@ -527,7 +529,7 @@ export default function Library() {
   const displayedVideos = scopedGroups.flatMap((group) => currentFolder || hasFilters || group.folder == null ? group.videos : [])
     .sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0) || (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.createdAt - a.createdAt));
   const visibleCount = displayedVideos.length + folderTiles.length;
-  const selectedKey = [...selection][0];
+  const selectedKey = selection.size === 1 ? [...selection][0] : undefined;
   const selectedFolder = folderTiles.find((group) => `folder:${group.key}` === selectedKey);
   const selectedVideo = displayedVideos.find((video) => `file:${video.id}` === selectedKey);
 
@@ -1516,6 +1518,8 @@ export default function Library() {
         </header>
         {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
+        onPointerDown={marquee.onPointerDown}
+        onClickCapture={marquee.onClickCapture}
         onContextMenu={(event) => {
           const item = (event.target as HTMLElement).closest<HTMLElement>('[data-video-id], [data-group-key]');
           if (!item) return;
@@ -1570,7 +1574,7 @@ export default function Library() {
           ) : (
             <>
               {view === 'list' && <div className="finder-list-heading" aria-hidden="true"><span>名称</span><span>项目 / 大小</span><span>添加日期</span><span>种类</span></div>}
-              <ListBox aria-label={currentFolder?.name ?? '全部资料'} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="single" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
+              <ListBox aria-label={currentFolder?.name ?? '全部资料'} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="multiple" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
                 {folderTiles.map(renderGroupHeader)}
                 {displayedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id}>
                   <span className="finder-item__icon"
@@ -1588,10 +1592,11 @@ export default function Library() {
             </>
           )}
         </SkeletonReveal>
+        {marquee.box && <div className="finder-selection-box" data-testid="selection-box" aria-hidden="true" style={marquee.box} />}
       </div>
         <footer className="finder-footer">
           <nav aria-label="资料路径" className="finder-path"><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button>{currentFolder && <><ChevronRight /><span aria-current="page">{currentFolder.name}</span></>}{(selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
-          <div className="finder-status"><span role="status">{selectedVideo || selectedFolder ? `已选择 1 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '单击选择 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
+          <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
         </footer>
         {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
       </section>

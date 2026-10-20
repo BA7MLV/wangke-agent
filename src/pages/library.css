@@ -61,7 +61,8 @@
 .finder-search input { min-width: 0; font-size: 13px; }
 .finder-search-scope { display: flex; justify-content: space-between; align-items: center; padding: 4px 24px; font-size: 12px; border-bottom: 1px solid var(--border); background: var(--background-secondary); }
 
-.finder-canvas { min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 24px; }
+.finder-canvas { position: relative; min-height: 0; flex: 1; overflow: auto; overscroll-behavior: contain; padding: 24px; }
+.finder-selection-box { position: absolute; z-index: 10; pointer-events: none; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 16%, transparent); }
 .finder-items { width: 100%; max-height: none; padding: 0; border: 0; background: transparent; border-radius: 0; box-shadow: none; outline-offset: -2px; }
 .finder-items--icons { display: grid; grid-template-columns: repeat(auto-fill, minmax(144px, 1fr)); gap: 24px 16px; align-content: start; }
 .finder-item {
