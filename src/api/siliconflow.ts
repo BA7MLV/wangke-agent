@@ -1,6 +1,7 @@
 import type { ModelTarget } from '../store/settings';
 import { createDsmlRecoverer, recoverDsmlText, type DsmlPart } from './dsml';
 import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
+import { getModelMeta } from './modelMeta';
 
 /**
  * OpenAI 兼容 API 客户端（浏览器直调）。
@@ -313,6 +314,13 @@ function responsesContent(content: ChatMessage['content']): unknown {
 }
 
 function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[], stream: boolean): Record<string, unknown> {
+  const meta = getModelMeta(t.catalogId, t.model, t.capabilities);
+  if (opts.tools?.length && meta?.declaredToolCall === false) {
+    throw new Error('此模型已声明不支持工具调用；请切换支持工具的模型，或在模型编辑器中确认工具调用能力');
+  }
+  if (meta?.declaredOutput != null && meta.declaredOutput > 0) {
+    opts = { ...opts, max_tokens: Math.min(opts.max_tokens ?? 4096, meta.declaredOutput) };
+  }
   if (t.protocol === 'anthropic-messages') {
     const system = messages.filter((m) => m.role === 'system').map((m) => typeof m.content === 'string' ? m.content : '').join('\n\n');
     const turns = messages.filter((m) => m.role !== 'system').map((m) => {

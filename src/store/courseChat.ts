@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { useChatNotifications } from './chatNotifications';
 import { readChatPage } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
-import { catalogOf, getSettings } from './settings';
+import { catalogOf, getSettings, modelOverridesOf } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
 import { prepareSessionHistory } from './contextCompression';
@@ -1540,7 +1540,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           // 所以这里用 supportsThinking 而不是 hasThinkingDepth（后者只管 UI 显示）。
           // 「关着」传 'none' 而不是不传：不传等于连 `enable_thinking: false` 都不发，
           // 混合思考模型（默认开着的那种）压根没被关掉。
-          thinkingEffort: supportsThinking(catalogOf(settings, settings.llmModel.providerId), settings.llmModel.model)
+          thinkingEffort: supportsThinking(catalogOf(settings, settings.llmModel.providerId), settings.llmModel.model, modelOverridesOf(settings, settings.llmModel))
             ? settings.thinkingEnabled
               ? settings.thinkingEffort
               : 'none'
@@ -2401,7 +2401,7 @@ async function continueInterrupted(
       async () => '（续写中不需要调用工具）',
       {
         // 思考档位与 `send` 同一套口径，理由见那边的注释
-        thinkingEffort: supportsThinking(catalogOf(settings, settings.llmModel.providerId), settings.llmModel.model)
+        thinkingEffort: supportsThinking(catalogOf(settings, settings.llmModel.providerId), settings.llmModel.model, modelOverridesOf(settings, settings.llmModel))
           ? settings.thinkingEnabled
             ? settings.thinkingEffort
             : 'none'

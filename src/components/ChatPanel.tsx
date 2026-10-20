@@ -6,7 +6,7 @@ import { parseMaterialImageHref } from '../materials/imageRefs';
 import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
-import { catalogOf, getSettings, targetOrNull, useSettings } from '../store/settings';
+import { catalogOf, getSettings, modelOverridesOf, targetOrNull, useSettings, visionTargetOrNull } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
 import { mdEditorOpen } from '../harness/tools';
@@ -520,6 +520,7 @@ export default function ChatPanel({
   const llmModel = useSettings((s) => s.llmModel);
   // 思考能力要按**这家供应商**的能力数据源查（同一模型 id 在别家可能不支持思考）
   const llmCatalog = useSettings((s) => catalogOf(s, s.llmModel.providerId));
+  const llmCapabilities = useSettings((s) => modelOverridesOf(s, s.llmModel));
   const thinking = useSettings((s) => s.thinkingEnabled);
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
@@ -533,8 +534,8 @@ export default function ChatPanel({
    * - 能思考但只有开关（Qwen3.5 系、部分 DeepSeek）→ 一枚灯泡
    * - 不会思考 → 什么都没有
    */
-  const canThink = supportsThinking(llmCatalog, llmModel.model);
-  const canDepth = canThink && hasThinkingDepth(llmCatalog, llmModel.model);
+  const canThink = supportsThinking(llmCatalog, llmModel.model, llmCapabilities);
+  const canDepth = canThink && hasThinkingDepth(llmCatalog, llmModel.model, llmCapabilities);
   /** 滑块当前值：关着思考就是第一档（档位本身留着，下次打开还是它） */
   const thinkingLevel: ThinkingLevel = thinking ? effort : 'none';
   const setThinkingLevel = (level: ThinkingLevel) =>
@@ -1011,8 +1012,8 @@ export default function ChatPanel({
 
     // 文本模型与视觉模型可能分属不同供应商，各查各的能力数据源
     const chatTarget = targetOrNull(settings, settings.llmModel);
-    const visionTarget = targetOrNull(settings, settings.visionModel);
-    const llmSeesImages = chatTarget ? isVisionModel(chatTarget.catalogId, chatTarget.model) : false;
+    const visionTarget = visionTargetOrNull(settings);
+    const llmSeesImages = chatTarget ? isVisionModel(chatTarget.catalogId, chatTarget.model, chatTarget.capabilities) : false;
 
     // 降级链 tier 3 前置检查：模型无图能力且未配视觉模型时直接拦截，不清空输入与截图，保留草稿
     if (curShots.length > 0 && !llmSeesImages && !visionTarget) {

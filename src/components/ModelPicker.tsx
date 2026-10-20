@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Dropdown, ListBox, ScrollShadow, SearchField, Separator, Switch, Tooltip } from '@heroui/react';
 import { Sym } from '../ui';
-import { useSettings, sameRef, type ModelRef, type ModelSlot } from '../store/settings';
+import { useSettings, sameRef, modelOverridesOf, type ModelRef, type ModelSlot } from '../store/settings';
 import { guessContextWindow, hasThinkingDepth, supportsThinking } from '../api/modelCaps';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import ReasoningEffortSlider from './ReasoningEffortSlider';
@@ -50,7 +50,7 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
 const SLOT_LABEL: Record<ModelSlot, string> = {
   asr: '转写模型',
   vision: '视觉模型',
-  chat: '文本模型',
+  chat: '主模型',
 };
 
 /**
@@ -91,6 +91,7 @@ export default function ModelPicker({
         .map((r) => [`${r.providerId}\0${r.model}`, r]),
     ).values(),
   ];
+  if (slot === 'vision') candidates.unshift({ providerId: '', model: '' });
   /** 供应商被删掉的收藏项：仍列出但标出来，否则用户会以为菜单漏了东西 */
   const nameOf = (id: string) => settings.providers.find((p) => p.id === id)?.name ?? '（已删除的供应商）';
   const catalogOf = (id: string) => settings.providers.find((p) => p.id === id)?.catalogId ?? '';
@@ -100,7 +101,7 @@ export default function ModelPicker({
     if (field === 'llmModel') {
       settings.update({
         llmModel: ref,
-        contextWindow: guessContextWindow(catalogOf(ref.providerId), ref.model),
+        contextWindow: guessContextWindow(catalogOf(ref.providerId), ref.model, modelOverridesOf(settings, ref)),
       });
     } else {
       settings.update({ [field]: ref });
@@ -111,12 +112,13 @@ export default function ModelPicker({
   const currentKey = keyOf(value);
 
   const tooltip =
-    candidates.length <= 1
+    slot === 'vision' && !value.model ? '图片理解：自动复用主模型的视觉能力' : candidates.length <= 1
       ? `${SLOT_LABEL[slot]}：${nameOf(value.providerId)} · ${value.model}（在设置 → 我的模型中添加更多模型）`
       : `${SLOT_LABEL[slot]}：${nameOf(value.providerId)} · ${value.model}（点击切换）`;
 
   /** 列表行内那一块：勾 + 供应商 + 模型 id + 能力标记。下拉菜单与弹层共用 */
   const rowContent = (ref: ModelRef) => {
+    if (slot === 'vision' && !ref.model) return <span className="text-sm">自动：复用主模型的视觉能力</span>;
     const cat = catalogOf(ref.providerId);
     return (
       <span className="model-picker__opt">
@@ -129,7 +131,7 @@ export default function ModelPicker({
         {/* 供应商名独立一列：多供应商下模型 id 不再能唯一标识一个模型 */}
         <span className="model-picker__provider">{nameOf(ref.providerId)}</span>
         <span className="model-picker__id" title={ref.model}>{modelLabel(settings, ref)}</span>
-        <ModelCapabilities catalogId={cat} model={ref.model} compact />
+        <ModelCapabilities catalogId={cat} model={ref.model} overrides={modelOverridesOf(settings, ref)} compact />
       </span>
     );
   };
@@ -166,7 +168,7 @@ export default function ModelPicker({
               <Dropdown.Item
                 key={keyOf(ref)}
                 id={keyOf(ref)}
-                textValue={ref.model}
+                textValue={ref.model || '自动：复用主模型'}
                 data-testid={`model-picker-item-${keyOf(ref)}`}
               >
                 {rowContent(ref)}
@@ -252,8 +254,9 @@ function ChipDropdown({
    */
   useModelMetaRevision();
   const catalog = catalogOf(value.providerId);
-  const canThink = showThinking && supportsThinking(catalog, value.model);
-  const canDepth = canThink && hasThinkingDepth(catalog, value.model);
+  const overrides = modelOverridesOf(settings, value);
+  const canThink = showThinking && supportsThinking(catalog, value.model, overrides);
+  const canDepth = canThink && hasThinkingDepth(catalog, value.model, overrides);
   const thinking = settings.thinkingEnabled;
   const effort = settings.thinkingEffort;
 

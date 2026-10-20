@@ -361,21 +361,21 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
 
   if (failed) {
     return (
-      <div ref={hostRef} className="widget-block widget-block--error" data-testid="widget-error">
+      <div ref={hostRef} className="md-embedded-ui widget-block widget-block--error" data-testid="widget-error">
         这个图形没能加载起来：{failed}
       </div>
     );
   }
   if (!doc) {
     return (
-      <div ref={hostRef} className="widget-block widget-block--loading" data-testid="widget-loading" role="status">
+      <div ref={hostRef} className="md-embedded-ui widget-block widget-block--loading" data-testid="widget-loading" role="status">
         正在准备图形…
       </div>
     );
   }
 
   return (
-    <div ref={hostRef} className="widget-block" data-testid="widget-block" data-h={Math.round(height)}>
+    <div ref={hostRef} className="md-embedded-ui widget-block" data-testid="widget-block" data-h={Math.round(height)}>
       <iframe
         ref={frameRef}
         className="widget-block__frame"

@@ -27,23 +27,27 @@ assert.throws(() => applyArtifactReply('abc', { source: 'abc' }, 'rewrite'), /�
 assert.throws(() => applyArtifactReply('abc', { source: 'x'.repeat(120001) }, 'rewrite'), /大小限制/);
 
 const rowId = await db.chats.add({ videoId: 'artifact-test', sessionId: 17, role: 'assistant', createdAt: 1, content, reasoning: '保留思考', widget: { html: '<div>old</div>', libs: ['chart.js'] } });
-const save = (extra = {}) => persistArtifactEdit({ rowId, kind: 'diagram', location: 'fence', source: old, next, expectedContent: content, ...extra });
+const save = (extra = {}) => persistArtifactEdit({ rowId, kind: 'diagram', location: 'fence', source: old, next, ...extra });
 const updated = await save();
 assert.equal(updated.content, patched);
 assert.equal(updated.reasoning, '保留思考');
-await assert.rejects(save(), /已变化/);
-const undone = await save({ source: next, next: old, expectedContent: patched });
+await assert.rejects(save(), /已变化|唯一定位/);
+const undone = await save({ source: next, next: old });
 assert.equal(undone.content, content, 'undo restores only the selected fence');
+await db.chats.update(rowId, { content: content.replace('<svg></svg>', '<svg><path /></svg>') });
+const concurrent = await save();
+assert.equal(concurrent.content, patched.replace('<svg></svg>', '<svg><path /></svg>'), 'unrelated figure changes are rebased, not overwritten or blocked');
+await db.chats.update(rowId, { content });
 const widget = await save({ kind: 'html', location: 'widget', source: '<div>old</div>', next: '<div>new</div>' });
 assert.deepEqual(widget.widget, { html: '<div>new</div>', libs: ['chart.js'] });
 assert.equal(widget.content, content, 'widget changes must not touch answer text');
 await assert.rejects(save({ kind: 'html', location: 'widget', source: '<div>old</div>', next: '<div>race</div>' }), /已变化/);
 
 await db.chats.update(rowId, { content: '```html\n<p>old</p>\n```' });
-const html = await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>', expectedContent: '```html\n<p>old</p>\n```' });
+const html = await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>' });
 assert.equal(html.content, '```html\n<p>new</p>\n```');
 await db.chats.update(rowId, { content: '<p>old</p>' });
-assert.equal((await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>', expectedContent: '<p>old</p>' })).content, '<p>new</p>');
+assert.equal((await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>' })).content, '<p>new</p>');
 await db.chats.update(rowId, { interrupted: true });
 await assert.rejects(save(), /先完成/);
 await db.chats.delete(rowId);

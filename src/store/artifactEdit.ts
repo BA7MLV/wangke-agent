@@ -4,16 +4,30 @@ import { replaceArtifactFence, type ArtifactKind, type ArtifactLocation } from '
 import { uuid } from '../utils/uuid';
 import { messageWidgets } from '../harness/widgetLayout';
 
+export interface ArtifactTarget {
+  rowId: number; kind: ArtifactKind; location: ArtifactLocation; source: string; widgetId?: string;
+}
+
+/** Check only this target, so editing a different figure never invalidates a pending draft. */
+export function assertArtifactTarget(row: ChatRow | undefined, input: ArtifactTarget): asserts row is ChatRow {
+  if (!row || row.role !== 'assistant') throw new Error('原回答已被删除，修改未保存');
+  if (row.resume || row.interrupted) throw new Error('请先完成或继续这条回答，再修改内容块');
+  if (input.location === 'widget') {
+    const matches = messageWidgets(row).filter((widget) => widget.html === input.source
+      && (!input.widgetId || widget.id === input.widgetId));
+    if (matches.length !== 1) throw new Error('此 HTML 已变化或位置不唯一，请重新打开修改');
+  } else if (input.location === 'fence' || /^\s*[`~]{3}/.test(row.content)) {
+    replaceArtifactFence(row.content, input.kind, input.source, input.source);
+  } else if (htmlPreviewSource(row.content) !== input.source) {
+    throw new Error('原 HTML 已变化，请重新打开修改');
+  }
+}
+
 /** Compare-and-swap inside one IndexedDB transaction; unrelated row metadata is preserved. */
-export async function persistArtifactEdit(input: {
-  rowId: number; kind: ArtifactKind; location: ArtifactLocation;
-  source: string; next: string; expectedContent: string;
-  widgetId?: string;
-}): Promise<ChatRow> {
+export async function persistArtifactEdit(input: ArtifactTarget & { next: string }): Promise<ChatRow> {
   return db.transaction('rw', db.chats, async () => {
     const row = await db.chats.get(input.rowId);
-    if (!row || row.role !== 'assistant') throw new Error('原回答已被删除，修改未保存');
-    if (row.resume || row.interrupted) throw new Error('请先完成或继续这条回答，再修改内容块');
+    assertArtifactTarget(row, input);
     let patch: Partial<ChatRow>;
     if (input.location === 'widget') {
       const matches = messageWidgets(row).filter((widget) => widget.html === input.source
@@ -30,7 +44,6 @@ export async function persistArtifactEdit(input: {
         ...(row.widgetState?.widgetId === widget.id ? { widgetState: undefined } : {}),
       };
     } else {
-      if (row.content !== input.expectedContent) throw new Error('原回答已变化，请重新打开修改');
       if (input.location === 'fence') {
         patch = { content: replaceArtifactFence(row.content, input.kind, input.source, input.next) };
       } else {

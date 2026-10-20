@@ -1,3 +1,55 @@
+.x-markdown { min-width: 0; }
+
+/* XMarkdown's default descendant selectors also style React-owned controls.
+   Keep its prose geometry/variables, but stop at embedded UI. One class keeps
+   prose above the app reset, without competing with embedded host utilities. */
+.x-markdown :where(p):not(:where(.md-embedded-ui *)) { margin: var(--margin-block); }
+.x-markdown :where(p, ul, ol, pre):first-child:not(:where(.md-embedded-ui *)) { margin-top: 0; }
+.x-markdown :where(p, ul, ol, pre):last-child:not(:where(.md-embedded-ui *)) { margin-bottom: 0; }
+.x-markdown :where(ul, ol):not(:where(.md-embedded-ui *)) {
+  margin: var(--margin-ul-ol);
+  padding: var(--padding-ul-ol);
+}
+.x-markdown :where(ol > li):not(:where(.md-embedded-ui *)) { list-style: decimal; }
+.x-markdown :where(ul > li):not(:where(.md-embedded-ui *)) { list-style: disc; }
+.x-markdown :where(li):not(:where(.md-embedded-ui *)) { margin: var(--margin-li); }
+.x-markdown :where(li):first-child:not(:where(.md-embedded-ui *)) { margin-top: 0; }
+.x-markdown :where(li):last-child:not(:where(.md-embedded-ui *)) { margin-bottom: 0; }
+.x-markdown :where(pre):not(:where(.md-embedded-ui *)) { margin: var(--margin-pre); overflow-x: auto; }
+.x-markdown :where(code):not(:where(.md-embedded-ui *)) {
+  padding: var(--padding-code-inline);
+  margin: var(--margin-code-inline);
+  font-size: var(--code-inline-text);
+  border-radius: var(--small-border-radius);
+}
+.x-markdown :where(pre code):not(:where(.md-embedded-ui *)) {
+  padding: 0;
+  margin: 0;
+  font-size: inherit;
+  border-radius: 0;
+  line-height: 2;
+}
+.x-markdown :where(img):not(:where(.md-embedded-ui *)) { max-width: 100%; height: auto; margin: var(--image-margin); }
+.x-markdown :where(hr):not(:where(.md-embedded-ui *)) { margin: var(--hr-margin); }
+.x-markdown :where(table):not(:where(.md-embedded-ui *)) {
+  margin: var(--table-margin);
+  border-collapse: collapse;
+  display: block;
+  width: max-content;
+  max-width: 100%;
+  overflow: auto;
+}
+.x-markdown :where(table):first-child:not(:where(.md-embedded-ui *)) { margin-top: 0; }
+.x-markdown :where(table):last-child:not(:where(.md-embedded-ui *)) { margin-bottom: 0; }
+.x-markdown :where(th, td):not(:where(.md-embedded-ui *)) { padding: var(--td-th-padding); }
+.x-markdown :where(th):not(:where(.md-embedded-ui *)) { font-weight: var(--border-font-weight); }
+.x-markdown :where(pre table):not(:where(.md-embedded-ui *)) { box-shadow: none; }
+.x-markdown :where(pre td, pre th):not(:where(.md-embedded-ui *)) {
+  padding: var(--pre-th-td-padding);
+  border: none;
+  text-align: left;
+}
+
 .md-math { max-width: 100%; }
 .md-math--display {
   display: block;

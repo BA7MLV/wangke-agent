@@ -1,5 +1,6 @@
 import { create } from 'zustand';
 import type { RegionImage } from '../materials/region';
+import { markedText } from '../materials/annotationText';
 
 /**
  * 选区提问的**投递通道**。
@@ -31,6 +32,7 @@ export interface Citation {
   time?: number;
   /** 框选裁图（PDF）；Word/讲义没有画布可裁，只有文字 */
   image?: RegionImage;
+  annotation?: 'highlight';
 }
 
 export type AskMode = 'explain' | 'compose';
@@ -72,7 +74,8 @@ export function formatCitation(cite: Citation): string {
   const inkNote = cite.image?.hasInk
     ? '\n> [附图包含用户手写批注：请结合原文理解圈选、箭头和手写内容，区分原文与用户批注；无法辨认的笔迹请明确说明，不要猜测。]'
     : '';
-  return `> ${head}\n> ${cite.text.replace(/\n/g, '\n> ')}${inkNote}`;
+  const text = cite.annotation === 'highlight' ? `[用户文字高亮摘录]\n${markedText(cite.text)}` : cite.text;
+  return `> ${head}\n> ${text.replace(/\n/g, '\n> ')}${inkNote}`;
 }
 
 /** 「解释这段」用的默认提问；用户自己补问时走 compose 模式，不用这条 */

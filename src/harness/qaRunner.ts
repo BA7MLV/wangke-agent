@@ -6,7 +6,7 @@ import { PROMPTS } from './prompts';
 import { estimateTokens, fitHistoryToBudget } from './context';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { db, type ChatImage, type QuizState } from '../store/db';
-import { catalogOf, getSettings, type ModelTarget } from '../store/settings';
+import { catalogOf, getSettings, modelOverridesOf, type ModelTarget } from '../store/settings';
 import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage, ContentPart } from '../api/siliconflow';
 import type { WidgetPayload } from './widgetRuntime';
@@ -268,6 +268,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
           supportsThinking(
             input.modelTarget?.catalogId ?? catalogOf(settings, settings.llmModel.providerId),
             input.modelTarget?.model ?? settings.llmModel.model,
+            input.modelTarget ? input.modelTarget.capabilities : modelOverridesOf(settings, settings.llmModel),
           )
             ? settings.thinkingEffort
             : undefined,

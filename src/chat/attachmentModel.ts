@@ -1,14 +1,14 @@
 import { chatOnce, textOf, type ChatMessage } from '../api/siliconflow';
 import { isVisionModel } from '../api/modelCaps';
-import { getSettings, targetOrNull } from '../store/settings';
+import { getSettings, targetOrNull, visionTargetOrNull } from '../store/settings';
 import { attachmentMessage, type ChatAttachment } from './attachments';
 
 /** Text-only chat models use the configured vision model; never replace images with just filenames. */
 export async function attachmentsForModel(attachments: ChatAttachment[], question: string, signal: AbortSignal): Promise<ChatAttachment[]> {
   const settings = getSettings();
   const chat = targetOrNull(settings, settings.llmModel);
-  if (chat && isVisionModel(chat.catalogId, chat.model)) return attachments;
-  const vision = targetOrNull(settings, settings.visionModel);
+  if (chat && isVisionModel(chat.catalogId, chat.model, chat.capabilities)) return attachments;
+  const vision = visionTargetOrNull(settings);
   const result: ChatAttachment[] = [];
   for (const file of attachments) {
     signal.throwIfAborted();
@@ -32,6 +32,6 @@ export async function attachmentsForModel(attachments: ChatAttachment[], questio
 export function messageForModel(row: { role: 'user' | 'assistant'; content: string; attachments?: ChatAttachment[] }): ChatMessage {
   const settings = getSettings();
   const chat = targetOrNull(settings, settings.llmModel);
-  const seesImages = chat && isVisionModel(chat.catalogId, chat.model);
+  const seesImages = chat && isVisionModel(chat.catalogId, chat.model, chat.capabilities);
   return attachmentMessage({ ...row, attachments: row.attachments?.map((file) => seesImages ? file : { ...file, dataUrl: undefined }) });
 }

@@ -31,6 +31,12 @@
 
 通用宿主设计调参面板、原型变体轮播和独立 HTML 导出未实现；这不是 ZCode 全量 API 移植。沙箱和本地内联库策略仍采用本项目更严格的离线边界，不开放原 skill 的 CDN 白名单。
 
+## 样式边界
+
+- 正式交互件及局部修改预览都在各自的隔离 iframe 中执行，宿主只向内同步主题令牌，不接受修改宿主 CSS 的消息。
+- 正文不是另一种组件宿主。普通聊天、课程问答与 LiveLink 共用 Markdown 净化策略：移除 style/link 等标签、内联样式、class/id 和任意 data 属性；只保留公式、围栏与流式占位所需的内部字段。安全的语义 HTML 仍可阅读，已有消息源码不改写。需要样式和脚本的内容应走 show_widget，而不是混进正文。
+- 流式 HTML 继续使用去样式、去脚本的静态预览。宿主编辑面板、图块与预览通过 `md-embedded-ui` 标明正文样式的终点，Markdown 的段落、列表、表格和代码块规则不再深入这些界面。
+
 ## 验证
 
 ```sh
@@ -41,7 +47,8 @@ npx tsc -b --pretty false
 # 先运行 npm run dev；以下使用独立浏览器上下文和假模型，不消耗真实 API tokens
 node scripts/e2e-widget-state.mjs
 node scripts/e2e-widget-layout.mjs
+node scripts/e2e-widget-style-isolation.mjs
 node scripts/probe-widget-sandbox.mjs
 # 或只跑本轮新增验证（编排器会使用正确 TS loader）
-node scripts/e2e-all.mjs --only=test-widget-state,e2e-widget-state,e2e-widget-layout
+node scripts/e2e-all.mjs --only=test-widget-state,e2e-widget-state,e2e-widget-layout,e2e-widget-style-isolation
 ```

@@ -1,5 +1,5 @@
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings, targetOfSlot, type ModelTarget } from '../store/settings';
+import { getSettings, targetOfSlot, visionTargetOrNull, type ModelTarget } from '../store/settings';
 import { db, type FrameRow, type SegmentRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { extractFrames, extractFramesAt, blobToDataURL, type ExtractedFrame } from '../media/frames';
@@ -127,7 +127,9 @@ export async function runHandout(
   const settings = getSettings();
   // 文本与视觉可以配在两家不同的供应商，各自独立校验凭据
   const chatTarget = targetOfSlot(settings, 'chat');
-  const visionTarget = targetOfSlot(settings, 'vision');
+  const visionTarget = visionTargetOrNull(settings);
+  if (!visionTarget) throw new Error('主模型尚未声明视觉能力，请在设置中确认图片输入能力，或指定独立图片理解模型');
+  if (!visionTarget.apiKey.trim()) throw new Error('请先填写图片理解模型所在供应商的 API Key');
 
   const video = await db.videos.get(videoId);
   const blob = await getVideoFile(videoId);

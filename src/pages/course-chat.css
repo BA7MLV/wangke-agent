@@ -540,22 +540,22 @@
 }
 
 .course-chat__bubble--ai > *:first-child,
-.course-chat__bubble--ai p:first-child {
+.course-chat__bubble--ai p:first-child:not(:where(.md-embedded-ui *)) {
   margin-top: 0;
 }
 
 .course-chat__bubble--ai > *:last-child,
-.course-chat__bubble--ai p:last-child {
+.course-chat__bubble--ai p:last-child:not(:where(.md-embedded-ui *)) {
   margin-bottom: 0;
 }
 
-.course-chat__bubble--ai a {
+.course-chat__bubble--ai a:not(:where(.md-embedded-ui *)) {
   color: var(--accent);
   text-decoration-thickness: 1px;
   text-underline-offset: 3px;
 }
 
-.course-chat__bubble--ai pre {
+.course-chat__bubble--ai pre:not(:where(.md-embedded-ui *)) {
   max-width: 100%;
   overflow: auto;
   padding: 14px;
@@ -563,11 +563,11 @@
   background: var(--background-secondary);
 }
 
-.course-chat__bubble--ai code {
+.course-chat__bubble--ai code:not(:where(.md-embedded-ui *)) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.course-chat__bubble--ai blockquote {
+.course-chat__bubble--ai blockquote:not(:where(.md-embedded-ui *)) {
   margin-left: 0;
   padding-left: 14px;
   border-left: 3px solid color-mix(in oklch, var(--muted) 50%, transparent);

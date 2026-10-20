@@ -170,6 +170,7 @@ const META = {
   'test-widget-state': { service: 'none', antd: false, timeout: 120, tsx: true },
   'e2e-widget-state': { service: 'dev', antd: false, timeout: 180, base: true },
   'e2e-widget-layout': { service: 'dev', antd: false, timeout: 180, base: true },
+  'e2e-widget-style-isolation': { service: 'dev', antd: false, timeout: 180, base: true },
   // 重采样契约：跨帧不丢相位（91 分钟短 7.6s 那个 bug 的守门员）
   'test-pcm-resample': { service: 'none', antd: false, timeout: 120 },
   // 问答技能范围的三态语义：undefined（不限定）/ []（一个都不给）/ [id]。

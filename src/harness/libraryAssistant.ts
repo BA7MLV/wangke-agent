@@ -513,6 +513,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         `课程：${courseLink(course)}`,
         `courseId=${course.id}`,
         `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码，从 1 起' : '段号，从 1 起') : '秒，从 0 起'}）`,
+        ...(course.kind === 'material' ? [`用户文字高亮：/courses/${encodeURIComponent(course.id)}/highlights（read，offset/limit 分页）`] : []),
         `类型：${course.kind === 'material' ? `阅读材料 · ${(course.materialFormat ?? '文档').toUpperCase()}` : '视频课程'}`,
         `分类：${folder?.name ?? '未分类'}`,
         `学习进度：${progress.label}`,

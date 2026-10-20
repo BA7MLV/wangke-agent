@@ -1,27 +1,24 @@
 /**
- * 模型能力查询：优先用 models.dev 实时元数据（见 modelMeta.ts，**按供应商逐家索引**），
- * 未拉取/未收录时回退到按模型名的启发式推断，可能误判。
+ * 模型能力查询：用户覆盖优先，未配置字段用 models.dev（按供应商逐家索引）。
+ * 视觉/推理能力未知时不按名称猜测；上下文估值仍保留历史兜底。
  *
  * 每个查询都要带 `catalogId`（来自 `Provider.catalogId`）：同一个模型 id 在不同供应商下
- * 能力可以不同，只按模型名查等于把别家的能力当成本家的。元数据缺失时启发式仍只看模型名 ——
- * 那是兜底，宁可不准也不能不给。
+ * 能力可以不同，只按模型名查等于把别家的能力当成本家的。
  *
  * **例外是思考参数**（`thinkingParams`）：它不靠猜模型名，而是查模型自己声明的
- * 旋钮 —— 厂商 API 参考点名的走文档，其余走元数据，两处都没有就不发深度参数。
+ * 旋钮 —— 用户配置优先，其次是厂商文档纠错与目录；都没有就不发深度参数。
  */
 
 import type { ReasoningEffort, ThinkingLevel } from './siliconflow';
-import { getModelMeta, type ThinkingControl } from './modelMeta';
+import { getModelMeta, type ModelOverrides, type ThinkingControl } from './modelMeta';
 
-const VISION_RE = /([-_/]vl|vision|gpt-4o|gpt-5|gemini|claude|qwen3-vl|internvl|minicpm-v|glm-4v|step-1v|kimi-latest|moonshot-v1-.*-vision)/i;
-const THINK_RE = /(r1|qwen3|qwq|glm-z1|glm-5|glm-4\.[56]|hunyuan-t1|thinking|reasoner|deepseek-v3\.2|deepseek-v4|k2-thinking)/i;
-
-export function isVisionModel(catalogId: string, id: string): boolean {
-  return getModelMeta(catalogId, id)?.vision ?? VISION_RE.test(id);
+export function isVisionModel(catalogId: string, id: string, overrides?: ModelOverrides): boolean {
+  return getModelMeta(catalogId, id, overrides)?.vision ?? false;
 }
 
-export function supportsThinking(catalogId: string, id: string): boolean {
-  return getModelMeta(catalogId, id)?.reasoning ?? THINK_RE.test(id);
+export function supportsThinking(catalogId: string, id: string, overrides?: ModelOverrides): boolean {
+  if (overrides?.reasoningEffort !== undefined) return getModelMeta(catalogId, id, overrides)?.reasoning ?? false;
+  return !!DOC_EFFORT_MODELS[catalogId]?.[id] || (getModelMeta(catalogId, id)?.reasoning ?? false);
 }
 
 /**
@@ -159,18 +156,19 @@ function toEffortValue(lanes: readonly string[], effort: ReasoningEffort): strin
 }
 
 /**
- * 模型声明的思考控制方式。**厂商文档点名的走文档，其余走 models.dev 元数据**，
- * 两处都没有就是 null（= 不知道，不猜）。
+ * 模型声明的思考控制方式：用户覆盖 > 厂商文档纠错 > models.dev。
+ * 都没有就是 null（= 不知道，不猜）。
  */
-export function thinkingControlOf(catalogId: string, id: string): ThinkingControl | null {
+export function thinkingControlOf(catalogId: string, id: string, overrides?: ModelOverrides): ThinkingControl | null {
+  if (overrides?.reasoningEffort !== undefined) return getModelMeta(catalogId, id, overrides)?.thinking ?? null;
   const lanes = DOC_EFFORT_MODELS[catalogId]?.[id];
   if (lanes) return { toggle: true, effort: lanes };
   return getModelMeta(catalogId, id)?.thinking ?? null;
 }
 
 /** 这个模型能不能调思考深度：只有它声明了 effort 档位或 budget 区间才算 */
-export function hasThinkingDepth(catalogId: string, id: string): boolean {
-  const control = thinkingControlOf(catalogId, id);
+export function hasThinkingDepth(catalogId: string, id: string, overrides?: ModelOverrides): boolean {
+  const control = thinkingControlOf(catalogId, id, overrides);
   return !!control && (!!control.effort?.length || !!control.budget);
 }
 
@@ -194,9 +192,9 @@ export function hasThinkingDepth(catalogId: string, id: string): boolean {
  * 猜错就等于把一个模型不认的参数发出去（旋钮静默失效，或直接被网关拒）。
  * 现在没声明就没有深度参数 —— 深度控件也跟着不显示（见 `hasThinkingDepth`）。
  */
-export function thinkingParams(catalogId: string, model: string, level: ThinkingLevel) {
+export function thinkingParams(catalogId: string, model: string, level: ThinkingLevel, overrides?: ModelOverrides) {
   if (level === 'none') return { enable_thinking: false };
-  const control = thinkingControlOf(catalogId, model);
+  const control = thinkingControlOf(catalogId, model, overrides);
   if (control?.effort?.length) {
     return { enable_thinking: true, reasoning_effort: toEffortValue(control.effort, level) };
   }
@@ -223,8 +221,8 @@ export function thinkingParams(catalogId: string, model: string, level: Thinking
  * 实测在架模型（models.dev）：DeepSeek-V4-Pro 384k、Kimi-K3 / GLM-5.2 262k、
  * Qwen3.5-122B 64k，但也有 Qwen2.5-72B 只有 4k —— **所以必须逐模型取，不能取全局最大**。
  */
-export function outputLimitOf(catalogId: string, id: string): number {
-  return getModelMeta(catalogId, id)?.output ?? 8192;
+export function outputLimitOf(catalogId: string, id: string, overrides?: ModelOverrides): number {
+  return getModelMeta(catalogId, id, overrides)?.output ?? 8192;
 }
 
 /**
@@ -237,12 +235,15 @@ export function outputLimitOf(catalogId: string, id: string): number {
  *
  * 取 max 而不是无条件信元数据：设置值可能被用户**调大**过（换过窗口更大的服务），
  * 那是显式意图，不能被元数据拉回去。两者都缺时返回 null，交给调用方按未知处理。
+ * 模型编辑器中的显式窗口覆盖优先于上述估值，无论它调大还是调小。
  */
 export function effectiveContextWindow(
   catalogId: string,
   id: string,
   configured?: number | null,
+  overrides?: ModelOverrides,
 ): number | null {
+  if (overrides?.contextWindow !== undefined) return overrides.contextWindow;
   const meta = getModelMeta(catalogId, id)?.context ?? null;
   const conf = configured != null && configured > 0 ? configured : null;
   if (meta == null && conf == null) return null;
@@ -263,8 +264,8 @@ const WINDOW_TABLE: [RegExp, number][] = [
   [/gemini/i, 1048576],
 ];
 
-export function guessContextWindow(catalogId: string, id: string): number {
-  const meta = getModelMeta(catalogId, id);
+export function guessContextWindow(catalogId: string, id: string, overrides?: ModelOverrides): number {
+  const meta = getModelMeta(catalogId, id, overrides);
   if (meta) return meta.context;
   for (const [re, win] of WINDOW_TABLE) if (re.test(id)) return win;
   return 131072;

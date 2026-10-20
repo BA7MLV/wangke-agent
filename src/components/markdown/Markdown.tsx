@@ -3,6 +3,7 @@ import { XMarkdown, type ComponentProps, type XMarkdownProps } from '@ant-design
 import { protectMath } from './math';
 import { MarkdownStreamingProvider } from './streaming';
 import { SourceImage, SourceImageLink } from '../MaterialImage';
+import { markdownSanitizeConfig } from './sanitize';
 import './markdown.css';
 
 const MathFormula = lazy(() => import('./MathFormula'));
@@ -43,15 +44,20 @@ function Formula(props: ComponentProps) {
 }
 
 /** Shared rendering contract for streamed answers, history, explanations and materials. */
-export const Markdown = memo(function Markdown({ components, streaming, content, children, ...props }: XMarkdownProps) {
+export const Markdown = memo(function Markdown({ components, streaming, content, children, dompurifyConfig, ...props }: XMarkdownProps) {
   const source = content ?? children ?? '';
   const hasNextChunk = !!streaming?.hasNextChunk;
   const protectedContent = useMemo(() => protectMath(source, hasNextChunk), [source, hasNextChunk]);
   const mergedComponents = useMemo(() => ({ ...SHARED_COMPONENTS, ...components }), [components]);
+  const sanitizeConfig = useMemo(() => markdownSanitizeConfig(dompurifyConfig), [dompurifyConfig]);
   return (
     <MarkdownStreamingProvider value={hasNextChunk}>
       <XMarkdown
         {...props}
+        dompurifyConfig={sanitizeConfig}
+        // Prose defaults must stop at embedded host UI (editor, preview, diagram).
+        // markdown.css supplies the same defaults without descendant-style leaks.
+        disableDefaultStyles
         content={protectedContent}
         components={mergedComponents}
         streaming={streaming}

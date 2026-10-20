@@ -81,7 +81,7 @@ try {
   const pdfId = await importFile('scripts/fixtures/sample-zh.pdf');
   assert.equal(await byId('study-assistant-panel').isVisible(), false);
   assert.equal(await byId('chat-input').count(), 1, '收起仍挂载问答');
-  await byId('ink-pen').click();
+  assert.equal(await byId('ink-smart').getAttribute('aria-checked'), 'true', '默认智能批注，无需选画笔');
   await page.getByLabel('笔型', { exact: true }).selectOption('brush');
   await page.getByLabel('实时字迹美化').selectOption('0.65');
   await page.getByLabel('笔迹浓度').fill('60');
@@ -267,6 +267,7 @@ try {
   assert.equal(await first.locator('[data-ink-stroke]').count(), 1, '取消手势不提交残笔');
   await byId('ink-highlight').click(); await penStroke(first, 110); await waitSaved(2);
   assert.equal((await inkRows()).find((s) => s.id !== saved.id).tool, 'highlight');
+  assert.equal(await byId('ink-smart').getAttribute('aria-checked'), 'true', '荧光笔一次后回到智能批注');
   await byId('ink-erase').click(); await penStroke(first, 110); await waitSaved(1);
   await byId('ink-undo').click(); await waitSaved(2);
   await byId('reader-zoom-in').click();

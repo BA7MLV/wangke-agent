@@ -15,6 +15,10 @@
 .ink-input-root[data-writing] .mr-scroll { touch-action: none; }
 .ink-layer[data-active] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
 .ink-toolbar__tools [data-testid="ink-finger"] { color: var(--muted); }
+.ink-excerpts { max-height: 25dvh; overflow: auto; margin-top: 8px; }
+.ink-excerpt { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }
+.ink-excerpt > span { color: var(--muted); font-size: 12px; }
+.ink-excerpt mark { flex: 1 1 12rem; max-height: 5rem; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; color: inherit; background: color-mix(in srgb, #facc15 25%, transparent); }
 .mr-shell { position: relative; }
 .mr-shell__actions { display: flex; justify-content: flex-end; padding: 4px 8px 0; }
 .mr-shell[data-fullscreen] { position: fixed; inset: 0; z-index: 30; background: var(--background); }

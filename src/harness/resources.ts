@@ -1,5 +1,6 @@
 import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
+import { readHighlightCatalog } from '../materials/highlightContext';
 import type { UnitKind } from '../materials/units';
 import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, SHOW_WIDGET_TOOL, type ToolExecutorOptions } from './tools';
 import { createLibraryAssistantExecutor, libraryAssistantTools, type LibraryAssistantExecutorOptions } from './libraryAssistant';
@@ -12,7 +13,7 @@ export const READ_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'read',
-    description: '读取检索结果中的 path；需要上下文时传 start、end 两个数字，不要构造 range 对象。单位自动判断：视频为秒（从 0 起），PDF 为页，其他材料为段（从 1 起）。省略范围则读取开头；每次最多 600 秒或 20 页/段。例：{"path":"/courses/current/transcript","start":0,"end":60}。也可列目录：/courses 列课程（offset/limit 分页，status/kind 筛选），/skills 列技能；/courses/{id}/info 课程详情，/library/overview 学习统计，/library/folders 分类。正文路径用检索或详情返回的路径，不要猜测；/courses/{id}/images 列原图（支持 start/end、offset/limit），/courses/{id}/frames 列视频画面。单课程可用 /courses/current。技能及参考文档使用 /skills 返回的路径。',
+    description: '读取检索结果中的 path；需要上下文时传 start、end 两个数字，不要构造 range 对象。单位自动判断：视频为秒（从 0 起），PDF 为页，其他材料为段（从 1 起）。省略范围则读取开头；每次最多 600 秒或 20 页/段。例：{"path":"/courses/current/transcript","start":0,"end":60}。也可列目录：/courses 列课程（offset/limit 分页，status/kind 筛选），/skills 列技能；/courses/{id}/info 课程详情，/library/overview 学习统计，/library/folders 分类。正文路径用检索或详情返回的路径，不要猜测；/courses/{id}/images 列原图（支持 start/end、offset/limit），/courses/{id}/highlights 列用户文字高亮摘录（offset/limit 分页，每次最多 5 条），/courses/{id}/frames 列视频画面。单课程可用 /courses/current。技能及参考文档使用 /skills 返回的路径。',
     parameters: {
       type: 'object',
       properties: {
@@ -83,7 +84,7 @@ export function parseResource(path: unknown): Resource | undefined {
     if (p.length === 2 && p[0] === 'library' && p[1] === 'overview') return { type: 'overview' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'folders') return { type: 'folders' };
     if (p.length === 2 && p[0] === 'courses' && p[1] === 'context') return { type: 'context' };
-    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images'].includes(p[2]))) {
+    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images', 'highlights'].includes(p[2]))) {
       return { type: 'course', id: p[1], leaf: p[2] };
     }
     if (p[0] === 'skills' && p.length === 2) return { type: 'skill', name: p[1] };
@@ -181,6 +182,10 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
       return `path=${canonical}\n定位单位：${kind === 'page' ? 'pages' : kind ? 'paragraphs' : 'seconds'}\n${result}`;
     }
     if (leaf === 'info') return executeLibrary('get_course_details', { courseId: id });
+    if (leaf === 'highlights') {
+      if (!kind) return '此课程不是阅读材料，没有文字高亮。';
+      return `path=${canonical}\n${await readHighlightCatalog(id, Number(args.offset), Number(args.limit))}`;
+    }
     if (leaf === 'images') {
       if (course.kind !== 'material') return '此课程不是阅读材料。视频画面请 read 对应的 frames 资源。';
       const range = args.range === undefined && args.start === undefined && args.end === undefined ? undefined : readRange(args, kind);

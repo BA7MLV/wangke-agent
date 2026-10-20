@@ -3,6 +3,12 @@ import { getStroke } from 'perfect-freehand';
 export type InkNib = 'pressure' | 'ballpoint' | 'brush';
 /** 笔迹用页面自身的坐标系保存（宽 1000），缩放/横竖屏不会改变 PDF 上的落点。 */
 export interface InkPoint { x: number; y: number; pressure: number }
+export interface InkRect { x: number; y: number; w: number; h: number }
+/** TextPositionSelector + TextQuoteSelector；位置失效时仅允许唯一匹配的原文重定位。 */
+export interface TextAnchor {
+  start: number; end: number; exact: string; prefix: string; suffix: string;
+  unit: number; endUnit?: number; unitLabel: string; source: 'pdf' | 'docx' | 'md' | 'html';
+}
 export interface InkStroke {
   id: string;
   materialId: string;
@@ -20,8 +26,11 @@ export interface InkStroke {
   smoothing?: number;
   /** 手指优先贴合触点；持久化以保证刷新和问答裁图使用同一轮廓。 */
   input?: 'touch' | 'pen' | 'mouse';
+  anchor?: TextAnchor;
+  /** PDF 裁图使用的规范化矩形快照；屏幕显示按 anchor 实时重算。 */
+  rects?: InkRect[];
 }
-export type InkTool = 'read' | 'pen' | 'highlight' | 'erase';
+export type InkTool = 'smart' | 'read' | 'pen' | 'highlight' | 'text-highlight' | 'erase';
 
 const n = (value: number) => Math.round(value * 100) / 100;
 const radius = (stroke: InkStroke, point: InkPoint) =>
@@ -33,6 +42,7 @@ export function inkOpacity(stroke: InkStroke): number {
 }
 
 export function inkPath(stroke: InkStroke, complete = true): string {
+  if (stroke.anchor) return (stroke.rects ?? []).map(({ x, y, w, h }) => `M${n(x)},${n(y)}h${n(w)}v${n(h)}h${n(-w)}Z`).join('');
   if (stroke.renderer === 'freehand-v1') {
     const smooth = stroke.smoothing ?? 0.35;
     const outline = getStroke(stroke.points, {
@@ -69,6 +79,15 @@ export function inkPath(stroke: InkStroke, complete = true): string {
 
 /** 橡皮沿移动线段命中整笔，快速移动时也不会从两次采样之间漏过去。 */
 export function hitsInk(stroke: InkStroke, from: InkPoint, to: InkPoint, tolerance: number): boolean {
+  if (stroke.anchor) return (stroke.rects ?? []).some((r) => {
+    // 线段与扩大的矩形相交（slab），也覆盖快速擦过整行的情况。
+    let lo = 0, hi = 1;
+    for (const [a, b, min, max] of [[from.x, to.x, r.x - tolerance, r.x + r.w + tolerance], [from.y, to.y, r.y - tolerance, r.y + r.h + tolerance]]) {
+      if (a === b) { if (a < min || a > max) return false; }
+      else { const t1 = (min - a) / (b - a), t2 = (max - a) / (b - a); lo = Math.max(lo, Math.min(t1, t2)); hi = Math.min(hi, Math.max(t1, t2)); }
+    }
+    return lo <= hi;
+  });
   const distance = (p: InkPoint, a: InkPoint, b: InkPoint) => {
     const dx = b.x - a.x, dy = b.y - a.y;
     const t = Math.max(0, Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / (dx * dx + dy * dy || 1)));

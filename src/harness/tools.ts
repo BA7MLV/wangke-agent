@@ -1,5 +1,6 @@
 import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
+import { highlightContext } from '../materials/highlightContext';
 import { fmtTime } from '../utils/vtt';
 import { formatFrameList } from '../utils/linkify';
 import { validateQuiz, type QuizData } from './quiz';
@@ -424,7 +425,8 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       const query = String(args.query ?? '');
       const hits = await searchMaterial(courseId, query, Math.min(15, Math.max(1, Number(args.limit) || 6)));
       if (hits.length === 0) return '未检索到相关材料内容。';
-      return formatMaterialHits(hits, kind);
+      const highlights = await highlightContext(courseId, hits.map((h) => h.block.unit));
+      return [formatMaterialHits(hits, kind), highlights].filter(Boolean).join('\n\n');
     }
     if (name === 'get_material_range') {
       if (!kind) return '这份课程没有可检索的阅读材料。';
@@ -435,7 +437,8 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       if (rows.length === 0) {
         return `第 ${from}~${to} ${unitNoun(kind)}没有内容（可能超出材料范围）。`;
       }
-      const body = formatMaterialRange(rows, kind);
+      const highlights = await highlightContext(courseId, rows.map((r) => r.unit));
+      const body = [formatMaterialRange(rows, kind), highlights].filter(Boolean).join('\n\n');
       // 被截断时明确告知，否则模型会以为材料就到这里，给出「未提及」的错误结论
       return rawTo > to
         ? `${body}\n\n（注意：一次最多返回 ${MAX_RANGE_UNITS} 个${unitNoun(kind)}，已截断到 ${fmtUnitRef(kind, to)}）`

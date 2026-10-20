@@ -41,7 +41,7 @@ export class InkInput {
   };
 
   /** 捕获在稳定的阅读器外壳，页面虚拟化卸载也不会中断手指拖动。 */
-  attach(root: HTMLElement, finger: boolean): () => void {
+  attach(root: HTMLElement, finger: () => boolean): () => void {
     const scrollAt = (e: PointerEvent) => e.target instanceof Element ? e.target.closest<HTMLElement>('.mr-scroll') : null;
     const swallow = (e: PointerEvent) => { if (e.cancelable) e.preventDefault(); e.stopPropagation(); };
     const down = (e: PointerEvent) => {
@@ -59,7 +59,7 @@ export class InkInput {
         this.blockTouches();
       }
       if (this.blocked.has(e.pointerId)) { swallow(e); return; }
-      if (finger) return;
+      if (finger()) return;
       swallow(e);
       this.pan = { id: e.pointerId, scroll, x: e.clientX, y: e.clientY, time: e.timeStamp, vx: 0, vy: 0, moving: false };
       try { scroll.setPointerCapture(e.pointerId); } catch { /* 非活动的合成指针 */ }
@@ -84,7 +84,7 @@ export class InkInput {
       if (e.pointerType === 'pen') { this.endPen(e.pointerId); return; }
       if (!this.touches.has(e.pointerId)) return;
       const p = this.pan;
-      const consumed = !finger || this.blocked.has(e.pointerId);
+      const consumed = !!p || this.blocked.has(e.pointerId);
       this.touches.delete(e.pointerId);
       this.blocked.delete(e.pointerId);
       if (p?.id === e.pointerId) {

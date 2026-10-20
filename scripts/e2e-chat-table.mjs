@@ -113,7 +113,7 @@ try {
   assert.equal(await tableRoot.getAttribute('data-streaming'), null);
   const expand = tableRoot.locator('.md-table-expand');
   assert.equal(await expand.count(), 1);
-  assert.match(await expand.innerText(), /展开全部 · 12 行/);
+  assert.match(await expand.innerText(), /查看完整表格/);
 
   await expand.click();
   assert.equal(await tableRoot.locator('tr[data-md-row="body"]').count(), 12);
@@ -201,7 +201,7 @@ try {
   assert.equal(await sheet.getAttribute('data-snap'), 'half');
   assert.equal(await sheet.locator('tr[data-md-row="body"]').count(), 12);
   assert.equal(await sheet.locator('table').count(), 1);
-  assert.match(await sheet.innerText(), /12 行 × 3 列/);
+  assert.equal(await sheet.locator('thead th').count(), 3);
 
   await sheet.getByRole('button', { name: '展开表格' }).click();
   await page.waitForFunction(

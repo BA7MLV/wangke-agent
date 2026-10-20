@@ -134,9 +134,15 @@ try {
   await blocks.first().getByTestId('widget-more').click();
   await page.getByTestId('widget-edit').click();
   await page.getByRole('textbox', { name: '修改要求', exact: true }).fill('只把标题改为修改后的开口');
-  await page.getByRole('button', { name: '仅重生成此块', exact: true }).click();
-  await page.getByRole('button', { name: '应用修改', exact: true }).click();
-  await page.getByTestId('artifact-edit-dialog').waitFor({ state: 'hidden' });
+  // Exercise the native disclosure's keyboard path after the mobile/desktop resize cycle.
+  await page.getByTestId('artifact-edit-panel').getByText('更多选项', { exact: true }).press('Enter');
+  await page.getByRole('button', { name: '仅重生成此块', exact: true }).press('Enter').catch(async (error) => {
+    await page.screenshot({ path: new URL('widget-edit-debug.png', shots).pathname });
+    console.log(await page.locator('body').innerText());
+    throw error;
+  });
+  await page.getByRole('button', { name: '应用修改', exact: true }).press('Enter');
+  await page.getByTestId('artifact-edit-panel').waitFor({ state: 'hidden' });
   await first().getByText('修改后的开口', { exact: true }).waitFor();
   assert.equal(await second().locator('section').getAttribute('data-run-token'), siblingToken, 'editing one visual does not remount its sibling');
   assert.equal(await second().getByRole('slider').inputValue(), '2.5');

@@ -1,152 +1,164 @@
-import { createContext, useContext, useEffect, useRef, useState, type ReactNode } from 'react';
-import { Button, Modal, TextArea } from '@heroui/react';
-import { MODAL_CONTAINER_CLASS } from '../ui';
+import { createContext, lazy, Suspense, useContext, useId, useRef, useState, type ReactNode } from 'react';
+import { Button, TextArea } from '@heroui/react';
 import type { ChatRow } from '../store/db';
-import { persistArtifactEdit } from '../store/artifactEdit';
-import { editArtifact, validateArtifact } from '../pipelines/artifactEdit';
-import { replaceArtifactFence, type ArtifactKind, type ArtifactLocation } from '../utils/artifactEdit';
+import { persistArtifactEdit, type ArtifactTarget } from '../store/artifactEdit';
+import { artifactDraftKey, cancelArtifactDraft, clearArtifactDraft, EMPTY_ARTIFACT_DRAFT, generateArtifactDraft, updateArtifactDraft, useArtifactDrafts } from '../store/artifactDrafts';
+import type { ArtifactKind, ArtifactLocation } from '../utils/artifactEdit';
+import type { WidgetLib } from '../harness/widgetRuntime';
+import { useSettings } from '../store/settings';
+import { useResolvedDark } from '../ui/theme';
 
-interface Revision { kind: ArtifactKind; location: ArtifactLocation; before: string; after: string; widgetRef?: string }
+const ArtifactPreview = lazy(() => import('./ArtifactPreview'));
+interface Revision { kind: ArtifactKind; location: ArtifactLocation; before: string; after: string; widgetRef?: string; widgetIndex?: number }
 export interface ArtifactActions { edit(): void; undo?: () => void; busy: boolean }
-interface Draft { next: string; source: string; content: string; rowId: number }
 interface Scope {
-  rowId: number; content: string; busy: boolean; setBusy: (busy: boolean) => void;
-  history: Revision[]; saved: (row: ChatRow, revision?: Revision) => void;
+  rowId: number; disabled: boolean; history: Revision[];
+  saved: (row: ChatRow, revision: Revision, undo: boolean) => void;
 }
 const ArtifactContext = createContext<Scope | null>(null);
 
-/** Scoped to a persisted assistant message; standalone diagrams stay read-only. */
-export function ArtifactEditProvider({ rowId, content, disabled, onSaved, children }: {
+/** Only applying touches the message. Network requests never lock other figures or the conversation. */
+export function ArtifactEditProvider({ rowId, disabled, onSaved, children }: {
   rowId?: number; content: string; disabled: boolean; onSaved: (row: ChatRow) => void; children: ReactNode;
 }) {
-  const [busy, setBusy] = useState(false);
   const [history, setHistory] = useState<Revision[]>([]);
-  return <ArtifactContext.Provider value={rowId == null || disabled ? null : {
-    rowId, content, busy, setBusy, history,
-    saved: (row, revision) => {
-      setHistory((prev) => revision ? [...prev.slice(-9), revision] : prev.slice(0, -1));
+  return <ArtifactContext.Provider value={rowId == null ? null : {
+    rowId, disabled, history,
+    saved: (row, revision, undo) => {
+      setHistory((prev) => undo ? prev.filter((item) => item !== revision) : [...prev.slice(-9), revision]);
       onSaved(row);
     },
   }}>{children}</ArtifactContext.Provider>;
 }
 
-export default function ArtifactEditor({ kind, source, location = 'fence', closed = true, libraries, widgetId, widgetRef, children }: {
+interface EditorProps {
   kind: ArtifactKind; source: string; location?: ArtifactLocation; closed?: boolean;
   children: ReactNode | ((actions: ArtifactActions | null) => ReactNode);
-  libraries?: readonly string[];
-  widgetId?: string; widgetRef?: string;
-}) {
+  libraries?: readonly WidgetLib[]; widgetId?: string; widgetRef?: string; widgetIndex?: number;
+}
+
+export default function ArtifactEditor({ closed = true, ...props }: EditorProps) {
   const scope = useContext(ArtifactContext);
-  const [open, setOpen] = useState(false);
-  const [instruction, setInstruction] = useState('');
-  const [context, setContext] = useState('');
-  const [draft, setDraft] = useState<Draft | null>(null);
-  const [error, setError] = useState('');
-  const [running, setRunning] = useState(false);
-  const controller = useRef<AbortController | null>(null);
-  // Cancel on virtualization, navigation or deletion; late responses must never write.
-  useEffect(() => () => controller.current?.abort(), []);
+  if (!scope || !closed) return <>{typeof props.children === 'function' ? props.children(null) : props.children}</>;
+  return <EditableArtifact {...props} scope={scope} />;
+}
 
-  if (!scope || !closed) return <>{typeof children === 'function' ? children(null) : children}</>;
-  const revision = scope.history.at(-1);
-  const canUndo = revision?.after.trimEnd() === source.trimEnd() && revision.kind === kind && revision.location === location
-    && revision.widgetRef === widgetRef;
-
-  function close() {
-    controller.current?.abort();
-    setOpen(false);
-  }
-
-  async function generate(mode: 'patch' | 'rewrite') {
-    if (!scope || scope.busy || !instruction.trim() || controller.current) return;
-    const abort = new AbortController();
-    controller.current = abort;
-    scope.setBusy(true);
-    setRunning(true);
-    setError('');
-    setDraft(null);
-    try {
-      if (location === 'fence' || (location === 'html' && /^\s*[`~]{3}/.test(scope.content))) {
-        replaceArtifactFence(scope.content, kind, source, source);
-      }
-      const next = await editArtifact({ kind, source, instruction, context, libraries, mode, signal: abort.signal });
-      await validateArtifact(kind, next);
-      if (!abort.signal.aborted) setDraft({ next, source, content: scope.content, rowId: scope.rowId });
-    } catch (e) {
-      if (!abort.signal.aborted) setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      controller.current = null;
-      scope.setBusy(false);
-      setRunning(false);
-    }
-  }
+function EditableArtifact({ kind, source, location = 'fence', libraries, widgetId, widgetRef, widgetIndex, children, scope }: EditorProps & { scope: Scope }) {
+  const target: ArtifactTarget = { rowId: scope.rowId, kind, location, source, widgetId };
+  const key = artifactDraftKey(target);
+  const draft = useArtifactDrafts((state) => state.drafts[key] ?? EMPTY_ARTIFACT_DRAFT);
+  const theme = useSettings((state) => state.theme);
+  const dark = useResolvedDark(theme);
+  const headingId = useId();
+  const inputId = useId();
+  const panelRef = useRef<HTMLElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  const statusButtonRef = useRef<HTMLButtonElement>(null);
+  const editButtonRef = useRef<HTMLButtonElement>(null);
+  const running = draft.status === 'generating';
+  const applying = draft.status === 'applying';
+  const busy = running || applying;
+  const revision = [...scope.history].reverse().find((item) => item.after.trimEnd() === source.trimEnd() && item.kind === kind
+    && item.location === location && item.widgetRef === widgetRef && item.widgetIndex === widgetIndex);
+  const edit = () => {
+    updateArtifactDraft(key, { open: true });
+    // Focus only on an explicit user action, never when a virtualized message remounts.
+    requestAnimationFrame(() => (draft.next || running ? panelRef.current : inputRef.current)?.focus());
+  };
+  const collapse = () => {
+    updateArtifactDraft(key, { open: false });
+    requestAnimationFrame(() => (statusButtonRef.current ?? editButtonRef.current)?.focus());
+  };
 
   async function save(undo = false) {
-    if (!scope || scope.busy || controller.current) return;
-    const next = undo && canUndo ? revision.before : draft?.next;
+    if (scope.disabled || busy || useArtifactDrafts.getState().drafts[key]?.status === 'applying') return;
+    const next = undo ? revision?.before : draft.next;
     if (next == null) return;
-    scope.setBusy(true);
-    setError('');
+    updateArtifactDraft(key, { status: 'applying', error: '', notice: '' });
     try {
-      if (!undo && draft && (draft.source !== source || draft.content !== scope.content || draft.rowId !== scope.rowId)) {
-        throw new Error('生成补丁后原回答已变化，请重新生成修改');
-      }
-      const row = await persistArtifactEdit({ rowId: scope.rowId, kind, location, source, next, widgetId, expectedContent: scope.content });
-      scope.saved(row, undo ? undefined : { kind, location, before: source, after: next, widgetRef });
-      setDraft(null);
-      setOpen(false);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      scope.setBusy(false);
+      const row = await persistArtifactEdit({ ...target, next });
+      scope.saved(row, undo && revision ? revision : { kind, location, before: source, after: next, widgetRef, widgetIndex }, undo);
+      clearArtifactDraft(key);
+    } catch (error) {
+      updateArtifactDraft(key, { status: draft.next ? 'ready' : 'idle', error: error instanceof Error ? error.message : String(error) });
     }
   }
 
-  return <div data-testid="editable-artifact">
-    {typeof children !== 'function' && <div className="flex items-center justify-end gap-2 py-1">
-      <Button size="sm" variant="tertiary" isDisabled={scope.busy} onPress={() => { setError(''); setDraft(null); setOpen(true); }}>
-        {kind === 'html' ? '修改此 HTML' : '修改此图'}
-      </Button>
-      {canUndo && <Button size="sm" variant="tertiary" isDisabled={scope.busy} onPress={() => void save(true)}>撤销上次修改</Button>}
+  const form = <div className="flex min-w-0 flex-col gap-3">
+    <label htmlFor={inputId} className="text-sm font-medium">想怎么改？</label>
+    <TextArea ref={inputRef} id={inputId} aria-label="修改要求" rows={3} className="w-full resize-y"
+      placeholder={kind === 'html' ? '例如：用对比图突出变化，减少文字，保留现有交互' : '例如：突出两条曲线的差异，补充坐标与关键点'}
+      value={draft.instruction} maxLength={4000} disabled={busy}
+      onChange={(event) => updateArtifactDraft(key, { instruction: event.target.value })} />
+    <details className="text-sm text-muted">
+      <summary className="cursor-pointer">补充题意与约束（可选）</summary>
+      <TextArea aria-label="必要题意或约束（可选）" rows={2} className="mt-2 w-full resize-y" placeholder="只补充这次修改必须知道的条件"
+        value={draft.context} maxLength={4000} disabled={busy} onChange={(event) => updateArtifactDraft(key, { context: event.target.value })} />
+      <p className="mb-0 text-pretty text-xs">仅发送此块源码和你填写的内容，不读取整段会话或课程。</p>
+    </details>
+    <div className="flex flex-wrap items-center gap-2">
+      <Button size="sm" isDisabled={scope.disabled || busy || !draft.instruction.trim()}
+        onPress={() => void generateArtifactDraft(target, 'patch', libraries)}>{draft.next ? '重新生成修改' : '生成局部修改'}</Button>
+      <details className="text-sm text-muted">
+        <summary className="cursor-pointer">更多选项</summary>
+        <div className="flex flex-col items-start gap-2 py-2">
+          <p className="m-0 max-w-sm text-pretty text-xs">局部修改失败，或需要大幅调整时使用。会另发一次模型请求，仍只修改此块。</p>
+          <Button size="sm" variant="secondary" isDisabled={scope.disabled || busy || !draft.instruction.trim()}
+            onPress={() => void generateArtifactDraft(target, 'rewrite', libraries)}>仅重生成此块</Button>
+        </div>
+      </details>
+    </div>
+  </div>;
+
+  return <div data-testid="editable-artifact" className="md-embedded-ui min-w-0">
+    {typeof children !== 'function' && !scope.disabled && <div className="flex flex-wrap items-center justify-end gap-2 py-1">
+      <Button ref={editButtonRef} size="sm" variant="tertiary" isDisabled={scope.disabled || applying} onPress={edit}>{kind === 'html' ? '修改此 HTML' : '修改此图'}</Button>
+      {revision && <Button size="sm" variant="tertiary" isDisabled={scope.disabled || busy} onPress={() => void save(true)}>撤销上次修改</Button>}
     </div>}
-    {!open && error && <p role="alert" className="text-sm text-danger">{error}</p>}
-    {typeof children === 'function' ? children({ busy: scope.busy,
-      edit: () => { setError(''); setDraft(null); setOpen(true); },
-      ...(canUndo ? { undo: () => void save(true) } : {}),
+    {typeof children === 'function' ? children(scope.disabled ? null : { busy: applying, edit,
+      ...(revision && !running ? { undo: () => void save(true) } : {}),
     }) : children}
-    {open && <Modal.Root isOpen onOpenChange={(value) => !value && close()}>
-      <Modal.Backdrop>
-        <Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
-          <Modal.Dialog data-testid="artifact-edit-dialog">
-            <Modal.Header><Modal.Heading>{kind === 'html' ? '修改此 HTML' : '修改此图'}</Modal.Heading></Modal.Header>
-            <Modal.Body>
-              <div className="flex flex-col gap-3">
-                <p className="text-sm text-muted">只发送此块源码和下方要求，不发送整段会话。其他正文和图形保持不变。</p>
-                <TextArea aria-label="修改要求" placeholder="例如：将红色曲线改成 sin(x)，其余不变" value={instruction} maxLength={4000} disabled={scope.busy}
-                  onChange={(event) => { setInstruction(event.target.value); setDraft(null); }} />
-                <TextArea aria-label="必要题意或约束（可选）" placeholder="必要题意或约束（可选）；此操作不会自动读取课程或完整回答" value={context} maxLength={4000} disabled={scope.busy}
-                  onChange={(event) => { setContext(event.target.value); setDraft(null); }} />
-                {running && <p role="status" className="text-sm text-muted">正在修改此块，原内容保持不变…</p>}
-                {error && <p role="alert" className="text-sm text-danger">{error}</p>}
-                {draft != null && <>
-                  <p role="status" className="text-sm">修改已通过结构检查，应用后更新当前内容块。结构检查不保证视觉或交互正确，可应用后撤销。</p>
-                  <details><summary>查看修改前后源码</summary>
-                    <p className="text-sm text-muted">修改前</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs">{source}</pre>
-                    <p className="text-sm text-muted">修改后</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap text-xs">{draft.next}</pre>
-                  </details>
-                </>}
-              </div>
-            </Modal.Body>
-            <Modal.Footer className="flex-wrap">
-              <Button variant="tertiary" onPress={close}>{running ? '取消生成' : '取消'}</Button>
-              <Button variant="secondary" isDisabled={scope.busy || !instruction.trim()} onPress={() => void generate('rewrite')}>仅重生成此块</Button>
-              {draft == null
-                ? <Button isDisabled={scope.busy || !instruction.trim()} onPress={() => void generate('patch')}>生成局部修改</Button>
-                : <Button isDisabled={scope.busy} onPress={() => void save()}>应用修改</Button>}
-            </Modal.Footer>
-          </Modal.Dialog>
-        </Modal.Container>
-      </Modal.Backdrop>
-    </Modal.Root>}
+    {!draft.open && (running || draft.next || draft.error || draft.notice) && <div className="my-2 flex flex-wrap items-center gap-2 rounded-xl border border-border p-3" data-testid="artifact-edit-status">
+      <p className="m-0 flex-1 text-pretty text-sm" role={draft.error ? 'alert' : 'status'}>{draft.error || (running ? '正在生成修改 · 可继续其他操作' : draft.next ? '修改已就绪，等待你预览并应用' : draft.notice)}</p>
+      <Button ref={statusButtonRef} size="sm" variant="tertiary" onPress={edit}>{running ? '查看进度' : draft.next ? '查看修改' : '继续修改'}</Button>
+      {running && <Button size="sm" variant="tertiary" onPress={() => cancelArtifactDraft(key)}>停止生成</Button>}
+    </div>}
+    {draft.open && <section ref={panelRef} tabIndex={-1} aria-labelledby={headingId} data-testid="artifact-edit-panel" className="my-3 flex min-w-0 flex-col gap-4 rounded-xl border border-border bg-surface p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h3 id={headingId} className="m-0 text-balance text-sm font-medium">{kind === 'html' ? '调整这块内容' : '调整这幅图'}</h3>
+          <p className="mb-0 mt-1 text-pretty text-xs text-muted">先看效果，再决定是否替换。其他正文和图形不变。</p>
+        </div>
+        <Button size="sm" variant="tertiary" isDisabled={applying} onPress={collapse}>收起</Button>
+      </div>
+      {running ? <div className="flex flex-wrap items-center gap-3 rounded-lg bg-default p-3">
+        <div className="min-w-0 flex-1" role="status">
+          <p className="m-0 text-pretty text-sm font-medium">正在生成修改…</p>
+          <p className="mb-0 mt-1 text-pretty text-xs text-muted">可以收起后继续阅读、操作其他图形或发送消息。原内容不会改变。</p>
+        </div>
+        <Button size="sm" variant="secondary" onPress={() => cancelArtifactDraft(key)}>停止生成</Button>
+      </div> : draft.next ? null : form}
+      {draft.error && <p role="alert" className="m-0 break-words text-pretty text-sm text-danger">{draft.error}</p>}
+      {draft.notice && <p role="status" className="m-0 text-pretty text-sm text-muted">{draft.notice}</p>}
+      {draft.next && <>
+        <div data-testid="artifact-edit-preview" className="min-w-0">
+          <p role="status" className="mb-2 mt-0 text-pretty text-sm font-medium">{running ? '上次预览' : '修改后'} <span className="font-normal text-muted">· 尚未应用，原内容在上方</span></p>
+          <Suspense fallback={<p role="status" className="text-sm text-muted">正在准备预览…</p>}>
+            <ArtifactPreview kind={kind} source={draft.next} location={location} libraries={libraries} dark={dark} />
+          </Suspense>
+        </div>
+        <p className="m-0 text-pretty text-xs text-muted">请检查视觉与交互效果。预览操作不会保存到原图，应用后仍可撤销。</p>
+        <div className="flex flex-wrap items-center gap-2">
+          <Button size="sm" isDisabled={scope.disabled || busy} onPress={() => void save()}>{applying ? '正在应用…' : '应用修改'}</Button>
+          <Button size="sm" variant="tertiary" isDisabled={applying} onPress={collapse}>稍后再看</Button>
+        </div>
+        {!running && <details className="text-sm"><summary className="cursor-pointer text-muted">调整要求与重新生成</summary><div className="pt-3">{form}</div></details>}
+        <details className="min-w-0 text-sm text-muted"><summary className="cursor-pointer">查看修改前后源码</summary>
+          <p className="text-xs">修改前</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{source}</pre>
+          <p className="text-xs">修改后</p><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-all text-xs">{draft.next}</pre>
+        </details>
+      </>}
+      {scope.disabled && <p className="m-0 text-pretty text-xs text-muted">当前回答处理完成后可继续生成或应用修改，已生成的预览会保留。</p>}
+    </section>}
   </div>;
 }

@@ -17,6 +17,7 @@ import {
   SLOT_LABEL,
   catalogOf,
   nextProviderId,
+  modelOverridesOf,
   providersForSlot,
   sameRef,
   useSettings,
@@ -32,7 +33,7 @@ import {
   supportsThinking,
 } from '../../api/modelCaps';
 import { UNLIMITED_ROUNDS } from '../../harness/loopGuard';
-import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta } from '../../api/modelMeta';
+import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta, type ModelOverrides } from '../../api/modelMeta';
 import { ms } from '../motion';
 import { confirmDialog, Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
@@ -50,9 +51,9 @@ const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
  *
  * 带 catalogId 是因为能力判断必须按供应商查（同一模型 id 在别家可能不支持视觉/思考）。
  */
-const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string) => boolean> = {
-  chat: (cat, id) => supportsThinking(cat, id) || isVisionModel(cat, id),
-  vision: (cat, id) => isVisionModel(cat, id),
+const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string, overrides?: ModelOverrides) => boolean> = {
+  chat: (cat, id, overrides) => supportsThinking(cat, id, overrides) || isVisionModel(cat, id, overrides),
+  vision: (cat, id, overrides) => isVisionModel(cat, id, overrides),
   // ASR 只能靠名字猜 —— models.dev 的 modalities.input 里有 'audio'，但那含 TTS，
   // 而 /audio/transcriptions 只认 ASR 模型，两者在数据上区分不开。这里仍按名字排，
   // 但真正的准入靠供应商的 serves 勾选（见 ProviderRow）。
@@ -68,8 +69,8 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
 
 /** 槽位 → 一句话说明它负责什么。放在槽位名下，替代原来分散在各处的长 hint */
 const SLOT_HINT: Record<ModelSlot, string> = {
-  chat: '讲义生成、课程问答与思考链都走这个模型',
-  vision: '读截图与课件页，缺失时会退回纯文本理解',
+  chat: '负责讲义生成与课程问答，支持视觉时也可直接读图',
+  vision: '默认复用主模型，也可指定独立模型处理课件与抽帧',
   asr: '把视频音轨转成字幕，可以和文本模型不在同一家',
 };
 
@@ -77,8 +78,8 @@ const SLOT_ORDER: readonly ModelSlot[] = ['chat', 'vision', 'asr'];
 
 /** 上下文窗口的紧凑写法：128000 → 128K，1048576 → 1M。列表里每行都要显示，太长会挤掉模型名 */
 /** 能力徽标：多模态 / 可思考。模型 id 长的行里这两枚最占地方，所以做成小圆角标签 */
-function CapBadges({ catalogId, model }: { catalogId: string; model: string }) {
-  return <ModelCapabilities catalogId={catalogId} model={model} compact />;
+function CapBadges({ catalogId, model, overrides }: { catalogId: string; model: string; overrides?: ModelOverrides }) {
+  return <ModelCapabilities catalogId={catalogId} model={model} overrides={overrides} compact />;
 }
 
 /**
@@ -121,6 +122,7 @@ function ModelOptionRow({
   idPrefix?: string;
 }) {
   const favTestId = `fav-${slot}-${providerName}-${model}`;
+  const overrides = useSettings((s) => modelOverridesOf(s, { providerId, model }));
   // 星标放在 ListBox.Item **内部**：Item 是 React Aria collection 的成员，
   // 在外面另起一个 <div> 会让 collection 遍历到非collection 节点，行为不可预期。
   return (
@@ -143,14 +145,14 @@ function ModelOptionRow({
       <span className="flex flex-1 min-w-0 items-center gap-2">
         <span className="truncate font-mono text-[13px]" title={model}>{label || model}</span>
         {selected && <Sym name="check" />}
-        <CapBadges catalogId={catalogId} model={model} />
+        <CapBadges catalogId={catalogId} model={model} overrides={overrides} />
       </span>
       <span className="flex shrink-0 items-baseline gap-2.5 text-[11px] text-muted">
         <span className="max-w-[120px] truncate text-right">{providerName}</span>
         <span
           className="min-w-12 text-right tabular-nums"
         >
-          {formatModelTokens(getModelMeta(catalogId, model)?.declaredContext)}
+          {formatModelTokens(getModelMeta(catalogId, model, overrides)?.declaredContext)}
         </span>
       </span>
       <span
@@ -287,7 +289,7 @@ function SlotModelSelect({
     if (!model) return;
     const patch: Partial<Settings> = { [name]: { providerId, model } };
     if (name === 'llmModel') {
-      patch.contextWindow = guessContextWindow(catalogOf(settings, providerId), model);
+      patch.contextWindow = guessContextWindow(catalogOf(settings, providerId), model, modelOverridesOf(settings, { providerId, model }));
     }
     update(patch);
   };
@@ -313,7 +315,7 @@ function SlotModelSelect({
            (id) => !needle || `${id} ${modelLabel(settings, { providerId: p.id, model: id })} ${p.name}`.toLowerCase().includes(needle),
         ),
       ),
-    ).sort((a, b) => Number(relevant(p.catalogId, b)) - Number(relevant(p.catalogId, a)));
+    ).sort((a, b) => Number(relevant(p.catalogId, b, modelOverridesOf(settings, { providerId: p.id, model: b }))) - Number(relevant(p.catalogId, a, modelOverridesOf(settings, { providerId: p.id, model: a }))));
     return { provider: p, ids };
   });
   const favRows = candidates.flatMap((p) =>
@@ -339,7 +341,7 @@ function SlotModelSelect({
           <div className="mt-px truncate text-xs text-muted">{SLOT_HINT[slot]}</div>
         </div>
         {/* 候选供应商只列勾了该能力的那些家 —— 这是「手动标能力」的实际用途 */}
-        <Select
+        {(slot !== 'vision' || ref.model) && <Select
           className="w-[148px] shrink-0"
           data-testid={`provider-${name}`}
           aria-label={`${SLOT_LABEL[slot]}使用的供应商`}
@@ -367,9 +369,20 @@ function SlotModelSelect({
               ))}
             </ListBox>
           </Select.Popover>
-        </Select>
+        </Select>}
       </div>
 
+      {slot === 'vision' && <Checkbox
+        aria-label="自动：复用主模型的视觉能力"
+        isSelected={!ref.model}
+        onChange={(on) => {
+          const first = modelsForSlot(settings, 'vision')[0];
+          if (!on && !first) { toast.warning('请先添加用于图片理解的模型'); return; }
+          update({ visionModel: on ? { providerId: '', model: '' } : { providerId: first.providerId, model: first.model } });
+        }}
+      ><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>自动：复用主模型的视觉能力</Checkbox.Content></Checkbox>}
+
+      {slot === 'vision' && !ref.model ? <p className="text-xs text-muted">若主模型能力未知，请在供应商的模型编辑器中确认图片输入能力；不会静默忽略图片。</p> : <>
       {(
         // 受控用法（isOpen + onOpenChange），不用 Popover.Trigger。
         //
@@ -409,7 +422,7 @@ function SlotModelSelect({
               {ref.model ? (
                 <>
                   <span className="truncate font-mono text-[13px] font-medium" title={ref.model}>{modelLabel(settings, ref)}</span>
-                  <CapBadges catalogId={catalogId} model={ref.model} />
+                  <CapBadges catalogId={catalogId} model={ref.model} overrides={modelOverridesOf(settings, ref)} />
                 </>
               ) : (
                 <span className="truncate text-[13px] text-muted">未选择模型</span>
@@ -417,7 +430,7 @@ function SlotModelSelect({
             </span>
             <span className="flex shrink-0 items-center gap-2 text-[13px] text-muted">
               <span className="text-xs tabular-nums text-muted">
-                {ref.model ? formatModelTokens(getModelMeta(catalogId, ref.model)?.declaredContext) : ''}
+                {ref.model ? formatModelTokens(getModelMeta(catalogId, ref.model, modelOverridesOf(settings, ref))?.declaredContext) : ''}
               </span>
               <Sym name="keyboard_arrow_down" />
             </span>
@@ -580,6 +593,7 @@ function SlotModelSelect({
           </Popover.Content>
         </Popover>
       )}
+      </>}
     </div>
   );
 }
@@ -902,7 +916,7 @@ export default function ModelsModule() {
     };
   }, [catalogsKey]);
 
-  /** 手动刷新：更新缓存并把当前文本模型的上下文窗口回填为最新元数据（仍可手改） */
+  /** 只刷新目录；不改用户能力覆盖或手动设置的历史预算。 */
   const handleRefreshMeta = async () => {
     if (catalogs.length === 0) {
       toast.warning('没有供应商填写 models.dev 供应商 key，无从拉取能力数据');
@@ -912,11 +926,6 @@ export default function ModelsModule() {
     try {
       const { count } = await refreshModelMeta(catalogs);
       setMetaInfo(modelMetaInfo());
-      const meta = getModelMeta(
-        catalogOf(settings, settings.llmModel.providerId),
-        settings.llmModel.model,
-      );
-      if (meta?.declaredContext) settings.update({ contextWindow: meta.declaredContext });
       toast.success(`已更新 ${count} 个模型的能力数据`);
     } catch (e) {
       toast.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
@@ -1007,7 +1016,7 @@ export default function ModelsModule() {
 
   const currentLlm = settings.llmModel;
   const currentLlmCatalog = catalogOf(settings, currentLlm.providerId);
-  const currentMeta = getModelMeta(currentLlmCatalog, currentLlm.model);
+  const currentMeta = getModelMeta(currentLlmCatalog, currentLlm.model, modelOverridesOf(settings, currentLlm));
   const selectedProvider = selectedProviderId
     ? settings.providers.find((p) => p.id === selectedProviderId) ?? null
     : null;
@@ -1096,12 +1105,12 @@ export default function ModelsModule() {
         )}
         <p className="mt-3 text-xs leading-relaxed text-muted">
           {metaInfo ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）` : '能力数据未拉取，可在供应商详情中更新'}
-          。models.dev 仅补充能力与定价，不作为供应商可用模型列表；接口未提供列表时可手动添加。
+          。用户配置的能力优先于 models.dev；未配置字段跟随目录。目录仅补充能力与定价，不作为可用模型列表。
         </p>
       </SectionCard>
       <SectionCard
         title="选择模型"
-        subtitle="为三种用途设置默认模型。候选来自各供应商中已添加的模型，Chat 可随时切换。"
+        subtitle="选择主模型与语音转写模型；图片理解可自动复用主模型或单独指定。Chat 可随时切换。"
         testId="card-models"
       >
         <div className="flex flex-col gap-2.5">
@@ -1129,7 +1138,7 @@ export default function ModelsModule() {
       >
         <Field
           label="上下文窗口（tokens）"
-          hint={`models.dev：上下文 ${formatModelTokens(currentMeta?.declaredContext)} / 最大输出 ${formatModelTokens(currentMeta?.declaredOutput)}。下方为实际历史预算，可手动调整；未提供能力数据时使用应用默认预算，不代表模型标称上限。`}
+          hint={`有效能力（用户配置优先）：上下文 ${formatModelTokens(currentMeta?.declaredContext)} / 最大输出 ${formatModelTokens(currentMeta?.declaredOutput)}。下方为历史预算，可手动调整；未提供能力数据时使用应用默认预算，不代表模型标称上限。`}
           testId="field-context-window"
         >
           <Input

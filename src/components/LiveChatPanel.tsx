@@ -42,7 +42,8 @@
  */
 
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
-import { XMarkdown, type ComponentProps } from '@ant-design/x-markdown';
+import type { ComponentProps } from '@ant-design/x-markdown';
+import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { GuestTurn, LiveGuest } from '../livelink/guest';
 import type { UnitKind } from '../materials/units.ts';
 import { validateQuiz, type QuizData } from '../harness/quiz';

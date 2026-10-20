@@ -1,6 +1,6 @@
 /**
  * 模型能力元数据：来自 models.dev 的实时数据，**逐供应商**索引，
- * 本地缓存 + 7 天 TTL；未拉取/过期/失败时由 modelCaps.ts 回退到名称启发式。
+ * 本地缓存 + 7 天 TTL；用户覆盖按字段合并，不写入或修改目录缓存。
  *
  * ## 为什么缓存键要带供应商
  *
@@ -53,6 +53,22 @@ export interface ModelMeta {
    * `null` = 这个模型不思考；`undefined` = **元数据没说**（不等于不支持，只代表不知道）。
    */
   thinking?: ThinkingControl | null;
+}
+
+/** undefined = 跟随目录；false / [] = 用户明确关闭，不得被目录覆盖。 */
+export interface ModelOverrides {
+  contextWindow?: number;
+  maxOutputTokens?: number;
+  reasoningEffort?: string;
+  inputCapabilities?: string[];
+  outputCapabilities?: string[];
+  toolCalling?: boolean;
+}
+
+export const MODEL_OVERRIDE_FIELDS = ['contextWindow', 'maxOutputTokens', 'reasoningEffort', 'inputCapabilities', 'outputCapabilities', 'toolCalling'] as const;
+
+export function hasModelOverrides(value?: ModelOverrides): boolean {
+  return !!value && MODEL_OVERRIDE_FIELDS.some((field) => value[field] !== undefined);
 }
 
 /**
@@ -162,14 +178,30 @@ function load(): MetaCache | null {
 }
 
 /**
- * 查一个模型在某家供应商下的能力。元数据没有收录（或供应商没填 catalogId）时返回 null。
+ * 查一个模型在某家供应商下的能力，并合并用户显式覆盖。
+ * 未配置字段跟随目录；两者都没有时返回 null。
  *
  * `catalogId` 为空串时**不会**退化成「按模型名全局查」：那正是 v2 拍平表的老 bug，
  * 同名模型在别家的能力会被当成本家的。
  */
-export function getModelMeta(catalogId: string, modelId: string): ModelMeta | null {
-  if (!catalogId) return null;
-  return load()?.models[metaKey(catalogId, modelId)] ?? null;
+export function getModelMeta(catalogId: string, modelId: string, overrides?: ModelOverrides): ModelMeta | null {
+  const catalog = catalogId ? load()?.models[metaKey(catalogId, modelId)] ?? null : null;
+  if (!hasModelOverrides(overrides)) return catalog;
+  const meta = { ...(catalog ?? parseModelMeta({})) };
+  if (overrides?.inputCapabilities !== undefined) {
+    meta.inputModalities = [...overrides.inputCapabilities];
+    meta.vision = meta.inputModalities.includes('image');
+  }
+  if (overrides?.outputCapabilities !== undefined) meta.outputModalities = [...overrides.outputCapabilities];
+  if (overrides?.contextWindow !== undefined) meta.context = meta.declaredContext = overrides.contextWindow;
+  if (overrides?.maxOutputTokens !== undefined) meta.output = meta.declaredOutput = overrides.maxOutputTokens;
+  if (overrides?.toolCalling !== undefined) meta.toolCall = meta.declaredToolCall = overrides.toolCalling;
+  if (overrides?.reasoningEffort !== undefined) {
+    const lanes = overrides.reasoningEffort.split(',').map((v) => v.trim()).filter((v) => EFFORT_LANES.includes(v));
+    meta.reasoning = meta.declaredReasoning = lanes.length > 0;
+    meta.thinking = lanes.length ? { toggle: false, effort: [...new Set(lanes)] } : null;
+  }
+  return meta;
 }
 
 type MetaListener = () => void;

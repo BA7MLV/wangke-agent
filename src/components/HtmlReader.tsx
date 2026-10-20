@@ -91,6 +91,7 @@ export default function HtmlReader({
    * 入库只做「下次打开还记得」，所以它只当初值用。
    */
   const [view, setView] = useState<HtmlView>(initialView);
+  useEffect(() => { if (view === 'raw') ink.setTool('read'); }, [view, ink.setTool]);
   /**
    * 初值取入库位置，不是 1。
    *

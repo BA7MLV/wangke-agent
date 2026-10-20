@@ -15,18 +15,18 @@
 
 /* ── 三线：顶线 / 栏目线 / 底线 ────────────────────────────────────────── */
 
-.x-markdown table:not(pre) {
+.x-markdown table:not(pre):not(:where(.md-embedded-ui *)) {
   border-top: 2px solid var(--foreground);
   border-bottom: 2px solid var(--foreground);
 }
 
 /* 先清竖线：任何来源的单元格边框都不该出现在三线表里；栏目线由下一条补回来 */
-.x-markdown table:not(pre) :is(th, td) {
+.x-markdown table:not(pre):not(:where(.md-embedded-ui *)) :is(th, td) {
   border: 0 none;
 }
 
 /* 栏目线：表头下沿。选择器比上一条更具体（多 thead / tr / th 三层），顺序放后面也稳 */
-.x-markdown table:not(pre) > thead > tr > th {
+.x-markdown table:not(pre):not(:where(.md-embedded-ui *)) > thead > tr > th {
   border-bottom: 1px solid var(--foreground);
 }
 
@@ -59,12 +59,12 @@
   --md-table-align-num: end; /* 数值列（自动判定） */
 }
 
-.x-markdown table:not(pre) :is(th, td):not([align]) {
+.x-markdown table:not(pre):not(:where(.md-embedded-ui *)) :is(th, td):not([align]) {
   text-align: var(--md-table-align-text);
 }
 
 /* 数值列：表头与数据一起右对齐。与上一条同权重，靠顺序取胜，必须放它后面。 */
-.x-markdown table:not(pre) :is(th, td).md-table-num {
+.x-markdown table:not(pre):not(:where(.md-embedded-ui *)) :is(th, td).md-table-num {
   text-align: var(--md-table-align-num);
 }
 
@@ -97,11 +97,9 @@
   overscroll-behavior-x: contain;
 }
 
-/* ⚠️ 选择器必须照着 x-markdown 自己的 `:not()` 守卫写全，才能盖住它的
-   `display:block / width:max-content / max-width:100% / margin:var(--table-margin)`：
-   它是 `.x-markdown:not(.x-md-disable-all):not(.x-md-disable-table) table:not(pre)`，
-   三段类名；这里再多一段 `.md-table-scroll` 才稳（不靠文件顺序，改动到哪都成立）。 */
-.x-markdown:not(.x-md-disable-all):not(.x-md-disable-table) .md-table-scroll > table:not(pre) {
+/* Markdown's scoped prose defaults replace the library's unbounded selectors.
+   Only our real table component owns the full-width table geometry. */
+.x-markdown .md-table-scroll > table:not(pre) {
   display: table;
   width: 100%;
   /* 列宽不许被压：内容比容器宽就撑开，交给外层滚动 */

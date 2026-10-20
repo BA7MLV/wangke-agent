@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ReasoningEffort } from '../api/siliconflow';
 import { normalizeThinkingEffort } from '../api/modelCaps';
+import { getModelMeta, type ModelOverrides } from '../api/modelMeta';
 import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
@@ -51,8 +52,8 @@ type ModelFieldName = (typeof SLOT_FIELD)[ModelSlot];
 /** 槽位的中文名。报错文案与设置页共用，避免同一个槽位在两处叫法不一致。 */
 export const SLOT_LABEL: Record<ModelSlot, string> = {
   asr: '语音识别',
-  vision: '视觉理解',
-  chat: '文本生成',
+  vision: '图片理解',
+  chat: '主模型',
 };
 
 /**
@@ -92,15 +93,9 @@ export interface ModelRef {
   model: string;
 }
 
-export interface SavedModel extends ModelRef {
+export interface SavedModel extends ModelRef, ModelOverrides {
   name: string;
   slots: ModelSlot[];
-  contextWindow?: number;
-  maxOutputTokens?: number;
-  reasoningEffort?: string;
-  inputCapabilities?: string[];
-  outputCapabilities?: string[];
-  toolCalling?: boolean;
 }
 
 /**
@@ -117,6 +112,7 @@ export interface ModelTarget {
   model: string;
   catalogId: string;
   protocol: ApiProtocol;
+  capabilities?: ModelOverrides;
 }
 
 /** 两个模型引用是否同一个（收藏夹去重、选中态判定） */
@@ -250,7 +246,7 @@ function defaultModels(): Record<ModelFieldName, ModelRef> {
   return {
     asrModel: { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODELS.asrModel },
     llmModel: { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODELS.llmModel },
-    visionModel: { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODELS.visionModel },
+    visionModel: { providerId: '', model: '' },
   };
 }
 
@@ -465,6 +461,7 @@ export function getSettings(): Settings {
     asrModel: { ...s.asrModel },
     llmModel: { ...s.llmModel },
     visionModel: { ...s.visionModel },
+    savedModels: s.savedModels?.map((m) => ({ ...m, slots: [...m.slots], inputCapabilities: m.inputCapabilities && [...m.inputCapabilities], outputCapabilities: m.outputCapabilities && [...m.outputCapabilities] })),
     favorites: {
       chat: s.favorites.chat.map((r) => ({ ...r })),
       vision: s.favorites.vision.map((r) => ({ ...r })),
@@ -530,6 +527,7 @@ export function targetOfSlot(s: Settings, slot: ModelSlot): ModelTarget {
     model: ref.model,
     catalogId: p.catalogId,
     protocol: p.protocol ?? 'openai-chat',
+    capabilities: modelOverridesOf(s, ref),
   };
 }
 
@@ -547,7 +545,24 @@ export function targetOrNull(s: Settings, ref: ModelRef): ModelTarget | null {
     model: ref.model,
     catalogId: p.catalogId,
     protocol: p.protocol ?? 'openai-chat',
+    capabilities: modelOverridesOf(s, ref),
   };
+}
+
+/** 能力覆盖必须按连接 id 隔离；同目录或同名模型的两个连接也可以配置不同能力。 */
+export function modelOverridesOf(s: Settings, ref: ModelRef): ModelOverrides | undefined {
+  return s.savedModels?.find((m) => sameRef(m, ref));
+}
+
+/** 空视觉引用表示自动复用主模型；已有的独立模型选择保持不变。 */
+export function visionTargetOrNull(s: Settings): ModelTarget | null {
+  const ref = s.visionModel.model ? s.visionModel : s.llmModel;
+  const target = targetOrNull(s, ref);
+  if (!target?.model) return null;
+  const meta = getModelMeta(target.catalogId, target.model, target.capabilities);
+  // 独立视觉模型允许用户确认未收录的模型；自动模式必须有视觉能力声明。
+  if (s.visionModel.model) return meta?.inputModalities && !meta.vision ? null : target;
+  return meta?.vision ? target : null;
 }
 
 /** 只查能力数据源的 key（元数据缓存按它索引；没登记就没有元数据） */

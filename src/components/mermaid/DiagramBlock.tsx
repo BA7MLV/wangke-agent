@@ -124,7 +124,7 @@ export default function DiagramBlock({
   };
 
   return (
-    <div className="xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase} aria-busy={phase === 'waiting' || phase === 'drawing' || phase === 'rendering'}>
+    <div className="md-embedded-ui xmd-mermaid" data-testid={`${testId}-block`} data-phase={phase} aria-busy={phase === 'waiting' || phase === 'drawing' || phase === 'rendering'}>
       <div className="xmd-mermaid-head">
         {/* 标题：围栏参数里的那张图的名字。超长会被 fence.ts 截断，所以再挂一个 title 属性 ——
             与原生 SVG/HTML 的 title 一样，悬停看全。 */}

@@ -32,6 +32,18 @@ export function modelLabel(settings: Settings, ref: ModelRef): string {
 export function editModelPatch(settings: Settings, original: ModelRef | null, draft: SavedModel): Partial<Settings> {
   const next = { ...draft, model: draft.model.trim(), name: draft.name.trim(), slots: [...new Set(draft.slots)] };
   if (!next.model) throw new Error('请输入模型 ID');
+  for (const field of ['contextWindow', 'maxOutputTokens'] as const) {
+    if (next[field] !== undefined && (!Number.isSafeInteger(next[field]) || next[field]! <= 0)) {
+      throw new Error('上下文窗口和最大输出令牌数必须为正整数；留空表示跟随 models.dev');
+    }
+  }
+  if (next.reasoningEffort !== undefined) {
+    const lanes = next.reasoningEffort.split(',').map((v) => v.trim()).filter(Boolean);
+    if (lanes.some((v) => !['minimal', 'low', 'medium', 'high', 'xhigh', 'max'].includes(v))) {
+      throw new Error('推理等级仅支持 minimal、low、medium、high、xhigh、max，用英文逗号分隔');
+    }
+    next.reasoningEffort = [...new Set(lanes)].join(', ');
+  }
   const provider = settings.providers.find((p) => p.id === next.providerId);
   if (!provider) throw new Error('请选择有效的供应商');
   if (!next.slots.length || next.slots.some((slot) => !provider.serves.includes(slot))) {
@@ -46,6 +58,7 @@ export function editModelPatch(settings: Settings, original: ModelRef | null, dr
     savedModels: [...list.filter((m) => modelKey(m) !== originalKey), next],
     favorites: { ...settings.favorites },
   };
+  if (originalKey === modelKey(settings.llmModel) && next.contextWindow !== undefined) patch.contextWindow = next.contextWindow;
   for (const slot of Object.keys(fields) as ModelSlot[]) {
     const field = fields[slot];
     if (modelKey(settings[field]) === originalKey) {

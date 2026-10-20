@@ -106,6 +106,13 @@ export function cropCanvasRegion(
       left = Math.min(left, p.x); right = Math.max(right, p.x);
       top = Math.min(top, p.y); bottom = Math.max(bottom, p.y);
     }
+    if (stroke.anchor) {
+      left = Infinity; right = -Infinity; top = Infinity; bottom = -Infinity;
+      for (const r of stroke.rects ?? []) {
+        left = Math.min(left, r.x); right = Math.max(right, r.x + r.w);
+        top = Math.min(top, r.y); bottom = Math.max(bottom, r.y + r.h);
+      }
+    }
     const xScale = canvas.width / 1000, yScale = canvas.height / stroke.height;
     return (left - stroke.width) * xScale < sx + sw && (right + stroke.width) * xScale > sx
       && (top - stroke.width) * yScale < sy + sh && (bottom + stroke.width) * yScale > sy;

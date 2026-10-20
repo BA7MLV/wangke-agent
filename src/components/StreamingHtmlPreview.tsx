@@ -138,7 +138,7 @@ export default function StreamingHtmlPreview({
 
   return (
     <div
-      className="widget-stream-preview"
+      className="md-embedded-ui widget-stream-preview"
       data-testid="widget-stream-preview"
       aria-busy={isStreaming || undefined}
     >

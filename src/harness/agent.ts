@@ -129,7 +129,7 @@ export async function runAgentLoop(
   const target = cb.target ?? targetOfSlot(settings, 'chat');
   const { catalogId, model } = target;
   const out = [...messages];
-  const thinking = cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort) : {};
+  const thinking = target.capabilities?.reasoningEffort === '' ? {} : cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort, target.capabilities) : {};
   /** 护栏 1：循环检测的账本（同一工具 + 同一参数本轮只能出现一次） */
   const ledger = new CallLedger();
   /**
@@ -161,8 +161,8 @@ export async function runAgentLoop(
    */
   const budgetFor = () =>
     roundMaxTokens(
-      outputLimitOf(catalogId, model),
-      effectiveContextWindow(catalogId, model, settings.contextWindow),
+      outputLimitOf(catalogId, model, target.capabilities),
+      effectiveContextWindow(catalogId, model, settings.contextWindow, target.capabilities),
       out.reduce((n, m) => n + estimateTokens(textOf(m)), 0),
     );
 

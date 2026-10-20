@@ -168,8 +168,11 @@ try {
   const previewFrame = followUpPreview.getByTestId('widget-frame').contentFrame();
   await previewFrame.getByRole('button', { name: '解释当前情况' }).click();
   await followUpPreview.getByTestId('widget-follow-up-dialog').waitFor();
+  // Receiving the popout ACK can precede async request preparation in the original tab.
+  const previewRequest = page.waitForRequest('https://widget.test/**');
   await followUpPreview.getByRole('dialog').getByRole('button', { name: '发送追问', exact: true }).click();
   await followUpPreview.getByRole('dialog').waitFor({ state: 'hidden' });
+  await previewRequest;
   await page.waitForFunction(async () => !(await window.__widgetTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loading);
   assert.equal(requests.length, 2, 'confirmed preview prompts reach the original conversation exactly once');
   assert.ok(!JSON.stringify(requests[1]).includes('PRIVATE_STATE_SENTINEL'));
