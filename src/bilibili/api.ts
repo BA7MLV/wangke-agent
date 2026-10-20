@@ -35,6 +35,11 @@ interface ViewPage {
 
 /** 一个分 P（合集/系列课的「一集」）：cid 独立，播放流与字幕都各拉各的 */
 export interface BiliPageInfo {
+  /** 合集条目的源稿件；page 在合集内仅作为唯一选集键。 */
+  bvid?: string;
+  aid?: number;
+  sourcePage?: number;
+  videoTitle?: string;
   /** 1 起 */
   page: number;
   cid: number;
@@ -48,6 +53,18 @@ interface ViewData {
   title: string;
   duration: number;
   pages: ViewPage[];
+  ugc_season?: {
+    title: string;
+    sections?: { episodes?: {
+      bvid: string;
+      aid: number;
+      cid: number;
+      title: string;
+      arc?: { duration?: number };
+      page?: ViewPage;
+      pages?: ViewPage[];
+    }[] }[];
+  };
 }
 interface DashStream {
   baseUrl?: string;
@@ -91,7 +108,7 @@ async function apiGet<T>(opts: BiliApiOptions, target: string): Promise<T> {
 export async function fetchVideoView(
   opts: BiliApiOptions,
   bvid: string,
-): Promise<{ aid: number; title: string; duration: number; pages: BiliPageInfo[] }> {
+): Promise<{ aid: number; title: string; duration: number; pages: BiliPageInfo[]; season?: { title: string; pages: BiliPageInfo[] } }> {
   const data = await apiGet<ViewData>(
     opts,
     `https://api.bilibili.com/x/web-interface/view?bvid=${encodeURIComponent(bvid)}`,
@@ -103,6 +120,37 @@ export async function fetchVideoView(
     duration: p.duration ?? 0,
   }));
   if (pages.length === 0) throw new BiliHttpError('未找到可用分 P');
+  const seasonPages: BiliPageInfo[] = [];
+  const seen = new Set<string>();
+  for (const section of data.ugc_season?.sections ?? []) {
+    for (const episode of section.episodes ?? []) {
+      if (!episode.bvid || !episode.aid) continue;
+      // 当前稿件的 pages 最完整；其它集优先使用 pages，兼容只返回 page/cid 的接口。
+      const parts = episode.bvid === bvid ? data.pages
+        : episode.pages?.length ? episode.pages
+        : episode.page ? [episode.page]
+        : [{ cid: episode.cid, page: 1, duration: episode.arc?.duration }];
+      for (const part of parts) {
+        const key = `${episode.bvid}:${part.cid}`;
+        if (!part.cid || seen.has(key)) continue;
+        seen.add(key);
+        seasonPages.push({
+          page: seasonPages.length + 1,
+          cid: part.cid,
+          part: parts.length > 1 ? `${episode.title} · P${part.page} ${part.part ?? ''}` : episode.title,
+          duration: part.duration ?? (parts.length === 1 ? episode.arc?.duration ?? 0 : 0),
+          bvid: episode.bvid,
+          aid: episode.aid,
+          sourcePage: part.page,
+          videoTitle: episode.title,
+        });
+      }
+    }
+  }
+  if (seasonPages.length > 1 && seasonPages.some((p) => p.bvid === bvid)) {
+    return { aid: data.aid, title: data.title, duration: data.duration ?? 0, pages,
+      season: { title: data.ugc_season!.title, pages: seasonPages } };
+  }
   return { aid: data.aid, title: data.title, duration: data.duration ?? 0, pages };
 }
 

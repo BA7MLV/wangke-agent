@@ -788,7 +788,7 @@ export default function Library() {
     // 防手滑：一门课几十 P 几十小时，误点「全选」会很惨
     if (selected.length > 10 || totalSec > 6 * 3600) {
       const ok = await confirmDialog({
-        headline: `确认下载 ${selected.length} 个分 P？`,
+        headline: `确认下载 ${selected.length} ${biliTarget.kind === 'season' ? '集' : '个分 P'}？`,
         description: `合计约 ${formatTotalDuration(totalSec)}，会逐个写入本机存储（可随时在任务列表里看到进度）`,
         confirmText: '开始下载',
       });
@@ -1819,7 +1819,7 @@ export default function Library() {
                       </strong>
                       <span className="text-secondary" style={{ fontSize: 12 }} data-testid="bili-summary">
                         {multiPage
-                          ? `共 ${biliTarget.pages.length} P · 已选 ${biliPagesSel.length} P · 合计 ${formatTotalDuration(selectedSec)}`
+                          ? `共 ${biliTarget.pages.length} ${biliTarget.kind === 'season' ? '集' : 'P'} · 已选 ${biliPagesSel.length} · 合计 ${formatTotalDuration(selectedSec)}`
                           : formatTotalDuration(selectedSec)}
                       </span>
                     </div>
@@ -1827,7 +1827,7 @@ export default function Library() {
                       <>
                         <div className="row row--nowrap" style={{ gap: 8, marginTop: 10 }}>
                           <span className="text-secondary" style={{ flex: 1, fontSize: 12 }}>
-                            分 P（每个 P 是一条独立视频，可多选）
+                            {biliTarget.kind === 'season' ? '合集选集（可多选，默认仅选当前视频）' : '分 P（每个 P 是一条独立视频，可多选）'}
                           </span>
                           <Button variant="tertiary" data-testid="bili-pages-all" onPress={() => selectAllPages(true)}>
                             全选
@@ -1848,7 +1848,7 @@ export default function Library() {
                           selectionMode="multiple"
                           selectedKeys={biliPagesSel.map(String)}
                           onSelectionChange={(keys) => selectPages([...keys].map(String))}
-                          aria-label="选择分 P"
+                          aria-label={biliTarget.kind === 'season' ? '选择合集视频' : '选择分 P'}
                         >
                           <TagGroup.List
                             className="row"
@@ -1876,7 +1876,7 @@ export default function Library() {
                     {biliLangItems.length > 0 ? (
                       <>
                         <div className="text-secondary" style={{ fontSize: 12, marginTop: 10 }}>
-                          {multiPage ? `字幕语言（按 P${biliLangPage ?? ''} 上可用的语言）` : '自带字幕'}
+                          {multiPage ? `字幕语言（按${biliTarget.kind === 'season' ? `第${biliLangPage ?? ''}集` : ` P${biliLangPage ?? ''}`}上可用的语言）` : '自带字幕'}
                           ：选中的第一路作主字幕（讲义/问答用它），其余可选做播放页的「对照语言」
                         </div>
                         <TagGroup

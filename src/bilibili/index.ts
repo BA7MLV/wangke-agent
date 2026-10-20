@@ -20,6 +20,7 @@ import type { StreamTargetChunk } from 'mediabunny';
 
 /** 解析结果：一次解析后，勾分 P / 勾语言 / 真正下载都基于它 */
 export interface BiliTarget {
+  kind?: 'pages' | 'season';
   bvid: string;
   aid: number;
   /** 视频总标题（不含分 P 名） */
@@ -50,7 +51,7 @@ export async function fetchPageSubtitles(
   const info = target.pages.find((p) => p.page === page);
   if (!info) return [];
   try {
-    return await fetchBiliSubtitleList(opts, target.aid, info.cid);
+    return await fetchBiliSubtitleList(opts, info.aid ?? target.aid, info.cid);
   } catch {
     return [];
   }
@@ -63,12 +64,16 @@ export async function resolveBiliTarget(opts: BiliApiOptions, raw: string): Prom
   const explicitPage = /[?&]p=\d+/.test(raw) ? parseBiliInput(raw).page : null;
   const { bvid } = await resolveInput(opts, raw);
   const view = await fetchVideoView(opts, bvid);
-  const defaultPages = defaultPagesFor(view.pages, explicitPage);
+  const pages = view.season?.pages ?? view.pages;
+  const current = view.season?.pages.find((p) => p.bvid === bvid && p.sourcePage === (explicitPage ?? 1));
+  const defaultPages = view.season ? [current?.page ?? pages.find((p) => p.bvid === bvid)!.page]
+    : defaultPagesFor(pages, explicitPage);
   const target: BiliTarget = {
+    kind: view.season ? 'season' : 'pages',
     bvid,
     aid: view.aid,
-    title: view.title,
-    pages: view.pages,
+    title: view.season?.title ?? view.title,
+    pages,
     defaultPages,
     subtitles: [],
   };
@@ -142,7 +147,7 @@ async function loadPageSubtitles(
   if (langs.length === 0) return { primary: null, tracks: [] };
   let available: BiliSubtitleItem[] = [];
   try {
-    available = await fetchBiliSubtitleList(opts, target.aid, page.cid);
+    available = await fetchBiliSubtitleList(opts, page.aid ?? target.aid, page.cid);
   } catch {
     return { primary: null, tracks: [] };
   }
@@ -171,7 +176,7 @@ export async function importBiliPages(
   onProgress?: (ratio: number, label: string) => void,
 ): Promise<void> {
   const { langs = [], pages: wanted, ...apiOpts } = opts;
-  const selected = resolveSelectedPages(target.pages, wanted && wanted.length > 0 ? wanted : target.defaultPages);
+  const selected = resolveSelectedPages(target.pages, wanted ?? target.defaultPages);
   if (selected.length === 0) throw new Error('没有选中任何分 P');
 
   for (let i = 0; i < selected.length; i++) {
@@ -179,7 +184,7 @@ export async function importBiliPages(
     const label = `${pageLabel(info)} · ${i + 1}/${selected.length}`;
     onProgress?.(i / selected.length, label);
 
-    const streams = await fetchPlayStreams(apiOpts, target.bvid, info.cid);
+    const streams = await fetchPlayStreams(apiOpts, info.bvid ?? target.bvid, info.cid);
     streams.title = pageVideoTitle(target.title, target.pages, info.page);
     const file = await remuxPageToFile(streams, apiOpts, (r) =>
       onProgress?.((i + r * 0.9) / selected.length, label),

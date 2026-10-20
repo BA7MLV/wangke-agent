@@ -18,6 +18,8 @@ export function defaultPagesFor(pages: BiliPageInfo[], explicitPage: number | nu
  * 单 P 视频原样返回（与改造前的行为一致）。
  */
 export function pageVideoTitle(baseTitle: string, pages: BiliPageInfo[], page: number): string {
+  const info = pages.find((p) => p.page === page);
+  if (info?.bvid) return `第${page}集 ${info.part || info.videoTitle || baseTitle}`;
   if (pages.length <= 1) return baseTitle;
   const part = pages.find((p) => p.page === page)?.part?.trim();
   return part ? `${baseTitle} P${page} ${part}` : `${baseTitle} P${page}`;
@@ -25,6 +27,7 @@ export function pageVideoTitle(baseTitle: string, pages: BiliPageInfo[], page: n
 
 /** 分 P 条目标签：`P2 1.1 二三阶行列式` */
 export function pageLabel(page: BiliPageInfo): string {
+  if (page.bvid) return `第${page.page}集 ${page.part.trim()}`.trim();
   return page.part?.trim() ? `P${page.page} ${page.part.trim()}` : `P${page.page}`;
 }
 
