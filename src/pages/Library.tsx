@@ -560,8 +560,12 @@ export default function Library() {
   const visibleCount = displayedVideos.length + folderTiles.length;
   const folderPath = folderAncestors(folders, currentFolder?.folder?.id ?? null);
   // Keep the native drag source mounted while spring-loading another directory.
-  const renderedFolders = finderDragging.length ? groups.filter((group) => group.folder) : folderTiles;
-  const renderedVideos = finderDragging.length ? videos : displayedVideos;
+  const renderedFolders = finderDragging.length
+    ? [...folderTiles, ...groups.filter((group) => group.folder && !folderTiles.some((visible) => visible.key === group.key))]
+    : folderTiles;
+  const renderedVideos = finderDragging.length
+    ? [...displayedVideos, ...videos.filter((video) => !displayedVideos.some((visible) => visible.id === video.id))]
+    : displayedVideos;
   const selectedKey = selection.size === 1 ? [...selection][0] : undefined;
   const selectedFolder = folderTiles.find((group) => `folder:${group.key}` === selectedKey);
   const selectedVideo = displayedVideos.find((video) => `file:${video.id}` === selectedKey);
@@ -1165,7 +1169,7 @@ export default function Library() {
     } finally { setUndoingMove(false); }
   };
 
-  const startFinderDrag = (event: React.DragEvent, key: string) => {
+  const startFinderDrag = (event: { currentTarget: HTMLElement; dataTransfer?: DataTransfer }, key: string) => {
     const keys = finderPressSelection.current.includes(key) ? finderPressSelection.current : selection.has(key) ? [...selection] : [key];
     finderDragKeys.current = keys;
     setFinderDragging(keys);
@@ -1191,9 +1195,11 @@ export default function Library() {
     }
     document.body.append(preview);
     dragImage.current = preview;
-    event.dataTransfer.setDragImage(preview, 34, 34);
-    event.dataTransfer.setData('application/x-library-items', JSON.stringify(keys));
-    event.dataTransfer.effectAllowed = 'move';
+    if (event.dataTransfer) {
+      event.dataTransfer.setDragImage(preview, 34, 34);
+      event.dataTransfer.setData('application/x-library-items', JSON.stringify(keys));
+      event.dataTransfer.effectAllowed = 'move';
+    }
     setSelection(new Set(keys));
   };
   const endFinderDrag = () => {
@@ -1208,18 +1214,12 @@ export default function Library() {
     dragImage.current?.remove();
     dragImage.current = null;
   };
-  const folderDropProps = (target: number | null, spring = false) => {
-    const handlers = {
-    onDragOver: (event: React.DragEvent) => {
-      if (!event.dataTransfer.types.includes('application/x-library-items')) return;
-      event.preventDefault();
-      event.stopPropagation();
+  const updateFinderDrop = (target: number | null, spring = false) => {
       const valid = validFolderDrop(folders, finderDragKeys.current, target);
       const targetKey = String(target ?? 'root');
       const sameFolder = finderDragKeys.current.every((key) => key.startsWith('folder:')
         ? (folders.find((folder) => folder.id === Number(key.slice(7)))?.parentId ?? null) === target
         : (videos.find((video) => video.id === key.slice(5))?.folderId ?? null) === target);
-      event.dataTransfer.dropEffect = valid ? 'move' : 'none';
       setDropFolder(valid ? targetKey : null);
       const name = target == null ? '全部资料' : folders.find((folder) => folder.id === target)?.name;
       setDropHint(!valid ? '不能移入自身或子文件夹' : sameFolder ? `项目已在「${name}」中` : `将 ${finderDragKeys.current.length} 个项目移入「${name}」${spring ? ' · 停留以打开' : ''}`);
@@ -1240,6 +1240,23 @@ export default function Library() {
           }, 850);
         }
       } else clearSpring();
+      return valid;
+  };
+  const commitFinderDrop = (target: number | null) => {
+    const keys = finderDragKeys.current;
+    if (validFolderDrop(folders, keys, target)) {
+      finderDropCommitted.current = true;
+      void moveFinderItems(keys, target);
+    }
+    endFinderDrag();
+  };
+  const folderDropProps = (target: number | null, spring = false) => {
+    const handlers = {
+    onDragOver: (event: React.DragEvent) => {
+      if (!event.dataTransfer.types.includes('application/x-library-items')) return;
+      event.preventDefault();
+      event.stopPropagation();
+      event.dataTransfer.dropEffect = updateFinderDrop(target, spring) ? 'move' : 'none';
     },
     onDragLeave: (event: React.DragEvent) => {
       // Child-to-padding transitions fire dragleave after the new target's
@@ -1253,12 +1270,7 @@ export default function Library() {
       event.stopPropagation();
       setDropFolder(null);
       clearSpring();
-      const keys = finderDragKeys.current;
-      if (validFolderDrop(folders, keys, target)) {
-        finderDropCommitted.current = true;
-        void moveFinderItems(keys, target);
-      }
-      endFinderDrag();
+      commitFinderDrop(target);
     },
     };
     return { ...handlers, onDragEnter: handlers.onDragOver };
@@ -1278,6 +1290,87 @@ export default function Library() {
     const rect = event.currentTarget.getBoundingClientRect();
     if (event.clientY < rect.top + 40) event.currentTarget.scrollBy(0, -16);
     else if (event.clientY > rect.bottom - 40) event.currentTarget.scrollBy(0, 16);
+  };
+
+  // Internal moves use pointer events, not the host WebView's HTML drag session.
+  // Native file imports remain on the existing HTML drag-and-drop path.
+  const pointerDragActions = useRef({ startFinderDrag, updateFinderDrop, commitFinderDrop, endFinderDrag });
+  pointerDragActions.current = { startFinderDrag, updateFinderDrop, commitFinderDrop, endFinderDrag };
+  const pointerDragCleanup = useRef<(() => void) | null>(null);
+  const suppressFinderClick = useRef(false);
+  useEffect(() => () => pointerDragCleanup.current?.(), []);
+  const beginFinderPointer = (event: React.PointerEvent<HTMLDivElement>) => {
+    finderPressSelection.current = [...selection];
+    if (event.button !== 0 || event.pointerType === 'touch') return;
+    const item = (event.target as Element).closest<HTMLElement>('.finder-item');
+    const content = item?.querySelector<HTMLElement>('.finder-item__content');
+    if (!item || !content) return;
+    const key = item.dataset.groupKey ? `folder:${item.dataset.groupKey}` : `file:${item.dataset.videoId}`;
+    pointerDragCleanup.current?.();
+    suppressFinderClick.current = false;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const pointerId = event.pointerId;
+    let active = false;
+    const hit = (x: number, y: number) => {
+      const element = document.elementFromPoint(x, y);
+      const path = element?.closest<HTMLElement>('.finder-path-target');
+      if (path) return { target: path.dataset.folderId ? Number(path.dataset.folderId) : null, spring: true };
+      const canvas = element?.closest('.finder-canvas');
+      if (!canvas) return null;
+      const folder = element?.closest<HTMLElement>('[data-group-key]');
+      return { target: folder ? Number(folder.dataset.groupKey) : Number(canvas.getAttribute('data-folder-id')) || null, spring: !!folder };
+    };
+    const move = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      if (!active) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return;
+        active = true;
+        suppressFinderClick.current = true;
+        pointerDragActions.current.startFinderDrag({ currentTarget: content }, key);
+        window.getSelection()?.removeAllRanges();
+      }
+      e.preventDefault();
+      if (dragImage.current) {
+        dragImage.current.style.left = '0';
+        dragImage.current.style.transform = `translate(${e.clientX + 16}px, ${e.clientY + 16}px)`;
+      }
+      const destination = hit(e.clientX, e.clientY);
+      if (destination) pointerDragActions.current.updateFinderDrop(destination.target, destination.spring);
+      else { clearSpring(); setDropFolder(null); setDropHint('拖到文件夹以移动，或按 Esc 取消'); }
+      const canvas = canvasRef.current;
+      if (canvas) {
+        const rect = canvas.getBoundingClientRect();
+        if (e.clientX >= rect.left && e.clientX <= rect.right && e.clientY >= rect.top && e.clientY <= rect.bottom) {
+          if (e.clientY < rect.top + 40) canvas.scrollBy(0, -16);
+          else if (e.clientY > rect.bottom - 40) canvas.scrollBy(0, 16);
+        }
+      }
+    };
+    const finish = (e: PointerEvent) => {
+      if (e.pointerId !== pointerId) return;
+      if (active) {
+        const destination = hit(e.clientX, e.clientY);
+        if (destination) pointerDragActions.current.commitFinderDrop(destination.target);
+        else pointerDragActions.current.endFinderDrag();
+      }
+      pointerDragCleanup.current?.();
+    };
+    const cancel = () => { if (active) pointerDragActions.current.endFinderDrag(); pointerDragCleanup.current?.(); };
+    const keydown = (e: KeyboardEvent) => { if (e.key === 'Escape' && active) { e.preventDefault(); e.stopPropagation(); cancel(); } };
+    window.addEventListener('pointermove', move, { passive: false, capture: true });
+    window.addEventListener('pointerup', finish, true);
+    window.addEventListener('pointercancel', cancel, true);
+    window.addEventListener('blur', cancel);
+    window.addEventListener('keydown', keydown, true);
+    pointerDragCleanup.current = () => {
+      window.removeEventListener('pointermove', move, true);
+      window.removeEventListener('pointerup', finish, true);
+      window.removeEventListener('pointercancel', cancel, true);
+      window.removeEventListener('blur', cancel);
+      window.removeEventListener('keydown', keydown, true);
+      pointerDragCleanup.current = null;
+    };
   };
 
   /** 移动弹窗内当场新建文件夹并选中 */
@@ -1678,15 +1771,20 @@ export default function Library() {
         {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
         ref={canvasRef}
+        data-folder-id={currentFolder?.folder?.id ?? ''}
+        onDragStartCapture={(event) => { if ((event.target as Element).closest('.finder-item')) event.preventDefault(); }}
         onDragEnterCapture={finderCanvasDragOver}
         onDragOverCapture={finderCanvasDragOver}
         onDropCapture={(event) => {
           const folder = (event.target as Element).closest<HTMLElement>('[data-group-key]');
           folderDropProps(folder ? Number(folder.dataset.groupKey) : currentFolder?.folder?.id ?? null).onDrop(event);
         }}
-        onPointerDownCapture={() => { finderPressSelection.current = [...selection]; }}
+        onPointerDownCapture={beginFinderPointer}
         onPointerDown={marquee.onPointerDown}
-        onClickCapture={marquee.onClickCapture}
+        onClickCapture={(event) => {
+          if (suppressFinderClick.current) { event.preventDefault(); event.stopPropagation(); suppressFinderClick.current = false; }
+          else marquee.onClickCapture(event);
+        }}
         onContextMenu={(event) => {
           const item = (event.target as HTMLElement).closest<HTMLElement>('[data-video-id], [data-group-key]');
           if (!item) return;
@@ -1767,7 +1865,7 @@ export default function Library() {
       </div>
         <footer className="finder-footer">
           {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
-          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><ChevronRight /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><ChevronRight /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
           {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}
           <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
         </footer>

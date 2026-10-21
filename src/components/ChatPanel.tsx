@@ -18,9 +18,8 @@ import ContextUsageButton from './ContextUsageButton';
 import { useContextCompression } from './useContextCompression';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
-import { hasThinkingDepth, isVisionModel, supportsThinking } from '../api/modelCaps';
+import { isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ThinkingLevel } from '../api/siliconflow';
-import ReasoningEffortSlider from './ReasoningEffortSlider';
 import { fmtTime } from '../utils/vtt';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
@@ -30,12 +29,11 @@ import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citatio
 import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { messageTime } from '../utils/messageTime';
-import { useIsMobile, useMediaQuery, useViewportResize } from '../utils/useMobile';
+import { useMediaQuery, useViewportResize } from '../utils/useMobile';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import {
   Panel,
   PanelBar,
-  PanelSpacer,
   PanelBody,
   PanelPlaceholder,
   Sym,
@@ -436,7 +434,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete 
           <Button size="sm" variant="tertiary" className="chat-user-expand"
             aria-expanded={expanded} aria-controls={`chat-user-text-${message.key}`}
             data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
-            {expanded ? '收起' : '展开全文'}<Sym name="keyboard_arrow_down" />
+            {expanded ? '收起' : '展开'}<Sym name="keyboard_arrow_down" />
           </Button>
         )}
       </div>
@@ -492,6 +490,7 @@ export default function ChatPanel({
    * 「模型看不到某技能、但调了却能成功」的错配。
    */
   const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const [shots, setShots] = useState<Snapshot[]>([]);
   /**
    * 划词/框选带进来的引用条（最多 MAX_REFS 条）。
@@ -530,7 +529,6 @@ export default function ChatPanel({
   const ctxWin = useSettings((s) => s.contextWindow);
   const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
   const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
-  const updateSettings = useSettings((s) => s.update);
   /**
    * 思考能力分两层，工具行上给什么控件就看这两层：
    *
@@ -539,13 +537,8 @@ export default function ChatPanel({
    * - 不会思考 → 什么都没有
    */
   const canThink = supportsThinking(llmCatalog, llmModel.model, llmCapabilities);
-  const canDepth = canThink && hasThinkingDepth(llmCatalog, llmModel.model, llmCapabilities);
   /** 滑块当前值：关着思考就是第一档（档位本身留着，下次打开还是它） */
   const thinkingLevel: ThinkingLevel = thinking ? effort : 'none';
-  const setThinkingLevel = (level: ThinkingLevel) =>
-    updateSettings(
-      level === 'none' ? { thinkingEnabled: false } : { thinkingEnabled: true, thinkingEffort: level },
-    );
   // 沙箱 widget 是独立文档，拿不到 mdui 的 CSS 令牌，所以明暗得由宿主算完显式传进去。
   // （`useResolvedDark` 原先只服务 antd，这里是第二个消费者 —— 理由同为「明暗是 JS 算的」。）
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
@@ -586,8 +579,6 @@ export default function ChatPanel({
   useEffect(() => () => cancelAnimationFrame(pinRafRef.current), []);
   // 键盘弹收 / 横竖旋转：重新吸底（没聚焦输入框时也会响，那时吸底同样正确）
   useViewportResize(pinList);
-  // 手机端：思考开关上移到会话行，第二行只留 ModelPicker（+思考深度），省一行高度
-  const isMobile = useIsMobile();
   // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
   useModelMetaRevision();
 
@@ -1738,49 +1729,8 @@ export default function ChatPanel({
         {iconBtn('copy-session-btn', '复制整个会话（Markdown）', <Sym name="content_copy" />, copySession, loading || msgs.length === 0)}
         {iconBtn('export-session-btn', '导出 .md 文件', <Sym name="download" />, downloadSession, loading || msgs.length === 0)}
         {iconBtn('chat-delete-session', '删除当前会话', <Sym name="delete" />, confirmDeleteSession, loading)}
-        {/* 灯泡只在**没有深度档位**的模型上出现：有档位的模型「关」已经并进滑块的
-            第一档（见 chat-model-bar 那条滑块），再摆一颗灯泡就是同一件事两个入口 */}
-        {isMobile &&
-          canThink &&
-          !canDepth &&
-          iconBtn(
-            'chat-thinking-toggle',
-            thinking ? '关闭思考' : '开启思考',
-            <Sym name="lightbulb" filled={thinking} />,
-            () => updateSettings({ thinkingEnabled: !thinking }),
-            undefined,
-            thinking ? 'primary' : 'tertiary',
-          )}
       </PanelBar>
-
-      <PanelBar wrap={false} testId="chat-model-bar">
-        <ModelPicker slot="chat" field="llmModel" />
-        <SkillPicker value={skillIds} onChange={updateSkillIds} />
-        <PanelSpacer />
-        {canThink &&
-          !canDepth &&
-          !isMobile &&
-          iconBtn(
-            'chat-thinking-toggle',
-            thinking ? '关闭思考' : '开启思考',
-            <Sym name="lightbulb" filled={thinking} />,
-            () => updateSettings({ thinkingEnabled: !thinking }),
-            undefined,
-            thinking ? 'primary' : 'tertiary',
-          )}
-        {/* 深度控件只在模型声明了 effort 档位或 budget 区间时出现。
-            **不跟着 `thinking` 隐藏**：第一档就是「不思考」，藏起来用户就没法把思考关回去。
-            窄屏省掉「思考深度」四个字，滑块自己带当前档位文案（不思考 / 低 / 高…），
-            在只有图标的行里那句主语已经挤不下 */}
-        {canDepth && (
-          <span className="chat-effort-field">
-            {!isMobile && <span className="chat-effort-label">思考深度</span>}
-            {/* 不传 `disabled`：这一格原先的按钮组在生成中也是可点的（同排的灯泡
-                反而被 `iconBtn` 的 loading 禁用），本次只换控件、不动这条既有行为 */}
-            <ReasoningEffortSlider value={thinkingLevel} onChange={setThinkingLevel} />
-          </span>
-        )}
-      </PanelBar>
+      <SkillPicker value={skillIds} onChange={updateSkillIds} isOpen={skillsOpen} onOpenChange={setSkillsOpen} hideTrigger />
 
       {/* 消息流：AI 靠左、用户靠右。两种气泡的形状差是 MD3 聊天的标志 ——
           靠对话侧收小圆角、另一侧全圆角。流式 markdown / 思考块 / 题卡都留在 AI 气泡内。 */}
@@ -1940,7 +1890,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* 输入区：截图/出题在左，输入框居中，发送在右。
+      {/* 输入区与首页一致：文本在上，添加菜单、模型和发送在下。
           Enter 发送、Shift+Enter 换行；isComposing 时放行（中文输入法选词的回车不是提交意图）。 */}
       <div className="chat-composer" data-testid="chat-composer">
         {/*
@@ -2005,45 +1955,6 @@ export default function ChatPanel({
           </div>
         )}
         <div className="chat-composer__row">
-          {/* 截图按钮只在有播放器时出现：材料没有正在播放的画面可截，框选走阅读器的「框选」按钮 */}
-          {!isMaterial && (
-            <Tooltip>
-              <Tooltip.Trigger>
-                <Button
-                  isIconOnly
-                  variant="tertiary"
-                  size="sm"
-                  data-testid="shot-btn"
-                  aria-label="截取当前画面"
-                  isDisabled={!indexReady || shots.length >= 4 || loading}
-                  onPress={addShot}
-                >
-                  <Sym name="photo_camera" />
-                </Button>
-              </Tooltip.Trigger>
-              <Tooltip.Content>
-                <p>截取当前画面（最多 4 张）</p>
-              </Tooltip.Content>
-            </Tooltip>
-          )}
-          <Tooltip>
-            <Tooltip.Trigger>
-              <Button
-                isIconOnly
-                variant="tertiary"
-                size="sm"
-                data-testid="quiz-btn"
-                aria-label="出题考我"
-                isDisabled={!indexReady || loading}
-                onPress={() => send('根据课程内容出 3 道单选题考考我，选项要有干扰性')}
-              >
-                <Sym name="quiz" />
-              </Button>
-            </Tooltip.Trigger>
-            <Tooltip.Content>
-              <p>出题考我</p>
-            </Tooltip.Content>
-          </Tooltip>
           {/* testid 挂在外层容器上：e2e 的选择器是 `[data-testid="chat-input"] textarea`，
               需要「容器 → textarea」的层级（mdui 时代是自定义元素 + shadow 里的 textarea，
               HeroUI 是单元素，用一层 div 补回同样的结构）。 */}
@@ -2085,6 +1996,30 @@ export default function ChatPanel({
               }}
             />
           </div>
+          <div className="chat-composer__tools">
+          <Dropdown>
+            <Button isIconOnly variant="tertiary" size="sm" data-testid="panel-chat-add"
+              aria-label="添加截图、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>
+              <Sym name="add" />
+            </Button>
+            <Dropdown.Popover placement="top start">
+              <Dropdown.Menu aria-label="添加到学习问答"
+                disabledKeys={[
+                  ...(!indexReady || loading ? ['shot', 'quiz'] : []),
+                  ...(shots.length >= 4 ? ['shot'] : []),
+                ]}
+                onAction={(key) => {
+                  if (key === 'shot') addShot();
+                  else if (key === 'quiz') void send('根据课程内容出 3 道单选题考考我，选项要有干扰性');
+                  else if (key === 'skills') setSkillsOpen(true);
+                }}>
+                {!isMaterial && <Dropdown.Item id="shot" textValue="截取当前画面" data-testid="shot-btn"><Sym name="photo_camera" />截取当前画面</Dropdown.Item>}
+                <Dropdown.Item id="quiz" textValue="出题考我" data-testid="quiz-btn"><Sym name="quiz" />出题考我</Dropdown.Item>
+                <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
+          <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} />
           {/* 上文用量环：只留环，不再跟一串 `≈2.1k / 131k` 文字 —— 常驻的估值
               在工具行上太吵（详情在环的弹层里），文字还会把发送键从最右侧挤开。
               环排在发送键**前面**，发送键永远占最右那一格。 */}
@@ -2137,6 +2072,7 @@ export default function ChatPanel({
               </Tooltip.Content>
             </Tooltip>
           )}
+          </div>
         </div>
       </div>
     </Panel>

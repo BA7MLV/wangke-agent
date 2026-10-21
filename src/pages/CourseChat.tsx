@@ -326,7 +326,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete 
     {overflows && <Button size="sm" variant="tertiary" className="course-chat__user-expand"
       aria-expanded={expanded} aria-controls={`user-text-${message.key}`}
       data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
-      {expanded ? '收起' : '展开全文'}<Sym name="keyboard_arrow_down" />
+      {expanded ? '收起' : '展开'}<Sym name="keyboard_arrow_down" />
     </Button>}
     </div>
     </div>

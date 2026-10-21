@@ -1,5 +1,5 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
-import { Button, Disclosure } from '@heroui/react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
+import { Disclosure } from '@heroui/react';
 import { Sym } from '../ui/icons';
 import { MatrixDots, TextSwap, useReasoningStream } from './motion';
 import './reasoning-chain.css';
@@ -116,7 +116,6 @@ export default function ReasoningChain({
   const [open, setOpen] = useState(active);
   const [full, setFull] = useState(false);
   const fullRef = useRef(false);
-  const bodyId = useId();
   const innerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const lastTop = useRef(0);
@@ -143,21 +142,14 @@ export default function ReasoningChain({
   const stopStream = useReasoningStream(innerRef, live, stickRef, reasoning, revision);
 
   const changeOpen = (next: boolean) => {
-    setOpen(next);
-    if (!next) {
-      fullRef.current = false;
-      setFull(false);
-    }
-  };
-
-  const toggleFull = () => {
-    const next = !full;
+    // 首次点击实时预览时先展开全文；之后箭头只负责全文展开 / 收起。
+    const nextOpen = live || next;
+    const nextFull = active && nextOpen;
     stopStream();
-    fullRef.current = next;
-    setFull(next);
-    setOpen(true);
-    stickRef.current = true;
-    if (innerRef.current) innerRef.current.scrollTop = next ? 0 : innerRef.current.scrollHeight;
+    fullRef.current = nextFull;
+    setFull(nextFull);
+    setOpen(nextOpen);
+    if (nextFull && innerRef.current) innerRef.current.scrollTop = 0;
   };
 
   /**
@@ -228,9 +220,9 @@ export default function ReasoningChain({
       data-testid="response-process" data-streaming={active || undefined}
       isExpanded={open} onExpandedChange={changeOpen}>
       {active && <span className="sr-only" role="status">{title}</span>}
-      <div className="reasoning-chain__header">
       <Disclosure.Heading className="reasoning-chain__heading">
-      <Disclosure.Trigger className="reasoning-chain__toggle" data-testid="response-process-toggle">
+      <Disclosure.Trigger className="reasoning-chain__toggle" data-testid="response-process-toggle"
+        aria-label={live ? '展开全部思考过程' : open ? '收起思考过程' : '展开思考过程'}>
         {waiting ? <Sym name="help" className="reasoning-chain__icon" aria-hidden="true" />
           : active && <MatrixDots className="reasoning-chain__icon" />}
         <TextSwap className="reasoning-chain__title" text={title} />
@@ -240,18 +232,10 @@ export default function ReasoningChain({
         <Disclosure.Indicator className="reasoning-chain__indicator" />
       </Disclosure.Trigger>
       </Disclosure.Heading>
-      {active && (
-        <Button variant="ghost" size="sm" className="reasoning-chain__view-toggle"
-          data-testid="response-process-expand-all" aria-controls={bodyId}
-          aria-pressed={full} onPress={toggleFull}>
-          {full ? '实时视图' : '全部展开'}
-        </Button>
-      )}
-      </div>
       <Disclosure.Content className="reasoning-chain__content">
         <Disclosure.Body className="reasoning-chain__panel">
         <div className="reasoning-chain__viewport" ref={viewportRef}>
-          <div ref={innerRef} id={bodyId}
+          <div ref={innerRef}
             className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
             <div className="reasoning-chain__entries">{children ?? reasoning}</div>

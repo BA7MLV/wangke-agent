@@ -49,7 +49,7 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
   const [rows, setRows] = useState<Row[]>([]);
   /** 首次读回之前为 false —— 折叠态那行「还没有讨论」与展开态空态都靠它门控（不变量 I1） */
   const [loaded, setLoaded] = useState(false);
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(true);
   const [sort, setSort] = useState<CommentSort>('hot');
   const [progress, setProgress] = useState<CommentsProgress | null>(null);
   const [errorText, setErrorText] = useState<string | null>(null);

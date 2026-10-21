@@ -15,25 +15,11 @@
 }
 
 .reasoning-chain__heading {
-  flex: 1;
-  min-width: 0;
   margin: 0;
   font: inherit;
 }
 
-.reasoning-chain__header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.reasoning-chain .reasoning-chain__view-toggle {
-  flex: none;
-  color: var(--muted);
-  font-size: 0.75rem;
-}
-
-.reasoning-chain[data-mode='expanded'] .reasoning-chain__header {
+.reasoning-chain[data-mode='expanded'] .reasoning-chain__heading {
   position: sticky;
   top: var(--reasoning-sticky-top, 0px);
   z-index: 1;

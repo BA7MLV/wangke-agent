@@ -142,18 +142,18 @@ async function seedComments(page, videoId) {
   await seedComments(page, videoId);
   ok(`videoId = ${videoId}，已播种 2 串 5 条发言`);
 
-  console.log('2. 进入播放页：折叠条在、列表不在（默认折叠）');
+  console.log('2. 进入播放页：讨论区默认展开');
   await page.goto(`${BASE}/#/player/${videoId}`, { waitUntil: 'networkidle' });
   await page.waitForSelector('[data-testid="comments-toggle"]', { timeout: 15000 });
   const count = (await page.locator('[data-testid="comments-count"]').textContent())?.trim();
   if (count === '2 条讨论 · 5 条发言') ok(`折叠条计数 = ${count}`);
   else fail(`折叠条计数不符：${count}`);
-  if ((await page.locator('[data-testid="comments-list"]').count()) === 0) ok('折叠态不渲染列表');
-  else fail('折叠态下列表竟然存在');
-  await page.screenshot({ path: `${SHOTS}/desktop-collapsed.png` });
+  if ((await page.locator('[data-testid="comments-toggle"]').getAttribute('aria-expanded')) === 'true') ok('讨论区默认展开');
+  else fail('讨论区没有默认展开');
+  if ((await page.locator('.video-pane').getAttribute('class'))?.includes('video-pane--comments-open')) ok('初始视频栏布局与展开状态一致');
+  else fail('初始视频栏缺少展开态类名');
 
-  console.log('3. 展开 → 渲染讨论串与回复层');
-  await page.click('[data-testid="comments-toggle"]');
+  console.log('3. 无需点击即可渲染讨论串与回复层');
   await page.waitForSelector('[data-testid="comments-list"]', { timeout: 8000 });
   const threads = await page.locator('[data-testid="cmt-thread"]').count();
   const items = await page.locator('[data-testid="cmt-item"]').count();
@@ -301,7 +301,8 @@ async function seedComments(page, videoId) {
     ok(`折叠条在可视区内，高 ${Math.round(box.height)}px（≥40 触控下限）`);
   } else fail(`折叠条位置/高度不合适：${JSON.stringify(box)}`);
 
-  await toggle.tap();
+  if ((await toggle.getAttribute('aria-expanded')) === 'true') ok('移动端讨论区默认展开');
+  else fail('移动端讨论区没有默认展开');
   await page.waitForSelector('[data-testid="comments-list"]', { timeout: 8000 });
   const selfScroll = await page.evaluate(() => {
     const el = document.querySelector('[data-testid="comments-list"]');

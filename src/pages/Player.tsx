@@ -101,7 +101,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
    * 评论区展开状态。窄屏和影院模式仍需在 `.video-pane` 上标记展开态，以便在有限高度里
    * 给评论让位；桌面普通模式改为整条左栏滚动，不再压缩播放器。
    */
-  const [commentsOpen, setCommentsOpen] = useState(false);
+  const [commentsOpen, setCommentsOpen] = useState(true);
   // 阅读器命令式句柄：问答里的「[第3页]」引用点一下就靠它跳过去
   const readerRef = useRef<MaterialReaderHandle | null>(null);
   // 选区提问投递：浮层点完必须让用户看到问答面板（窄屏下面板可能是隐藏的）

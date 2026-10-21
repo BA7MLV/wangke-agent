@@ -27,6 +27,11 @@ export default function StudyAssistant({ open, onOpenChange, activeTab, onTabCha
       <Disclosure ref={assistantRef} className="study-assistant" isExpanded={open}
         onExpandedChange={(expanded) => { if (!suppressToggle.current) onOpenChange(expanded); }}>
         <Disclosure.Content className="study-assistant__content" hidden={!open} data-testid="study-assistant-panel">
+          <Button isIconOnly variant="tertiary" size="sm" className="study-assistant__resize"
+            data-assistant-resize-handle data-testid="study-assistant-resize"
+            aria-label="调整学习助手尺寸" aria-description="拖动调整尺寸，方向键微调，Home 恢复默认">
+            <Sym name="open_in_full" />
+          </Button>
           <Tabs className="panel-tabs" variant="secondary" align="start" selectedKey={activeTab}
             onSelectionChange={(key) => {
               if (panelKeys.includes(key as StudyPanelKey)) onTabChange(key as StudyPanelKey);

@@ -2,10 +2,10 @@
 // Uses an isolated browser context; never changes the user's library.
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const base = process.env.BASE_URL ?? 'http://localhost:5173';
-const browser = await chromium.launch({ headless: true });
+const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch({ headless: true });
 const errors = [];
 const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
 page.on('pageerror', (error) => errors.push(error.message));
@@ -153,7 +153,7 @@ try {
   await page.locator('[data-group-key="3"]').dblclick();
   assert.equal(await page.locator('.finder-path-target').count(), 3);
   await page.locator('.finder-path-target').first().getByRole('button').click();
-  // Native drag stays alive through spring-loaded navigation into an empty folder.
+  // Pointer drag stays alive through spring-loaded navigation into an empty folder.
   await page.locator('[data-group-key="2"]').dblclick();
   const source = await page.locator('[data-video-id="finder-word"] .finder-item__name').boundingBox();
   const destination = await page.locator('[data-group-key="3"] .finder-item__name').boundingBox();

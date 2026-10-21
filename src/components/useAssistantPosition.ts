@@ -1,7 +1,19 @@
 import { useLayoutEffect, useRef } from 'react';
 
 const POSITION_KEY = 'wangke-study-assistant-position';
+const SIZE_KEY = 'wangke-study-assistant-size';
 interface Position { right: number; bottom: number }
+interface Size { width: number; height: number }
+
+function readSize(): Size {
+  try {
+    const value = JSON.parse(localStorage.getItem(SIZE_KEY) ?? 'null');
+    if (value && Number.isFinite(value.width) && Number.isFinite(value.height)) {
+      return { width: Math.max(320, value.width), height: Math.max(300, value.height) };
+    }
+  } catch { /* 存储不可用时使用默认尺寸。 */ }
+  return { width: 480, height: 640 };
+}
 
 function readPosition(): Position {
   try {
@@ -24,9 +36,20 @@ export function useAssistantPosition() {
     const assistant = assistantRef.current;
     if (!viewportElement || !assistant) return;
     let position = readPosition();
+    let size = readSize();
+    const applySize = (next: Size) => {
+      size = next;
+      assistant.style.setProperty('--assistant-width', `${size.width}px`);
+      assistant.style.setProperty('--assistant-height', `${size.height}px`);
+    };
+    const saveSize = () => {
+      try { localStorage.setItem(SIZE_KEY, JSON.stringify(size)); } catch { /* 仅保留本次尺寸。 */ }
+    };
+    applySize(size);
     let gesture: {
       id: number; x: number; y: number; right: number; bottom: number;
       previous: Position; moved: boolean; target: Element;
+      resize: boolean; width: number; height: number; previousSize: Size;
     } | null = null;
     // 透明边框是安全区；绝对定位的 containing block 从边框内沿开始。
     const readBounds = () => {
@@ -52,7 +75,7 @@ export function useAssistantPosition() {
       if (gesture || !event.isPrimary || event.button !== 0) return;
       suppressToggle.current = false;
       if (!(event.target instanceof Element)) return;
-      const handle = event.target.closest('[data-assistant-drag-handle]');
+      const handle = event.target.closest('[data-assistant-drag-handle], [data-assistant-resize-handle]');
       if (!handle) return;
       const bounds = readBounds();
       const rect = assistant.getBoundingClientRect();
@@ -61,6 +84,10 @@ export function useAssistantPosition() {
         id: event.pointerId, x: event.clientX, y: event.clientY,
         right: bounds.right - rect.right, bottom: bounds.bottom - rect.bottom,
         previous: position, moved: false, target,
+        resize: handle.hasAttribute('data-assistant-resize-handle'),
+        width: assistant.querySelector('.study-assistant__content')!.getBoundingClientRect().width,
+        height: assistant.querySelector('.study-assistant__content')!.getBoundingClientRect().height,
+        previousSize: size,
       };
       // RAC 的 Press 会在 pointerdown 释放隐式捕获；随后捕获到原按钮，轻点仍能正常触发。
       // 捕获也确保快速拖到 HTML iframe 上时不会丢失后续移动/抬起事件。
@@ -76,9 +103,19 @@ export function useAssistantPosition() {
       if (!gesture.moved && Math.hypot(dx, dy) < 6) return;
       gesture.moved = true;
       suppressToggle.current = true;
-      assistant.dataset.dragging = 'true';
       event.preventDefault();
       const bounds = readBounds();
+      if (gesture.resize) {
+        assistant.dataset.resizing = 'true';
+        const maxHeight = parseFloat(assistant.style.getPropertyValue('--assistant-max-height')) - gesture.bottom;
+        applySize({
+          width: Math.min(Math.max(320, gesture.width - dx), bounds.width - gesture.right),
+          height: Math.min(Math.max(300, gesture.height - dy), maxHeight),
+        });
+        place(position);
+        return;
+      }
+      assistant.dataset.dragging = 'true';
       position = place({ right: (gesture.right - dx) / (bounds.width || 1), bottom: (gesture.bottom - dy) / (bounds.height || 1) });
     };
     const finish = (event: PointerEvent, cancelled: boolean) => {
@@ -86,19 +123,37 @@ export function useAssistantPosition() {
       const drag = gesture;
       gesture = null;
       delete assistant.dataset.dragging;
+      delete assistant.dataset.resizing;
       if (drag.moved) {
         if (cancelled) {
           position = drag.previous;
+          if (drag.resize) applySize(drag.previousSize);
           place(position);
         } else {
-          try { localStorage.setItem(POSITION_KEY, JSON.stringify(position)); } catch { /* 仅保留本次位置。 */ }
+          if (drag.resize) saveSize();
+          else try { localStorage.setItem(POSITION_KEY, JSON.stringify(position)); } catch { /* 仅保留本次位置。 */ }
         }
       }
       if (drag.target.hasPointerCapture(event.pointerId)) drag.target.releasePointerCapture(event.pointerId);
     };
     const up = (event: PointerEvent) => finish(event, false);
     const cancel = (event: PointerEvent) => finish(event, true);
-    const keydown = () => { suppressToggle.current = false; };
+    const keydown = (event: KeyboardEvent) => {
+      suppressToggle.current = false;
+      if (!(event.target instanceof Element) || !event.target.closest('[data-assistant-resize-handle]')) return;
+      if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
+      event.preventDefault();
+      const content = assistant.querySelector('.study-assistant__content')!.getBoundingClientRect();
+      const bounds = readBounds();
+      const rect = assistant.getBoundingClientRect();
+      const step = event.shiftKey ? 40 : 10;
+      applySize(event.key === 'Home' ? { width: 480, height: 640 } : {
+        width: Math.min(Math.max(320, content.width + (event.key === 'ArrowLeft' ? step : event.key === 'ArrowRight' ? -step : 0)), rect.right - (bounds.right - bounds.width)),
+        height: Math.min(Math.max(300, content.height + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0)), parseFloat(assistant.style.getPropertyValue('--assistant-max-height')) - (bounds.bottom - rect.bottom)),
+      });
+      place(position);
+      saveSize();
+    };
     const viewport = window.visualViewport;
     const sync = () => {
       // Safari 键盘与双指缩放会同时改变视觉视口的大小和偏移。

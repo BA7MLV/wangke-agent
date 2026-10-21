@@ -319,8 +319,7 @@ console.log(`   BASE = ${BASE}`);
   await page.goto('about:blank');
   await page.goto(`${BASE}/#/player/${VIDEO_ID}`, { waitUntil: 'load' });
   await page.waitForSelector('[data-testid="subs-row"]', { timeout: WAIT_MS });
-  // 讨论区默认是收起的 —— 条目只在展开后才挂载，得先点开才能验「有内容时不显示空态」
-  await page.click('[data-testid="comments-toggle"]');
+  // 讨论区默认展开，直接验证「有内容时不显示空态」。
   await page.waitForSelector('[data-testid="cmt-thread"]', { timeout: WAIT_MS });
   await page.waitForTimeout(900);
   const watch = await page.evaluate(() => window.__watch());

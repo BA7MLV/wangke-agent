@@ -35,7 +35,6 @@ try {
   });
   const chain = page.getByTestId('response-process');
   const toggle = page.getByTestId('response-process-toggle');
-  const full = page.getByTestId('response-process-expand-all');
   const body = page.locator('.reasoning-chain__body');
   const mode = (value) => page.waitForFunction(
     (expected) => document.querySelector('[data-testid="response-process"]')?.dataset.mode === expected, value);
@@ -43,22 +42,21 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await mode('live');
     assert.equal(await body.evaluate((el) => el.scrollHeight > el.clientHeight), true);
-    await full.click();
+    await toggle.click();
     await mode('expanded');
-    assert.equal(await full.getAttribute('aria-pressed'), 'true');
+    assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(await page.getByRole('button').count(), 1);
     assert.equal(await body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1), true);
     assert.equal(await chain.getAttribute('data-streaming'), 'true');
     assert.equal(await page.getByTestId('reasoning-elapsed').count(), 1);
     await page.evaluate(() => window.renderReasoning({ reasoning: '新增内容\n'.repeat(80) }));
     await mode('expanded');
-    await full.click();
-    await mode('live');
     await toggle.click();
     await mode('closed');
-    await full.click();
+    await toggle.click();
     await mode('expanded');
     await page.evaluate(() => window.renderReasoning({ active: false }));
-    await full.waitFor({ state: 'detached' });
+    await page.waitForFunction(() => !document.querySelector('[data-streaming]'));
     await mode('expanded');
     await toggle.click();
     await mode('closed');
@@ -68,7 +66,7 @@ try {
     await mode('closed');
     await page.evaluate(() => window.renderReasoning({ active: true }));
     await mode('live');
-    console.log(`PASS full expansion, live view, collapse and completion at ${width}px`);
+    console.log(`PASS single-arrow preview, full expansion, collapse and completion at ${width}px`);
   }
   assert.deepEqual(errors, []);
 } finally {
