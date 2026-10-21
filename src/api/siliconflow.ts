@@ -2,6 +2,7 @@ import type { ModelTarget } from '../store/settings';
 import { createDsmlRecoverer, recoverDsmlText, type DsmlPart } from './dsml';
 import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
 import { getModelMeta } from './modelMeta';
+import { parseDiscoveredModel, type DiscoveredModel } from './modelDiscoveryData';
 
 /**
  * OpenAI 兼容 API 客户端（浏览器直调）。
@@ -104,12 +105,12 @@ async function request(
 }
 
 /** 拉某家供应商在架的模型 id 列表（用于设置页的候选与「检查模型可用性」） */
-export async function listModels(
+export async function listModelDetails(
   s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
   signal?: AbortSignal,
-): Promise<string[]> {
+): Promise<DiscoveredModel[]> {
   const connection = { ...s, baseUrl: s.baseUrl.trim().replace(/\/+$/, ''), apiKey: s.apiKey.trim() };
-  const ids = new Set<string>();
+  const found = new Map<string, DiscoveredModel>();
   const cursors = new Set<string>();
   let path = '/models';
   for (let page = 0; page < 100; page++) {
@@ -117,15 +118,14 @@ export async function listModels(
     const data: unknown = await res.json();
     if (!data || typeof data !== 'object') throw new Error('模型列表响应格式无效');
     const body = data as { data?: unknown; models?: unknown; has_more?: unknown; last_id?: unknown };
-    const models = body.data ?? body.models;
+    const models = Array.isArray(data) ? data : body.data ?? body.models;
     if (!Array.isArray(models)) throw new Error('接口未返回模型列表，可手动添加模型');
     for (const model of models) {
-      if (!model || typeof model !== 'object') throw new Error('模型列表条目格式无效');
-      const value = model.id ?? model.name;
-      if (typeof value !== 'string' || !value.trim()) throw new Error('模型列表条目缺少有效 ID');
-      ids.add(value.trim());
+      const parsed = parseDiscoveredModel(model);
+      if (!parsed) throw new Error('模型列表条目缺少有效 ID');
+      if (!found.has(parsed.id)) found.set(parsed.id, parsed);
     }
-    if (body.has_more === undefined || body.has_more === false) return [...ids].sort();
+    if (body.has_more === undefined || body.has_more === false) return [...found.values()].sort((a, b) => a.id.localeCompare(b.id));
     if (body.has_more !== true || typeof body.last_id !== 'string' || !body.last_id || cursors.has(body.last_id)) {
       throw new Error('模型列表分页信息无效');
     }
@@ -133,6 +133,14 @@ export async function listModels(
     path = `/models?after_id=${encodeURIComponent(body.last_id)}`;
   }
   throw new Error('模型列表分页超出安全上限');
+}
+
+/** 兼容仅消费 ID 的调用方。 */
+export async function listModels(
+  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
+  signal?: AbortSignal,
+): Promise<string[]> {
+  return (await listModelDetails(s, signal)).map((m) => m.id);
 }
 
 export interface TranscriptionSegment {

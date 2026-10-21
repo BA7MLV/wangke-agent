@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { liveQuery } from 'dexie';
 import { Button } from '@heroui/react';
+import { Maximize, Minimize } from 'lucide-react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
@@ -145,13 +146,13 @@ export default function MaterialReader({ material, handleRef }: Props) {
   }
 
   return (
-    <MaterialInkProvider key={`${materialId}:${requestedUnit ?? ''}`} materialId={materialId}>
+    <MaterialInkProvider key={`${materialId}:${requestedUnit ?? ''}`} materialId={materialId} toolbarActions={
+      <Button isIconOnly variant="tertiary" onPress={toggleFullscreen} data-testid="reader-fullscreen"
+        aria-label={fullscreen ? '退出全屏' : '全屏阅读'}>
+        {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+      </Button>
+    }>
     <div className="mr-shell" ref={shellRef} data-fullscreen={fullscreen || undefined}>
-      <div className="mr-shell__actions">
-        <Button size="sm" variant="tertiary" onPress={toggleFullscreen} data-testid="reader-fullscreen" aria-label={fullscreen ? '退出全屏' : '全屏阅读'}>
-          {fullscreen ? '退出全屏' : '全屏阅读'}
-        </Button>
-      </div>
       {/*
         「不能检索」必须显式说明：否则用户会以为「问答坏了」，而真实原因在材料自己身上。
         扫描件（仅 PDF：有页面但无文本层）与无正文（压根没内容）是两回事，

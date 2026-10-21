@@ -1,4 +1,5 @@
-import { ApiError, listModels } from './siliconflow';
+import { ApiError, listModelDetails } from './siliconflow';
+import type { DiscoveredModel } from './modelDiscoveryData';
 import { modelListCacheKey, writeModelList, type ModelListConnection } from './modelListCache';
 
 interface Pending {
@@ -17,10 +18,10 @@ function wait(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-async function fetchModels(connection: ModelListConnection, signal: AbortSignal): Promise<string[]> {
+async function fetchModels(connection: ModelListConnection, signal: AbortSignal): Promise<DiscoveredModel[]> {
   for (let attempt = 0; ; attempt++) {
     try {
-      return await listModels(connection, signal);
+      return await listModelDetails(connection, signal);
     } catch (error) {
       signal.throwIfAborted();
       const transient = error instanceof TypeError || (error instanceof ApiError
@@ -44,9 +45,10 @@ export async function discoverModels(connection: ModelListConnection, signal: Ab
     const timer = setTimeout(() => controller.abort(new DOMException('拉取模型列表超时，请重试', 'TimeoutError')), 20_000);
     const entry: Pending = { controller, users: 0, promise: Promise.resolve([]) };
     entry.promise = fetchModels(connection, controller.signal)
-      .then((ids) => {
+      .then((models) => {
         controller.signal.throwIfAborted();
-        writeModelList(key, ids);
+        const ids = models.map((m) => m.id);
+        writeModelList(key, ids, models);
         return ids;
       })
       .catch((error) => { throw controller.signal.aborted ? controller.signal.reason : error; })

@@ -11,6 +11,8 @@
  * 不持久化原始凭据。同一端点下不同账户/协议的模型权限不能混用。
  */
 
+import { parseDiscoveredModel, type DiscoveredModel } from './modelDiscoveryData';
+
 const CACHE_KEY = 'wangke-model-list';
 
 /**
@@ -40,6 +42,7 @@ const TTL_MS = 24 * 3600 * 1000;
 
 interface ListEntry {
   ids: string[];
+  models?: DiscoveredModel[];
   updatedAt: number;
 }
 
@@ -51,6 +54,7 @@ interface ListCache {
 
 export interface CachedModelList {
   ids: string[];
+  models: DiscoveredModel[];
   updatedAt: number;
   /** true = 已过 TTL。调用方应当后台重拉，但可以先用这份顶着 */
   stale: boolean;
@@ -95,17 +99,19 @@ export function readModelList(cacheKey: string): CachedModelList | null {
   const entry = load().entries[key];
   if (!entry || !Array.isArray(entry.ids) || !entry.ids.every((id) => typeof id === 'string' && id.trim().length > 0)
     || !Number.isFinite(entry.updatedAt) || entry.updatedAt <= 0 || entry.updatedAt > Date.now()) return null;
-  return { ids: [...entry.ids], updatedAt: entry.updatedAt, stale: Date.now() - entry.updatedAt >= TTL_MS };
+  const models = Array.isArray(entry.models) ? entry.models.map(parseDiscoveredModel).filter((m): m is DiscoveredModel => m !== null)
+    : entry.ids.map((id) => ({ id }));
+  return { ids: [...entry.ids], models, updatedAt: entry.updatedAt, stale: Date.now() - entry.updatedAt >= TTL_MS };
 }
 
 /** 写一家的缓存。空列表也写 —— 「这家确实一个模型都没有」是一个值得记住的结论 */
-export function writeModelList(cacheKey: string, ids: readonly string[]): void {
+export function writeModelList(cacheKey: string, ids: readonly string[], models?: DiscoveredModel[]): void {
   const key = keyOf(cacheKey);
   if (!key) return;
   const cache = load();
   save({
     version: MODEL_LIST_CACHE_VERSION,
-    entries: { ...cache.entries, [key]: { ids: [...ids], updatedAt: Date.now() } },
+    entries: { ...cache.entries, [key]: { ids: [...ids], models, updatedAt: Date.now() } },
   });
 }
 

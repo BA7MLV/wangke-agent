@@ -6,7 +6,7 @@ export const MODEL_KIND_LABEL = {
 } as const;
 export type ModelKind = keyof typeof MODEL_KIND_LABEL;
 
-/** 只依据已声明的模态分类；未知与否定必须区分。生成模型优先按输出分类。 */
+/** 依据有效模态分类（未声明时默认文本）；生成模型优先按输出分类。 */
 export function modelKind(meta: ModelMeta | null): ModelKind {
   const input = meta?.inputModalities;
   const output = meta?.outputModalities;

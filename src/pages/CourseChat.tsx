@@ -23,14 +23,13 @@ import ChatAddMenu from '../components/ChatAddMenu';
 import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
 import { useChatAttachments } from '../store/chatAttachments';
 import VoiceInput from '../components/VoiceInput';
-import { StreamParagraph, ThinkLine, PendingReply, useMessageEnter } from '../components/motion';
-import ReasoningChain from '../components/ReasoningChain';
+import { StreamParagraph, PendingReply, useMessageEnter } from '../components/motion';
+import ResponseProcess from '../components/ResponseProcess';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
 import { useMessageDeletion } from '../components/useMessageDeletion';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
-import ToolTrace from '../components/ToolTrace';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
@@ -1345,31 +1344,9 @@ export default function CourseChat() {
                   ) : (
                     <div className="course-chat__bubble course-chat__bubble--ai">
                       <>
-                        {/* 思考链与工具链都是**过程记录**，独立于正文渲染。
-                            此前「有 hint 就整块换成 ThinkLine」，于是模型一调工具
-                            （hint 被设上）思考链就消失、跑完又冒出来 —— 一块内容闪两次。 */}
-                        {message.reasoning && (
-                          <ReasoningChain
-                            reasoning={message.reasoning}
-                            active={!!message.streaming && !message.content}
-                            since={message.reasoningStartedAt}
-                            elapsedMs={message.reasoningMs}
-                          />
-                        )}
-                        {message.tools && (
-                          <ToolTrace calls={message.tools} running={!!message.streaming} />
-                        )}
-                        {/* 状态行只在「还没有卡片要用户处理」时出现：提问卡挂着的时候，
-                            卡片本身就是「等你」的提示，再叠一行转圈的「等你选一个…」是重复 */}
-                        {message.hint && !message.content && !message.ask && !message.folderPlan
-                          && !message.widget && !message.widgetPreview && (
-                          <ThinkLine text={message.hint} />
-                        )}
-                        {/* 待回复：提问刚刚上屏、首个 token 还没来，且思考/工具都还没开始的纯等待窗口。
-                            有思考链（28 思考态）或状态行时它们已经在表示「在动」，这里就不重复。 */}
-                        {message.streaming && !message.content && !message.reasoning && !message.hint
-                          && !message.ask && !message.folderPlan && !message.widget && !message.widgetPreview
-                          && <PendingReply />}
+                        <ResponseProcess key={message.key} reasoning={message.reasoning} calls={message.tools}
+                          streaming={!!message.streaming} phase={message.processPhase} hint={message.hint}
+                          waiting={!!message.ask && !message.ask.picked || !!message.folderPlan && message.folderPlan.applied === 0} />
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
                             「先给结论、下面才是问题」。 */}

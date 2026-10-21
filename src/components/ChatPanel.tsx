@@ -42,14 +42,14 @@ import {
   toast,
   confirmDialog,
 } from '../ui';
-import { ThinkLine, StreamParagraph, PendingReply, useMessageEnter } from './motion';
-import ReasoningChain from './ReasoningChain';
+import { StreamParagraph, useMessageEnter } from './motion';
+import ResponseProcess from './ResponseProcess';
+import type { ProcessPhase } from '../utils/responseProcess';
 import VirtualMessages from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
 import { readChatPage } from '../store/chatHistory';
 import { framePatch } from '../utils/framePatch';
-import ToolTrace from './ToolTrace';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { MarkdownTable } from './MdTable';
 import { MarkdownStreamingProvider } from './markdown/streaming';
@@ -91,6 +91,7 @@ interface Props {
 }
 
 interface ChatMsg {
+  processPhase?: ProcessPhase;
   key: string;
   role: 'user' | 'ai';
   content: string;
@@ -1331,9 +1332,10 @@ export default function ChatPanel({
             reasoningTo = now;
             // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算，
             // 落库用不到（历史用终值 reasoningMs），所以不写进 ChatRow
-            updates.stream(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
+            updates.stream({ reasoning, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
           },
           onToolCallDelta: (call) => {
+            updates.stream({ processPhase: 'preparing' });
             // show_widget 的 code 是一个 JSON 字符串，不能直接把参数片段
             // 当 HTML。只在 format 已明确为 html 后，解码已经完整的
             // JSON 字符串前缀，再交给静态安全预览组件。
@@ -1346,7 +1348,7 @@ export default function ChatPanel({
           },
           onDelta: (text) => {
             answer += text;
-            updates.stream({ content: answer, hint: undefined });
+            updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
             // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
@@ -1354,7 +1356,7 @@ export default function ChatPanel({
             answer = '';
             roundsRan++;
             widgetPreview = undefined;
-            patchAi({ content: '', hint: undefined, widgetPreview: undefined });
+            patchAi({ content: '', hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
           onToolStart: (name, argsJson) => {
             /**
@@ -1367,8 +1369,8 @@ export default function ChatPanel({
             const hint = toolHint(name, argsJson);
             lastHint = hint;
             toolStartedAt = Date.now();
-            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
-            patchAi({ hint, tools: [...toolCalls] });
+            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running', reasoningOffset: reasoning.length });
+            patchAi({ hint, tools: [...toolCalls], processPhase: 'tool' });
           },
           onToolEnd: (name, result) => {
             // 顺序执行 ⇒ 正在跑的那条就是末尾那条。不按名字反查：同一个工具可能被连调多次
@@ -1381,7 +1383,7 @@ export default function ChatPanel({
                 result: summarizeToolResult(result),
                 ...(ms != null ? { ms } : {}),
               };
-              patchAi({ tools: [...toolCalls] });
+              patchAi({ tools: [...toolCalls], processPhase: 'preparing', hint: undefined });
             }
             // 参数校验 / 安全预检的软失败也不能把半成品留在最终回答里；
             // 模型下一轮会根据工具回执重试。
@@ -1858,30 +1860,11 @@ export default function ChatPanel({
                   <ArtifactEditProvider rowId={m.rowId} content={m.content} disabled={loading || !!m.streaming || !!m.error}
                     onSaved={(row) => setMsgs((prev) => prev.map((item) => item.rowId === row.id ? { ...item, content: row.content, widget: row.widget, widgets: row.widgets } : item))}>
                   <div className="chat-bubble chat-bubble--ai">
-                    {/* 思考链与工具链都**独立于正文**渲染：它们是这一轮的过程记录。
-                        此前这里的条件是「有 hint 就只显示那一行状态字」，于是模型一调工具
-                        （hint 被设上）整条思考链就消失、工具跑完又冒出来 —— 一块内容闪两次。
-                        现在状态行只负责「当前正在做什么」，过程记录留在它上面。 */}
-                    {m.reasoning && (
-                      <ReasoningChain
-                        reasoning={m.reasoning}
-                        active={!!m.streaming && !m.content}
-                        since={m.reasoningStartedAt}
-                        elapsedMs={m.reasoningMs}
-                      />
-                    )}
-                    {m.tools && <ToolTrace calls={m.tools} running={!!m.streaming} />}
-                    {m.hint && !m.content && !m.quiz && !m.widget && !m.widgetPreview ? (
-                      <ThinkLine text={m.hint} />
-                    ) : m.streaming && !m.content && !m.reasoning && !m.quiz && !m.widget && !m.widgetPreview ? (
-                      /* 待回复：提问刚上屏、首个 token 还没来的纯等待窗口。思考链/状态行/卡片
-                         任一在场时它们已经在表示「在动」，这里就不重复。 */
-                      <PendingReply />
-                    ) : (
-                      <>
+                    <ResponseProcess key={m.key} reasoning={m.reasoning} calls={m.tools} streaming={!!m.streaming}
+                      phase={m.processPhase} hint={m.hint} />
                         <WidgetMessage message={m} content={m.content} dark={widgetDark} rowId={m.rowId}
                           disabled={loading || !!m.streaming || !!m.error} onPrompt={(text) => void send(text)}>
-                        {(markdown) => htmlPreview !== undefined ? (
+                        {(markdown) => !markdown ? null : htmlPreview !== undefined ? (
                           <ArtifactEditor kind="html" location="html" source={htmlPreview}>
                           <StreamingHtmlPreview
                             html={htmlPreview}
@@ -1920,8 +1903,6 @@ export default function ChatPanel({
                         {m.widgetPreview && (
                           <StreamingHtmlPreview html={m.widgetPreview.html} />
                         )}
-                      </>
-                    )}
                   </div>
                   </ArtifactEditProvider>
                   {!m.streaming && m.content && m.rowId != null && (

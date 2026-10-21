@@ -682,7 +682,7 @@ function ProviderRow({
 
   return (
     <div
-      className={`overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
+      className={`relative overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
       data-testid={`provider-card-${provider.id}`}
       data-open={open ? 'true' : undefined}
     >
@@ -697,7 +697,7 @@ function ProviderRow({
           <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true">
             <Sym name={providerIcon} />
           </span>
-          <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
+          <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
             {STATUS_HINT[status]}
           </span>
         </span>
@@ -717,6 +717,19 @@ function ProviderRow({
           <span className="ml-auto text-xs text-muted max-[640px]:hidden">{open ? '详情' : '进入'}</span>
         </span>
       </button>
+      {removable && (
+        <Button
+          variant="ghost"
+          isIconOnly
+          size="sm"
+          className="absolute top-4 right-4 text-muted hover:text-danger max-[640px]:top-2 max-[640px]:right-2"
+          data-testid={`provider-remove-${provider.id}`}
+          onPress={onRemove}
+          aria-label={`删除供应商 ${provider.name || provider.id}`}
+        >
+          <Sym name="delete" />
+        </Button>
+      )}
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-border/70 px-5 pt-4 pb-5">
@@ -733,18 +746,6 @@ function ProviderRow({
               onChange={(e) => onChange({ name: e.target.value })}
               className="flex-1"
             />
-            {removable && (
-              <Button
-                variant="ghost"
-                isIconOnly
-                size="sm"
-                data-testid={`provider-remove-${provider.id}`}
-                onPress={onRemove}
-                aria-label={`删除供应商 ${provider.name || provider.id}`}
-              >
-                <Sym name="delete" />
-              </Button>
-            )}
           </div>
           <Field label="API 地址" testId={`field-base-url-${provider.id}`}>
             <Input
@@ -847,15 +848,15 @@ function ProviderRow({
             </div>
           </Field>
           <Field
-            label="能力数据源"
-            hint="models.dev 上的供应商 key（如 siliconflow-cn）。按供应商 + 模型 ID 精确匹配模态、上下文和定价；未匹配时标为能力未知。"
+            label="能力目录供应商（可选）"
+            hint="通常无需填写。默认按模型 ID 精确匹配能力；同名有歧义时，可指定 models.dev 供应商 key。不影响连接与模型列表。"
             testId={`field-catalog-${provider.id}`}
           >
             <Input
               value={provider.catalogId}
               data-testid={`catalog-${provider.id}`}
               aria-label="models.dev 供应商 key"
-              placeholder="siliconflow-cn"
+              placeholder="自动匹配（可选，如 siliconflow-cn）"
               onChange={(e) => onChange({ catalogId: e.target.value.trim() })}
             />
           </Field>
@@ -885,17 +886,12 @@ export default function ModelsModule() {
   const [keyError, setKeyError] = useState<string | null>(null);
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const { modelOptions, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
+  const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const revertTimerRef = useRef<number | undefined>(undefined);
 
-  /**
-   * 要拉哪些供应商的能力数据：所有**填了 models.dev key** 的那几家。
-   *
-   * 只拉登记过的（`refreshModelMeta` 内部也只保留这几家）：models.dev 全库 226 家，
-   * 整份缓存下来对 localStorage 纯浪费，而配额满了会静默让整份缓存写不进去。
-   */
+  /** 供应商 key 仅用于消除同名歧义；未填写也能刷新和使用能力目录。 */
   const catalogs = useMemo(
     () => settings.providers.map((p) => p.catalogId).filter((c) => c.trim().length > 0),
     [settings.providers],
@@ -904,7 +900,7 @@ export default function ModelsModule() {
 
   // 能力数据过期则静默刷新（离线/失败不影响使用，回退启发式）
   useEffect(() => {
-    if (catalogs.length === 0 || !isModelMetaStale(catalogs)) return;
+    if (!isModelMetaStale()) return;
     let cancelled = false;
     refreshModelMeta(catalogs)
       .then(() => {
@@ -918,10 +914,6 @@ export default function ModelsModule() {
 
   /** 只刷新目录；不改用户能力覆盖或手动设置的历史预算。 */
   const handleRefreshMeta = async () => {
-    if (catalogs.length === 0) {
-      toast.warning('没有供应商填写 models.dev 供应商 key，无从拉取能力数据');
-      return;
-    }
     setMetaRefreshing(true);
     try {
       const { count } = await refreshModelMeta(catalogs);
@@ -1061,7 +1053,7 @@ export default function ModelsModule() {
                 if (await confirmDialog({ headline: '删除供应商？', description: `删除「${selectedProvider.name || selectedProvider.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(selectedProvider);
               }}
             >
-              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} />
+              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} discovered={discoveredModels[selectedProvider.id]} />
             </ProviderRow>
           </div>
         ) : (
@@ -1105,7 +1097,7 @@ export default function ModelsModule() {
         )}
         <p className="mt-3 text-xs leading-relaxed text-muted">
           {metaInfo ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）` : '能力数据未拉取，可在供应商详情中更新'}
-          。用户配置的能力优先于 models.dev；未配置字段跟随目录。目录仅补充能力与定价，不作为可用模型列表。
+          。手动配置优先，接口声明其次，models.dev 只补全能力，不作为可用模型列表。未知模型默认文本输入/输出并开启工具调用。
         </p>
       </SectionCard>
       <SectionCard

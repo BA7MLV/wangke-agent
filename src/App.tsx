@@ -42,8 +42,7 @@ export default function App() {
   // 设置页拉 —— 首次使用或缓存结构升级后，元数据缺失会让「思考深度」控件直接不出现。
   // 失败静默：离线时回退到「只知道能不能思考」，其余功能不受影响。
   //
-  // 拉哪些家由本机登记的 `catalogId` 决定（多供应商下每家的能力表分开存），
-  // 所以依赖放在这串 key 上：用户去设置里改了供应商的能力数据源，重启后要重新拉。
+  // 目录只补全能力；自定义接入无需先登记 models.dev 供应商。
   const catalogsKey = useSettings((s) =>
     s.providers
       .map((p) => p.catalogId)
@@ -51,7 +50,7 @@ export default function App() {
       .join('\0'),
   );
   useEffect(() => {
-    if (!catalogsKey || !isModelMetaStale(catalogsKey.split('\0'))) return;
+    if (!isModelMetaStale()) return;
     void refreshModelMeta(catalogsKey.split('\0')).catch(() => {});
   }, [catalogsKey]);
 

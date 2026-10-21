@@ -2,9 +2,11 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Provider } from '../store/settings';
 import { modelListCacheKey, modelListIdentity, pruneModelLists, readModelList } from '../api/modelListCache';
 import { discoverModels } from '../api/modelDiscovery';
+import type { DiscoveredModel } from '../api/modelDiscoveryData';
 
 interface DiscoveryState {
   ids?: string[];
+  models?: DiscoveredModel[];
   note?: string;
   loading: boolean;
 }
@@ -28,8 +30,9 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
     setStates((prev) => ({ ...prev, [identity]: { ...prev[identity], loading: true } }));
     try {
       const ids = await discoverModels(provider, signal);
+      const cached = readModelList(await modelListCacheKey(provider));
       if (!current()) return null;
-      setStates((prev) => ({ ...prev, [identity]: { ids, note: `${ids.length} 个可用模型（列表不代表调用测试通过）`, loading: false } }));
+      setStates((prev) => ({ ...prev, [identity]: { ids, models: cached?.models, note: `${ids.length} 个可用模型（列表不代表调用测试通过）`, loading: false } }));
       return ids;
     } catch (error) {
       if (signal.aborted && sequences.current.get(identity) === sequence) {
@@ -56,7 +59,7 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
         configured.forEach((p, index) => {
           const identity = modelListIdentity(p);
           const cached = readModelList(keys[index]);
-          next[identity] = { ...prev[identity], ids: prev[identity]?.ids ?? cached?.ids,
+          next[identity] = { ...prev[identity], ids: prev[identity]?.ids ?? cached?.ids, models: prev[identity]?.models ?? cached?.models,
             loading: prev[identity]?.loading ?? false,
             note: prev[identity]?.note ?? (cached ? `${cached.ids.length} 个模型 · ${cached.stale ? '过期缓存' : '缓存'}` : undefined) };
         });
@@ -81,12 +84,14 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
   }, [providersKey, selectedProviderId, refresh]);
 
   const modelOptions: Record<string, string[]> = {};
+  const discoveredModels: Record<string, DiscoveredModel[]> = {};
   const providerNotes: Record<string, string> = {};
   for (const p of providers) {
     const state = states[modelListIdentity(p)];
     if (state?.ids) modelOptions[p.id] = state.ids;
+    if (state?.models) discoveredModels[p.id] = state.models;
     if (state?.note) providerNotes[p.id] = state.note;
   }
   const selected = providers.find((p) => p.id === selectedProviderId);
-  return { modelOptions, providerNotes, refresh, checking: selected ? states[modelListIdentity(selected)]?.loading ?? false : false };
+  return { modelOptions, discoveredModels, providerNotes, refresh, checking: selected ? states[modelListIdentity(selected)]?.loading ?? false : false };
 }

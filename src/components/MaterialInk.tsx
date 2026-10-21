@@ -11,6 +11,7 @@ import './material-ink.css';
 
 interface Change { add: InkStroke[]; remove: InkStroke[] }
 interface InkContextValue {
+  toolbarActions?: ReactNode;
   materialId: string;
   tool: InkTool;
   setTool: (tool: InkTool) => void;
@@ -42,7 +43,7 @@ const InkContext = createContext<InkContextValue | null>(null);
 export const useMaterialInk = () => useContext(InkContext)!;
 const EMPTY: InkStroke[] = [];
 
-export function MaterialInkProvider({ materialId, children }: { materialId: string; children: ReactNode }) {
+export function MaterialInkProvider({ materialId, children, toolbarActions }: { materialId: string; children: ReactNode; toolbarActions?: ReactNode }) {
   const [tool, setTool] = useState<InkTool>('smart');
   const [penColor, setPenColor] = useState('#dc2626');
   const [highlightColor, setHighlightColor] = useState('#facc15');
@@ -147,7 +148,7 @@ export function MaterialInkProvider({ materialId, children }: { materialId: stri
     }
     return bySurface;
   }, [rows]);
-  return <InkContext value={{ materialId, tool, setTool, color: highlighting ? highlightColor : penColor,
+  return <InkContext value={{ materialId, toolbarActions, tool, setTool, color: highlighting ? highlightColor : penColor,
     setColor: highlighting ? setHighlightColor : setPenColor, width, setWidth, finger, setFinger,
     nib, setNib, opacity: highlighting ? highlightOpacity : penOpacity,
     setOpacity: highlighting ? setHighlightOpacity : setPenOpacity, smoothing, setSmoothing,
@@ -201,12 +202,10 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
           <ToggleButton isSelected={ink.finger} onChange={ink.setFinger} data-testid="ink-finger">启用手指绘制</ToggleButton>
         </>}
         <Button variant="tertiary" data-testid="ink-excerpts" aria-expanded={showHighlights} onPress={() => setShowHighlights(!showHighlights)}>高亮摘录（{highlights.length}）</Button>
+        {ink.toolbarActions}
       </div>
-      <div className="ink-toolbar__hint">
-        <span>{ink.tool === 'read' ? '原生滚动 / 选字 · 智能批注可直接落笔' : ink.tool === 'text-highlight' ? '手指 / 笔拖过文字，按字和行高亮 · 一次后恢复智能批注 · 扫描件请用自由荧光笔' : ink.tool === 'highlight' ? '手指 / 笔自由划重点 · 一笔后恢复智能批注' : ink.tool !== 'smart' && ink.finger ? '兼容模式：手指绘制 · 完成后切回智能批注' : '触控笔直接写字 · 手指滑动 · 鼠标可在智能批注中选字'}</span>
-        {ink.error ? <span role="alert" className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span>
-          : <span role="status">{ink.status}</span>}
-      </div>
+      {ink.error ? <div className="ink-toolbar__hint" role="alert"><span className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span></div>
+        : <span className="sr-only" role="status">{ink.status}</span>}
       {showHighlights && <div className="ink-excerpts" data-testid="ink-excerpt-list">
         {!highlights.length && <p>还没有文字高亮。选择「文字荧光笔」，拖过要标记的文字。</p>}
         {highlights.map((stroke) => {

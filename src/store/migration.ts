@@ -261,23 +261,29 @@ export async function importMigrationZip(
     result.rowsAdded[t] = (result.rowsAdded[t] ?? 0) + n;
   };
 
-  // 1) folders：按名字合并，建立 旧id → 新id 映射
+  // 1) folders：同一路径下按名字合并，父目录先导入，重映射 parentId。
   onStep?.('正在导入文件夹…');
   const folderIdMap = new Map<number, number>();
   const existingFolders = await db.folders.toArray();
-  const folderByName = new Map(existingFolders.map((f) => [f.name, f.id!]));
-  for (const raw of data.folders ?? []) {
-    const row = decodeRow(raw) as { id?: number; name: string; createdAt: number };
+  const folderByName = new Map(existingFolders.map((f) => [JSON.stringify([f.parentId ?? null, f.name]), f.id!]));
+  const pendingFolders = (data.folders ?? []).map((raw) => decodeRow(raw) as { id?: number; name: string; createdAt: number; parentId?: number });
+  while (pendingFolders.length) {
+    let index = pendingFolders.findIndex((row) => row.parentId == null || folderIdMap.has(row.parentId) || !pendingFolders.some((parent) => parent.id === row.parentId));
+    // Malformed cyclic backups are recovered at root rather than looping forever.
+    if (index < 0) index = 0;
+    const row = pendingFolders.splice(index, 1)[0];
     const oldId = row.id;
-    const hit = folderByName.get(row.name);
+    const parentId = row.parentId == null ? undefined : folderIdMap.get(row.parentId);
+    const pathKey = JSON.stringify([parentId ?? null, row.name]);
+    const hit = folderByName.get(pathKey);
     if (hit != null) {
       if (oldId != null) folderIdMap.set(oldId, hit);
       continue;
     }
-    const rest: Record<string, unknown> = { ...row };
+    const rest: Record<string, unknown> = { ...row, parentId };
     delete rest.id;
     const newId = (await db.folders.add(rest as never)) as number;
-    folderByName.set(row.name, newId);
+    folderByName.set(pathKey, newId);
     if (oldId != null) folderIdMap.set(oldId, newId);
     bump('folders', 1);
   }

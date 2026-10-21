@@ -88,11 +88,12 @@ export interface VideoRow {
   coverState?: 'pending' | 'done' | 'skipped';
 }
 
-/** 首页视频分组文件夹（单层） */
+/** 资料文件夹；没有 parentId 的旧数据仍位于根目录。 */
 export interface FolderRow {
   id?: number;
   name: string;
   createdAt: number;
+  parentId?: number;
 }
 
 export interface FileRow {
@@ -257,9 +258,11 @@ export interface QuizState {
  * 参数与结果各压成一行 —— 一次字幕检索的结果可能上千字，存全文会让每条历史消息凭空胖一圈
  * （同 `ChatRow.widget` 那条取舍）。
  *
- * `status` 里只有 `running` 是流式中间态，**不会落库**：落库的都是 done / error。
+ * 正常完成是 done / error；挂起或中止时可能保留 running，非流式回放显示为「未完成」。
  */
 export interface ChatToolCall {
+  /** 工具开始时累计的 reasoning 字符数，用于重建「分析 → 工具 → 继续分析」。旧记录没有此字段。 */
+  reasoningOffset?: number;
   /** 工具协议名（如 `search_transcript`）。展示文案一律现算 */
   name: string;
   /** 这次调用在对谁做（检索词 / 技能名 / 起始时间），没有就是 undefined */

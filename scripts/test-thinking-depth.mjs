@@ -229,12 +229,11 @@ await test('元数据没收录的模型：一律不发深度参数（宁可没�
   assert.equal(depth('some/unknown-model'), false);
 });
 
-await test('没填能力数据源的供应商：查不到就是查不到，不按模型名兜底', () => {
-  // catalogId 为空时不能退化成「按模型名全局查」—— 那正是把两站拍平成一张表的老 bug：
-  // 同名模型在别家的能力会被当成本家的。
-  assert.equal(thinkingControlOf('', 'zai-org/GLM-5.2'), null);
-  assert.equal(hasThinkingDepth('', 'zai-org/GLM-5.2'), false);
-  assert.deepEqual(thinkingParams('', 'zai-org/GLM-5.2', 'high'), { enable_thinking: true });
+await test('无需登记目录供应商：唯一精确模型 ID 可以补全能力，不做模糊猜测', () => {
+  assert.deepEqual(thinkingControlOf('', 'zai-org/GLM-5.2'), { toggle: false, effort: ['high', 'max'] });
+  assert.equal(hasThinkingDepth('', 'zai-org/GLM-5.2'), true);
+  assert.deepEqual(thinkingParams('', 'zai-org/GLM-5.2', 'high'), { enable_thinking: true, reasoning_effort: 'high' });
+  assert.equal(hasThinkingDepth('', 'zai-org/GLM-5.2-production'), false);
 });
 
 await test('有深度能力的模型才显示深度控件', () => {
@@ -287,10 +286,11 @@ await test('同一个模型 id 在两家能力不同时，按供应商各取各�
     // 视觉能力也各查各的
     assert.equal(both.isVisionModel('siliconflow-cn', 'x/shared'), false);
     assert.equal(both.isVisionModel('siliconflow', 'x/shared'), true);
+    assert.equal(both.hasThinkingDepth('', 'x/shared'), false, 'ambiguous models never borrow a provider control automatically');
   })();
 });
 
-await test('只保留登记过的供应商，不把全库 226 家都塞进缓存', async () => {
+await test('全目录保留能力投影，不按登记供应商过滤', async () => {
   const many = Object.fromEntries(
     Array.from({ length: 50 }, (_, i) => [`x/m${i}`, { reasoning: false }]),
   );
@@ -302,17 +302,18 @@ await test('只保留登记过的供应商，不把全库 226 家都塞进缓存
     new Response(JSON.stringify(j), { status: 200, headers: { 'Content-Type': 'application/json' } });
   const one = await load('one');
   const { count } = await one.refreshModelMeta(['siliconflow-cn']);
-  assert.equal(count, 50, '未登记的那家不该进缓存');
-  assert.equal(one.getModelMeta('some-other', 'x/other'), null);
+  assert.equal(count, 51);
+  assert.equal(one.getModelMeta('', 'x/other').reasoning, true);
   assert.ok(one.getModelMeta('siliconflow-cn', 'x/m7'));
 });
 
-await test('一家都没登记时不必发请求', async () => {
+await test('一家都没登记也能获取能力目录', async () => {
   globalThis.fetch = async () => {
-    throw new Error('不该发请求');
+    return new Response(JSON.stringify({ test: { models: { local: { tool_call: false } } } }));
   };
   const none = await load('none');
-  assert.deepEqual(await none.refreshModelMeta([]), { count: 0 });
+  assert.deepEqual(await none.refreshModelMeta([]), { count: 1 });
+  assert.equal(none.getModelMeta('', 'local').toolCall, false);
 });
 
 await test('旧版本缓存被整体作废，而不是当成「不支持深度」', async () => {

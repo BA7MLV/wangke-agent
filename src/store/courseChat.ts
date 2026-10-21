@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { useChatNotifications } from './chatNotifications';
 import { readChatPage } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
+import type { ProcessPhase } from '../utils/responseProcess';
 import { catalogOf, getSettings, modelOverridesOf } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
@@ -117,6 +118,7 @@ import { normalizeCourseContextIds } from '../harness/courseContext';
 
 /** 视图用的一条消息（比 `ChatRow` 多的是流式中间态） */
 export interface CourseChatMessage {
+  processPhase?: ProcessPhase;
   key: string;
   /** 落库后的行 id：需要就地更新（提问作答、方案落库）时用它 */
   rowId?: number;
@@ -1227,6 +1229,9 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     if (resume) {
       await db.chats.where('id').equals(resume.rowId).modify((row) => {
         delete row.resume;
+        row.tools = row.tools?.map((call) => call.status === 'running' && call.name === resume.toolName
+          ? { ...call, status: 'done', result: '已收到你的回应' }
+          : call);
         if (resume.toolName === 'ask_user' && row.ask && resume.userContent != null) {
           row.ask.picked = resume.userContent;
           row.ask.answer = resume.askAnswer;
@@ -1235,6 +1240,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           row.folderPlan.applied = resume.planApplied;
         }
       });
+      const resumedTools = (await db.chats.get(resume.rowId))?.tools;
+      writeView(turnKey, { messages: readView(turnKey).messages.map((message) => message.rowId === resume.rowId
+        ? { ...message, tools: resumedTools }
+        : message) });
     }
 
     /**
@@ -1291,6 +1300,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         content: message.content,
         createdAt: Date.now(),
         reasoning: message.reasoning,
+        ...(message.tools ? { tools: message.tools } : {}),
         ...(message.widget ? { widget: message.widget } : {}),
         ...(message.widgets ? { widgets: message.widgets } : {}),
         ...(message.ask ? { ask: message.ask } : {}),
@@ -1314,6 +1324,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       updates.flush();
       const message = readView(turnKey).messages.find((m) => m.key === currentKey);
       if (!message) return;
+      // 用户回应后，这张卡的确认步骤已结束。过程记录留在原消息，不重复到下一条回答。
+      const closedTools = message.tools?.map((call): ChatToolCall =>
+        call.status === 'running' && (call.name === 'ask_user' || call.name === 'propose_folder_plan')
+          ? { ...call, status: 'done', result: '已收到你的回应' }
+          : call);
       let rowId = message.rowId;
       if (rowId != null) {
         // 挂起时已落过库：改成 update，并把检查点结掉（这一轮不再可续跑）
@@ -1321,6 +1336,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           row.content = message.content;
           if (message.reasoning) row.reasoning = message.reasoning;
           else delete row.reasoning;
+          if (closedTools) row.tools = closedTools;
           if (message.widget) row.widget = message.widget;
           else delete row.widget;
           if (message.widgets) row.widgets = message.widgets;
@@ -1339,6 +1355,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           content: message.content,
           createdAt: Date.now(),
           reasoning: message.reasoning,
+          ...(closedTools ? { tools: closedTools } : {}),
           ...(message.widget ? { widget: message.widget } : {}),
           ...(message.widgets ? { widgets: message.widgets } : {}),
           ...(message.ask ? { ask: message.ask } : {}),
@@ -1349,12 +1366,20 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       writeView(turnKey, {
         messages: [
           ...readView(turnKey).messages.map((m) =>
-            m.key === currentKey ? { ...m, rowId, streaming: false, hint: undefined } : m,
+            m.key === currentKey ? { ...m, rowId, tools: closedTools, streaming: false, hint: undefined } : m,
           ),
           { key: fresh, role: 'ai', content: '', streaming: true },
         ],
       });
       currentKey = fresh;
+      answer = '';
+      reasoning = '';
+      reasoningFrom = 0;
+      reasoningTo = 0;
+      toolCalls.length = 0;
+      toolStartedAt = 0;
+      lastNarration = '';
+      lastHint = '';
     };
 
     const holdAsk = (ask: AskUserData) =>
@@ -1552,11 +1577,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             if (first) reasoningFrom = now;
             reasoningTo = now;
             // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算（不落库，见字段注释）
-            updates.stream(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
+            updates.stream({ reasoning, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
           },
           onDelta: (delta) => {
             answer += delta;
-            updates.stream({ content: answer, hint: undefined });
+            updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
             // 上一轮流出的只是检索旁白，答案要等后面的轮次 —— 但**存一份**：
@@ -1565,15 +1590,16 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             answer = '';
             roundsRan++;
             widgetPreview = undefined;
-            patchAi({ content: '', hint: undefined, widgetPreview: undefined });
+            patchAi({ content: '', hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
           onToolStart: (name, argsJson) => {
             lastHint = toolHint(name, argsJson, '正在读取资料…');
             toolStartedAt = Date.now();
-            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
-            patchAi({ hint: lastHint, tools: [...toolCalls] });
+            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running', reasoningOffset: reasoning.length });
+            patchAi({ hint: lastHint, tools: [...toolCalls], processPhase: 'tool' });
           },
           onToolCallDelta: (call) => {
+            updates.stream({ processPhase: 'preparing' });
             if (call.name !== 'show_widget') return;
             const partial = readPartialWidgetArguments(call.arguments);
             if (partial.format !== 'html' || !partial.code) return;
@@ -1591,7 +1617,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
                 result: summarizeToolResult(result),
                 ...(ms != null ? { ms } : {}),
               };
-              patchAi({ tools: [...toolCalls] });
+              patchAi({ tools: [...toolCalls], processPhase: 'preparing', hint: undefined });
             }
             // 参数校验 / 安全预检失败，或参数因 token 截断而未执行，
             // 都不能把半成品留在最终回答里。
@@ -2105,6 +2131,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           ...(row.attachments ? { attachments: row.attachments } : {}),
           ...(row.reasoning ? { reasoning: row.reasoning } : {}),
           ...(row.reasoningMs != null ? { reasoningMs: row.reasoningMs } : {}),
+          ...(row.tools ? { tools: row.tools } : {}),
           ...(row.quiz ? { quiz: row.quiz } : {}),
           ...(row.ask ? { ask: { ...row.ask } } : {}),
           ...(row.folderPlan ? { folderPlan: { ...row.folderPlan } } : {}),
@@ -2413,16 +2440,16 @@ async function continueInterrupted(
           if (first) reasoningFrom = now;
           reasoningTo = now;
           // 续写同样要实时计时（这条回答的中途可能出现「接着想的几秒」）
-          patch(first ? { reasoning, reasoningStartedAt: now } : { reasoning });
+          patch({ reasoning, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
         },
         onDelta: (delta) => {
           answer += delta;
-          patch({ content: carried + answer, hint: undefined });
+          patch({ content: carried + answer, hint: undefined, processPhase: 'answering' });
         },
         onRoundStart: () => {
           if (answer.trim()) carried += answer;
           answer = '';
-          patch({ content: carried, hint: undefined });
+          patch({ content: carried, hint: undefined, processPhase: 'preparing' });
         },
         onStop: (info) => {
           stopped.push(info);

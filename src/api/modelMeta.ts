@@ -1,35 +1,24 @@
 /**
- * 模型能力元数据：来自 models.dev 的实时数据，**逐供应商**索引，
- * 本地缓存 + 7 天 TTL；用户覆盖按字段合并，不写入或修改目录缓存。
- *
- * ## 为什么缓存键要带供应商
- *
- * models.dev 的能力表本来就是「provider → models → 能力」的三层结构，而**同一个模型 id
- * 在不同供应商下能力可以不同**。实测全库 3914 个 id 里有 1150 个出现在多个供应商下，
- * 其中大量上下文窗口/模态不一致，例如：
- *
- * - `Qwen/Qwen3.6-35B-A3B`：国际站只支持文本，国内站支持图像 + 视频
- * - `thinkingmachines/Inkling`：deepinfra 524288 上下文，官方只有 65536
- *
- * 旧实现把 `siliconflow` 与 `siliconflow-cn` 拍平成一张 `id → 能力` 表，两者有 31 个同名 id
- * 其中 7 个能力冲突，取到的是「后合并的那一站」的值 —— 能用纯属合并顺序的巧合，
- * 上游改任一侧就会静默失效（视觉识图首当其冲）。现在键是 `catalogId \0 modelId`，冲突从根上消失。
+ * models.dev 只补全模型能力，不决定可用模型列表或连接配置。
+ * 保留供应商作用域以避免串用；未指定供应商时仅自动采用全目录唯一的精确 ID。
+ * 未知模型默认文本输入/输出、开启工具调用（与 OpenChamber 接入行为一致）。
  */
 
 const API_URL = 'https://models.dev/api.json';
 const CACHE_KEY = 'wangke-model-meta';
-const TTL_MS = 7 * 24 * 3600 * 1000;
+const TTL_MS = 10 * 60 * 1000;
 
 /**
  * 缓存结构版本。**字段含义变了就得 +1**，老缓存必须整体作废而不是被误读。
  *
  * v2 → v3：键从裸模型 id 变成 `catalogId \0 modelId`。不升版本的话老缓存里那批无前缀的键
  * 会被当成「catalog 为空的数据」，命中不上任何查询（表现为「能力数据凭空失效」）。
+ * v5：缓存全目录能力投影，不再要求登记供应商；未知模态/工具采用接入默认值，移除定价。
  *
  * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs、
  * scripts/test-thinking-depth.mjs）：版本写错的话那份夹具会被当成过期缓存丢掉。
  */
-export const MODEL_META_CACHE_VERSION = 4;
+export const MODEL_META_CACHE_VERSION = 5;
 
 export interface ModelMeta {
   name?: string;
@@ -41,7 +30,6 @@ export interface ModelMeta {
   declaredReasoning?: boolean;
   declaredToolCall?: boolean;
   structuredOutput?: boolean;
-  cost?: { input?: number; output?: number };
   lastUpdated?: string;
   context: number;
   output: number;
@@ -57,6 +45,8 @@ export interface ModelMeta {
 
 /** undefined = 跟随目录；false / [] = 用户明确关闭，不得被目录覆盖。 */
 export interface ModelOverrides {
+  /** 用户确认的目录供应商；仅影响能力匹配，不改变请求模型 ID 或连接。 */
+  metadataCatalogId?: string;
   contextWindow?: number;
   maxOutputTokens?: number;
   reasoningEffort?: string;
@@ -65,7 +55,7 @@ export interface ModelOverrides {
   toolCalling?: boolean;
 }
 
-export const MODEL_OVERRIDE_FIELDS = ['contextWindow', 'maxOutputTokens', 'reasoningEffort', 'inputCapabilities', 'outputCapabilities', 'toolCalling'] as const;
+export const MODEL_OVERRIDE_FIELDS = ['metadataCatalogId', 'contextWindow', 'maxOutputTokens', 'reasoningEffort', 'inputCapabilities', 'outputCapabilities', 'toolCalling'] as const;
 
 export function hasModelOverrides(value?: ModelOverrides): boolean {
   return !!value && MODEL_OVERRIDE_FIELDS.some((field) => value[field] !== undefined);
@@ -89,6 +79,7 @@ export interface ThinkingControl {
 
 interface MetaCache {
   version: number;
+  complete?: boolean;
   updatedAt: number;
   catalogs?: Record<string, number>;
   /** 键 = `${catalogId}\0${modelId}` */
@@ -109,7 +100,6 @@ interface ReasoningOption {
 interface ModelsDevEntry {
   name?: string;
   last_updated?: string;
-  cost?: { input?: number; output?: number };
   structured_output?: boolean;
   limit?: { context?: number; output?: number };
   modalities?: { input?: string[]; output?: string[] };
@@ -177,16 +167,40 @@ function load(): MetaCache | null {
   return mem;
 }
 
-/**
- * 查一个模型在某家供应商下的能力，并合并用户显式覆盖。
- * 未配置字段跟随目录；两者都没有时返回 null。
- *
- * `catalogId` 为空串时**不会**退化成「按模型名全局查」：那正是 v2 拍平表的老 bug，
- * 同名模型在别家的能力会被当成本家的。
- */
+export interface ModelMetaMatch {
+  status: 'exact' | 'ambiguous' | 'none';
+  candidates: { catalogId: string; modelId: string; meta: ModelMeta }[];
+}
+
+let indexedModels: MetaCache['models'] | undefined;
+let byModelId = new Map<string, ModelMetaMatch['candidates']>();
+
+/** 不归一化或模糊猜测模型名；多供应商同名条目必须由用户确认来源。 */
+export function matchModelMeta(catalogId: string, modelId: string): ModelMetaMatch {
+  const models = load()?.models;
+  if (models !== indexedModels) {
+    indexedModels = models;
+    byModelId = new Map();
+    for (const [key, meta] of Object.entries(models ?? {})) {
+      const [catalog, id] = key.split('\0');
+      if (!id) continue;
+      const entries = byModelId.get(id) ?? [];
+      entries.push({ catalogId: catalog, modelId: id, meta });
+      byModelId.set(id, entries);
+    }
+  }
+  const scoped = catalogId ? models?.[metaKey(catalogId, modelId)] : undefined;
+  if (scoped) return { status: 'exact', candidates: [{ catalogId, modelId, meta: scoped }] };
+  const candidates = byModelId.get(modelId) ?? [];
+  return { status: candidates.length === 1 ? 'exact' : candidates.length ? 'ambiguous' : 'none', candidates };
+}
+
+/** 用户字段覆盖目录；未知模型也可直接接入，默认值不冒充目录声明。 */
 export function getModelMeta(catalogId: string, modelId: string, overrides?: ModelOverrides): ModelMeta | null {
-  const catalog = catalogId ? load()?.models[metaKey(catalogId, modelId)] ?? null : null;
-  if (!hasModelOverrides(overrides)) return catalog;
+  if (!modelId) return null;
+  const match = matchModelMeta(overrides?.metadataCatalogId ?? catalogId, modelId);
+  const catalog = match.status === 'exact' ? match.candidates[0].meta : null;
+  if (!hasModelOverrides(overrides)) return catalog ?? parseModelMeta({});
   const meta = { ...(catalog ?? parseModelMeta({})) };
   if (overrides?.inputCapabilities !== undefined) {
     meta.inputModalities = [...overrides.inputCapabilities];
@@ -224,10 +238,10 @@ export function modelMetaInfo(): { updatedAt: number; count: number } | null {
   return c ? { updatedAt: c.updatedAt, count: Object.keys(c.models).length } : null;
 }
 
-export function isModelMetaStale(catalogs?: readonly string[]): boolean {
+export function isModelMetaStale(_catalogs?: readonly string[]): boolean {
   const c = load();
-  if (catalogs?.length) return catalogs.some((id) => !c?.catalogs?.[id] || Date.now() - c.catalogs[id] > TTL_MS);
-  return !c || Date.now() - c.updatedAt > TTL_MS;
+  if (!c?.complete) return true;
+  return Date.now() - c.updatedAt > TTL_MS;
 }
 
 export function catalogMetaUpdatedAt(catalogId: string): number | null {
@@ -245,71 +259,54 @@ export function parseModelMeta(m: ModelsDevEntry): ModelMeta {
   const input = modalities(m.modalities?.input);
   return {
     name: typeof m.name === 'string' ? m.name : undefined,
-    inputModalities: input,
-    outputModalities: modalities(m.modalities?.output),
+    inputModalities: input ?? ['text'],
+    outputModalities: modalities(m.modalities?.output) ?? ['text'],
     declaredContext: context,
     declaredOutput: output,
     declaredReasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
     declaredToolCall: typeof m.tool_call === 'boolean' ? m.tool_call : undefined,
     structuredOutput: typeof m.structured_output === 'boolean' ? m.structured_output : undefined,
-    cost: m.cost ? { input: finiteNumber(m.cost.input), output: finiteNumber(m.cost.output) } : undefined,
     lastUpdated: typeof m.last_updated === 'string' ? m.last_updated : undefined,
     context: context || 131072,
     output: output ?? 8192,
     vision: !!input?.includes('image'),
     reasoning: m.reasoning === true,
-    toolCall: m.tool_call === true,
+    toolCall: m.tool_call !== false,
     thinking: parseThinking(m),
   };
 }
 
-/**
- * 拉取 models.dev 并按 `catalogId \0 modelId` 建能力表。
- *
- * @param catalogs 用户登记过的 models.dev 供应商 key（`Provider.catalogId`）。
- *   **只保留这几家的数据** —— models.dev 全库 226 家 / 3914 个模型，整份存下来对
- *   localStorage 是纯浪费（而配额满了会静默让整份缓存写不进去）。
- *   传空数组则整份都不保留（没有登记就没有查询入口）。
- */
-const inFlight = new Map<string, Promise<{ count: number }>>();
+/** 全目录仅缓存能力投影；供应商 key 是可选匹配提示，不限制下载范围。 */
+let inFlight: Promise<{ count: number }> | undefined;
 
-export function refreshModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
-  const ids = [...new Set(catalogs.map((id) => id.trim()).filter(Boolean))].sort();
-  const key = JSON.stringify(ids);
-  const pending = inFlight.get(key);
-  if (pending) return pending;
-  const request = fetchModelMeta(ids).finally(() => inFlight.delete(key));
-  inFlight.set(key, request);
-  return request;
+export function refreshModelMeta(_catalogs?: readonly string[]): Promise<{ count: number }> {
+  if (inFlight) return inFlight;
+  inFlight = fetchModelMeta().finally(() => { inFlight = undefined; });
+  return inFlight;
 }
 
-async function fetchModelMeta(catalogs: readonly string[]): Promise<{ count: number }> {
-  const wanted = [...new Set(catalogs.filter((c) => c.trim().length > 0))];
-  if (wanted.length === 0) return { count: 0 };
-
+async function fetchModelMeta(): Promise<{ count: number }> {
   const res = await fetch(API_URL, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
   const json = (await res.json()) as Record<string, { models?: Record<string, ModelsDevEntry> }>;
 
   const models: Record<string, ModelMeta> = {};
   const refreshed: string[] = [];
-  for (const catalog of wanted) {
-    const src = json?.[catalog]?.models;
-    if (!src) continue;
+  for (const [catalog, provider] of Object.entries(json ?? {})) {
+    const src = provider?.models;
+    if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
     refreshed.push(catalog);
     for (const [id, m] of Object.entries(src)) {
-      if (!m || typeof m !== 'object') continue;
+      if (!m || typeof m !== 'object' || Array.isArray(m)) continue;
       models[metaKey(catalog, id)] = parseModelMeta(m);
     }
   }
   if (Object.keys(models).length === 0) {
-    throw new Error(`models.dev 里没有 ${wanted.join(' / ')} 的模型数据`);
+    throw new Error('models.dev 未返回有效模型能力数据');
   }
-  const previous = load();
   const updatedAt = Date.now();
-  const kept = Object.fromEntries(Object.entries(previous?.models ?? {}).filter(([key]) => !refreshed.includes(key.split('\0')[0])));
-  mem = { version: MODEL_META_CACHE_VERSION, updatedAt, models: { ...kept, ...models },
-    catalogs: { ...previous?.catalogs, ...Object.fromEntries(refreshed.map((id) => [id, updatedAt])) } };
+  mem = { version: MODEL_META_CACHE_VERSION, complete: true, updatedAt, models,
+    catalogs: Object.fromEntries(refreshed.map((id) => [id, updatedAt])) };
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(mem));
   } catch {

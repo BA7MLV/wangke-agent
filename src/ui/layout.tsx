@@ -47,7 +47,7 @@ function useIsNarrow(): boolean {
  * 侧栏、顶栏、内容列会跟着令牌一起变，不需要逐条改 CSS。
  *
  * 侧栏宽屏可折叠、窄屏走抽屉，两条路径各只有一个入口：
- *   - 宽屏：顶栏那颗 `panel_left`，收起是**整块隐藏**、内容区铺满（不另做图标窄条态 ——
+ *   - 宽屏：侧栏顶部的 `panel_left` 收起，收起后顶栏提供展开入口；**整块隐藏**、内容区铺满（不另做图标窄条态 ——
  *     收成窄条要额外一整套收起态样式，而内容一窄对阅读页反而更差）；
  *   - 窄屏：顶栏汉堡，弹 Drawer。
  * 折叠状态见 `ui/rail.ts`（全局一份 + 记本机）。
@@ -600,6 +600,22 @@ export function PageShell({
       ? 'page-shell__content mx-auto w-full max-w-[var(--page-content-max,100%)] px-5 pb-5'
       : 'page-shell__content w-full px-5 pb-5';
 
+  const railToggle = (
+    <Button
+      isIconOnly
+      variant="ghost"
+      className="relative shrink-0 rounded-full"
+      data-testid="nav-rail-toggle"
+      aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+      aria-pressed={railCollapsed}
+      onPress={toggleRail}
+    >
+      <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
+      <DotBadge open={hasUnread} className="nav-unread"
+        label="有已完成的会话未查看" testId="nav-unread-dot" />
+    </Button>
+  );
+
   return (
     <div className={rootClass} ref={rootRef}>
       <a
@@ -623,6 +639,9 @@ export function PageShell({
             data-testid="nav-rail"
             aria-label="主导航"
           >
+            <div className="mb-2 flex shrink-0 justify-end">
+              {railToggle}
+            </div>
             <Sidebar
               rail={rail}
               recent={recent}
@@ -661,8 +680,7 @@ export function PageShell({
              * 这是刻意的 —— 顶栏回答的是「这块画布叫什么」，内容列是「画布里的东西」，
              * 两者同宽不是必须成立的关系，而「跨页面位置一致」是用户直接看得见的。
              *
-             * ⚠️ 加了折叠开关之后，「**标题**左缘 == 内容列左缘」按几何本来也已不成立
-             * （开关 34px + gap 6px 把标题往右推 40px），顶栏最左边本来就有控件。
+              * 侧栏收起或窄屏时，顶栏的导航入口仍会把标题向右推；展开时入口在侧栏内。
              *
              * 右内边距仍保留横屏的安全区避让：那是刘海 / 圆角，与对齐无关。
              */
@@ -681,15 +699,8 @@ export function PageShell({
               <span />
               <span />
             </div>
-            {/* 两档各一颗，语义不同也不重复：
-                窄屏的侧栏在抽屉里（没渲染，只能开），汉堡是**开抽屉**；
-                宽屏的侧栏在页面里，`panel_left` 是**收 / 放这块画布**。
-                同一档里只留一颗 —— 留一个点了没反应的按钮比没有按钮更伤信任。
-
-                三颗顶栏左侧的圆形键（这两颗开关 + 返回键）尺寸/描边/底色一律由
-                `layout.css` 的 `[data-testid='nav-rail-*']` 那条规则给，tsx 这里
-                只管语义 —— 这套外观原先只挂在主页（course-chat.css），切页面就
-                「掉一层皮」，已提到共享外壳，见那条规则的注释。 */}
+            {/* 窄屏在顶栏开抽屉；宽屏展开时开关在侧栏内，收起后才在顶栏提供展开入口。
+                圆形键的共享外观见 layout.css 的导航按钮规则。 */}
             {rail && isNarrow && (
               <Button
                 isIconOnly
@@ -704,22 +715,7 @@ export function PageShell({
                   label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>
             )}
-            {rail && !isNarrow && (
-              <Button
-                isIconOnly
-                variant="ghost"
-                className="relative shrink-0 rounded-full"
-                data-testid="nav-rail-toggle"
-                aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
-                /* aria-pressed 让「现在是不是收着的」不只存在于视觉里 */
-                aria-pressed={railCollapsed}
-                onPress={toggleRail}
-              >
-                <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
-                <DotBadge open={hasUnread} className="nav-unread"
-                  label="有已完成的会话未查看" testId="nav-unread-dot" />
-              </Button>
-            )}
+            {rail && !isNarrow && railCollapsed && railToggle}
             {onBack && (
               <Button
                 isIconOnly

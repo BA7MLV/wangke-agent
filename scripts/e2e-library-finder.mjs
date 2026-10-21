@@ -91,6 +91,7 @@ try {
     const { db } = await import('/src/store/db.ts');
     return (await db.videos.get('finder-paper')).folderId === 1;
   });
+  await page.locator('[data-video-id="finder-paper"]').waitFor({ state: 'detached' });
   await folder.dblclick();
   await page.locator('[data-video-id="finder-paper"]').waitFor();
   assert.equal(await page.getByTestId('video-item').count(), 2);
@@ -102,6 +103,39 @@ try {
     return (await db.videos.toArray()).some((video) => video.name === '复习提纲' && video.folderId === 1);
   });
   await page.getByRole('button', { name: '后退', exact: true }).click();
+  // Move a folder with its contents, then move it back using the path bar.
+  await page.locator('[data-group-key="1"] .finder-item__content').dragTo(page.locator('[data-group-key="2"] .finder-item__name'));
+  await page.waitForFunction(async () => {
+    const { db } = await import('/src/store/db.ts');
+    return (await db.folders.get(1)).parentId === 2;
+  });
+  await page.locator('[data-group-key="2"]').dblclick();
+  await page.locator('[data-group-key="1"]').waitFor();
+  await page.locator('[data-group-key="1"] .finder-item__name').dragTo(page.locator('.finder-path-target').first());
+  await page.waitForFunction(async () => {
+    const { db } = await import('/src/store/db.ts');
+    return (await db.folders.get(1)).parentId == null;
+  });
+  await page.locator('.finder-path-target').first().getByRole('button').click();
+  // Finder-style mixed multi-selection drag in list layout.
+  await page.getByLabel('列表视图', { exact: true }).click();
+  await page.locator('[data-group-key="3"]').click();
+  await page.locator('[data-video-id="finder-word"]').click({ modifiers: ['ControlOrMeta'] });
+  assert.equal(await page.locator('.finder-item[aria-selected="true"]').count(), 2);
+  await page.locator('[data-group-key="3"] .finder-item__name').dragTo(page.locator('[data-group-key="2"] .finder-item__name'));
+  await page.waitForFunction(async () => {
+    const { db } = await import('/src/store/db.ts');
+    return (await db.folders.get(3)).parentId === 2 && (await db.videos.get('finder-word')).folderId === 2;
+  });
+  await page.locator('[data-group-key="3"]').waitFor({ state: 'detached' });
+  await page.locator('[data-group-key="2"]').dblclick();
+  await page.locator('[data-group-key="3"]').waitFor();
+  await page.locator('[data-video-id="finder-word"]').waitFor();
+  // The entire path remains navigable after nesting.
+  await page.locator('[data-group-key="3"]').dblclick();
+  assert.equal(await page.locator('.finder-path-target').count(), 3);
+  await page.locator('.finder-path-target').first().getByRole('button').click();
+  await page.getByLabel('图标视图', { exact: true }).click();
   await mkdir('.openchamber', { recursive: true });
   await page.getByText(/已导入《复习提纲.md》/).waitFor({ state: 'hidden' });
   await page.mouse.move(1400, 900);
@@ -114,8 +148,9 @@ try {
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.screenshot({ path: '.openchamber/finder-v2-mobile.png' });
   assert.deepEqual(errors, []);
-  console.log('PASS: selection, double-click, keyboard, history, search, context menu, rename, drag/move, import destination, view switch, mobile layout');
+  console.log('PASS: marquee, selection, keyboard, history, search, context menu, rename, file/folder/mixed drag, nested paths, import destination, both layouts, mobile layout');
 } catch (error) {
+  console.error(await page.evaluate(async () => { const { db } = await import('/src/store/db.ts'); return { folders: await db.folders.toArray(), videos: await db.videos.toArray() }; }));
   console.error(await page.locator('.finder-window').innerText());
   await page.screenshot({ path: '.openchamber/finder-test-failure.png' });
   throw error;

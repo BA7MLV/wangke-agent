@@ -77,12 +77,8 @@ export interface Provider {
   /** 这家能填哪些槽位（= 实现了哪些端点）。用户手动声明 */
   serves: ModelSlot[];
   /**
-   * models.dev 上的供应商 key（如 `siliconflow-cn`），用于查模型能力数据。留空则拿不到元数据。
-   *
-   * 为什么必须按它索引而不是按 baseUrl：models.dev 的能力表是**逐供应商**给的，
-   * 同一个模型 id 在不同供应商下能力可以不同（实测 `Qwen/Qwen3.6-35B-A3B` 在
-   * 硅基流动国际站只支持文本、国内站支持图像+视频；`thinkingmachines/Inkling`
-   * 在 deepinfra 是 524288 上下文、官方只有 65536）。把两站拍平成一张表会静默取错值。
+   * 可选的 models.dev 供应商匹配提示（如 `siliconflow-cn`）。
+   * 留空时仅采用全目录唯一的精确模型 ID；同名有歧义时不自动套用。
    */
   catalogId: string;
 }
@@ -565,7 +561,7 @@ export function visionTargetOrNull(s: Settings): ModelTarget | null {
   return meta?.vision ? target : null;
 }
 
-/** 只查能力数据源的 key（元数据缓存按它索引；没登记就没有元数据） */
+/** 可选的能力目录供应商提示，不是连接或能力查询的前置条件。 */
 export function catalogOf(s: Settings, providerId: string): string {
   return providerOf(s, providerId)?.catalogId ?? '';
 }
