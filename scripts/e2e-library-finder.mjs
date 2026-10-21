@@ -135,12 +135,14 @@ try {
   await page.locator('[data-video-id="finder-word"]').click({ modifiers: ['ControlOrMeta'] });
   // Capture real drag feedback before releasing the mixed selection.
   const dragFrom = await page.locator('[data-group-key="3"] .finder-item__name').boundingBox();
-  const dragTo = await page.locator('[data-group-key="2"] .finder-item__name').boundingBox();
+  const dragTo = await page.locator('[data-group-key="2"]').boundingBox();
   await page.mouse.move(dragFrom.x + 8, dragFrom.y + 8);
   await page.mouse.down();
-  await page.mouse.move(dragTo.x + 8, dragTo.y + 8, { steps: 10 });
+  // Hit the option's outer padding, not its icon/name/content wrapper.
+  await page.mouse.move(dragTo.x + dragTo.width - 2, dragTo.y + dragTo.height / 2, { steps: 10 });
   assert.equal(await page.locator('.finder-drag-preview__badge').innerText(), '2');
   assert.equal(await page.locator('[data-group-key="2"] .finder-item__content').getAttribute('data-drop-target'), 'true');
+  assert.equal(await page.locator('[data-group-key="2"] .finder-item__content').evaluate((el) => getComputedStyle(el).backgroundColor), await page.locator('[data-group-key="3"]').evaluate((el) => getComputedStyle(el).backgroundColor), 'destination must visibly use the selected accent, including on row padding');
   await page.screenshot({ path: '.openchamber/finder-drag-feedback.png' });
   await page.mouse.up();
   await page.locator('[data-group-key="3"]').waitFor({ state: 'detached' });

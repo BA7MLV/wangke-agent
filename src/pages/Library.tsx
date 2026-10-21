@@ -1242,7 +1242,10 @@ export default function Library() {
       } else clearSpring();
     },
     onDragLeave: (event: React.DragEvent) => {
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { clearSpring(); setDropFolder(null); setDropHint('拖到文件夹以移动；停留片刻可打开文件夹'); }
+      // Child-to-padding transitions fire dragleave after the new target's
+      // dragenter. Do not erase that new highlight; the canvas resolves it.
+      const window = event.currentTarget.closest('.finder-window');
+      if (!window?.contains(event.relatedTarget as Node | null)) { clearSpring(); setDropFolder(null); setDropHint('拖到文件夹以移动；停留片刻可打开文件夹'); }
     },
     onDrop: (event: React.DragEvent) => {
       if (!event.dataTransfer.types.includes('application/x-library-items')) return;
@@ -1264,6 +1267,17 @@ export default function Library() {
   const pathDropProps = (target: number | null) => {
     const props = folderDropProps(target, true);
     return { onDragEnterCapture: props.onDragOver, onDragOverCapture: props.onDragOver, onDropCapture: props.onDrop, onDragLeave: props.onDragLeave };
+  };
+
+  // Resolve the entire option at the canvas boundary, before React Aria's
+  // item/press handlers can swallow native drag events on its descendants.
+  const finderCanvasDragOver = (event: React.DragEvent<HTMLDivElement>) => {
+    if (!event.dataTransfer.types.includes('application/x-library-items')) return;
+    const folder = (event.target as Element).closest<HTMLElement>('[data-group-key]');
+    folderDropProps(folder ? Number(folder.dataset.groupKey) : currentFolder?.folder?.id ?? null, !!folder).onDragOver(event);
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (event.clientY < rect.top + 40) event.currentTarget.scrollBy(0, -16);
+    else if (event.clientY > rect.bottom - 40) event.currentTarget.scrollBy(0, 16);
   };
 
   /** 移动弹窗内当场新建文件夹并选中 */
@@ -1664,12 +1678,11 @@ export default function Library() {
         {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
         ref={canvasRef}
-        onDragOverCapture={(event) => {
-          if (!finderDragKeys.current.length) return;
-          const rect = event.currentTarget.getBoundingClientRect();
-          const edge = 40;
-          if (event.clientY < rect.top + edge) event.currentTarget.scrollBy(0, -16);
-          else if (event.clientY > rect.bottom - edge) event.currentTarget.scrollBy(0, 16);
+        onDragEnterCapture={finderCanvasDragOver}
+        onDragOverCapture={finderCanvasDragOver}
+        onDropCapture={(event) => {
+          const folder = (event.target as Element).closest<HTMLElement>('[data-group-key]');
+          folderDropProps(folder ? Number(folder.dataset.groupKey) : currentFolder?.folder?.id ?? null).onDrop(event);
         }}
         onPointerDownCapture={() => { finderPressSelection.current = [...selection]; }}
         onPointerDown={marquee.onPointerDown}

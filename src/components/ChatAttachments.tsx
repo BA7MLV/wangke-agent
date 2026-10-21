@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Modal } from '@heroui/react';
+import { Button, Modal, Spinner } from '@heroui/react';
 import { useChatAttachments } from '../store/chatAttachments';
 import { attachmentSize, type ChatAttachment } from '../chat/attachments';
 import { downloadAttachment, readAttachmentBlob } from '../chat/prepareAttachment';
@@ -68,14 +68,30 @@ function ChatImage({ file, images, draft = false }: { file: ChatAttachment; imag
   </>;
 }
 
+function PendingImage({ file, removing }: { file: File; removing: boolean }) {
+  const [preview, setPreview] = useState('');
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setPreview(url);
+    return () => URL.revokeObjectURL(url);
+  }, [file]);
+  return <div className="chat-image chat-image--draft chat-image-pending" aria-busy="true" aria-label={file.name}>
+    {preview && <img src={preview} alt="" />}
+    <span className="chat-image-pending__overlay" role="status" aria-label={removing ? '正在移除图片' : '图片加载中'}>
+      <span className="chat-image-pending__indicator"><Spinner size="sm" color="current" aria-hidden="true" /></span>
+      <span className="sr-only">{removing ? '正在移除图片' : '图片加载中'}</span>
+    </span>
+  </div>;
+}
+
 export function ChatAttachmentDraft() {
   const { items, error, retry, remove } = useChatAttachments();
   const images = items.flatMap((item) => item.value?.dataUrl ? [item.value] : []);
   if (!items.length && !error) return null;
   return <div className="chat-attachments" data-testid="chat-attachment-draft" aria-label="待发送附件">
-    {items.map((item) => item.value?.dataUrl && !item.error ? <div key={item.id} className="chat-image-draft" data-testid="chat-attachment" data-state="ready">
-      <ChatImage file={item.value} images={images} draft />
-      <Button isIconOnly size="sm" variant="secondary" className="chat-image-draft__remove" aria-label={`移除附件 ${item.file.name}`} onPress={() => void remove(item.id)}><Sym name="close" /></Button>
+    {items.map((item) => !item.error && (item.value?.dataUrl || /^image\/(png|jpeg|webp|gif)$/.test(item.file.type) || /\.(png|jpe?g|webp|gif)$/i.test(item.file.name)) ? <div key={item.id} className="chat-image-draft" data-testid="chat-attachment" data-state={item.value ? 'ready' : 'loading'}>
+      {item.value?.dataUrl ? <ChatImage file={item.value} images={images} draft /> : <PendingImage file={item.file} removing={item.phase === '移除中'} />}
+      <Button isIconOnly size="sm" variant="secondary" className="chat-image-draft__remove" aria-label={`移除附件 ${item.file.name}`} isDisabled={item.phase === '移除中'} onPress={() => void remove(item.id)}><Sym name="close" /></Button>
     </div> : <div key={item.id} className="chat-attachments__item" data-testid="chat-attachment" data-state={item.error ? 'error' : item.value ? 'ready' : 'loading'}>
       {item.value?.dataUrl ? <img className="chat-attachments__thumb" src={item.value.dataUrl} alt={item.file.name} /> : <Sym name="description" />}
       <div className="chat-attachments__info">

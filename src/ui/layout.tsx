@@ -178,7 +178,7 @@ export interface PageShellProps {
   /** 宽屏左侧导航。窄屏由 CSS 隐藏，此时导航走顶栏汉堡按钮弹出的 Drawer。 */
   rail?: NavConfig;
   /** 侧栏 Recent 分组（会话列表等）。传了就渲染这一段 */
-  recent?: { label: string; items: RecentItem[] };
+  recent?: { label: string; items: RecentItem[]; loading?: boolean };
   /** 侧栏底部自定义按钮（如「设置」入口） */
   railFooter?: ReactNode;
   children: ReactNode;
@@ -193,7 +193,7 @@ function Sidebar({
   onNavigate,
 }: {
   rail: NavConfig;
-  recent?: { label: string; items: RecentItem[] };
+  recent?: { label: string; items: RecentItem[]; loading?: boolean };
   railFooter?: ReactNode;
   navigationId: string;
   /** 窄屏点完就该收起抽屉，否则菜单盖住刚打开的页面 */
@@ -282,7 +282,7 @@ function Sidebar({
         ))}
       </ListBox>
 
-      {recent && recent.items.length === 0 && (
+      {recent && !recent.loading && recent.items.length === 0 && (
         <div className="mt-4 px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
       )}
 

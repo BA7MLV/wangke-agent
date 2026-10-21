@@ -6,6 +6,10 @@ import { useCourseChat } from '../store/courseChat';
 import { confirmDialog, promptDialog, Sym, toast } from '../ui';
 import type { RecentItem } from '../ui/layout';
 
+// 页面切换会重挂 hook，但最近会话不应因此退回空态。
+// 只缓存查询结果；每次挂载仍订阅 liveQuery，删除、后台消息等会继续实时更新。
+let cachedActivity: Map<number, number> | null = null;
+
 /** 主页和资料页共用会话筛选、排序、状态与操作；只有主页显示当前会话高亮。 */
 export function useRecentChats(showActive = false) {
   const navigate = useNavigate();
@@ -13,9 +17,11 @@ export function useRecentChats(showActive = false) {
   const activeId = useCourseChat((s) => s.activeId);
   const runningIds = useCourseChat((s) => s.runningIds);
   const awaitingIds = useCourseChat((s) => s.awaitingIds);
-  const [activity, setActivity] = useState<Map<number, number>>(() => new Map());
+  const ready = useCourseChat((s) => s.ready);
+  const [activity, setActivity] = useState(() => cachedActivity);
 
   useEffect(() => {
+    if (!ready) return;
     // 仅展示发送过消息的会话，后台回答和跨标签页更新也刷新排序。
     const subscription = liveQuery(async () => new Map(await Promise.all(
       sessions.filter((session) => session.id != null).map(async (session) => {
@@ -30,18 +36,24 @@ export function useRecentChats(showActive = false) {
         return [session.id!, user ? latest!.createdAt : 0] as const;
       }),
     ))).subscribe({
-      next: setActivity,
+      next: (next) => {
+        cachedActivity = next;
+        setActivity(next);
+      },
       error: () => toast.error('最近会话加载失败，请刷新重试'),
     });
     return () => subscription.unsubscribe();
-  }, [sessions]);
+  }, [sessions, ready]);
 
   // 不改变 store 顺序：bootstrap 和删除后的落脚点依赖原有顺序。
-  const recentSessions = useMemo(() => sessions
+  const recentSessions = useMemo(() => {
+    if (!activity) return [];
+    return sessions
     .filter((session) => activity.has(session.id!) && activity.get(session.id!) !== 0)
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)
       || activity.get(b.id!)! - activity.get(a.id!)!
-      || b.createdAt - a.createdAt || b.id! - a.id!), [sessions, activity]);
+      || b.createdAt - a.createdAt || b.id! - a.id!);
+  }, [sessions, activity]);
 
   const remove = async (id: number, title: string) => {
     const ok = await confirmDialog({
@@ -105,5 +117,5 @@ export function useRecentChats(showActive = false) {
       deleteDisabled: busy,
     };
   });
-  return { label: '最近', items };
+  return { label: '最近', items, loading: !ready || activity === null };
 }

@@ -43,7 +43,7 @@ export const useChatAttachments = create<AttachmentDraft>((set, get) => {
       if (state.sessionKey === item.sessionKey) return { items: update(state.items) };
       return { parked: { ...state.parked, [item.sessionKey]: update(state.parked[item.sessionKey] ?? []) } };
     });
-    patch({ error: undefined, phase: '准备中' });
+    patch({ error: undefined, phase: '加载中' });
     try {
       const value = await prepareAttachment(item.id, item.file, (phase) => patch({ phase }));
       if (!hasItem()) {
@@ -82,7 +82,7 @@ export const useChatAttachments = create<AttachmentDraft>((set, get) => {
     add: (files) => {
       const available = MAX_CHAT_ATTACHMENTS - get().items.length;
       const sessionKey = get().sessionKey;
-      const items = files.slice(0, available).map((file) => ({ sessionKey, id: `chat-file-${Date.now()}-${sequence++}-${Math.random().toString(36).slice(2)}`, file, phase: '准备中' }));
+      const items = files.slice(0, available).map((file) => ({ sessionKey, id: `chat-file-${Date.now()}-${sequence++}-${Math.random().toString(36).slice(2)}`, file, phase: '加载中' }));
       set((state) => ({ items: [...state.items, ...items], error: files.length > available ? `每条消息最多 ${MAX_CHAT_ATTACHMENTS} 个附件，多出的文件未添加` : null }));
       // Bound parsing/upload memory; large PDFs and images should not all decode concurrently.
       void (async () => { for (const item of items) if (hasPendingItem(get, item)) await process(item); })();
