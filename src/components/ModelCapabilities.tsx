@@ -1,6 +1,12 @@
 import { getModelMeta, catalogMetaUpdatedAt, hasModelOverrides, matchModelMeta, type ModelOverrides } from '../api/modelMeta';
-import { capabilityLabel, formatModelTokens, MODEL_KIND_LABEL, modelKind, modalityLabel } from '../api/modelPresentation';
+import { capabilityLabel, formatModelTokens, MODEL_KIND_LABEL, modelKind, modalityLabel, type ModelKind } from '../api/modelPresentation';
 import { useModelMetaRevision } from '../utils/useModelMeta';
+import { Sym, type SymbolName } from '../ui/icons';
+
+const MODEL_KIND_ICON: Record<ModelKind, SymbolName> = {
+  llm: 'chat_bubble', vlm: 'visibility', audio: 'graphic_eq', image: 'image',
+  video: 'play_circle', multimodal: 'extension', unknown: 'help',
+};
 
 type ModelMetadataProps = { catalogId: string; model: string; overrides?: ModelOverrides };
 
@@ -10,8 +16,12 @@ export function ModelCapabilities({ catalogId, model, overrides, compact = false
   const match = matchModelMeta(overrides?.metadataCatalogId ?? catalogId, model);
   const source = hasModelOverrides(overrides) ? '已保存配置优先，目录只补全缺失能力' : match.status === 'exact' ? 'models.dev' : '默认能力（非接口验证）';
   const kind = modelKind(meta);
+  const visionFallback = kind === 'unknown' && meta?.vision;
+  const kindLabel = visionFallback ? '支持图片输入' : MODEL_KIND_LABEL[kind];
   return <span className="inline-flex flex-wrap items-center gap-1 text-xs" title={meta ? `${source} · 输入：${modalityLabel(meta.inputModalities)} · 输出：${modalityLabel(meta.outputModalities)}` : 'models.dev 未匹配此供应商与模型；可手动配置能力，不按名称猜测'}>
-    <span className="rounded-md bg-default px-2 py-0.5 text-foreground">{kind === 'unknown' && meta?.vision ? '支持图片输入' : MODEL_KIND_LABEL[kind]}</span>
+    <span className="inline-flex size-6 shrink-0 items-center justify-center rounded-md bg-default text-foreground" role="img" aria-label={kindLabel} title={kindLabel}>
+      <Sym name={visionFallback ? 'visibility' : MODEL_KIND_ICON[kind]} className="size-3.5" />
+    </span>
     {!compact && meta?.declaredReasoning === true && <span className="rounded-md bg-default px-2 py-0.5 text-muted">推理</span>}
     {!compact && meta?.toolCall === true && <span className="rounded-md bg-default px-2 py-0.5 text-muted">{meta.declaredToolCall === undefined ? '工具调用（默认）' : '工具调用'}</span>}
     {!compact && meta?.declaredContext != null && <span className="px-1 text-muted tabular-nums">{formatModelTokens(meta.declaredContext)} 上下文</span>}

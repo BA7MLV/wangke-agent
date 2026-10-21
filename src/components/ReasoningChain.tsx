@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState, type ReactNode } from 'react';
-import { Disclosure } from '@heroui/react';
+import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { Button, Disclosure } from '@heroui/react';
 import { Sym } from '../ui/icons';
 import { MatrixDots, TextSwap, useReasoningStream } from './motion';
 import './reasoning-chain.css';
@@ -64,13 +64,13 @@ function LiveElapsed({ from }: { from: number }) {
  * - **收起不挂**：收起是「别占我地方」，而一个每 250ms 跳一下的数字恰恰最占注意力 ——
  *   既然用户已经把它折叠了，就别再让那行小字继续动。收起态留一个稳定的「正在思考」就够。
  *
- * 实时计时、固定视口与自动跟随仅在 `live` 启用；历史回看完整展开。
+ * 实时计时在思考中且展开时启用；固定视口与自动跟随仅在 `live` 启用。
+ * 思考中可切换「全部展开」，退出固定视口，按全文阅读且不再自动跟随。
  *
  * 固定区域 + 渐隐 + 自动滚动是**成对**的：框只有 240px 高，思考链动辄上千字，
  * 不自动滚就永远只能看到最早那几行；不用渐隐收尾则看得出「下面还有」，用户才知道可以滚。
  *
- * 完成后自动收起（`useEffect` 那三行）：思考链是过程不是答案，
- * 不收起来会把真正要读的回答挤到屏幕外。
+ * 完成后默认自动收起；用户主动选择全文阅读时保留展开，避免打断阅读。
  */
 export default function ReasoningChain({
   reasoning,
@@ -114,6 +114,9 @@ export default function ReasoningChain({
   elapsedMs?: number;
 }) {
   const [open, setOpen] = useState(active);
+  const [full, setFull] = useState(false);
+  const fullRef = useRef(false);
+  const bodyId = useId();
   const innerRef = useRef<HTMLDivElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const lastTop = useRef(0);
@@ -125,15 +128,37 @@ export default function ReasoningChain({
    */
   const stickRef = useRef(true);
 
-  // 整轮结束就收起；开始时展开。工具/思考之间切换不触发，保留用户手动开合。
+  // 新一轮回到实时视图；结束时保留用户主动选择的全文阅读状态。
   useEffect(() => {
-    setOpen(active);
+    if (active) {
+      fullRef.current = false;
+      setFull(false);
+    }
+    setOpen(active || fullRef.current);
   }, [active]);
 
-  /** 思考中且展开着：自动跟随与实时计时。 */
-  const live = active && open;
-  const expanded = !active && open;
+  /** 实时视图固定高度并自动跟随；全文视图交给用户滚动阅读。 */
+  const live = active && open && !full;
+  const expanded = open && (!active || full);
   const stopStream = useReasoningStream(innerRef, live, stickRef, reasoning, revision);
+
+  const changeOpen = (next: boolean) => {
+    setOpen(next);
+    if (!next) {
+      fullRef.current = false;
+      setFull(false);
+    }
+  };
+
+  const toggleFull = () => {
+    const next = !full;
+    stopStream();
+    fullRef.current = next;
+    setFull(next);
+    setOpen(true);
+    stickRef.current = true;
+    if (innerRef.current) innerRef.current.scrollTop = next ? 0 : innerRef.current.scrollHeight;
+  };
 
   /**
    * 渐隐的两端是**各自**开关的，不是「内容溢出就上下一起淡」：
@@ -201,23 +226,32 @@ export default function ReasoningChain({
   return (
     <Disclosure className="reasoning-chain" data-mode={expanded ? 'expanded' : live ? 'live' : 'closed'}
       data-testid="response-process" data-streaming={active || undefined}
-      isExpanded={open} onExpandedChange={setOpen}>
+      isExpanded={open} onExpandedChange={changeOpen}>
       {active && <span className="sr-only" role="status">{title}</span>}
+      <div className="reasoning-chain__header">
       <Disclosure.Heading className="reasoning-chain__heading">
       <Disclosure.Trigger className="reasoning-chain__toggle" data-testid="response-process-toggle">
         {waiting ? <Sym name="help" className="reasoning-chain__icon" aria-hidden="true" />
           : active && <MatrixDots className="reasoning-chain__icon" />}
         <TextSwap className="reasoning-chain__title" text={title} />
         {summary}
-        {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
-        {live && !waiting && <LiveElapsed from={since ?? mountedAt.current} />}
+        {/* 思考中展开时保留计时，包括用户选择的全文视图。 */}
+        {active && open && !waiting && <LiveElapsed from={since ?? mountedAt.current} />}
         <Disclosure.Indicator className="reasoning-chain__indicator" />
       </Disclosure.Trigger>
       </Disclosure.Heading>
+      {active && (
+        <Button variant="ghost" size="sm" className="reasoning-chain__view-toggle"
+          data-testid="response-process-expand-all" aria-controls={bodyId}
+          aria-pressed={full} onPress={toggleFull}>
+          {full ? '实时视图' : '全部展开'}
+        </Button>
+      )}
+      </div>
       <Disclosure.Content className="reasoning-chain__content">
         <Disclosure.Body className="reasoning-chain__panel">
         <div className="reasoning-chain__viewport" ref={viewportRef}>
-          <div ref={innerRef}
+          <div ref={innerRef} id={bodyId}
             className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
             <div className="reasoning-chain__entries">{children ?? reasoning}</div>

@@ -62,7 +62,7 @@ export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig 
     },
     {
       value: 'bot',
-      label: 'Bot 工作空间',
+      label: 'Bot',
       icon: <Sym name="smart_toy" />,
       onClick: () => navigate('/bot'),
       testId: 'nav-rail-bot',

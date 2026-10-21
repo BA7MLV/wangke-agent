@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react';
-import Dexie, { liveQuery } from 'dexie';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from '../components/markdown/Markdown';
 import { MaterialImage } from '../components/MaterialImage';
@@ -16,6 +15,7 @@ import {
   Tooltip,
 } from '@heroui/react';
 import { useAppNav } from '../components/appNav';
+import { useRecentChats } from '../components/useRecentChats';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
@@ -53,7 +53,7 @@ import { prefersReducedMotion } from '../utils/motion';
 import { useMediaQuery, useViewportResize } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
 import { htmlPreviewSource } from '../utils/streamingHtml';
-import { confirmDialog, PageShell, promptDialog, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
+import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
 
@@ -274,6 +274,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete 
   onDelete: () => void;
 }) {
   const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
+  const isNarrow = useMediaQuery('(max-width: 900px)');
   const textRef = useRef<HTMLSpanElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -557,6 +558,7 @@ function QueueBar({
 const NEAR_BOTTOM_PX = 24;
 
 export default function CourseChat() {
+  const isNarrow = useMediaQuery('(max-width: 900px)');
   const [libraryHeadline] = useState(
     () => LIBRARY_HEADLINES[Math.floor(Math.random() * LIBRARY_HEADLINES.length)],
   );
@@ -647,8 +649,6 @@ export default function CourseChat() {
    * 正在生成的会话 id（可能不止一条）。侧栏 Recent 行尾的 分支/归档/删除 据此
    * **只禁那条在跑的**：别的会话在后台跑不影响你操作一条空闲会话。
    */
-  const runningIds = useCourseChat((s) => s.runningIds);
-  const awaitingIds = useCourseChat((s) => s.awaitingIds);
   const draft = useCourseChat((s) => s.draft);
   const attachmentItems = useChatAttachments((state) => state.items);
   const hasDraft = !!draft.trim() || attachmentItems.length > 0;
@@ -666,13 +666,9 @@ export default function CourseChat() {
   const refreshCourseCount = useCourseChat((s) => s.refreshCourseCount);
   const loadSession = useCourseChat((s) => s.loadSession);
   const createSession = useCourseChat((s) => s.createSession);
-  // 「删当前会话」的 `deleteSession` 也已不再订阅：入口收进 Recent 行尾菜单后走 `deleteSessionById`。
-  const deleteSessionById = useCourseChat((s) => s.deleteSessionById);
   const removeMessage = useCourseChat((s) => s.deleteMessage);
   const { deleteMessage, deleting } = useMessageDeletion(listRef, activeId, (key) => removeMessage(key, activeId));
-  const renameSession = useCourseChat((s) => s.renameSession);
-  const setPinned = useCourseChat((s) => s.setPinned);
-  const setArchived = useCourseChat((s) => s.setArchived);
+  const recent = useRecentChats(true);
   const setDraft = useCourseChat((s) => s.setDraft);
   const send = useCourseChat((s) => s.send);
   const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
@@ -760,41 +756,6 @@ export default function CourseChat() {
   };
 
   /**
-   * 侧栏 Recent 行尾菜单的删除 —— **删除会话现在只有这一个入口**。
-   *
-   * 输入卡工具行原先那颗「删除当前会话」已被上下文用量环取代（2026-10-16）：
-   * 那颗键与发送键相距约 40px，是这一行里唯一的破坏性动作，收进最近菜单后
-   * 工具行不再需要为它留出「离设置远一点」的布局代价，也让「切哪条会话」
-   * 与「删哪条会话」始终落在同一处（Recent 的同一行）。
-   *
-   * 走确认框：删会话不可逆，而 Recent 的「更多」菜单**离「切会话」只差几个像素**
-   * —— 误点一次就没了，没有确认框的删除不该放在这种位置。
-   */
-  const onDeleteRecent = async (sessionId: number, title: string) => {
-    const ok = await confirmDialog({
-      headline: '删除这条会话？',
-      description: `「${title}」会被永久删除，课程和学习数据不会受影响。`,
-      confirmText: '删除',
-      cancelText: '取消',
-      danger: true,
-    });
-    if (ok) await deleteSessionById(sessionId);
-  };
-
-  /** 行尾菜单 → 重命名。空标题由 promptDialog 拦（它按「取消」处理，不 resolve 值） */
-  const onRenameRecent = async (sessionId: number, title: string) => {
-    const next = await promptDialog({
-      headline: '重命名会话',
-      description: '给这段对话起个名字，方便以后在 Recent 里认出来。',
-      defaultValue: title,
-      placeholder: '会话标题',
-      confirmText: '保存',
-      validate: (value) => (value.length > 60 ? '标题太长了，60 个字以内就行' : null),
-    });
-    if (next) await renameSession(sessionId, next);
-  };
-
-  /**
    * 从一条消息分叉出新会话（对话里的「分支」）。
    *
    * 传 `rowId` 而不是 `message.key`：库里认的是行 id，而 `key` 是视图层的临时键
@@ -805,29 +766,6 @@ export default function CourseChat() {
     if (id == null || message.rowId == null) return;
     const newId = await forkSession(id, message.rowId);
     if (newId != null) toast.success('已从这条消息分支出新会话');
-  };
-
-  /** 行尾菜单 → 分支（整条会话复制一份）。返回 null = 被拒（生成中）或空会话 */
-  const onForkRecent = async (sessionId: number) => {
-    const newId = await forkSession(sessionId);
-    if (newId == null) toast.warning('这条会话还没有内容，无法分支');
-    else toast.success('已分支出新会话');
-  };
-
-  /**
-   * 行尾菜单 → 归档。
-   *
-   * 同样要确认框，但文案与删除不同：归档**可恢复**（设置 → 数据 → 已归档会话），
-   * 说成「会被永久删除」是在骗用户，于是一句话就把用户劝退了。
-   */
-  const onArchiveRecent = async (sessionId: number, title: string) => {
-    const ok = await confirmDialog({
-      headline: '归档这条会话？',
-      description: `「${title}」会从 Recent 里收起来，之后可以在「设置 → 数据 → 已归档会话」里找回来。`,
-      confirmText: '归档',
-      cancelText: '取消',
-    });
-    if (ok) await setArchived(sessionId, true);
   };
 
   const CourseLink = useCallback(
@@ -1040,45 +978,6 @@ export default function CourseChat() {
   const loopAlive = pendingAsk != null || pendingPlan != null;
 
   /**
-   * Recent 只展示发送过消息的会话：置顶优先，组内按最后消息时间倒序。
-   *
-   * 排序只在展示层做，**不去改 store 里的 `sessions`**：那边有两条逻辑拿
-   * `sessions[sessions.length - 1]` 当「最新的那条会话」（bootstrap 的默认选中、
-   * 删完之后的落脚点），一换序这两处就会跳到错的会话上。
-   *
-   * 已归档的会话**不进 Recent**（store 的 `sessions` 里本来就没有它们，
-   * 这里不再重复过滤 —— 归档项的落脚点是设置 → 数据 → 已归档会话）。
-   */
-  const [sessionActivity, setSessionActivity] = useState<Map<number, number>>(() => new Map());
-  useEffect(() => {
-    // 订阅持久化消息，首条发送、后台回答和跨标签页更新都能刷新最近列表。
-    const subscription = liveQuery(async () => new Map(await Promise.all(
-      sessions.filter((session) => session.id != null).map(async (session) => {
-        const query = () => db.chats.where('[sessionId+createdAt+id]').between(
-          [session.id!, Dexie.minKey, Dexie.minKey],
-          [session.id!, Dexie.maxKey, Dexie.maxKey],
-        ).reverse();
-        const [user, latest] = await Promise.all([
-          query().filter((message) => message.role === 'user').first(),
-          query().first(),
-        ]);
-        return [session.id!, user ? latest!.createdAt : 0] as const;
-      }),
-    ))).subscribe({
-      next: setSessionActivity,
-      error: () => toast.error('最近会话加载失败，请刷新重试'),
-    });
-    return () => subscription.unsubscribe();
-  }, [sessions]);
-  const recentSessions = useMemo(
-    () => sessions.filter((session) => sessionActivity.has(session.id!) && sessionActivity.get(session.id!) !== 0)
-      .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)
-        || sessionActivity.get(b.id!)! - sessionActivity.get(a.id!)!
-        || b.createdAt - a.createdAt || b.id! - a.id!),
-    [sessions, sessionActivity],
-  );
-
-  /**
    * 导出整个会话为 .md。
    *
    * 课程名传「课程库」而不是某门课：这个会话是**跨课程**的（助手自己挑上下文），
@@ -1142,84 +1041,23 @@ export default function CourseChat() {
       /* 侧栏顶部**没有身份块**：上一版按 showcase 截图恢复过一块
          「网课学习助手 / 本机课程库 · N 门课程」，被用户当场否掉（2026-10-14 同日修订）。
          这块位置现在直接是主导航 —— 见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */
-      recent={{
-        label: '最近',
-        // 「新建对话」不再混在 Recent 里当伪项：它是**动作**不是历史记录，
-        // 混在一起的代价是 Recent 列表的每一行语义都不一样（点标题切会话、点最后一行新建），
-        // 而 ListBox 的选中态也没法表达它。它现在的家是侧栏首项「新会话」
-        // （那些位置试过顶栏、也试过混进本列表，见 appNav.tsx 与设计文档 §七）。
-        items: recentSessions.map((session) => ({
-          id: String(session.id),
-          label: session.title,
-          active: session.id === activeId,
-          pendingReply: runningIds.includes(session.id!) && !awaitingIds.includes(session.id!),
-          pinned: !!session.pinned,
-          onUnpin: () => void setPinned(session.id!, false),
-          /**
-           * 生成中**也能切会话**（2026-10-16）：正在跑的那一轮绑在它自己的会话上，切走会 park
-           * 它的视图、循环照旧在后台写，切回来看得到仍在流式的回答 —— 见 store 的 `loadSession`。
-           * 旧实现这里判 `!loading`，于是「等它答，先去看另一条」点了没反应。
-           */
-          onClick: () => {
-            const id = session.id;
-            if (id != null) void loadSession(id);
-          },
-          testId: `chat-recent-${session.id}`,
-          /**
-           * 行尾菜单的五个动作。顺序按「改动量从小到大」排，最后是破坏性的删除 ——
-           * 菜单里的**最后一项是破坏性动作**是通例，让误触时手指落在无害动作上。
-           *
-           * 禁用规则：重命名 / 置顶**任何时候都允许**（只改标题与排序位，不碰消息）；
-           * 分支 / 归档 / 删除都要读库里的消息行，而**这条会话**在生成时那条回答还没落库，
-           * 复制/删除会缺一截 —— 所以只禁**正在跑的那条**（`runningIds`），
-           * 而不是一有生成就整列变灰。按钮变灰比点了没反应更早说清楚。
-           */
-          menu: [
-            {
-              key: 'rename',
-              label: '重命名',
-              icon: <Sym name="edit" />,
-              onAction: () => void onRenameRecent(session.id!, session.title),
-            },
-            {
-              key: 'pin',
-              label: session.pinned ? '取消置顶' : '置顶',
-              icon: <Sym name={session.pinned ? 'pin_off' : 'pin'} />,
-              onAction: () => void setPinned(session.id!, !session.pinned),
-            },
-            {
-              // 分支排在归档之前：它**不是破坏性动作**，该离删除远一点
-              key: 'fork',
-              label: '分支出新会话',
-              icon: <Sym name="fork" />,
-              isDisabled: runningIds.includes(session.id!),
-              onAction: () => void onForkRecent(session.id!),
-            },
-            {
-              key: 'archive',
-              label: '归档',
-              icon: <Sym name="archive" />,
-              isDisabled: runningIds.includes(session.id!),
-              onAction: () => void onArchiveRecent(session.id!, session.title),
-            },
-            {
-              key: 'delete',
-              label: '删除',
-              icon: <Sym name="delete" />,
-              danger: true,
-              isDisabled: runningIds.includes(session.id!),
-              onAction: () => void onDeleteRecent(session.id!, session.title),
-            },
-          ],
-          // 删除同样只禁这条在跑的（见上）。`onDelete` 还兼着 Delete / Backspace 快捷键的判据：
-          // 行尾按钮 Tab 走不到，键盘用户只能靠它。
-          onDelete: () => void onDeleteRecent(session.id!, session.title),
-          deleteLabel: `删除会话 ${session.title}`,
-          deleteTestId: `chat-recent-delete-${session.id}`,
-          deleteDisabled: runningIds.includes(session.id!),
-        })),
-      }}
+      recent={recent}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      actions={isNarrow ? (
+        <Button
+          isIconOnly
+          variant="tertiary"
+          className="course-chat__new-chat"
+          aria-label="新建对话"
+          data-testid="chat-new-session"
+          onPress={() => {
+            if (useCourseChat.getState().activeId == null) toast.info('已在新会话');
+            else void createSession();
+          }}
+        >
+          <Sym name="edit" />
+        </Button>
+      ) : undefined}
     >
       <div
         className={`course-chat${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}

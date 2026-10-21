@@ -887,7 +887,7 @@ export default function ModelsModule() {
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
-  const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
+  const [, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const revertTimerRef = useRef<number | undefined>(undefined);
 
@@ -1093,8 +1093,7 @@ export default function ModelsModule() {
           </div>
         )}
         <p className="mt-3 text-xs leading-relaxed text-muted">
-          {metaInfo ? `能力数据源：models.dev（${metaInfo.count} 个模型，${new Date(metaInfo.updatedAt).toLocaleDateString()} 更新）` : '能力数据未拉取，可在供应商详情中更新'}
-          。手动配置优先，接口声明其次，models.dev 只补全能力，不作为可用模型列表。未知模型默认文本输入/输出并开启工具调用。
+          能力数据由 models.dev 提供。
         </p>
       </SectionCard>
       {!selectedProvider && <>

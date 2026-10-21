@@ -39,6 +39,7 @@ import {
 } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { useCourseChat } from '../store/courseChat';
+import { useRecentChats } from '../components/useRecentChats';
 import { SettingsButton } from '../components/SettingsModal';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
@@ -307,18 +308,11 @@ function LibrarySkeleton({ count }: { count: number }) {
 export default function Library() {
   const navigate = useNavigate();
   const nav = useAppNav('home');
-  const sessions = useCourseChat((s) => s.sessions);
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
-  const loadChatSession = useCourseChat((s) => s.loadSession);
+  const recent = useRecentChats();
   useEffect(() => {
     void bootstrapChat();
   }, [bootstrapChat]);
-  const recentSessions = useMemo(
-    () => (sessions.some((session) => session.pinned)
-      ? [...sessions].sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned))
-      : sessions),
-    [sessions],
-  );
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -1431,21 +1425,7 @@ export default function Library() {
       fill
       rootClassName="page-library"
       rail={nav}
-      recent={{
-        label: '最近',
-        items: recentSessions.map((session) => ({
-          id: String(session.id),
-          label: session.title,
-          // 当前在资料页，没有正在查看的会话；否则已选中行可能不触发跳转。
-          onClick: () => {
-            if (session.id != null) {
-              void loadChatSession(session.id);
-              navigate('/');
-            }
-          },
-          testId: `chat-recent-${session.id}`,
-        })),
-      }}
+      recent={recent}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
       /* 顶栏右上角那颗设置图标撤掉（2026-10-15，与 AI 助手页同一口径）：
          设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
