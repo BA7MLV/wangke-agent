@@ -119,6 +119,8 @@ import { normalizeCourseContextIds } from '../harness/courseContext';
 /** 视图用的一条消息（比 `ChatRow` 多的是流式中间态） */
 export interface CourseChatMessage {
   processPhase?: ProcessPhase;
+  /** 本轮启动时刻，只用于实时「已用时」，不冒充纯思考耗时。 */
+  processStartedAt?: number;
   key: string;
   /** 落库后的行 id：需要就地更新（提问作答、方案落库）时用它 */
   rowId?: number;
@@ -1368,7 +1370,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           ...readView(turnKey).messages.map((m) =>
             m.key === currentKey ? { ...m, rowId, tools: closedTools, streaming: false, hint: undefined } : m,
           ),
-          { key: fresh, role: 'ai', content: '', streaming: true },
+          { key: fresh, role: 'ai', content: '', streaming: true, processStartedAt: Date.now() },
         ],
       });
       currentKey = fresh;
@@ -1428,7 +1430,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           : resume.userContent != null
             ? [{ key: userKey, role: 'user' as const, content: resume.userContent, createdAt: userCreatedAt }]
             : []),
-        { key: aiKey, role: 'ai', content: '', streaming: true },
+        { key: aiKey, role: 'ai', content: '', streaming: true, processStartedAt: Date.now() },
       ],
     });
 
@@ -2362,7 +2364,7 @@ async function continueInterrupted(
   markRunning(sessionId, true);
   writeView(sessionId, { loading: true });
   // 提示条立刻收掉：它已经变成「正在接着写」了（正文末尾会显示流式光标）
-  patch({ streaming: true, interrupted: false, interruptReason: undefined, hint: undefined });
+  patch({ streaming: true, interrupted: false, interruptReason: undefined, hint: undefined, processStartedAt: Date.now() });
 
   /**
    * 已经确定归属回答的那部分正文。

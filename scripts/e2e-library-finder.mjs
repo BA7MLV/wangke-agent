@@ -128,12 +128,62 @@ try {
     return (await db.folders.get(3)).parentId === 2 && (await db.videos.get('finder-word')).folderId === 2;
   });
   await page.locator('[data-group-key="3"]').waitFor({ state: 'detached' });
+  await page.getByRole('button', { name: '撤销移动', exact: true }).click();
+  await page.locator('[data-group-key="3"]').waitFor();
+  await page.locator('[data-video-id="finder-word"]').waitFor();
+  await page.locator('[data-group-key="3"]').click();
+  await page.locator('[data-video-id="finder-word"]').click({ modifiers: ['ControlOrMeta'] });
+  // Capture real drag feedback before releasing the mixed selection.
+  const dragFrom = await page.locator('[data-group-key="3"] .finder-item__name').boundingBox();
+  const dragTo = await page.locator('[data-group-key="2"] .finder-item__name').boundingBox();
+  await page.mouse.move(dragFrom.x + 8, dragFrom.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(dragTo.x + 8, dragTo.y + 8, { steps: 10 });
+  assert.equal(await page.locator('.finder-drag-preview__badge').innerText(), '2');
+  assert.equal(await page.locator('[data-group-key="2"] .finder-item__content').getAttribute('data-drop-target'), 'true');
+  await page.screenshot({ path: '.openchamber/finder-drag-feedback.png' });
+  await page.mouse.up();
+  await page.locator('[data-group-key="3"]').waitFor({ state: 'detached' });
   await page.locator('[data-group-key="2"]').dblclick();
   await page.locator('[data-group-key="3"]').waitFor();
   await page.locator('[data-video-id="finder-word"]').waitFor();
   // The entire path remains navigable after nesting.
   await page.locator('[data-group-key="3"]').dblclick();
   assert.equal(await page.locator('.finder-path-target').count(), 3);
+  await page.locator('.finder-path-target').first().getByRole('button').click();
+  // Native drag stays alive through spring-loaded navigation into an empty folder.
+  await page.locator('[data-group-key="2"]').dblclick();
+  const source = await page.locator('[data-video-id="finder-word"] .finder-item__name').boundingBox();
+  const destination = await page.locator('[data-group-key="3"] .finder-item__name').boundingBox();
+  await page.mouse.move(source.x + 8, source.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(destination.x + 8, destination.y + 8, { steps: 10 });
+  await page.waitForFunction(() => document.querySelector('.finder-title').textContent === '04_设计素材');
+  assert.equal(await page.locator('.finder-drag-preview').count(), 1);
+  assert.match(await page.locator('.finder-drag-status').innerText(), /已打开|松手|移入/);
+  const blank = await page.getByTestId('video-list').boundingBox();
+  await page.mouse.move(blank.x + 20, blank.y + blank.height - 40, { steps: 5 });
+  await page.mouse.up();
+  await page.waitForFunction(async () => {
+    const { db } = await import('/src/store/db.ts');
+    return (await db.videos.get('finder-word')).folderId === 3;
+  });
+  await page.locator('[data-video-id="finder-word"]').waitFor();
+  assert.equal(await page.locator('[data-video-id="finder-word"]').getAttribute('aria-selected'), 'true');
+  assert.equal(await page.locator('.finder-drag-preview').count(), 0);
+  // Escape restores the original directory after spring navigation, without moving.
+  const moved = await page.locator('[data-video-id="finder-word"] .finder-item__name').boundingBox();
+  await page.mouse.move(moved.x + 8, moved.y + 8);
+  await page.mouse.down();
+  await page.mouse.move(moved.x + 30, moved.y + 10, { steps: 4 });
+  await page.locator('.finder-drag-status').waitFor();
+  const parentPath = await page.locator('.finder-path-target').nth(1).boundingBox();
+  await page.mouse.move(parentPath.x + parentPath.width / 2, parentPath.y + parentPath.height / 2, { steps: 10 });
+  await page.waitForFunction(() => document.querySelector('.finder-title').textContent === '03_论文与学校');
+  await page.keyboard.press('Escape');
+  await page.mouse.up();
+  await page.waitForFunction(() => document.querySelector('.finder-title').textContent === '04_设计素材');
+  assert.equal(await page.locator('.finder-drag-preview').count(), 0);
   await page.locator('.finder-path-target').first().getByRole('button').click();
   await page.getByLabel('图标视图', { exact: true }).click();
   await mkdir('.openchamber', { recursive: true });

@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Checkbox, Input } from '@heroui/react';
+import { useId, useState } from 'react';
+import { Button, Checkbox, Input } from '@heroui/react';
 import { evaluateNouls } from '../../api/typesafe';
 import { useSettings, type JevSettings } from '../../store/settings';
 import { Field, LoadingButton, SectionCard } from '../../ui';
@@ -7,6 +7,8 @@ import { Field, LoadingButton, SectionCard } from '../../ui';
 /** 独立决策连接，不能与生成模型槽位混用。除显式测试外，不在设置页自动发请求。 */
 export default function JevCard() {
   const config = useSettings((s) => s.jev);
+  const [expanded, setExpanded] = useState(false);
+  const contentId = useId();
   const [checking, setChecking] = useState(false);
   const [result, setResult] = useState<{ config: JevSettings; error: boolean; text: string } | null>(null);
   const update = (patch: Partial<JevSettings>) => {
@@ -35,11 +37,17 @@ export default function JevCard() {
       subtitle="只负责技能选择与历史筛选，不生成文字，也不替代文本、视觉或语音模型"
       testId="card-jev"
       actions={
+        <Button variant="tertiary" aria-expanded={expanded} aria-controls={contentId} onPress={() => setExpanded((value) => !value)} data-testid="btn-toggle-jev">
+          {expanded ? '收起' : '展开配置'}
+        </Button>
+      }
+    >
+      <div id={contentId} hidden={!expanded}>
+      <div className="mb-4 flex justify-end">
         <LoadingButton variant="secondary" loading={checking} onPress={() => void check()} data-testid="btn-check-jev">
           测试 Jev 连接
         </LoadingButton>
-      }
-    >
+      </div>
       <p className="mb-4 text-pretty text-sm text-muted">
         默认关闭。启用技能路由会向 TypeSafe 发送课程名、字幕样本与技能说明；启用上下文压缩会发送当前问题和部分历史对话。
         压缩仅筛选本次请求，不改写原文、不删除聊天记录。连接配置与 Key 仅存本机，不参与云同步或迁移包导出。
@@ -77,6 +85,7 @@ export default function JevCard() {
           {result.text}
         </p>
       ) : null}
+      </div>
     </SectionCard>
   );
 }

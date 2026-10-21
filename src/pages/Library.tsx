@@ -8,6 +8,7 @@ import {
   Chip,
   Dropdown,
   Input,
+  Label,
   ListBox,
   Modal,
   ProgressBar,
@@ -64,7 +65,7 @@ import { detectMaterialFormat, isLegacyDocFile, isMaterialFile } from '../materi
 import { formatCaughtError } from '../utils/errorText';
 import { uuid } from '../utils/uuid';
 import './library.css';
-import { folderAncestors, validFolderDrop, moveLibraryItems } from '../materials/libraryFolders';
+import { folderAncestors, validFolderDrop, moveLibraryItems, undoLibraryMove } from '../materials/libraryFolders';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -263,10 +264,21 @@ const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap
 /** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
 const SKEL_CLS = 'skel-breathe block rounded-md bg-background-tertiary';
 
-function FolderIcon() {
+const FOLDER_COLORS = [
+  { id: 'blue', label: '默认蓝色', hue: 198, swatch: '#50bfe8' },
+  { id: 'green', label: '绿色', hue: 142, swatch: '#63bc7c' },
+  { id: 'yellow', label: '黄色', hue: 46, swatch: '#e6c34e' },
+  { id: 'orange', label: '橙色', hue: 27, swatch: '#e89b50' },
+  { id: 'red', label: '红色', hue: 0, swatch: '#df7373' },
+  { id: 'purple', label: '紫色', hue: 274, swatch: '#ad83d8' },
+  { id: 'gray', label: '灰色', hue: 198, swatch: '#9ca3af' },
+] as const;
+
+function FolderIcon({ color = 'blue' }: { color?: FolderRow['color'] }) {
   const id = useId();
+  const palette = FOLDER_COLORS.find((entry) => entry.id === color) ?? FOLDER_COLORS[0];
   return (
-    <svg className="finder-folder-icon" viewBox="0 0 120 96" fill="none" aria-hidden="true">
+    <svg className="finder-folder-icon" data-folder-color={palette.id} style={{ filter: `hue-rotate(${palette.hue - 198}deg) saturate(${palette.id === 'gray' ? 0 : 1}) drop-shadow(0 2px 1px rgb(0 0 0 / 20%))` }} viewBox="0 0 120 96" fill="none" aria-hidden="true">
       <defs>
         <linearGradient id={`${id}-back`} x1="60" y1="10" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#48b8e8" /><stop offset=".3" stopColor="#168dc3" /><stop offset="1" stopColor="#56bce4" /></linearGradient>
         <linearGradient id={`${id}-front`} x1="60" y1="29" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#87ddfa" /><stop offset="1" stopColor="#50bfe8" /></linearGradient>
@@ -340,6 +352,24 @@ export default function Library() {
   const [dropFolder, setDropFolder] = useState<string | null>(null);
   const finderDragKeys = useRef<string[]>([]);
   const finderPressSelection = useRef<string[]>([]);
+  const [finderDragging, setFinderDragging] = useState<string[]>([]);
+  const [dropHint, setDropHint] = useState('');
+  const [lastMove, setLastMove] = useState<Awaited<ReturnType<typeof moveLibraryItems>>>([]);
+  const [moveNotice, setMoveNotice] = useState<{ text: string; error?: boolean } | null>(null);
+  const [undoingMove, setUndoingMove] = useState(false);
+  const springTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const springTarget = useRef<string | null>(null);
+  const dragOrigin = useRef<string | null>(null);
+  const springOpened = useRef(false);
+  const finderDropCommitted = useRef(false);
+  const dragImage = useRef<HTMLElement | null>(null);
+  const canvasRef = useRef<HTMLDivElement>(null);
+  const clearSpring = () => {
+    if (springTimer.current) clearTimeout(springTimer.current);
+    springTimer.current = null;
+    springTarget.current = null;
+  };
+  useEffect(() => () => { clearSpring(); dragImage.current?.remove(); }, []);
   const [actionMenuOpen, setActionMenuOpen] = useState(false);
   const [contextPoint, setContextPoint] = useState<{ x: number; y: number } | null>(null);
   const contextAnchor = useRef<HTMLSpanElement>(null);
@@ -535,6 +565,9 @@ export default function Library() {
     .sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0) || (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.createdAt - a.createdAt));
   const visibleCount = displayedVideos.length + folderTiles.length;
   const folderPath = folderAncestors(folders, currentFolder?.folder?.id ?? null);
+  // Keep the native drag source mounted while spring-loading another directory.
+  const renderedFolders = finderDragging.length ? groups.filter((group) => group.folder) : folderTiles;
+  const renderedVideos = finderDragging.length ? videos : displayedVideos;
   const selectedKey = selection.size === 1 ? [...selection][0] : undefined;
   const selectedFolder = folderTiles.find((group) => `folder:${group.key}` === selectedKey);
   const selectedVideo = displayedVideos.find((video) => `file:${video.id}` === selectedKey);
@@ -1113,43 +1146,131 @@ export default function Library() {
 
   const moveFinderItems = async (keys: string[], target: number | null) => {
     try {
-      await moveLibraryItems(keys, target);
+      const placements = await moveLibraryItems(keys, target);
+      setLastMove(placements);
+      const targetName = target == null ? '全部资料' : folders.find((folder) => folder.id === target)?.name;
+      setMoveNotice({ text: placements.length ? `已将 ${keys.length} 个项目移入「${targetName}」` : '项目已在此文件夹中' });
+      setSelection(new Set(target === (currentFolder?.folder?.id ?? null) ? keys : target != null ? [`folder:${target}`] : []));
+      await reload();
+    } catch (error) {
+      setMoveNotice({ text: `移动失败：${formatCaughtError(error)}`, error: true });
+    }
+  };
+
+  const undoFinderMove = async () => {
+    if (undoingMove) return;
+    setUndoingMove(true);
+    try {
+      await undoLibraryMove(lastMove);
+      setLastMove([]);
+      setMoveNotice({ text: '已撤销移动' });
       setSelection(new Set());
       await reload();
     } catch (error) {
-      toast.error(`移动失败：${formatCaughtError(error)}`);
-    }
+      setMoveNotice({ text: `撤销失败：${formatCaughtError(error)}`, error: true });
+    } finally { setUndoingMove(false); }
   };
 
   const startFinderDrag = (event: React.DragEvent, key: string) => {
     const keys = finderPressSelection.current.includes(key) ? finderPressSelection.current : selection.has(key) ? [...selection] : [key];
     finderDragKeys.current = keys;
+    setFinderDragging(keys);
+    dragOrigin.current = folderKey;
+    springOpened.current = false;
+    finderDropCommitted.current = false;
+    setDropHint('拖到文件夹以移动；停留片刻可打开文件夹');
+    dragImage.current?.remove();
+    const preview = document.createElement('div');
+    preview.className = 'finder-drag-preview';
+    const icon = event.currentTarget.querySelector('.finder-item__icon')?.cloneNode(true);
+    if (icon) preview.append(icon);
+    const label = document.createElement('span');
+    label.className = 'finder-drag-preview__name';
+    label.textContent = event.currentTarget.querySelector('.finder-item__name')?.textContent ?? '资料';
+    preview.append(label);
+    if (keys.length > 1) {
+      preview.dataset.multiple = 'true';
+      const badge = document.createElement('span');
+      badge.className = 'finder-drag-preview__badge';
+      badge.textContent = String(keys.length);
+      preview.append(badge);
+    }
+    document.body.append(preview);
+    dragImage.current = preview;
+    event.dataTransfer.setDragImage(preview, 34, 34);
     event.dataTransfer.setData('application/x-library-items', JSON.stringify(keys));
     event.dataTransfer.effectAllowed = 'move';
     setSelection(new Set(keys));
   };
-  const folderDropProps = (target: number | null) => ({
+  const endFinderDrag = () => {
+    clearSpring();
+    if (springOpened.current && !finderDropCommitted.current) {
+      setFolderHistory((history) => ({ ...history, entries: [...history.entries.slice(0, history.index), dragOrigin.current] }));
+    }
+    finderDragKeys.current = [];
+    setFinderDragging([]);
+    setDropFolder(null);
+    setDropHint('');
+    dragImage.current?.remove();
+    dragImage.current = null;
+  };
+  const folderDropProps = (target: number | null, spring = false) => {
+    const handlers = {
     onDragOver: (event: React.DragEvent) => {
       if (!event.dataTransfer.types.includes('application/x-library-items')) return;
       event.preventDefault();
       event.stopPropagation();
       const valid = validFolderDrop(folders, finderDragKeys.current, target);
+      const targetKey = String(target ?? 'root');
+      const sameFolder = finderDragKeys.current.every((key) => key.startsWith('folder:')
+        ? (folders.find((folder) => folder.id === Number(key.slice(7)))?.parentId ?? null) === target
+        : (videos.find((video) => video.id === key.slice(5))?.folderId ?? null) === target);
       event.dataTransfer.dropEffect = valid ? 'move' : 'none';
-      setDropFolder(valid ? String(target ?? 'root') : null);
+      setDropFolder(valid ? targetKey : null);
+      const name = target == null ? '全部资料' : folders.find((folder) => folder.id === target)?.name;
+      setDropHint(!valid ? '不能移入自身或子文件夹' : sameFolder ? `项目已在「${name}」中` : `将 ${finderDragKeys.current.length} 个项目移入「${name}」${spring ? ' · 停留以打开' : ''}`);
+      if (spring && valid && targetKey !== String(currentFolder?.folder?.id ?? 'root')) {
+        if (springTarget.current !== targetKey) {
+          clearSpring();
+          springTarget.current = targetKey;
+          springTimer.current = setTimeout(() => {
+            springOpened.current = true;
+            setFolderHistory((history) => ({ ...history, entries: [...history.entries.slice(0, history.index), target == null ? null : String(target)] }));
+            setSelection(new Set(finderDragKeys.current));
+            setSearchText('');
+            setFilter('all');
+            setDropFolder(null);
+            setDropHint(`已打开「${name}」· 松手放入，或继续拖到子文件夹`);
+            if (canvasRef.current) canvasRef.current.scrollTop = 0;
+            clearSpring();
+          }, 850);
+        }
+      } else clearSpring();
     },
     onDragLeave: (event: React.DragEvent) => {
-      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) setDropFolder(null);
+      if (!event.currentTarget.contains(event.relatedTarget as Node | null)) { clearSpring(); setDropFolder(null); setDropHint('拖到文件夹以移动；停留片刻可打开文件夹'); }
     },
     onDrop: (event: React.DragEvent) => {
       if (!event.dataTransfer.types.includes('application/x-library-items')) return;
       event.preventDefault();
       event.stopPropagation();
       setDropFolder(null);
+      clearSpring();
       const keys = finderDragKeys.current;
-      finderDragKeys.current = [];
-      if (validFolderDrop(folders, keys, target)) void moveFinderItems(keys, target);
+      if (validFolderDrop(folders, keys, target)) {
+        finderDropCommitted.current = true;
+        void moveFinderItems(keys, target);
+      }
+      endFinderDrag();
     },
-  });
+    };
+    return { ...handlers, onDragEnter: handlers.onDragOver };
+  };
+
+  const pathDropProps = (target: number | null) => {
+    const props = folderDropProps(target, true);
+    return { onDragEnterCapture: props.onDragOver, onDragOverCapture: props.onDragOver, onDropCapture: props.onDrop, onDragLeave: props.onDragLeave };
+  };
 
   /** 移动弹窗内当场新建文件夹并选中 */
   const createFolderInMove = async () => {
@@ -1270,9 +1391,11 @@ export default function Library() {
         data-testid="group-header"
         data-group-key={g.key}
         data-drop-target={dropFolder === g.key || undefined}
+        data-dragging={finderDragging.includes(`folder:${g.key}`) || undefined}
+        hidden={!folderTiles.some((folder) => folder.key === g.key)}
       >
-        <span className="finder-item__content" {...folderDropProps(g.folder!.id!)} draggable onDragStart={(event) => startFinderDrag(event, `folder:${g.key}`)} onDragEnd={() => { finderDragKeys.current = []; setDropFolder(null); }}>
-        <span className="finder-item__icon"><FolderIcon /></span>
+        <span className="finder-item__content" data-drop-target={dropFolder === g.key || undefined} data-dragging={finderDragging.includes(`folder:${g.key}`) || undefined} data-hidden={!folderTiles.some((folder) => folder.key === g.key) || undefined} {...folderDropProps(g.folder!.id!, true)} draggable onDragStart={(event) => startFinderDrag(event, `folder:${g.key}`)} onDragEnd={endFinderDrag}>
+        <span className="finder-item__icon"><FolderIcon color={g.folder?.color} /></span>
         <span className="finder-item__name" title={g.name}>{g.name}</span>
         <span className="finder-item__meta">{g.videos.length + folders.filter((folder) => folder.parentId === g.folder!.id).length} 个项目</span>
         <span className="finder-item__date">{new Date(g.folder!.createdAt).toLocaleDateString()}</span>
@@ -1469,7 +1592,7 @@ export default function Library() {
         </Card.Root>
       )}
 
-      <section className="finder-window" aria-label="资料访达"
+      <section className="finder-window" aria-label="资料访达" data-drag-active={finderDragging.length > 0 || undefined}
         onDragOver={(event) => {
           if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDropActive(true); }
           else folderDropProps(currentFolder?.folder?.id ?? null).onDragOver(event);
@@ -1526,6 +1649,27 @@ export default function Library() {
               }}>
                 <Dropdown.Item id="open" textValue="打开">打开</Dropdown.Item>
                 <Dropdown.Item id="rename" textValue="重命名">重命名</Dropdown.Item>
+                {selectedFolder?.folder && <Dropdown.SubmenuTrigger>
+                  <Dropdown.Item id="folder-color" textValue="文件夹颜色"><Label>文件夹颜色</Label><Dropdown.SubmenuIndicator /></Dropdown.Item>
+                  <Dropdown.Popover><Dropdown.Menu aria-label="文件夹颜色" selectionMode="single" selectedKeys={[selectedFolder.folder.color ?? 'blue']} onAction={(key) => {
+                    const color = FOLDER_COLORS.find((entry) => entry.id === key)?.id;
+                    const folderId = selectedFolder.folder?.id;
+                    if (!color || folderId == null) return;
+                    void (async () => {
+                      try {
+                        await db.folders.update(folderId, { color });
+                        await reload();
+                      } catch (error) {
+                        toast.error(`修改文件夹颜色失败：${formatCaughtError(error)}`);
+                      }
+                    })();
+                  }}>
+                    {FOLDER_COLORS.map((color) => <Dropdown.Item key={color.id} id={color.id} textValue={color.label}>
+                      <span className="size-4 shrink-0 rounded-full border border-black/10" style={{ backgroundColor: color.swatch }} aria-hidden="true" />
+                      <Label>{color.label}</Label><Dropdown.ItemIndicator />
+                    </Dropdown.Item>)}
+                  </Dropdown.Menu></Dropdown.Popover>
+                </Dropdown.SubmenuTrigger>}
                 {selectedVideo && <Dropdown.Item id="move" textValue="移动到文件夹">移动到文件夹</Dropdown.Item>}
                 {selectedVideo && <Dropdown.Item id="pin" textValue="置顶">{selectedVideo.pinned === 1 ? '取消置顶' : '置顶'}</Dropdown.Item>}
                 {selectedVideo && <Dropdown.Item id="details" textValue="显示简介">显示简介</Dropdown.Item>}
@@ -1539,6 +1683,14 @@ export default function Library() {
         </header>
         {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
+        ref={canvasRef}
+        onDragOverCapture={(event) => {
+          if (!finderDragKeys.current.length) return;
+          const rect = event.currentTarget.getBoundingClientRect();
+          const edge = 40;
+          if (event.clientY < rect.top + edge) event.currentTarget.scrollBy(0, -16);
+          else if (event.clientY > rect.bottom - edge) event.currentTarget.scrollBy(0, 16);
+        }}
         onPointerDownCapture={() => { finderPressSelection.current = [...selection]; }}
         onPointerDown={marquee.onPointerDown}
         onClickCapture={marquee.onClickCapture}
@@ -1597,16 +1749,18 @@ export default function Library() {
             <>
               {view === 'list' && <div className="finder-list-heading" aria-hidden="true"><span>名称</span><span>项目 / 大小</span><span>添加日期</span><span>种类</span></div>}
               <ListBox aria-label={currentFolder?.name ?? '全部资料'} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="multiple" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
-                {folderTiles.map(renderGroupHeader)}
-                {displayedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id}>
+                {renderedFolders.map(renderGroupHeader)}
+                {renderedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id} hidden={!displayedVideos.some((row) => row.id === video.id)} data-dragging={finderDragging.includes(`file:${video.id}`) || undefined}>
                   <span className="finder-item__content"
+                  data-dragging={finderDragging.includes(`file:${video.id}`) || undefined}
+                  data-hidden={!displayedVideos.some((row) => row.id === video.id) || undefined}
                   draggable
                   onDragStart={(event) => startFinderDrag(event, `file:${video.id}`)}
-                  onDragEnd={() => { finderDragKeys.current = []; setDropFolder(null); }}
+                  onDragEnd={endFinderDrag}
                   >
                   <span className="finder-item__icon"><FinderFileIcon video={video} /></span>
                   <span className="finder-item__name" title={video.name}>{video.name}{video.kind === 'material' && video.materialFormat && !video.name.toLowerCase().endsWith(`.${video.materialFormat}`) ? `.${video.materialFormat}` : ''}</span>
-                  <span className="finder-item__meta">{formatSize(video.size)}</span>
+                  <span className="finder-item__meta" title={formatSize(video.size)}>{finderProgressText(video) ?? formatSize(video.size)}</span>
                   <span className="finder-item__date">{new Date(video.createdAt).toLocaleDateString()}</span>
                    <span className="finder-item__kind">{video.kind === 'material' ? video.materialFormat?.toUpperCase() ?? '文档' : '视频'}</span>
                   </span>
@@ -1619,7 +1773,9 @@ export default function Library() {
         {marquee.box && <div className="finder-selection-box" data-testid="selection-box" aria-hidden="true" style={marquee.box} />}
       </div>
         <footer className="finder-footer">
-          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...folderDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-drop-target={dropFolder === String(folder.id) || undefined} {...folderDropProps(folder.id!)}><ChevronRight /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{(selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+          {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
+          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><ChevronRight /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+          {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}
           <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
         </footer>
         {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
@@ -2095,14 +2251,30 @@ function useThumb(videoId: string): string | null {
   return url;
 }
 
+function finderProgressText(video: VideoRow): string | null {
+  const ratio = progressRatio(video);
+  if (ratio == null) return null;
+  return video.finished === 1 ? '已看完' : `已看 ${Math.round(ratio * 100)}%`;
+}
+
 function FinderFileIcon({ video }: { video: VideoRow }) {
   const cover = useThumb(video.id);
   const isMaterial = video.kind === 'material';
+  const ratio = progressRatio(video);
   const extension = isMaterial ? (video.materialFormat ?? 'doc').toUpperCase() : 'VIDEO';
   return (
     <span className={isMaterial ? 'finder-document' : 'finder-video'}>
       {cover ? <img src={cover} alt="" loading="lazy" decoding="async" /> : <span className="finder-file-placeholder" aria-hidden="true">{isMaterial ? <><i /><i /><i /><i /><i /><i /></> : <Sym name="play_circle" />}</span>}
       <span className="finder-file-extension">{extension}</span>
+      {ratio != null && <span
+        className="finder-video-progress"
+        role="progressbar"
+        aria-label={`${video.name}观看进度`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(ratio * 100)}
+        aria-valuetext={finderProgressText(video) ?? undefined}
+      ><span style={{ width: `${ratio * 100}%` }} /></span>}
       {video.pinned === 1 && <span className="finder-file-pin" aria-label="已置顶"><Sym name="pin" /></span>}
     </span>
   );

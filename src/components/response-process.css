@@ -1,166 +1,80 @@
-.response-process {
-  min-width: 0;
-  margin-bottom: 8px;
-  color: var(--muted);
+/* 延用原思考链的左侧竖线与正文排版。工具行没有独立卡片、边线或嵌套折叠。 */
+.response-process__text {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.response-process__text + .response-process__text {
+  margin-top: 8px;
+}
+
+.response-process__tool {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: baseline;
+  column-gap: 6px;
+  row-gap: 2px;
+  margin: 8px 0;
+  white-space: normal;
   font-size: 0.75rem;
   line-height: 1.5;
 }
 
-.response-process__toggle,
-.response-process__pending {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 40px;
-  width: 100%;
-  padding: 8px;
-  border-radius: var(--radius-sm);
-  color: var(--muted);
-  font: inherit;
-  text-align: left;
+.response-process__tool-icon {
+  position: absolute;
+  top: 1px;
+  left: calc(-1 * (var(--reasoning-rail-gap) + (var(--reasoning-rail-width) + 16px) / 2));
+  display: grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  /* 同一张画布的底色将竖线断开，图标成为线上节点，而不是旁边的项目符号。 */
+  background: var(--reasoning-sticky-bg, var(--surface));
 }
 
-.response-process__toggle {
-  border: 0;
-  background: transparent;
-  cursor: pointer;
+.response-process__tool-icon > svg {
+  width: 12px;
+  height: 12px;
 }
 
-.response-process__toggle:hover,
-.response-process__toggle[data-expanded='true'] {
-  background: var(--default);
-  color: var(--foreground);
-}
-
-.response-process__toggle:focus-visible,
-.response-process__analysis-toggle:focus-visible,
-.response-process__reasoning:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
-}
-
-.response-process__title {
-  flex: 1;
+.response-process__action {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.response-process__count,
-.response-process__error-count,
-.response-process__duration {
-  flex: none;
+.response-process__duration,
+.response-process__state {
+  white-space: nowrap;
   font-size: 0.6875rem;
   font-variant-numeric: tabular-nums;
 }
 
-.response-process__error-count,
-.response-process__failure,
-.response-process__step[data-status='error'] {
-  color: var(--danger);
-}
-
-.response-process .disclosure__body {
-  padding: 0;
-}
-
-.response-process__steps {
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  margin: 8px 8px 12px 16px;
-  padding: 0 0 0 12px;
-  border-left: 1px solid var(--border);
-  list-style: none;
-}
-
-.response-process__step {
-  display: grid;
-  grid-template-columns: 16px minmax(0, 1fr);
-  align-items: start;
-  gap: 8px;
-}
-
-.response-process__step > :first-child {
-  margin-top: 2px;
-}
-
-.response-process__tool-heading {
-  display: flex;
-  align-items: baseline;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.response-process__label {
-  color: var(--foreground);
-}
-
 .response-process__duration {
-  margin-left: auto;
+  grid-column: 3;
 }
 
-.response-process__state {
+.response-process__result {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: 0.6875rem;
 }
 
-.response-process__detail,
-.response-process__result,
-.response-process__failure,
+.response-process__tool[data-status='error'] {
+  color: var(--danger);
+}
+
+.response-process__tool[data-status='error'] .response-process__result {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
 .response-process__note {
-  margin: 4px 0 0;
-  overflow-wrap: anywhere;
-}
-
-.response-process__detail {
-  color: var(--foreground);
-}
-
-.response-process__analysis-toggle {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  width: 100%;
-  margin-top: -6px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  cursor: pointer;
-  font: inherit;
-}
-
-.response-process__reasoning {
-  max-height: 240px;
-  overflow: auto;
-  overscroll-behavior: contain;
-  padding: 8px;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
-  background: var(--default);
-  border-radius: var(--radius-sm);
-}
-
-.response-process__failure {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  padding: 0 8px;
-}
-
-/* 过程列表不做入场、闪光或高度动画，避免流式更新反复吸引注意。 */
-.response-process .disclosure__content,
-.response-process .disclosure__indicator {
-  animation: none;
-  transition: none;
-  will-change: auto;
-}
-
-@media (pointer: coarse) {
-  .response-process__toggle,
-  .response-process__analysis-toggle {
-    min-height: 44px;
-  }
+  margin: 0 0 8px;
+  font-size: 0.6875rem;
+  white-space: normal;
 }

@@ -94,6 +94,7 @@ export interface FolderRow {
   name: string;
   createdAt: number;
   parentId?: number;
+  color?: 'blue' | 'green' | 'yellow' | 'orange' | 'red' | 'purple' | 'gray';
 }
 
 export interface FileRow {

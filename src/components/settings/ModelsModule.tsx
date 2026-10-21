@@ -1006,9 +1006,6 @@ export default function ModelsModule() {
     toast.info(`已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」`);
   };
 
-  const currentLlm = settings.llmModel;
-  const currentLlmCatalog = catalogOf(settings, currentLlm.providerId);
-  const currentMeta = getModelMeta(currentLlmCatalog, currentLlm.model, modelOverridesOf(settings, currentLlm));
   const selectedProvider = selectedProviderId
     ? settings.providers.find((p) => p.id === selectedProviderId) ?? null
     : null;
@@ -1100,6 +1097,7 @@ export default function ModelsModule() {
           。手动配置优先，接口声明其次，models.dev 只补全能力，不作为可用模型列表。未知模型默认文本输入/输出并开启工具调用。
         </p>
       </SectionCard>
+      {!selectedProvider && <>
       <SectionCard
         title="选择模型"
         subtitle="选择主模型与语音转写模型；图片理解可自动复用主模型或单独指定。Chat 可随时切换。"
@@ -1128,24 +1126,6 @@ export default function ModelsModule() {
         subtitle="检索深度与并发。日常不需要动，换模型或觉得回答太慢时再调"
         testId="card-tuning"
       >
-        <Field
-          label="上下文窗口（tokens）"
-          hint={`有效能力（用户配置优先）：上下文 ${formatModelTokens(currentMeta?.declaredContext)} / 最大输出 ${formatModelTokens(currentMeta?.declaredOutput)}。下方为历史预算，可手动调整；未提供能力数据时使用应用默认预算，不代表模型标称上限。`}
-          testId="field-context-window"
-        >
-          <Input
-            data-testid="context-window"
-            aria-label="上下文窗口，单位 tokens"
-            type="number"
-            min={8192}
-            step={1024}
-            value={String(settings.contextWindow)}
-            onChange={(e) => {
-              const n = Number(e.target.value);
-              settings.update({ contextWindow: n || 131072 });
-            }}
-          />
-        </Field>
         <Field
           label="问答检索轮次上限"
           hint="每轮检索都会重发已检索内容：轮次越多材料越全，但更慢、更费 token。选「不限」也有几道护栏兜着 —— 同样的调用重复出现会停、单轮读到的材料接近上下文长度会停、模型空回复会被拉回来重说一遍、界面上随时可以按停止生成"
@@ -1198,7 +1178,7 @@ export default function ModelsModule() {
       </SectionCard>
 
       <JevCard />
-
+      </>}
     </>
   );
 }

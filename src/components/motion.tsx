@@ -301,6 +301,7 @@ export function useReasoningStream(
   enabled: boolean,
   stickRef: MutableRefObject<boolean>,
   revision: string,
+  activity?: unknown,
 ): () => void {
   const clock = useRef({ timer: 0, raf: 0, running: false, last: 0 });
 
@@ -397,7 +398,7 @@ export function useReasoningStream(
     // token 取消（那会让滚动每帧重启），所以这个 effect 不返回清理函数 ——
     // 取消统一由 enabled 的翻转与 stop 负责。
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [revision, enabled, elRef, stickRef, stop]);
+  }, [revision, activity, enabled, elRef, stickRef, stop]);
 
   return stop;
 }

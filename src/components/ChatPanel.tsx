@@ -44,6 +44,7 @@ import {
 } from '../ui';
 import { StreamParagraph, useMessageEnter } from './motion';
 import ResponseProcess from './ResponseProcess';
+import ChatViewportFade from './ChatViewportFade';
 import type { ProcessPhase } from '../utils/responseProcess';
 import VirtualMessages from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
@@ -92,6 +93,8 @@ interface Props {
 
 interface ChatMsg {
   processPhase?: ProcessPhase;
+  /** 本轮启动时刻，切页重挂时不重置过程计时（不落库）。 */
+  processStartedAt?: number;
   key: string;
   role: 'user' | 'ai';
   content: string;
@@ -1106,7 +1109,7 @@ export default function ChatPanel({
           createdAt,
           images: userImages.length > 0 ? userImages : undefined,
         },
-        { key: aiKey, role: 'ai', content: '', streaming: true },
+        { key: aiKey, role: 'ai', content: '', streaming: true, processStartedAt: Date.now() },
       ]);
 
       // 用户消息立即落库：tier 2 描述可能耗时数秒，避免期间关页丢失已上屏消息
@@ -1781,6 +1784,7 @@ export default function ChatPanel({
 
       {/* 消息流：AI 靠左、用户靠右。两种气泡的形状差是 MD3 聊天的标志 ——
           靠对话侧收小圆角、另一侧全圆角。流式 markdown / 思考块 / 题卡都留在 AI 气泡内。 */}
+      <div className="chat-message-viewport">
       <PanelBody bodyRef={listRef} className="chat-list-wrap" testId="chat-list">
         {activeId != null && loadedSessionId !== activeId && <ChatHistorySkeleton />}
         {msgs.length === 0 && (activeId == null || loadedSessionId === activeId) && (
@@ -1861,7 +1865,8 @@ export default function ChatPanel({
                     onSaved={(row) => setMsgs((prev) => prev.map((item) => item.rowId === row.id ? { ...item, content: row.content, widget: row.widget, widgets: row.widgets } : item))}>
                   <div className="chat-bubble chat-bubble--ai">
                     <ResponseProcess key={m.key} reasoning={m.reasoning} calls={m.tools} streaming={!!m.streaming}
-                      phase={m.processPhase} hint={m.hint} />
+                      phase={m.processPhase} hint={m.hint} since={m.processStartedAt ?? m.reasoningStartedAt}
+                      elapsedMs={m.reasoningMs} />
                         <WidgetMessage message={m} content={m.content} dark={widgetDark} rowId={m.rowId}
                           disabled={loading || !!m.streaming || !!m.error} onPrompt={(text) => void send(text)}>
                         {(markdown) => !markdown ? null : htmlPreview !== undefined ? (
@@ -1924,6 +1929,8 @@ export default function ChatPanel({
           );
         }}</VirtualMessages>}
       </PanelBody>
+      {msgs.length > 0 && <ChatViewportFade />}
+      </div>
 
       {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}
       {indexNote && (

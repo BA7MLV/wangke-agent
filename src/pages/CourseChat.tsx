@@ -27,6 +27,7 @@ import { StreamParagraph, PendingReply, useMessageEnter } from '../components/mo
 import ResponseProcess from '../components/ResponseProcess';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
+import ChatViewportFade from '../components/ChatViewportFade';
 import { useMessageDeletion } from '../components/useMessageDeletion';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
@@ -1219,21 +1220,6 @@ export default function CourseChat() {
         })),
       }}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
-      actions={
-        <Button
-          isIconOnly
-          variant="tertiary"
-          className="course-chat__new-chat"
-          aria-label="新建对话"
-          data-testid="chat-new-session"
-          onPress={() => {
-            if (useCourseChat.getState().activeId == null) toast.info('已在新会话');
-            else void createSession();
-          }}
-        >
-          <Sym name="edit" />
-        </Button>
-      }
     >
       <div
         className={`course-chat${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
@@ -1346,6 +1332,7 @@ export default function CourseChat() {
                       <>
                         <ResponseProcess key={message.key} reasoning={message.reasoning} calls={message.tools}
                           streaming={!!message.streaming} phase={message.processPhase} hint={message.hint}
+                          since={message.processStartedAt ?? message.reasoningStartedAt} elapsedMs={message.reasoningMs}
                           waiting={!!message.ask && !message.ask.picked || !!message.folderPlan && message.folderPlan.applied === 0} />
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
@@ -1484,6 +1471,7 @@ export default function CourseChat() {
 
           <ChatMessageNav key={activeId} messages={messages} scrollRef={listRef}
             virtualRef={virtualMessagesRef} onNavigate={navigateToQuestion} />
+          <ChatViewportFade />
           </div>
 
           {/* 正文独占上行；底部添加入口固定在左，发送操作固定在右。

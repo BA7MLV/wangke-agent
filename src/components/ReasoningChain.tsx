@@ -1,5 +1,6 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Disclosure } from '@heroui/react';
+import { Sym } from '../ui/icons';
 import { MatrixDots, TextSwap, useReasoningStream } from './motion';
 import './reasoning-chain.css';
 
@@ -23,7 +24,7 @@ function fmtThought(ms: number): string {
  * 状态挂在父组件上就等于每 250ms 把整条思考链（动辄上千字）重渲一遍。
  * 拆出来之后，重渲的只有这一行小字。
  *
- * 起点由父组件给（`since` = 首个思考 token 的时刻，与「已思考用时」同一个源头），
+ * 起点由父组件给（`since` = 本轮启动时刻），这里表示整体「已用时」，不冒充纯思考耗时。
  * 拿不到才退化成挂载时刻 —— 差几十毫秒，总好过不显示。
  */
 function LiveElapsed({ from }: { from: number }) {
@@ -76,12 +77,28 @@ export default function ReasoningChain({
   active,
   since,
   elapsedMs,
+  title: currentTitle,
+  idleTitle = '思考过程',
+  summary,
+  waiting = false,
+  failure,
+  revision,
+  children,
 }: {
   reasoning: string;
-  /** 流式中且正文未出 = 还在思考（见 ChatPanel 传参处） */
+  /** 整轮是否仍在运行；思考和工具之间切换不改变它，避免反复开合。 */
   active: boolean;
+  /** 当前动作只替换标题，不重置原有的展开、滚动与计时。 */
+  title?: string;
+  idleTitle?: string;
+  summary?: ReactNode;
+  waiting?: boolean;
+  failure?: string;
+  /** 工具行的追加或结果更新也要触发跟随，不只监听思考 token。 */
+  revision?: unknown;
+  children?: ReactNode;
   /**
-   * 首个思考 token 的时刻（毫秒时间戳）：思考中实时计时的起点。
+   * 本轮启动时刻（毫秒时间戳）：包含思考与工具执行的整体实时用时起点。
    *
    * 由调用方给、而不是在这里 `Date.now()`：课程助手的消息活在 store 里，
    * 切走页面再回来组件会重挂 —— 自己计时就会从 0 重新数。
@@ -108,7 +125,7 @@ export default function ReasoningChain({
    */
   const stickRef = useRef(true);
 
-  // 思考结束就收起；思考开始（首帧）展开。两种情况都只在跃迁那一下跑一次。
+  // 整轮结束就收起；开始时展开。工具/思考之间切换不触发，保留用户手动开合。
   useEffect(() => {
     setOpen(active);
   }, [active]);
@@ -116,7 +133,7 @@ export default function ReasoningChain({
   /** 思考中且展开着：自动跟随与实时计时。 */
   const live = active && open;
   const expanded = !active && open;
-  const stopStream = useReasoningStream(innerRef, live, stickRef, reasoning);
+  const stopStream = useReasoningStream(innerRef, live, stickRef, reasoning, revision);
 
   /**
    * 渐隐的两端是**各自**开关的，不是「内容溢出就上下一起淡」：
@@ -141,7 +158,7 @@ export default function ReasoningChain({
       syncFade(el);
     });
     return () => cancelAnimationFrame(frame);
-  }, [reasoning, live, open]);
+  }, [reasoning, revision, live, open]);
 
   // 用户自己滚 → 更新「还粘不粘底」。scroll 不冒泡，只能挂在滚动容器自己身上。
   useEffect(() => {
@@ -175,20 +192,25 @@ export default function ReasoningChain({
 
   // 「已完成但没记耗时」（老数据）就别硬凑一个 0.0 秒，回落到朴素标题
   const title = active
-    ? '正在思考'
+    ? currentTitle ?? '正在思考'
+    : waiting ? currentTitle ?? '等待你的确认'
     : expanded && elapsedMs != null
       ? `已思考用时 ${fmtThought(elapsedMs)}`
-      : '思考过程';
+      : idleTitle;
 
   return (
     <Disclosure className="reasoning-chain" data-mode={expanded ? 'expanded' : live ? 'live' : 'closed'}
+      data-testid="response-process" data-streaming={active || undefined}
       isExpanded={open} onExpandedChange={setOpen}>
+      {active && <span className="sr-only" role="status">{title}</span>}
       <Disclosure.Heading className="reasoning-chain__heading">
-      <Disclosure.Trigger className="reasoning-chain__toggle">
-        {active && <MatrixDots className="reasoning-chain__icon" />}
+      <Disclosure.Trigger className="reasoning-chain__toggle" data-testid="response-process-toggle">
+        {waiting ? <Sym name="help" className="reasoning-chain__icon" aria-hidden="true" />
+          : active && <MatrixDots className="reasoning-chain__icon" />}
         <TextSwap className="reasoning-chain__title" text={title} />
+        {summary}
         {/* 只在 live 挂：思考中一旦被收起，那行跳动的数字就该消失（见文件头注释） */}
-        {live && <LiveElapsed from={since ?? mountedAt.current} />}
+        {live && !waiting && <LiveElapsed from={since ?? mountedAt.current} />}
         <Disclosure.Indicator className="reasoning-chain__indicator" />
       </Disclosure.Trigger>
       </Disclosure.Heading>
@@ -198,11 +220,17 @@ export default function ReasoningChain({
           <div ref={innerRef}
             className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
-            {reasoning}
+            <div className="reasoning-chain__entries">{children ?? reasoning}</div>
           </div>
         </div>
         </Disclosure.Body>
       </Disclosure.Content>
+      {failure && !open && (
+        <p className="reasoning-chain__failure" role="status">
+          <Sym name="error" aria-hidden="true" />
+          <span>{failure}</span>
+        </p>
+      )}
     </Disclosure>
   );
 }

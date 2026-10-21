@@ -32,13 +32,15 @@ test('异常偏移夹在有效范围内，不重复或丢失正文', () => {
 test('执行阶段决定标题，不用正文是否为空来猜正在思考', () => {
   const calls = [{ name: 'search_material', detail: '傅里叶', status: 'running' }];
   assert.equal(processTitle({ streaming: true, phase: 'tool', calls }), '正在检索材料：傅里叶');
-  assert.equal(processTitle({ streaming: true, phase: 'thinking', calls }), '正在分析问题');
+  assert.equal(processTitle({ streaming: true, phase: 'thinking', calls }), '正在思考');
   assert.equal(processTitle({ streaming: true, phase: 'answering', calls }), '正在组织回答');
-  assert.equal(processTitle({ streaming: false, phase: 'thinking', calls }), '处理过程');
+  assert.equal(processTitle({ streaming: false, phase: 'thinking', calls }), '思考过程');
 });
 
 test('确认和失败场景不会伪装成成功或继续思考', () => {
   assert.equal(processTitle({ streaming: true, calls: [], waiting: true }), '等待你的确认');
   assert.equal(processTitle({ streaming: true, phase: 'tool', calls: [{ name: 'ask_user', status: 'running' }] }), '等待你的回答');
-  assert.equal(processTitle({ streaming: false, calls: [{ name: 'read', status: 'error' }] }), '处理过程');
+  assert.equal(processTitle({ streaming: false, calls: [{ name: 'ask_user', status: 'running' }], waiting: true }), '等待你的回答');
+  assert.equal(processTitle({ streaming: true, calls: [{ name: 'propose_folder_plan', status: 'running' }], waiting: true }), '等待你的确认');
+  assert.equal(processTitle({ streaming: false, calls: [{ name: 'read', status: 'error' }] }), '思考过程');
 });

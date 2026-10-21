@@ -34,15 +34,16 @@ export function processTitle({ streaming, phase, calls, hint, waiting }: {
   hint?: string;
   waiting?: boolean;
 }): string {
-  if (waiting) return '等待你的确认';
-  if (!streaming) return '处理过程';
+  if (waiting) return calls.some((call) => call.name === 'ask_user' && call.status === 'running')
+    ? '等待你的回答' : '等待你的确认';
+  if (!streaming) return '思考过程';
   const acting = calls.find((call) => call.status === 'running');
   if (acting && (!phase || phase === 'tool')) {
     if (acting.name === 'ask_user') return '等待你的回答';
     const { label, detail } = toolDisplay(acting.name, acting.detail);
     return `正在${label}${detail ? `：${detail}` : '…'}`;
   }
-  if (phase === 'thinking') return '正在分析问题';
+  if (phase === 'thinking') return '正在思考';
   if (phase === 'answering') return '正在组织回答';
   return hint || '正在准备下一步';
 }

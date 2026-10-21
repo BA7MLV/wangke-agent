@@ -3,6 +3,8 @@
 .reasoning-chain {
   margin-bottom: 6px;
   font-size: 0.75rem;
+  --reasoning-rail-width: 1px;
+  --reasoning-rail-gap: 12px;
   /* The panel is content-sized by HeroUI. Keep its height/opacity motion
      deliberately slower than the default disclosure easing so the reveal
      feels calm instead of snapping open. */
@@ -21,6 +23,7 @@
   position: sticky;
   top: var(--reasoning-sticky-top, 0px);
   z-index: 1;
+  background: var(--reasoning-sticky-bg, var(--surface));
 }
 
 .reasoning-chain .reasoning-chain__toggle {
@@ -49,9 +52,47 @@
   font-variant-numeric: tabular-nums;
 }
 
-.reasoning-chain__elapsed {
+.reasoning-chain__title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.reasoning-chain__summary,
+.reasoning-chain__errors {
+  flex: none;
   font-size: 0.75rem;
   white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.reasoning-chain__errors,
+.reasoning-chain__failure {
+  color: var(--danger);
+}
+
+.reasoning-chain__failure {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 4px 0;
+  overflow-wrap: anywhere;
+}
+
+.reasoning-chain__elapsed {
+  flex: none;
+  font-size: 0.75rem;
+  white-space: nowrap;
+}
+
+@media (max-width: 480px) {
+  .reasoning-chain .reasoning-chain__toggle {
+    flex-wrap: wrap;
+    column-gap: 6px;
+    row-gap: 2px;
+  }
+  .reasoning-chain__title { max-width: 100%; }
 }
 
 .reasoning-chain .reasoning-chain__indicator {
@@ -69,12 +110,17 @@
 }
 
 .reasoning-chain__body {
-  padding-left: 12px;
-  border-left: 2px solid var(--border-secondary);
+  /* 把竖线留在滚动区内，线上图标两侧都有空间，实时视口不会把图标裁掉。 */
+  padding-left: 8px;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   line-height: 1.75;
   color: var(--muted);
+}
+
+.reasoning-chain__entries {
+  padding-left: var(--reasoning-rail-gap);
+  border-left: var(--reasoning-rail-width) solid var(--border-secondary);
 }
 
 .reasoning-chain .reasoning-chain__body--live {

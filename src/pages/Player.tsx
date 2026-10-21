@@ -229,7 +229,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
       const row = await db.videos.get(id);
       if (!row) {
         toast.error('视频不存在');
-        navigate('/');
+        navigate('/library');
         return;
       }
       const blob = await getVideoFile(id);
@@ -398,7 +398,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
     return (
       <PageShell
         title=""
-        onBack={() => navigate('/')}
+        onBack={() => navigate('/library')}
         fill
         rootRef={colorSchemeRef}
         rootClassName="page-player"
@@ -490,7 +490,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
   return (
     <PageShell
       title={video.name}
-      onBack={() => navigate('/')}
+      onBack={() => navigate('/library')}
       fill
       rootRef={colorSchemeRef}
       rootClassName="page-player"

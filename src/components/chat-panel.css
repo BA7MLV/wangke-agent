@@ -30,6 +30,16 @@
 }
 
 /* ── 消息流 ─────────────────────────────────────────────────────────────── */
+.chat-message-viewport {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  min-height: 0;
+  --chat-viewport-bg: var(--surface);
+  --chat-viewport-fade-height: 48px;
+}
+
 /* PanelBody 已负责滚动，这里只管消息的纵向节奏。
    这个 div 同时就是滚动容器（PanelBody 的类名落在这里），所以上内边距也是
    思考链吸顶标题的偏移量 —— 同 course-chat.css 的同名变量。 */
@@ -37,7 +47,8 @@
   overflow-anchor: none;
   --reasoning-sticky-gap: 4px;
   display: block;
-  padding: var(--reasoning-sticky-gap) 0 8px;
+  /* 最后一条消息仍能完整滚到模糊带上方，不把末行永久盖在装饰下。 */
+  padding: var(--reasoning-sticky-gap) 0 calc(var(--chat-viewport-fade-height) + 8px);
 }
 
 .chat-msg {

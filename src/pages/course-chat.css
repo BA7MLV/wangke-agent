@@ -56,6 +56,10 @@
   display: contents;
 }
 
+.course-chat--empty .chat-viewport-fade {
+  display: none;
+}
+
 .course-chat--empty .course-chat__empty > h2,
 .course-chat--empty .course-chat__empty-skel {
   grid-row: 1;
@@ -110,6 +114,9 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
+  /* 模糊从浮动输入区上方轻轻进入，输入区后面只铺底色。装饰仍贴视区、不随消息滚动。 */
+  --chat-viewport-fade-height: calc(var(--chat-composer-height, 116px) + 48px);
+  --chat-viewport-fade-band: 64px;
 }
 
 /* ── 回答设置 ─────────────────────────────────────────────────────────────
@@ -207,7 +214,7 @@
   overflow-y: auto;
   overscroll-behavior-y: contain;
   padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset)
-    calc(var(--chat-composer-height, 116px) + 8px);
+    calc(var(--chat-composer-height, 116px) + 48px + 8px);
   scrollbar-gutter: stable;
 }
 
@@ -1239,7 +1246,10 @@
   .course-chat__messages {
     /* 保留手机原来的 20px 呼吸感，同时叠加动态顶栏高度：不能让窄屏覆盖桌面规则，
        否则消息第一行会钻进顶栏后面。 */
-    padding: calc(var(--app-bar-h, 60px) + 20px) 14px calc(var(--chat-composer-height, 116px) + 6px);
+    --reasoning-sticky-gap: 20px;
+    --course-chat-message-inset: 14px;
+    padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset)
+      calc(var(--chat-composer-height, 116px) + 48px + 6px);
     scrollbar-gutter: auto;
   }
 

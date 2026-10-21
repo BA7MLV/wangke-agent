@@ -23,7 +23,8 @@ export function validFolderDrop(folders: FolderRow[], keys: string[], target: nu
 
 /** Validate against fresh rows and commit the whole mixed selection atomically. */
 export async function moveLibraryItems(keys: string[], target: number | null) {
-  await db.transaction('rw', [db.folders, db.videos], async () => {
+  return db.transaction('rw', [db.folders, db.videos], async () => {
+    const placements: { key: string; parent: number | null; target: number | null }[] = [];
     const folders = await db.folders.toArray();
     if (!validFolderDrop(folders, keys, target)) throw new Error('不能将文件夹移入自身或子文件夹');
     const movingFolders = new Set(keys.filter((key) => key.startsWith('folder:')).map((key) => Number(key.slice(7))));
@@ -33,13 +34,39 @@ export async function moveLibraryItems(keys: string[], target: number | null) {
         // A selected parent already carries its selected descendants.
         const folder = folders.find((row) => row.id === id)!;
         if (folderAncestors(folders, folder.parentId ?? null).some((row) => movingFolders.has(row.id!))) continue;
+        if ((folder.parentId ?? null) === target) continue;
+        placements.push({ key, parent: folder.parentId ?? null, target });
         await db.folders.update(id, { parentId: target ?? undefined });
       } else {
         const id = key.slice(5);
         const video = await db.videos.get(id);
         if (!video) throw new Error('资料已不存在');
         if (folderAncestors(folders, video.folderId ?? null).some((row) => movingFolders.has(row.id!))) continue;
+        if ((video.folderId ?? null) === target) continue;
+        placements.push({ key, parent: video.folderId ?? null, target });
         await db.videos.update(id, { folderId: target ?? undefined });
+      }
+    }
+    return placements;
+  });
+}
+
+export async function undoLibraryMove(placements: Awaited<ReturnType<typeof moveLibraryItems>>) {
+  await db.transaction('rw', [db.folders, db.videos], async () => {
+    const folders = await db.folders.toArray();
+    for (const placement of placements) {
+      const { key, parent, target } = placement;
+      if (!validFolderDrop(folders, [key], parent)) throw new Error('原文件夹已不存在或目录结构已改变，无法撤销');
+      if (key.startsWith('folder:')) {
+        const id = Number(key.slice(7));
+        const row = await db.folders.get(id);
+        if (!row || (row.parentId ?? null) !== target) throw new Error('项目已再次移动，无法撤销');
+        await db.folders.update(id, { parentId: parent ?? undefined });
+      } else {
+        const id = key.slice(5);
+        const row = await db.videos.get(id);
+        if (!row || (row.folderId ?? null) !== target) throw new Error('项目已再次移动，无法撤销');
+        await db.videos.update(id, { folderId: parent ?? undefined });
       }
     }
   });
