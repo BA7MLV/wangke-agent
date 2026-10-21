@@ -10,7 +10,8 @@ export function markdownRegex(pattern: unknown, flags: unknown = 'm'): RegExp {
 }
 
 /** read/grep/edit share the original Markdown, including comments and line breaks. */
-export async function executeMarkdownResource(name: string, id: string, path: string, args: Record<string, unknown>) {
+export async function executeMarkdownResource(name: string, id: string, path: string, args: Record<string, unknown>,
+  creation?: { name: string; folderId?: number }) {
   if (path === `/${id}` && !await db.videos.get(id)) {
     const candidates = await db.videos.filter((r) => r.kind === 'material' && r.materialFormat === 'md' &&
       (r.name === id || `${r.name}.md` === id)).toArray();
@@ -37,7 +38,7 @@ export async function executeMarkdownResource(name: string, id: string, path: st
   if (args.create === true) {
     if (file || course) return '文件已存在，请先 read，再用 edits 修改。';
     if (typeof args.content !== 'string') return '创建文件需提供 content。';
-    await saveMarkdownMaterial(id, args.content, '', path.slice(1));
+    await saveMarkdownMaterial(id, args.content, '', creation?.name ?? path.slice(1), { folderId: creation?.folderId, createOnly: true });
     return `已创建 ${path}`;
   }
   if (!file) return '文件不存在，请先用 create=true、content 创建。';

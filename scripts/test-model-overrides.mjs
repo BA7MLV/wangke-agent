@@ -50,7 +50,7 @@ globalThis.fetch = () => { throw new Error('direct image reading must not invoke
 assert.deepEqual(await attachmentsForModel([file], 'Read this', new AbortController().signal), [file]);
 assert.ok(messageForModel({ role: 'user', content: 'Read', attachments: [file] }).content.some((part) => part.type === 'image_url'));
 useSettings.getState().update({ llmModel: { providerId: 'second', model: 'shared' } });
-assert.equal(visionTargetOrNull(getSettings()), null, 'auto mode never silently ignores missing image capabilities');
+assert.equal(visionTargetOrNull(getSettings()).providerId, 'first', 'text-only main models fall back to an existing vision model');
 useSettings.getState().update({ visionModel: ref });
 assert.equal(visionTargetOrNull(getSettings()).providerId, 'first', 'explicit vision models are preserved');
 const original = getSettings().savedModels[0];

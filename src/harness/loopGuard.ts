@@ -83,9 +83,16 @@ export function answerReserve(contextWindow?: number | null): number {
 export function callKey(name: string, argsJson: string): string {
   let normalized = argsJson;
   try {
-    const args = JSON.parse(argsJson || '{}') as Record<string, unknown>;
+    const args: unknown = JSON.parse(argsJson || '{}');
     // 键排序：模型两次调用 `{a,b}` 与 `{b,a}` 是同一件事，不该被判成「在换花样重试」
-    normalized = JSON.stringify(args, Object.keys(args).sort());
+    const canonical = (value: unknown): unknown => {
+      if (Array.isArray(value)) return value.map(canonical);
+      if (value && typeof value === 'object') return Object.fromEntries(
+        Object.entries(value).sort(([a], [b]) => a < b ? -1 : a > b ? 1 : 0).map(([key, item]) => [key, canonical(item)]),
+      );
+      return value;
+    };
+    normalized = JSON.stringify(canonical(args));
   } catch {
     // 参数不是合法 JSON：原样存（这类调用本身就该被记成指纹的一部分）
   }
@@ -96,8 +103,8 @@ export function callKey(name: string, argsJson: string): string {
  * 指纹集合：判断「这个调用这一轮里是不是已经做过」。
  *
  * 只判**完全相同**的调用是刻意的：同一工具换参数是正常的多轮检索（`search_material` 换关键词
- * 是有意为之），只有「同样的工具、一样的参数」才是原地打转的信号 —— 那时再查一遍拿到的
- * 结果必然一模一样，循环不会自己结束。
+ * 是有意为之），只有「同样的工具、一样的参数」且资源未变化才是原地打转的信号 ——
+ * 结果一模一样，循环不会自己结束；成功写入后允许重新读取核对。
  */
 export class CallLedger {
   private readonly seen = new Set<string>();
@@ -108,6 +115,14 @@ export class CallLedger {
     if (this.seen.has(key)) return true;
     this.seen.add(key);
     return false;
+  }
+
+  /** 写成功后旧读取指纹失效，允许 read → edit → read；失败与重复写入仍受护栏保护。 */
+  recordResult(name: string, result: string): void {
+    if (!['edit', 'edit_markdown'].includes(name) || !/^已(?:创建|修改)/.test(result)) return;
+    for (const key of this.seen) {
+      if (/^(?:read|grep|get_material_range|search_material):/.test(key)) this.seen.delete(key);
+    }
   }
 }
 
@@ -146,4 +161,3 @@ export function truncatedToolResult(toolName: string): string {
   return `工具「${toolName}」没有执行：这一轮的输出撞到了 max_tokens 上限，参数可能已被截断。` +
     `请用完整的参数重新调用一次。`;
 }
-

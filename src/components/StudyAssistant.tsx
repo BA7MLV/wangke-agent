@@ -4,10 +4,10 @@ import { Sym } from '../ui';
 import { useAssistantPosition } from './useAssistantPosition';
 import './study-assistant.css';
 
-export type StudyPanelKey = 'subs' | 'handout' | 'chat' | 'dm' | 'cards';
-export const STUDY_PANEL_KEYS: readonly StudyPanelKey[] = ['subs', 'handout', 'chat', 'dm', 'cards'];
+export type StudyPanelKey = 'subs' | 'chat' | 'dm' | 'cards';
+export const STUDY_PANEL_KEYS: readonly StudyPanelKey[] = ['subs', 'chat', 'dm', 'cards'];
 const LABELS: Record<StudyPanelKey, string> = {
-  subs: '字幕', handout: '讲义', chat: '问答', dm: '弹幕', cards: '卡片',
+  subs: '字幕', chat: '问答', dm: '弹幕', cards: '卡片',
 };
 
 interface Props {

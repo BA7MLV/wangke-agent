@@ -70,7 +70,7 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
 /** 槽位 → 一句话说明它负责什么。放在槽位名下，替代原来分散在各处的长 hint */
 const SLOT_HINT: Record<ModelSlot, string> = {
   chat: '负责讲义生成与课程问答，支持视觉时也可直接读图',
-  vision: '默认复用主模型，也可指定独立模型处理课件与抽帧',
+  vision: '主模型可读图时自动复用，否则使用已添加的图片理解模型；也可独立指定',
   asr: '把视频音轨转成字幕，可以和文本模型不在同一家',
 };
 
@@ -373,16 +373,16 @@ function SlotModelSelect({
       </div>
 
       {slot === 'vision' && <Checkbox
-        aria-label="自动：复用主模型的视觉能力"
+        aria-label="自动：优先主模型，否则使用读图模型"
         isSelected={!ref.model}
         onChange={(on) => {
           const first = modelsForSlot(settings, 'vision')[0];
           if (!on && !first) { toast.warning('请先添加用于图片理解的模型'); return; }
           update({ visionModel: on ? { providerId: '', model: '' } : { providerId: first.providerId, model: first.model } });
         }}
-      ><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>自动：复用主模型的视觉能力</Checkbox.Content></Checkbox>}
+      ><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>自动：优先主模型，否则使用读图模型</Checkbox.Content></Checkbox>}
 
-      {slot === 'vision' && !ref.model ? <p className="text-xs text-muted">若主模型能力未知，请在供应商的模型编辑器中确认图片输入能力；不会静默忽略图片。</p> : <>
+      {slot === 'vision' && !ref.model ? <p className="text-xs text-muted">主模型无图片输入能力或能力未知时，自动使用已添加且已配置凭据的图片理解模型。请先添加读图模型并勾选「图片理解」用途；不会按模型名称猜测能力，也不会静默忽略图片。</p> : <>
       {(
         // 受控用法（isOpen + onOpenChange），不用 Popover.Trigger。
         //

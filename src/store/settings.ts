@@ -2,8 +2,9 @@ import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { ReasoningEffort } from '../api/siliconflow';
 import { normalizeThinkingEffort } from '../api/modelCaps';
-import { getModelMeta, type ModelOverrides } from '../api/modelMeta';
+import { getModelMeta, matchModelMeta, type ModelOverrides } from '../api/modelMeta';
 import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
+import { modelsForSlot } from './modelLibrary';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
@@ -550,15 +551,28 @@ export function modelOverridesOf(s: Settings, ref: ModelRef): ModelOverrides | u
   return s.savedModels?.find((m) => sameRef(m, ref));
 }
 
-/** 空视觉引用表示自动复用主模型；已有的独立模型选择保持不变。 */
+/** 显式读图模型优先；自动模式先复用主模型，再回退到用户已添加的读图模型。 */
 export function visionTargetOrNull(s: Settings): ModelTarget | null {
-  const ref = s.visionModel.model ? s.visionModel : s.llmModel;
-  const target = targetOrNull(s, ref);
-  if (!target?.model) return null;
-  const meta = getModelMeta(target.catalogId, target.model, target.capabilities);
-  // 独立视觉模型允许用户确认未收录的模型；自动模式必须有视觉能力声明。
-  if (s.visionModel.model) return meta?.inputModalities && !meta.vision ? null : target;
-  return meta?.vision ? target : null;
+  const visionTarget = (ref: ModelRef, confirmed = false) => {
+    const target = targetOrNull(s, ref);
+    if (!target?.model) return null;
+    const meta = getModelMeta(target.catalogId, target.model, target.capabilities);
+    // 用户指定「图片理解」用途可确认未收录模型，但不能覆盖明确的纯文本能力声明。
+    const unlisted = target.capabilities?.inputCapabilities === undefined &&
+      matchModelMeta(target.capabilities?.metadataCatalogId ?? target.catalogId, target.model).status === 'none';
+    return meta?.vision || (confirmed && unlisted) ? target : null;
+  };
+  // 不绕过用户的显式选择（包括凭据错误），也不擅自更换其供应商。
+  if (s.visionModel.model) return visionTarget(s.visionModel, true);
+  const main = visionTarget(s.llmModel);
+  if (main) return main;
+  const candidates = modelsForSlot(s, 'vision');
+  const preferred = s.favorites.vision.flatMap((ref) => candidates.filter((m) => sameRef(m, ref)));
+  for (const ref of [...preferred, ...candidates]) {
+    const target = visionTarget(ref, true);
+    if (target?.apiKey.trim()) return target;
+  }
+  return null;
 }
 
 /** 可选的能力目录供应商提示，不是连接或能力查询的前置条件。 */

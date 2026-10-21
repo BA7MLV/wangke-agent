@@ -70,7 +70,7 @@ export function linkifyFrames(text: string): string {
 
 /** list_frames 工具的输出：讲义抽帧（幻灯片）清单，按时间排序的 [mm:ss] 画面描述，供 agent 挑选引用 */
 export function formatFrameList(rows: { ts: number; caption?: string }[]): string {
-  if (rows.length === 0) return '该课程暂无可用画面（需先在「讲义」页生成讲义）。';
+  if (rows.length === 0) return '该课程暂无已保存画面，可在问答加号菜单中截取当前画面后提问；生成文字讲义不需要先抽帧。';
   return [...rows]
     .sort((a, b) => a.ts - b.ts)
     .map((r) => `[${fmtTime(r.ts)}] ${r.caption?.trim() || '（无画面描述）'}`)

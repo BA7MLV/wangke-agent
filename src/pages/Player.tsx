@@ -17,7 +17,6 @@ import { SettingsButton } from '../components/SettingsModal';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import type { MaterialReaderHandle } from '../materials/types';
 import SubtitlePanel from '../components/SubtitlePanel';
-import HandoutPanel from '../components/HandoutPanel';
 import ChatPanel from '../components/ChatPanel';
 import DanmakuPanel from '../components/DanmakuPanel';
 import CardsPanel from '../components/CardsPanel';
@@ -63,7 +62,7 @@ const PANEL_KEYS = STUDY_PANEL_KEYS;
 /**
  * 阅读材料只保留「问答」面板。
  *
- * 其余四个面板都以字幕为输入（字幕轨/讲义/弹幕/制卡），材料没有字幕 ——
+ * 其余三个面板都以字幕为输入（字幕轨/弹幕/制卡），材料没有字幕 ——
  * 留着它们只会显示「请先生成字幕」，而那个按钮点下去会对着 PDF 起一次转写，
  * 属于**看起来能用、实际是错的**入口，必须挡掉。
  */
@@ -355,7 +354,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
     return () => list.removeEventListener('add', onAdd);
   }, [trackReady, syncTrack]);
 
-  // 讲义/弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
+  // 弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
   const hasSubtitles = subsLoaded ? segments.length > 0 && !subsRunning : null;
 
   // 默认 YouTube 式映射，设置改变时重建；其余渲染保留连按累加游标。
@@ -439,7 +438,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
    */
   const effTab: PanelKey = panelKeys.includes(activeTab) ? activeTab : panelKeys[0];
 
-  // 五个面板只实例化一份，在所有尺寸下都由学习助手的 Tabs 保活切换。
+  // 四个面板只实例化一份，在所有尺寸下都由学习助手的 Tabs 保活切换。
   // 材料只实例化问答：其余面板都以字幕为输入，挂上去只会给出「先生成字幕」的错误入口。
   const panels: Partial<Record<PanelKey, ReactNode>> = isMaterial
     ? {
@@ -467,7 +466,6 @@ function PlayerResource({ id }: { id: string | undefined }) {
             onLoadedChange={onSubsLoadedChange}
           />
         ),
-        handout: <HandoutPanel videoId={id} hasSubtitles={hasSubtitles} />,
         chat: (
           <ChatPanel videoId={id} videoName={video.name} playerRef={playerRef} readerRef={readerRef} />
         ),

@@ -6,7 +6,8 @@ import { useCourseChat } from '../store/courseChat';
 import { useChatAttachments } from '../store/chatAttachments';
 import { CHAT_FILE_ACCEPT, CHAT_IMAGE_ACCEPT } from '../chat/attachments';
 import { MAX_COURSE_CONTEXT } from '../harness/courseContext';
-import { MODAL_CONTAINER_CLASS, Sym } from '../ui';
+import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
+import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
 import SkillPicker from './SkillPicker';
 import './chat-attachments.css';
 
@@ -21,6 +22,7 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   const [query, setQuery] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
+  const [handoutPreparing, setHandoutPreparing] = useState(false);
   const skillIds = useCourseChat((state) => state.skillIds);
   const setSkillIds = useCourseChat((state) => state.setSkillIds);
   const loading = useCourseChat((state) => state.loading);
@@ -38,22 +40,41 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
     catch { setError('课程选择保存失败，请重试'); }
     finally { setBusy(false); }
   };
+  const addHandout = async () => {
+    const session = useCourseChat.getState();
+    if (session.loading || handoutPreparing) return;
+    setHandoutPreparing(true);
+    try {
+      const prepared = await prepareHandoutPrompt(session.skillIds);
+      const current = useCourseChat.getState();
+      if (current.activeId !== session.activeId) return;
+      if (prepared.skillIds !== session.skillIds) current.setSkillIds(prepared.skillIds);
+      current.setDraft(handoutDraft(current.draft, prepared.prompt));
+      toast.info('已添加讲义提示词，可修改后发送');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '讲义提示词加载失败，请重试');
+    } finally {
+      setHandoutPreparing(false);
+    }
+  };
   return <>
     <div className="chat-add-menu">
       <Dropdown>
-        <Button isIconOnly size="sm" variant="tertiary" aria-label="添加课程、图片或文件" data-testid="chat-add" isDisabled={disabled}>
+        <Button isIconOnly size="sm" variant="tertiary" aria-label="添加课程、图片、文件或讲义" data-testid="chat-add" isDisabled={disabled}>
           <Sym name="add" />
         </Button>
         <Dropdown.Popover placement="top start">
-          <Dropdown.Menu aria-label="添加到对话" disabledKeys={loading ? ['courses'] : []} onAction={(key) => {
+          <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['courses', 'handout'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
             if (key === 'courses') void openCourses();
             else if (key === 'images') imageInput.current?.click();
             else if (key === 'files') fileInput.current?.click();
             else if (key === 'skills') setSkillsOpen(true);
+            else if (key === 'handout') void addHandout();
           }}>
             <Dropdown.Item id="courses" textValue="添加课程"><Sym name="school" />添加课程</Dropdown.Item>
             <Dropdown.Item id="images" textValue="上传图片"><Sym name="image" />上传图片</Dropdown.Item>
             <Dropdown.Item id="files" textValue="上传文件"><Sym name="attach_file" />上传文件</Dropdown.Item>
+            <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
             <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
           </Dropdown.Menu>
         </Dropdown.Popover>

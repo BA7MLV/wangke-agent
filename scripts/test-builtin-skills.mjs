@@ -36,8 +36,8 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 9 个内置 skill', () => {
-  assert.equal(skills.length, 9);
+test('恰好 10 个内置 skill', () => {
+  assert.equal(skills.length, 10);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -153,6 +153,16 @@ test('「资料整理」写明主轴互斥、数量区间、id 来源与确认�
   assert.match(s.body, /propose_folder_plan/);
   assert.match(s.body, /用户没有执行/);
   assert.match(s.description, /整理/);
+});
+
+test('「课程讲义」复用资源工具，直接输出 Markdown，未读范围与图片证据边界明确', () => {
+  const s = skills.find((x) => x.name === '课程讲义');
+  assert.ok(s);
+  for (const kw of ['read', 'grep', 'edit', 'Markdown', '/courses/current/handout.md', '600 秒', '20 页', '未读范围', '视觉能力', '目录名称不是图像证据', '唯一真相源', '用户笔记', '保存后', '历史快照']) {
+    assert.ok(s.body.includes(kw), `课程讲义缺约定：${kw}`);
+  }
+  assert.match(s.description, /对话/);
+  assert.match(s.body, /不调用旧讲义流水线/);
 });
 
 test('references 非空且路径规范（references/ 前缀）', () => {

@@ -128,7 +128,7 @@ export async function runHandout(
   // 文本与视觉可以配在两家不同的供应商，各自独立校验凭据
   const chatTarget = targetOfSlot(settings, 'chat');
   const visionTarget = visionTargetOrNull(settings);
-  if (!visionTarget) throw new Error('主模型尚未声明视觉能力，请在设置中确认图片输入能力，或指定独立图片理解模型');
+  if (!visionTarget) throw new Error('没有可用的读图模型，请在设置中添加「图片理解」模型并配置凭据；主模型无视觉能力时会自动使用它');
   if (!visionTarget.apiKey.trim()) throw new Error('请先填写图片理解模型所在供应商的 API Key');
 
   const video = await db.videos.get(videoId);

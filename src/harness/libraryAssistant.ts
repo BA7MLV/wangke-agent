@@ -9,6 +9,7 @@ import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { lexicalSearch } from './lexical';
 import { MATERIAL_IMAGE_RULE, RUNTIME_CAPABILITY_RULE } from './prompts';
+import { handoutFileOf } from '../materials/handoutFile';
 
 /**
  * 课程助手沿用 chatSessions / chats 两张表保存历史，但它不从属于某一门课程。
@@ -499,7 +500,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       const courseId = String(args.courseId ?? '').trim();
       const course = await db.videos.get(courseId);
       if (!course) return `未找到 courseId=${courseId} 的课程。`;
-      const [folder, contentCount, handouts, cards, sessions] = await Promise.all([
+      const [folder, contentCount, handouts, cards, sessions, handoutFile] = await Promise.all([
         course.folderId == null ? undefined : db.folders.get(course.folderId),
         course.kind === 'material'
           ? db.materialBlocks.where('materialId').equals(course.id).count()
@@ -507,18 +508,21 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         db.handouts.where('videoId').equals(course.id).count(),
         db.cards.where('videoId').equals(course.id).count(),
         db.chatSessions.where('videoId').equals(course.id).count(),
+        db.videos.get(handoutFileOf(course).id),
       ]);
       const progress = courseProgress(course);
       return [
         `课程：${courseLink(course)}`,
         `courseId=${course.id}`,
+        `讲义文件路径：${handoutFileOf(course).path}（read 原文；edit 创建/修改；创建时与来源课程同目录，以文件为唯一真相源）`,
+        `讲义文件：${handoutFile ? courseLink(handoutFile) : '尚未创建'}`,
         `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码，从 1 起' : '段号，从 1 起') : '秒，从 0 起'}）`,
         ...(course.kind === 'material' ? [`用户文字高亮：/courses/${encodeURIComponent(course.id)}/highlights（read，offset/limit 分页）`] : []),
         `类型：${course.kind === 'material' ? `阅读材料 · ${(course.materialFormat ?? '文档').toUpperCase()}` : '视频课程'}`,
         `分类：${folder?.name ?? '未分类'}`,
         `学习进度：${progress.label}`,
         `内容状态：${contentCount > 0 ? `可检索（${contentCount} 个内容块）` : '暂无可检索正文'}`,
-        `衍生内容：讲义 ${handouts} 份，记忆卡片 ${cards} 张，问答会话 ${sessions} 个`,
+        `衍生内容：历史文档讲义 ${handouts} 份，记忆卡片 ${cards} 张，问答会话 ${sessions} 个`,
         `原文件：${course.fileDeleted ? '已删除，衍生内容仍保留' : '可用'}`,
       ].join('\n');
     }

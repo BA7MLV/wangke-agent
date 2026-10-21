@@ -1,6 +1,7 @@
 import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
 import { readHighlightCatalog } from '../materials/highlightContext';
+import { handoutFileOf } from '../materials/handoutFile';
 import type { UnitKind } from '../materials/units';
 import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, SHOW_WIDGET_TOOL, type ToolExecutorOptions } from './tools';
 import { createLibraryAssistantExecutor, libraryAssistantTools, type LibraryAssistantExecutorOptions } from './libraryAssistant';
@@ -13,7 +14,7 @@ export const READ_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'read',
-    description: '读取检索结果中的 path；需要上下文时传 start、end 两个数字，不要构造 range 对象。单位自动判断：视频为秒（从 0 起），PDF 为页，其他材料为段（从 1 起）。省略范围则读取开头；每次最多 600 秒或 20 页/段。例：{"path":"/courses/current/transcript","start":0,"end":60}。也可列目录：/courses 列课程（offset/limit 分页，status/kind 筛选），/skills 列技能；/courses/{id}/info 课程详情，/library/overview 学习统计，/library/folders 分类。正文路径用检索或详情返回的路径，不要猜测；/courses/{id}/images 列原图（支持 start/end、offset/limit），/courses/{id}/highlights 列用户文字高亮摘录（offset/limit 分页，每次最多 5 条），/courses/{id}/frames 列视频画面。单课程可用 /courses/current。技能及参考文档使用 /skills 返回的路径。',
+    description: '读取检索结果中的 path；需要上下文时传 start、end 两个数字，不要构造 range 对象。单位自动判断：视频为秒（从 0 起），PDF 为页，其他材料为段（从 1 起）。省略范围则读取开头；每次最多 600 秒或 20 页/段。例：{"path":"/courses/current/transcript","start":0,"end":60}。也可列目录：/courses 列课程（offset/limit 分页，status/kind 筛选），/skills 列技能；/courses/{id}/info 课程详情，/library/overview 学习统计，/library/folders 分类。正文路径用检索或详情返回的路径，不要猜测；/courses/{id}/images 列原图（支持 start/end、offset/limit），/courses/{id}/highlights 列用户文字高亮摘录（offset/limit 分页，每次最多 5 条），/courses/{id}/frames 列视频画面。/courses/{id}/handout.md 读取讲义文件原文（offset/limit 按行），它是讲义最新版的唯一真相源。单课程可用 /courses/current。技能及参考文档使用 /skills 返回的路径。',
     parameters: {
       type: 'object',
       properties: {
@@ -49,7 +50,7 @@ export const EDIT_TOOL: ToolDef = {
   function: {
     ...EDIT_MARKDOWN_TOOL.function,
     name: 'edit',
-    description: '修改普通 Markdown 文件。path 可为 /wrongbook.md 等根目录文件或 /courses/{id}/material。先 read(raw=true) 读原文，再以 edits 中 old_string/new_string 替换；new_string 为空即删除，匹配相邻正文可插入。默认精确唯一匹配；regex=true 支持正则，flags 支持 i/m/s/u，replace_all=true 替换多处。正则 new_string 按字面文本插入，不展开捕获组。无需打开编辑面。create=true、content 可创建不存在的根目录 .md 文件，不覆盖已有文件。',
+    description: '修改普通 Markdown 文件。path 可为 /wrongbook.md 等根目录文件、/courses/{id}/material 或 /courses/{id}/handout.md（单课程可用 current）。先 read(raw=true) 读原文，再以 edits 中 old_string/new_string 替换；new_string 为空即删除，匹配相邻正文可插入。默认精确唯一匹配；regex=true 支持正则，flags 支持 i/m/s/u，replace_all=true 替换多处。正则 new_string 按字面文本插入，不展开捕获组。无需打开编辑面。create=true、content 可创建不存在的根目录 .md 文件或讲义文件，不覆盖已有文件；讲义按来源课程自动放入同一资料文件夹，以该 Markdown 文件为准。',
     parameters: {
       ...EDIT_MARKDOWN_TOOL.function.parameters,
       properties: {
@@ -93,7 +94,7 @@ export function parseResource(path: unknown): Resource | undefined {
     if (p.length === 2 && p[0] === 'library' && p[1] === 'overview') return { type: 'overview' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'folders') return { type: 'folders' };
     if (p.length === 2 && p[0] === 'courses' && p[1] === 'context') return { type: 'context' };
-    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images', 'highlights'].includes(p[2]))) {
+    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images', 'highlights', 'handout.md'].includes(p[2]))) {
       return { type: 'course', id: p[1], leaf: p[2] };
     }
     if (p[0] === 'skills' && p.length === 2) return { type: 'skill', name: p[1] };
@@ -185,6 +186,16 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const kind = options.kind ?? (course.kind === 'material' ? ((course.materialFormat ?? 'pdf') === 'pdf' ? 'page' : 'para') : undefined);
     const leaf = resource.leaf ?? (name === 'grep' ? (kind ? 'material' : 'transcript') : 'info');
     const canonical = `${coursePath(id)}/${leaf}`;
+    if (leaf === 'handout.md') {
+      const handout = handoutFileOf(course);
+      const { executeMarkdownResource } = await import('./markdownResource');
+      try {
+        const result = await executeMarkdownResource(name, handout.id, canonical, args, handout);
+        const row = await db.videos.get(handout.id);
+        const link = row && `讲义文件：[${row.name.replace(/([\\[\]])/g, '\\$1')}](#/player/${encodeURIComponent(row.id)})`;
+        return `${result}${link ? `\n${link}\n此 Markdown 是讲义唯一真相源；聊天正文是历史快照，续写或修改前重新 read 此路径。` : ''}`;
+      } catch (error) { return error instanceof Error ? error.message : '讲义文件操作失败。'; }
+    }
     const execute = local ? executeLocal : createToolExecutor(id, { kind });
     if ((leaf === 'material' && !kind) || (leaf === 'transcript' && kind)) return `此课程没有该类型的正文资源。请 read ${coursePath(id)}/${kind ? 'material' : 'transcript'}。`;
     if (name === 'edit') {

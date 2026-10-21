@@ -13,6 +13,7 @@ import interactiveExplainer from './builtin/interactive-explainer/SKILL.md?raw';
 import interactiveApi from './builtin/interactive-explainer/references/runtime.md?raw';
 import interactiveExamples from './builtin/interactive-explainer/references/examples.md?raw';
 import libraryOrganizer from './builtin/library-organizer/SKILL.md?raw';
+import courseHandout from './builtin/course-handout/SKILL.md?raw';
 
 /** 内置 skill：标准 SKILL.md 文件（?raw 导入）+ 可选 references */
 export interface BuiltinSkill extends SkillFile {
@@ -38,4 +39,5 @@ export const BUILTIN_SKILLS: BuiltinSkill[] = [
   fromMd(interactiveExplainer, [ref('references/runtime.md', interactiveApi), ref('references/examples.md', interactiveExamples)]),
   // 资料目录整理：方法与命名规范；真正的写入仍由 propose_folder_plan 的确认闸门把关
   fromMd(libraryOrganizer),
+  fromMd(courseHandout),
 ];

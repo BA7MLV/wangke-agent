@@ -17,6 +17,7 @@ try {
   await page.route('https://models.dev/api.json', (route) => route.fulfill({ json: {
     test: { models: { shared: { modalities: { input: catalogInput, output: ['text'] }, limit: { context: 128000, output: 8192 }, reasoning: false, tool_call: false } } },
   } }));
+  await page.route('https://models.test/v1/models', (route) => route.fulfill({ json: { data: [{ id: 'shared' }] } }));
   await page.addInitScript(() => {
     if (localStorage.getItem('wangke-settings')) return;
     localStorage.setItem('wangke-settings', JSON.stringify({ version: 3, state: {
@@ -31,7 +32,7 @@ try {
   await page.getByTestId('btn-refresh-meta').click();
   await page.getByTestId('provider-summary-test').click();
   await page.getByRole('button', { name: '编辑 shared', exact: true }).click();
-  await page.getByTestId('model-metadata-details').getByText('LLM · 文本', { exact: true }).waitFor();
+  await page.getByTestId('model-metadata-details').getByRole('img', { name: 'LLM · 文本', exact: true }).waitFor();
   assert.equal(await page.getByRole('checkbox', { name: '输入 image', exact: true }).isDisabled(), true);
   await page.getByRole('textbox', { name: '模型名称', exact: true }).fill('我的模型');
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
@@ -46,11 +47,12 @@ try {
   await setCheckbox('支持工具调用', true);
   await setCheckbox('自定义推理等级', true);
   await page.getByRole('textbox', { name: '推理等级', exact: true }).fill('low, high');
-  await page.getByTestId('model-metadata-details').getByText('VLM · 视觉', { exact: true }).waitFor();
+  await page.getByTestId('model-metadata-details').getByRole('img', { name: 'VLM · 视觉', exact: true }).waitFor();
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   assert.deepEqual((await state()).savedModels[0].inputCapabilities, ['text', 'image']);
   assert.equal((await state()).contextWindow, 16000);
-  await page.getByTestId('model-button-llmModel').getByText('VLM · 视觉', { exact: true }).waitFor();
+  await page.getByTestId('provider-back').click();
+  await page.getByTestId('model-button-llmModel').getByRole('img', { name: 'VLM · 视觉', exact: true }).waitFor();
   await page.getByTestId('btn-refresh-meta').click();
   assert.equal((await state()).savedModels[0].contextWindow, 16000);
   assert.equal((await state()).contextWindow, 16000, 'refresh preserves history budgets too');
@@ -64,14 +66,16 @@ try {
   await page.getByRole('button', { name: '编辑 我的模型', exact: true }).click();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'mobile editor must not overflow');
   await page.getByRole('button', { name: '恢复 models.dev 默认能力', exact: true }).click();
-  await page.getByTestId('model-metadata-details').getByText('LLM · 文本', { exact: true }).waitFor();
+  await page.getByTestId('model-metadata-details').getByRole('img', { name: 'LLM · 文本', exact: true }).waitFor();
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   const saved = (await state()).savedModels[0];
   for (const field of ['inputCapabilities', 'toolCalling', 'reasoningEffort', 'contextWindow', 'maxOutputTokens']) assert.equal(saved[field], undefined);
 
   catalogInput = ['text', 'image'];
   await page.getByTestId('btn-refresh-meta').click();
-  await page.getByTestId('model-button-llmModel').getByText('VLM · 视觉', { exact: true }).waitFor();
+  await page.getByTestId('provider-back').click();
+  await page.getByTestId('model-button-llmModel').getByRole('img', { name: 'VLM · 视觉', exact: true }).waitFor();
+  await page.getByTestId('provider-summary-test').click();
   await page.getByRole('button', { name: '编辑 我的模型', exact: true }).click();
   await setCheckbox('自定义输入能力', true);
   await setCheckbox('输入 image', false);
@@ -79,10 +83,11 @@ try {
   await page.getByRole('button', { name: '保存修改', exact: true }).click();
   assert.equal((await state()).savedModels[0].toolCalling, false, 'explicit false is persisted');
   assert.deepEqual((await state()).savedModels[0].inputCapabilities, ['text']);
-  await page.getByTestId('model-button-llmModel').getByText('LLM · 文本', { exact: true }).waitFor();
-  await setCheckbox('自动：复用主模型的视觉能力', false);
+  await page.getByTestId('provider-back').click();
+  await page.getByTestId('model-button-llmModel').getByRole('img', { name: 'LLM · 文本', exact: true }).waitFor();
+  await setCheckbox('自动：优先主模型，否则使用读图模型', false);
   assert.equal((await state()).visionModel.model, 'shared', 'explicit model selection remains available');
-  await setCheckbox('自动：复用主模型的视觉能力', true);
+  await setCheckbox('自动：优先主模型，否则使用读图模型', true);
   assert.equal((await state()).visionModel.model, '');
   assert.deepEqual(errors, []);
   console.log('PASS: editor inheritance, overrides, badges, refresh, persistence, reset, explicit false, automatic vision selection and mobile layout');

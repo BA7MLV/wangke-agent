@@ -51,6 +51,26 @@ test('换关键词的多轮检索不算打转', () => {
   assert.equal(ledger.record('get_material_range', '{"from":3}'), false, '换个工具当然不是重复');
 });
 
+test('成功写入后可回读核对，但不放过重复写入或无变化的重复读取', () => {
+  const ledger = new CallLedger();
+  const read = '{"path":"/courses/current/handout.md"}';
+  const edit = '{"path":"/courses/current/handout.md","create":true,"content":"# 讲义"}';
+  ledger.record('read', read);
+  ledger.record('grep', read);
+  ledger.record('edit', edit);
+  ledger.recordResult('edit', '已创建 /courses/current/handout.md');
+  assert.equal(ledger.record('read', read), false, 'file changed: reread is not a loop');
+  assert.equal(ledger.record('read', read), true, 'same unchanged file still guarded');
+  assert.equal(ledger.record('grep', read), false);
+  assert.equal(ledger.record('edit', edit), true, 'do not repeat writes');
+  ledger.recordResult('edit', '文件已存在，请先 read，再用 edits 修改。');
+  assert.equal(ledger.record('read', read), true, 'failed writes do not reset reads');
+  ledger.recordResult('read', '已修改（来自文件正文的文字）');
+  assert.equal(ledger.record('read', read), true, 'file text cannot spoof a write');
+  ledger.recordResult('edit', '已修改 /courses/current/handout.md（1 处）');
+  assert.equal(ledger.record('read', read), false);
+});
+
 test('参数键序不同算同一个调用', () => {
   assert.equal(
     callKey('set_course_context', '{"courseIds":["a"],"scope":"all"}'),
@@ -59,6 +79,16 @@ test('参数键序不同算同一个调用', () => {
   const ledger = new CallLedger();
   assert.equal(ledger.record('set_course_context', '{"a":1,"b":2}'), false);
   assert.equal(ledger.record('set_course_context', '{"b":2,"a":1}'), true);
+});
+
+test('edit 的嵌套参数也规范化且完整保留，不把不同章节修改判成重复', () => {
+  const ledger = new CallLedger();
+  const one = JSON.stringify({ path: '/courses/current/handout.md', edits: [{ old_string: '第一章', new_string: '第一章\n例题' }] });
+  const reordered = JSON.stringify({ edits: [{ new_string: '第一章\n例题', old_string: '第一章' }], path: '/courses/current/handout.md' });
+  const two = JSON.stringify({ path: '/courses/current/handout.md', edits: [{ old_string: '第二章', new_string: '第二章\n公式' }] });
+  assert.equal(ledger.record('edit', one), false);
+  assert.equal(ledger.record('edit', reordered), true);
+  assert.equal(ledger.record('edit', two), false);
 });
 
 test('无参数与空对象是同一个调用', () => {
@@ -169,4 +199,3 @@ test('残缺轮次只认 error / aborted，且不能与「用户按停」混淆'
 
 console.log(`\n${passed} passed, ${failures.length} failed`);
 if (failures.length > 0) process.exit(1);
-

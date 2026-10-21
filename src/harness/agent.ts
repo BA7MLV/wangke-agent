@@ -130,7 +130,7 @@ export async function runAgentLoop(
   const { catalogId, model } = target;
   const out = [...messages];
   const thinking = target.capabilities?.reasoningEffort === '' ? {} : cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort, target.capabilities) : {};
-  /** 护栏 1：循环检测的账本（同一工具 + 同一参数本轮只能出现一次） */
+  /** 护栏 1：循环检测的账本（同一工具 + 同一参数，资源变化后允许回读） */
   const ledger = new CallLedger();
   /**
    * 护栏 2：工具结果的 token 预算。`out` 只增不减，所以**真正防 400 的是这道闸**，
@@ -223,7 +223,7 @@ export async function runAgentLoop(
     }
 
     for (const call of msg.tool_calls) {
-      // 原地打转：同样的工具 + 同样的参数。再查一遍拿到的结果必然一模一样，
+      // 原地打转：同样的工具 + 同样的参数，且期间没有成功写入改变读取结果。
       // 与其等它自己撞上限，不如停下来说清楚它在重复什么
       if (ledger.record(call.function.name, call.function.arguments)) {
         stopped = { reason: 'loop', rounds: round + 1, detail: call.function.name };
@@ -239,6 +239,7 @@ export async function runAgentLoop(
       } catch (e) {
         result = `工具执行失败：${e instanceof Error ? e.message : String(e)}`;
       }
+      ledger.recordResult(call.function.name, result);
       cb.onToolEnd?.(call.function.name, result);
       toolTokens += estimateTokens(result);
       out.push({

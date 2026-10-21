@@ -17,6 +17,7 @@ import { EMPTY_COMPRESSION, prepareSessionHistory, retainedContext, useContextCo
 import ContextUsageButton from './ContextUsageButton';
 import { useContextCompression } from './useContextCompression';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
+import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
 import { captureFrame, resolveVideoEl, type Snapshot } from '../media/snapshot';
 import { isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ThinkingLevel } from '../api/siliconflow';
@@ -491,6 +492,7 @@ export default function ChatPanel({
    */
   const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [handoutPreparing, setHandoutPreparing] = useState(false);
   const [shots, setShots] = useState<Snapshot[]>([]);
   /**
    * 划词/框选带进来的引用条（最多 MAX_REFS 条）。
@@ -946,6 +948,22 @@ export default function ChatPanel({
       });
   };
 
+  const addHandout = async () => {
+    if (loading || handoutPreparing || activeId == null || activeId !== loadedSessionId) return;
+    setHandoutPreparing(true);
+    try {
+      const prepared = await prepareHandoutPrompt(skillIds);
+      if (historySession.current !== activeId) return;
+      if (prepared.skillIds !== skillIds) updateSkillIds(prepared.skillIds);
+      setInput((draft) => handoutDraft(draft, prepared.prompt));
+      toast.info('已添加讲义提示词，可修改后发送');
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '讲义提示词加载失败，请重试');
+    } finally {
+      setHandoutPreparing(false);
+    }
+  };
+
   /** 新开会话 */
   const createSession = async () => {
     const now = Date.now();
@@ -1198,6 +1216,7 @@ export default function ChatPanel({
                   },
                 ],
                 max_tokens: 512,
+                signal: abort.signal,
               }),
             ),
           );
@@ -1999,22 +2018,25 @@ export default function ChatPanel({
           <div className="chat-composer__tools">
           <Dropdown>
             <Button isIconOnly variant="tertiary" size="sm" data-testid="panel-chat-add"
-              aria-label="添加截图、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>
+              aria-label="添加截图、讲义、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>
               <Sym name="add" />
             </Button>
             <Dropdown.Popover placement="top start">
               <Dropdown.Menu aria-label="添加到学习问答"
                 disabledKeys={[
                   ...(!indexReady || loading ? ['shot', 'quiz'] : []),
+                  ...(!indexReady || loading || handoutPreparing ? ['handout'] : []),
                   ...(shots.length >= 4 ? ['shot'] : []),
                 ]}
                 onAction={(key) => {
                   if (key === 'shot') addShot();
                   else if (key === 'quiz') void send('根据课程内容出 3 道单选题考考我，选项要有干扰性');
+                  else if (key === 'handout') void addHandout();
                   else if (key === 'skills') setSkillsOpen(true);
                 }}>
                 {!isMaterial && <Dropdown.Item id="shot" textValue="截取当前画面" data-testid="shot-btn"><Sym name="photo_camera" />截取当前画面</Dropdown.Item>}
                 <Dropdown.Item id="quiz" textValue="出题考我" data-testid="quiz-btn"><Sym name="quiz" />出题考我</Dropdown.Item>
+                <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
                 <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown.Popover>
