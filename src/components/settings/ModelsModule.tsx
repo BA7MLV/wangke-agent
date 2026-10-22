@@ -1034,7 +1034,6 @@ export default function ModelsModule() {
         title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
         subtitle={draftProvider ? '填写 API Key 后保存。返回、取消或关闭设置不会新增供应商，也不会保存密钥。' : selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
-        actions={selectedProvider ? <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>查找模型</LoadingButton> : undefined}
       >
         {draftProvider ? (
           <form className="flex flex-col gap-4" data-testid="provider-draft" onSubmit={(event) => {
@@ -1083,7 +1082,6 @@ export default function ModelsModule() {
               key={selectedProvider.id}
               provider={selectedProvider}
               others={settings.providers.filter((x) => x.id !== selectedProvider.id)}
-              note={providerNotes[selectedProvider.id]}
               status={statusOf(selectedProvider)}
               modelCount={modelOptions[selectedProvider.id]?.length ?? null}
               open
@@ -1097,7 +1095,14 @@ export default function ModelsModule() {
                 if (await confirmDialog({ headline: '删除供应商？', description: `删除「${selectedProvider.name || selectedProvider.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(selectedProvider);
               }}
             >
-              <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} discovered={discoveredModels[selectedProvider.id]} />
+              <ModelLibrary
+                key={selectedProvider.id}
+                providerId={selectedProvider.id}
+                discovered={discoveredModels[selectedProvider.id]}
+                checking={checking}
+                onRefresh={() => void handleCheck(selectedProvider.id)}
+                note={providerNotes[selectedProvider.id]}
+              />
             </ProviderRow>
           </div>
         ) : connectingProvider ? (
@@ -1141,7 +1146,7 @@ export default function ModelsModule() {
                   if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
                 }}
               >
-                <ModelLibrary key={p.id} providerId={p.id} />
+                <ModelLibrary key={p.id} providerId={p.id} checking={checking} onRefresh={() => void handleCheck(p.id)} />
               </ProviderRow>
             ))}
           </div>

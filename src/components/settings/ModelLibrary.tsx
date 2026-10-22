@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, Checkbox, Input, ListBox, SearchField, Select } from '@heroui/react';
 import { catalogOf, SLOT_LABEL, useSettings, type ModelSlot, type SavedModel } from '../../store/settings';
 import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
-import { Field, SectionCard, toast } from '../../ui';
+import { Field, LoadingButton, SectionCard, toast } from '../../ui';
 import { getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
 import type { DiscoveredModel } from '../../api/modelDiscoveryData';
 import { ModelMetadataDetails } from '../ModelCapabilities';
@@ -12,7 +12,13 @@ const slots: ModelSlot[] = ['chat', 'vision', 'asr', 'decision'];
 const capabilities = ['text', 'image', 'audio', 'video', 'pdf'];
 type Draft = SavedModel & { contextWindowText: string; maxOutputTokensText: string };
 
-export default function ModelLibrary({ providerId, discovered = [] }: { providerId: string; discovered?: DiscoveredModel[] }) {
+export default function ModelLibrary({ providerId, discovered = [], checking, onRefresh, note }: {
+  providerId: string;
+  discovered?: DiscoveredModel[];
+  checking: boolean;
+  onRefresh: () => void;
+  note?: string;
+}) {
   const settings = useSettings();
   useModelMetaRevision();
   const catalogId = catalogOf(settings, providerId);
@@ -51,8 +57,12 @@ export default function ModelLibrary({ providerId, discovered = [] }: { provider
     : editor?.draft.slots ?? [];
 
   return <SectionCard title="模型" subtitle="点击“查找模型”获取接口列表，也可手动添加；接口能力优先，models.dev 只补全。" testId="card-model-library"
-    actions={<Button variant="secondary" onPress={() => openEditor(null)}>新模型</Button>}>
+    actions={<div className="flex flex-wrap gap-2">
+      <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={onRefresh}>查找模型</LoadingButton>
+      <Button variant="secondary" onPress={() => openEditor(null)}>新模型</Button>
+    </div>}>
     <div className="flex flex-col gap-4">
+      {note && <p role={note.startsWith('拉取失败') ? 'alert' : 'status'} className="text-xs text-pretty text-muted" data-testid={`provider-note-${providerId}`}>{note}</p>}
       {editor && <form className="flex flex-col gap-4 rounded-xl border border-border bg-background-secondary p-4" data-testid="model-editor" onSubmit={(event) => {
         event.preventDefault();
         try {
