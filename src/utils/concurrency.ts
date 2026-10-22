@@ -1,7 +1,14 @@
 /** 并发控制原语：AIMD 自适应限流 + 并发池，供转写/识图等批量调用场景共用 */
 import { CancelError } from './cancel';
 
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const sleep = (ms: number, signal?: AbortSignal): Promise<void> => {
+  signal?.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const abort = () => { clearTimeout(timer); reject(signal!.reason); };
+    const timer = setTimeout(() => { signal?.removeEventListener('abort', abort); resolve(); }, ms);
+    signal?.addEventListener('abort', abort, { once: true });
+  });
+};
 
 /** AIMD 自适应并发控制（类 TCP 拥塞控制）：连续成功缓慢 +1，遇 429 减半并按 Retry-After 冷却 */
 export class AdaptiveLimit {
@@ -37,28 +44,33 @@ export class AdaptiveLimit {
 
 /**
  * 带 AIMD 反馈的重试：429 通知控制器降速并按 Retry-After 等待；400/401/403 不可重试。
- * `shouldAbort` 用于取消：退避 sleep 最长 4s，不检查的话「点了取消要等好几秒才停」。
+ * `shouldAbort` 兼容旧调用方；传 signal 时可立即中断 Retry-After / 退避等待。
  */
 export async function withAdaptiveRetry<T>(
   fn: () => Promise<T>,
   limiter: AdaptiveLimit,
   retries = 3,
   shouldAbort?: () => boolean,
+  signal?: AbortSignal,
 ): Promise<T> {
   let lastErr: unknown;
   for (let attempt = 0; attempt < retries; attempt++) {
+    signal?.throwIfAborted();
     try {
       return await fn();
     } catch (e) {
       lastErr = e;
       const err = e as { status?: number; retryAfterMs?: number };
       if (err.status === 400 || err.status === 401 || err.status === 403) throw e; // 不可重试
+      signal?.throwIfAborted();
+      if (shouldAbort?.()) throw new CancelError();
+      if (err.status === 429) limiter.onRateLimit(err.retryAfterMs);
+      if (attempt === retries - 1) break;
       if (err.status === 429) {
-        // 限流：通知控制器降速，优先按 Retry-After 等待
-        limiter.onRateLimit(err.retryAfterMs);
-        await sleep(err.retryAfterMs ?? 2000 * 2 ** attempt + Math.random() * 500);
+        // 限流后优先按 Retry-After 等待
+        await sleep(err.retryAfterMs ?? 2000 * 2 ** attempt + Math.random() * 500, signal);
       } else {
-        await sleep(1000 * 2 ** attempt + Math.random() * 500);
+        await sleep(1000 * 2 ** attempt + Math.random() * 500, signal);
       }
       if (shouldAbort?.()) throw new CancelError();
     }
@@ -74,18 +86,23 @@ export async function adaptivePool<T>(
   items: T[],
   limiter: AdaptiveLimit,
   fn: (item: T, i: number) => Promise<void>,
-  opts: { failFast?: boolean } = {},
+  opts: { failFast?: boolean; signal?: AbortSignal } = {},
 ): Promise<void> {
-  const { failFast = true } = opts;
+  const { failFast = true, signal } = opts;
+  signal?.throwIfAborted();
   let i = 0;
   let inflight = 0;
   let failed = false;
   let firstErr: unknown;
   return new Promise((resolve, reject) => {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const cleanup = () => { clearTimeout(timer); signal?.removeEventListener('abort', abort); };
+    const abort = () => { failed = true; cleanup(); reject(signal!.reason); };
     const tick = () => {
       if (failed) return;
       if (i >= items.length) {
         if (inflight === 0) {
+          cleanup();
           if (firstErr) reject(firstErr);
           else resolve();
         }
@@ -93,7 +110,8 @@ export async function adaptivePool<T>(
       }
       const wait = limiter.cooldownUntil - Date.now();
       if (wait > 0) {
-        setTimeout(tick, wait);
+        clearTimeout(timer);
+        timer = setTimeout(tick, wait);
         return;
       }
       while (inflight < limiter.current && i < items.length) {
@@ -109,6 +127,7 @@ export async function adaptivePool<T>(
             inflight--;
             if (failFast) {
               failed = true;
+              cleanup();
               reject(e);
             } else {
               firstErr ??= e;
@@ -118,6 +137,7 @@ export async function adaptivePool<T>(
         );
       }
     };
+    signal?.addEventListener('abort', abort, { once: true });
     tick();
   });
 }

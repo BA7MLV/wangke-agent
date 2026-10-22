@@ -1,12 +1,13 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
-import { Eraser, Highlighter, MousePointer2, PenLine, Redo2, Undo2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Eraser, Highlighter, MousePointer2, PenLine, Redo2, TextCursor, Undo2 } from 'lucide-react';
 import { db } from '../store/db';
 import { hitsInk, inkPath, inkOpacity, type InkNib, type InkPoint, type InkStroke, type InkTool } from '../materials/ink';
 import { useSelectionAsk } from '../store/selectionAsk';
 import { uuid } from '../utils/uuid';
 import { InkInput } from '../materials/inkInput';
-import { hitText, indexText, makeTextAnchor, resolveTextAnchor, textRects, type TextIndex } from '../materials/textHighlight';
+import { cleanSelectionText, isUsableSelection } from '../materials/region';
+import { hitText, indexText, makeTextAnchor, resolveTextAnchor, selectionOffsets, textRects, type TextIndex } from '../materials/textHighlight';
 import './material-ink.css';
 
 interface Change { add: InkStroke[]; remove: InkStroke[] }
@@ -16,6 +17,8 @@ interface InkContextValue {
   tool: InkTool;
   setTool: (tool: InkTool) => void;
   color: string;
+  highlightColor: string;
+  highlightOpacity: number;
   setColor: (color: string) => void;
   width: number;
   setWidth: (width: number) => void;
@@ -148,18 +151,51 @@ export function MaterialInkProvider({ materialId, children, toolbarActions }: { 
     }
     return bySurface;
   }, [rows]);
-  return <InkContext value={{ materialId, toolbarActions, tool, setTool, color: highlighting ? highlightColor : penColor,
+  return <InkContext value={{ materialId, toolbarActions, tool, setTool, highlightColor, highlightOpacity, color: highlighting ? highlightColor : penColor,
     setColor: highlighting ? setHighlightColor : setPenColor, width, setWidth, finger, setFinger,
     nib, setNib, opacity: highlighting ? highlightOpacity : penOpacity,
     setOpacity: highlighting ? setHighlightOpacity : setPenOpacity, smoothing, setSmoothing,
     ready, status, error, retry: () => void (ready ? flush() : load()), strokes, commit, undo, redo,
     canUndo: history.past.length > 0, canRedo: history.future.length > 0, input }}>
-    <div ref={inputRoot} className="ink-input-root" data-writing={writing || undefined}>{children}</div>
+    <div ref={inputRoot} className="ink-input-root" data-writing={writing || undefined}
+      onContextMenu={(event) => {
+        const selection = window.getSelection();
+        if (!ready || !selection?.rangeCount || selection.isCollapsed) return;
+        const range = selection.getRangeAt(0);
+        const root = inputRoot.current;
+        if (!root?.contains(range.startContainer) || !root.contains(range.endContainer)) return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target?.closest('[data-askable],.ink-layer')) return;
+        const text = cleanSelectionText(selection.toString());
+        if (!isUsableSelection(text)) return;
+        const add: InkStroke[] = [];
+        for (const layer of root.querySelectorAll<HTMLElement>('[data-ink-surface]')) {
+          const host = layer.parentElement!;
+          if (!range.intersectsNode(host)) continue;
+          const index = indexText(host), offsets = selectionOffsets(index, range);
+          if (!offsets) continue;
+          const bounds = host.getBoundingClientRect();
+          if (!bounds.width) continue;
+          const surface = layer.dataset.inkSurface!;
+          add.push({ id: uuid(), materialId, surface, tool: 'highlight', color: highlightColor,
+            width: 1, height: bounds.height / bounds.width * 1000, points: [], createdAt: Date.now(),
+            renderer: 'freehand-v1', opacity: highlightOpacity, input: 'mouse',
+            anchor: makeTextAnchor(index, offsets.start, offsets.end, host, surface),
+            rects: textRects(index, offsets.start, offsets.end, host) });
+        }
+        const first = add[0]?.anchor;
+        if (!first) return;
+        event.preventDefault();
+        useSelectionAsk.getState().showBar({ text, source: first.source, unit: first.unit, unitLabel: first.unitLabel },
+          { x: event.clientX, y: event.clientY }, { mark: () => commit({ add, remove: [] }) });
+      }}>{children}</div>
   </InkContext>;
 }
 
 export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolean; onActivate?: () => void }) {
   const ink = useMaterialInk();
+  const [expanded, setExpanded] = useState(false);
+  const toolsId = useId();
   const [showHighlights, setShowHighlights] = useState(false);
   const highlights = [...ink.strokes.values()].flat().filter((s) => s.anchor);
   const select = (tool: InkTool) => {
@@ -172,6 +208,20 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
   };
   return (
     <div className="ink-toolbar" data-testid="ink-toolbar">
+      <div className="ink-toolbar__header">
+        <Button variant="tertiary" data-testid="ink-toggle" aria-expanded={expanded} aria-controls={toolsId}
+          onPress={() => {
+            setExpanded(!expanded);
+            if (expanded) {
+              setShowHighlights(false);
+              if (ink.tool !== 'read') ink.setTool('smart');
+            }
+          }}>
+          <PenLine size={18} /><span>批注工具</span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+        </Button>
+        {ink.toolbarActions}
+      </div>
+      <div id={toolsId} hidden={!expanded}>
       <div className="ink-toolbar__tools">
         <ToggleButtonGroup aria-label="阅读与批注工具" selectionMode="single" selectedKeys={[ink.tool]}
           isDisabled={disabled || !ink.ready} onSelectionChange={(keys) => {
@@ -181,7 +231,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
           <ToggleButton id="smart" aria-label="智能批注：笔写字，手指滚动" data-testid="ink-smart"><PenLine size={18} /><span>智能批注</span></ToggleButton>
           <ToggleButton id="read" aria-label="阅读模式" data-testid="ink-read"><MousePointer2 size={18} /><span>阅读 / 选字</span></ToggleButton>
           <ToggleButton id="pen" aria-label="画笔" data-testid="ink-pen"><PenLine size={18} /><span>画笔</span></ToggleButton>
-          <ToggleButton id="text-highlight" aria-label="文字荧光笔：拖过文字，一次后返回智能批注" data-testid="ink-text-highlight"><Highlighter size={18} /><span>文字荧光笔</span></ToggleButton>
+          <ToggleButton id="text-highlight" aria-label="文字荧光笔：拖过文字，一次后返回智能批注" data-testid="ink-text-highlight"><TextCursor size={18} /><span>文字荧光笔</span></ToggleButton>
           <ToggleButton id="highlight" aria-label="自由荧光笔（画一笔后返回智能批注）" data-testid="ink-highlight"><Highlighter size={18} /><span>自由荧光笔</span></ToggleButton>
           <ToggleButton id="erase" aria-label="橡皮擦（整笔）" data-testid="ink-erase"><Eraser size={18} /></ToggleButton>
         </ToggleButtonGroup>
@@ -202,7 +252,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
           <ToggleButton isSelected={ink.finger} onChange={ink.setFinger} data-testid="ink-finger">启用手指绘制</ToggleButton>
         </>}
         <Button variant="tertiary" data-testid="ink-excerpts" aria-expanded={showHighlights} onPress={() => setShowHighlights(!showHighlights)}>高亮摘录（{highlights.length}）</Button>
-        {ink.toolbarActions}
+      </div>
       </div>
       {ink.error ? <div className="ink-toolbar__hint" role="alert"><span className="text-danger">{ink.error}<Button size="sm" variant="tertiary" onPress={ink.retry}>重试</Button></span></div>
         : <span className="sr-only" role="status">{ink.status}</span>}
@@ -414,7 +464,7 @@ export function InkLayer({ surface, disabled = false }: { surface: string; disab
     };
   });
   return <div ref={layer} className="ink-layer" data-active={active && ink.tool !== 'smart' || undefined} data-testid="ink-layer" data-ink-surface={surface}
-    onContextMenu={(e) => { if (active) e.preventDefault(); }}>
+    data-tool={active ? ink.tool : undefined} onContextMenu={(e) => { if (active) e.preventDefault(); }}>
     {strokes.map((stroke) => <SavedStroke key={stroke.id} stroke={stroke} />)}
     <svg ref={previewSvg} preserveAspectRatio="none" aria-hidden="true"><path ref={preview} /></svg>
   </div>;

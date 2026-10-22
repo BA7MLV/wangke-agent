@@ -13,11 +13,12 @@ const segmenter = typeof Intl.Segmenter === 'function' ? new Intl.Segmenter(unde
 
 export function indexText(host: HTMLElement): TextIndex {
   const root = host.querySelector('.textLayer') ?? host;
-  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
+  const walker = host.ownerDocument.createTreeWalker(root, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_ELEMENT, {
     acceptNode: (node) => {
-      if (node instanceof Element) {
-        if (node.matches(EXCLUDE) || getComputedStyle(node).display === 'none') return NodeFilter.FILTER_REJECT;
-        return node.tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
+      if (node.nodeType === Node.ELEMENT_NODE) {
+        const element = node as Element;
+        if (element.matches(EXCLUDE) || host.ownerDocument.defaultView?.getComputedStyle(element).display === 'none') return NodeFilter.FILTER_REJECT;
+        return element.tagName === 'BR' ? NodeFilter.FILTER_ACCEPT : NodeFilter.FILTER_SKIP;
       }
       return node.parentElement?.closest(EXCLUDE) ? NodeFilter.FILTER_REJECT : NodeFilter.FILTER_ACCEPT;
     },
@@ -26,7 +27,7 @@ export function indexText(host: HTMLElement): TextIndex {
   const runs: TextRun[] = [];
   let previousBlock: Element | null = null;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    if (node instanceof Element) { if (text && !text.endsWith('\n')) text += '\n'; continue; }
+    if (node.nodeType === Node.ELEMENT_NODE) { if (text && !text.endsWith('\n')) text += '\n'; continue; }
     const value = node.textContent ?? '';
     if (!value) continue;
     const block = node.parentElement?.closest('p,li,td,th,h1,h2,h3,h4,h5,h6,pre,blockquote') ?? null;
@@ -39,11 +40,25 @@ export function indexText(host: HTMLElement): TextIndex {
 }
 
 const rangeOf = (run: TextRun, start = run.start, end = run.end) => {
-  const range = document.createRange();
+  const range = run.node.ownerDocument.createRange();
   range.setStart(run.node, Math.max(start, run.start) - run.start);
   range.setEnd(run.node, Math.min(end, run.end) - run.start);
   return range;
 };
+
+/** 把浏览器选区映射回正文索引；按节点定位，重复文本不会误标到别处。 */
+export function selectionOffsets(index: TextIndex, selection: Range): { start: number; end: number } | null {
+  let start = Infinity, end = -1;
+  for (const run of index.runs) {
+    if (!selection.intersectsNode(run.node)) continue;
+    const from = selection.startContainer === run.node ? selection.startOffset : 0;
+    const to = selection.endContainer === run.node ? selection.endOffset : run.node.length;
+    if (to <= from) continue;
+    start = Math.min(start, run.start + from);
+    end = Math.max(end, run.start + to);
+  }
+  return end > start ? { start, end } : null;
+}
 const distance = (r: DOMRect, x: number, y: number) => Math.hypot(Math.max(r.left - x, 0, x - r.right), Math.max(r.top - y, 0, y - r.bottom));
 
 /** 先定位文字节点，再按字素命中，避免逐帧扫描整页所有字符。 */

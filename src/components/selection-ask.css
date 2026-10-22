@@ -1,3 +1,15 @@
+.selection-menu-anchor {
+  position: fixed;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  border: 0;
+  pointer-events: none;
+  opacity: 0;
+}
+
+.selection-menu { min-width: 160px; }
+
 /* 选区提问浮层。
    设计约束：容器 pointer-events:none，只有按钮 auto —— 否则浮层会盖住正文，
    让「继续滚动」和「继续拖选」失效（那种「浮层把手指吃了」的手感很致命）。 */

@@ -38,6 +38,9 @@ async function importFile(file) {
   const id = await (await page.waitForFunction((old) => [...document.querySelectorAll('[data-testid="video-item"]')].find((e) => !old.includes(e.dataset.videoId))?.dataset.videoId, old)).jsonValue();
   await page.goto(`${BASE}/#/player/${id}`);
   await page.waitForFunction(() => document.querySelector('[data-testid="ink-smart"]')?.disabled === false);
+  assert.equal(await byId('ink-toggle').getAttribute('aria-expanded'), 'false', '工具栏默认收起');
+  assert.equal(await byId('ink-text-highlight').isVisible(), false);
+  await byId('ink-toggle').click();
   return id;
 }
 
@@ -68,6 +71,7 @@ async function endpoints(target, start, end) {
 }
 async function highlight(target, start, end, reverse = false) {
   await byId('ink-text-highlight').click();
+  assert.equal(await page.locator('.ink-layer[data-active]').first().evaluate((el) => getComputedStyle(el).cursor), 'text', '文字荧光笔使用选字光标');
   await target.evaluate((e) => e.scrollIntoView({ block: 'start', behavior: 'instant' }));
   const points = await endpoints(target, start, end);
   const a = reverse ? points.b : points.a, b = reverse ? points.a : points.b;
@@ -134,6 +138,7 @@ try {
   assert.deepEqual((await rows(mdId))[0], mark, '重排不改写锚点或原始快照');
   await page.reload();
   await path.waitFor();
+  await byId('ink-toggle').click();
   assert.equal(await byId('ink-smart').getAttribute('aria-checked'), 'true');
   assert.deepEqual((await rows(mdId))[0], mark, '刷新恢复高亮');
   await page.setViewportSize({ width: 1100, height: 1100 });
@@ -222,6 +227,7 @@ try {
 
   await page.goto(`${BASE}/#/player/${mdId}`);
   await page.locator('[data-ink-stroke]').waitFor();
+  await byId('ink-toggle').click();
   await byId('ink-excerpts').click();
   await mkdir('e2e-shots', { recursive: true });
   await page.locator('[data-slot="toast"]').first().waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});

@@ -56,10 +56,6 @@
   display: contents;
 }
 
-.course-chat--empty .chat-viewport-fade {
-  display: none;
-}
-
 .course-chat--empty .course-chat__empty > h2,
 .course-chat--empty .course-chat__empty-skel {
   grid-row: 1;
@@ -114,9 +110,6 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  /* 模糊从浮动输入区上方轻轻进入，输入区后面只铺底色。装饰仍贴视区、不随消息滚动。 */
-  --chat-viewport-fade-height: calc(var(--chat-composer-height, 116px) + 48px);
-  --chat-viewport-fade-band: 64px;
 }
 
 /* ── 回答设置 ─────────────────────────────────────────────────────────────
@@ -821,7 +814,8 @@
   flex: 0 0 auto;
   padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
     max(12px, env(safe-area-inset-bottom));
-  background: transparent;
+  /* 整个输入区（含两侧与底部安全间距）实色遮挡，避免消息从卡片下方漏出。 */
+  background: var(--background-secondary);
 }
 
 /* ── 回到底部 ─────────────────────────────────────────────────────────────

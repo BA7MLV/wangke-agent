@@ -45,6 +45,8 @@ async function importFile(file) {
   await page.locator('input[type=file]').setInputFiles(file);
   const id = await (await page.waitForFunction((old) => [...document.querySelectorAll('[data-testid="video-item"]')].find((e) => !old.includes(e.dataset.videoId))?.dataset.videoId, old)).jsonValue();
   await page.goto(`${BASE}/#/player/${id}`);
+  assert.equal(await byId('ink-toggle').getAttribute('aria-expanded'), 'false', '工具栏默认收起');
+  await byId('ink-toggle').click();
   await byId('ink-pen').waitFor();
   await page.waitForFunction(() => !document.querySelector('[data-testid="ink-pen"]')?.disabled);
   return id;
@@ -276,6 +278,7 @@ try {
   assert.equal(await byId('ink-read').getAttribute('aria-checked'), 'true', '框选与书写互斥');
   await byId('reader-tool-areaselect').click();
   await page.reload(); await first.locator('[data-ink-stroke]').first().waitFor();
+  await byId('ink-toggle').click();
   assert.equal(await first.locator('[data-ink-stroke]').count(), 2, '刷新恢复笔迹');
   assert.deepEqual((await inkRows()).find((s) => s.id === saved.id), saved, '笔型、浓度、美化与原始笔压持久化');
 
@@ -345,6 +348,7 @@ try {
   await importFile('scripts/fixtures/sample.docx');
   await byId('ink-pen').click(); await penStroke(byId('ink-layer').first()); await waitSaved(4);
   await page.reload(); await page.locator('[data-ink-stroke]').waitFor();
+  await byId('ink-toggle').click();
   await importFile('scripts/fixtures/sample.html');
   assert.equal(await byId('html-frame').count(), 1);
   await byId('ink-pen').click(); await byId('html-view-blocks').waitFor();

@@ -1,4 +1,8 @@
 .ink-toolbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
+.ink-toolbar__header { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+.ink-toolbar__header button { min-height: 44px; gap: 6px; }
+.ink-toolbar > [hidden] { display: none; }
+.ink-toolbar__header + div:not([hidden]) { margin-top: 4px; }
 .ink-toolbar__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .ink-toolbar__tools :is(button, select, input) { min-height: 44px; }
 .ink-toolbar__tools button { gap: 6px; }
@@ -14,6 +18,10 @@
 /* 笔和手指共享 touch-action；书写态必须在接触前关闭 UA 滚动，不能在 pointerdown 临时改。 */
 .ink-input-root[data-writing] .mr-scroll { touch-action: none; }
 .ink-layer[data-active] { pointer-events: auto; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; cursor: crosshair; }
+.ink-layer[data-active][data-tool="text-highlight"] { cursor: text; }
+.ink-layer[data-active][data-tool="pen"] { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32' viewBox='0 0 32 32'%3E%3Cpath d='M7 25l2-7L23 4l5 5-14 14z' fill='white' stroke='white' stroke-width='4' stroke-linejoin='round'/%3E%3Cpath d='M7 25l2-7L23 4l5 5-14 14zM19 8l5 5M9 18l5 5' fill='none' stroke='%2318181b' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 7 25, crosshair; }
+.ink-layer[data-active][data-tool="highlight"] { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M7 24l1-7L21 4l7 7-13 13z' fill='%23facc15' stroke='white' stroke-width='4' stroke-linejoin='round'/%3E%3Cpath d='M7 24l1-7L21 4l7 7-13 13zM8 17l7 7M5 27h12' fill='none' stroke='%2318181b' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 7 24, crosshair; }
+.ink-layer[data-active][data-tool="erase"] { cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='32' height='32'%3E%3Cpath d='M5 20L20 5l8 8-12 12h-6z' fill='white' stroke='white' stroke-width='4' stroke-linejoin='round'/%3E%3Cpath d='M5 20L20 5l8 8-12 12h-6zM12 13l8 8M9 27h18' fill='none' stroke='%2318181b' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 5 20, crosshair; }
 .ink-toolbar__tools [data-testid="ink-finger"] { color: var(--muted); }
 .ink-excerpts { max-height: 25dvh; overflow: auto; margin-top: 8px; }
 .ink-excerpt { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 8px 0; border-top: 1px solid var(--border); }

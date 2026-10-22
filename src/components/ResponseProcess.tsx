@@ -34,7 +34,12 @@ export default function ResponseProcess({
       elapsedMs={calls.length ? undefined : elapsedMs} waiting={waiting} revision={calls}
       failure={failures.length ? failures[failures.length - 1].result || '工具调用失败，可展开查看。' : undefined}
       summary={<>
-        {calls.length > 0 && <span className="reasoning-chain__summary">· {calls.length} 次工具调用</span>}
+        {calls.length > 0 && (
+          <span className="reasoning-chain__summary" aria-label={`${calls.length} 次工具调用`} title={`${calls.length} 次工具调用`}>
+            <Sym name="build" aria-hidden="true" />
+            {calls.length}
+          </span>
+        )}
         {failures.length > 0 && <span className="reasoning-chain__errors">· {failures.length} 次失败</span>}
       </>}
     >

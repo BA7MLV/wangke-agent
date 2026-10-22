@@ -1,44 +1,62 @@
-import crypto from 'node:crypto';
-import type { FastifyRequest } from 'fastify';
+import path from 'node:path';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudTask, CloudTaskKind } from '../../../../packages/contracts/src/cloud.js';
+import { CloudConfiguration } from './config.js';
+import { CloudRecords } from './records.js';
+import { executeBrowserTask } from './browser.js';
+import { executeMediaTask } from './media.js';
+import { executorFor, type TaskContext, type TaskExecutor } from './execution.js';
+export { workerIdentity } from './workerAuth.js';
 
-const workerTokens = new Map<string, { id: string; taskId: string }>();
-export function workerIdentity(request: FastifyRequest) {
-  const authorization = request.headers.authorization;
-  return authorization?.startsWith('Bearer ') ? workerTokens.get(authorization.slice(7)) : undefined;
-}
 export const TASK_KINDS: CloudTaskKind[] = ['chat', 'qa', 'transcribe', 'handout', 'cards', 'comments', 'danmaku', 'material', 'cover', 'artifactEdit', 'handoutEdit', 'modelOnce'];
 export function taskDto(row: any): CloudTask {
   return { id: row.id, kind: row.kind, resource: row.resource, status: row.status, input: JSON.parse(row.input),
     progress: row.progress ? JSON.parse(row.progress) : null, result: row.result ? JSON.parse(row.result) : null,
-    error: row.error, createdAt: row.created_at };
+    error: row.error, createdAt: row.created_at, executor: row.executor ?? undefined };
 }
 
-/** Tasks run in a server-owned browser, never in the user's tab. Browser engines supply
- * WebCodecs/Canvas/DOM required by the existing media and document pipelines. */
+let nativeRuntime: Promise<{ executeNodeTask: TaskExecutor }> | undefined;
+const executeNodeTask: TaskExecutor = async context => {
+  const runtime = new URL(import.meta.url.endsWith('.ts')
+    ? '../../../../dist-api/apps/api/runtime/node.mjs' : '../../runtime/node.mjs', import.meta.url);
+  nativeRuntime ??= import(runtime.href);
+  return (await nativeRuntime!).executeNodeTask(context);
+};
+
+interface RunnerOptions {
+  records?: CloudRecords;
+  configuration?: CloudConfiguration;
+  filesDir?: string;
+  fetch?: typeof fetch;
+  /** Dependency injection for scheduler tests; never accepted over HTTP. */
+  executors?: Partial<Record<'node' | 'media' | 'browser', TaskExecutor>>;
+}
+
+/** Single-instance durable scheduler; execution backends do not own queue state. */
 export class CloudTaskRunner {
   private stopped = false;
-  private active = new Map<string, { close: () => Promise<void> }>();
+  private active = new Map<string, AbortController>();
   private draining = false;
   private timer?: ReturnType<typeof setInterval>;
-  private running = new Set<Promise<void>>();
-  constructor(private store: DatabaseStore) {}
+  private running = new Map<string, Promise<void>>();
+  private readonly records: CloudRecords;
+  constructor(private store: DatabaseStore, private options: RunnerOptions = {}) {
+    this.records = options.records ?? new CloudRecords(store);
+  }
 
   start(origin: string) {
-    // Retain completed checkpoints, but require an explicit retry after process loss.
     this.store.db.prepare("UPDATE cloud_tasks SET status='interrupted',error='服务器重启，任务已中断，可重试' WHERE status IN ('running','waiting_user')").run();
     this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE status IN ('pending','approved','consumed') AND task_id IN (SELECT id FROM cloud_tasks WHERE status NOT IN ('running','waiting_user'))").run();
     this.timer = setInterval(() => void this.drain(origin), 1000);
     this.timer.unref();
     void this.drain(origin);
   }
-  async cancel(id: string) { await this.active.get(id)?.close(); }
+  async cancel(id: string) { this.active.get(id)?.abort(); await this.running.get(id); }
   async close() {
     this.stopped = true;
     clearInterval(this.timer);
-    await Promise.allSettled([...this.active.values()].map(c => c.close()));
-    await Promise.allSettled([...this.running]);
+    for (const controller of this.active.values()) controller.abort();
+    await Promise.allSettled(this.running.values());
   }
   private async drain(origin: string) {
     if (this.stopped || this.draining) return;
@@ -53,44 +71,50 @@ export class CloudTaskRunner {
         if (busy) continue;
         const claim = this.store.db.prepare("UPDATE cloud_tasks SET status='running',updated_at=? WHERE id=? AND status='queued'").run(new Date().toISOString(), row.id);
         if (!claim.changes) continue;
-        this.active.set(row.id, { close: async () => {} });
-        const promise = this.execute(origin, row).finally(() => { this.active.delete(row.id); this.running.delete(promise); });
-        this.running.add(promise);
+        const controller = new AbortController();
+        this.active.set(row.id, controller);
+        const promise = this.execute(origin, row, controller.signal).finally(() => { this.active.delete(row.id); this.running.delete(row.id); });
+        this.running.set(row.id, promise);
       }
     } finally { this.draining = false; }
   }
-  private async execute(origin: string, row: any) {
-    const token = crypto.randomBytes(32).toString('base64url');
-    workerTokens.set(token, { id: row.owner_id, taskId: row.id });
-    let context: any;
-    let browser: any;
+  private async execute(origin: string, row: any, signal: AbortSignal) {
     try {
-      const { chromium } = await import('playwright');
-      // One browser per task prevents launch races and isolates crashes/cancellation.
-      browser = await chromium.launch({ headless: true, executablePath: process.env.CHROMIUM_PATH || undefined });
-      context = await browser.newContext({ serviceWorkers: 'block' });
-      this.active.set(row.id, { close: () => browser.close() });
-      const status = this.store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(row.id) as { status: string };
-      if (this.stopped || status.status !== 'running') return;
-      await context.route('**/*', async (route: any) => {
-        const url = new URL(route.request().url());
-        if (url.origin !== origin) return route.abort();
-        return route.continue({ headers: { ...route.request().headers(), authorization: `Bearer ${token}` } });
-      });
-      const page = await context.newPage();
-      await page.goto(`${origin}/?cloud-worker=1`, { waitUntil: 'domcontentloaded', timeout: 60000 });
-      await page.waitForFunction(() => typeof (window as any).__runCloudTask === 'function', undefined, { timeout: 120000 });
-      const result = await page.evaluate(async (task: CloudTask) => (window as any).__runCloudTask(task), taskDto(row));
+      const task = taskDto(row);
+      task.status = 'running';
+      const video = typeof task.input.videoId === 'string' ? this.records.get(row.owner_id, 'videos', task.input.videoId) : null;
+      const executor = executorFor(task, video);
+      this.store.db.prepare('UPDATE cloud_tasks SET executor=? WHERE id=?').run(executor, row.id);
+      task.executor = executor;
+      const checkActive = () => {
+        signal.throwIfAborted();
+        if (this.stopped || (this.store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(row.id) as { status: string } | undefined)?.status !== 'running') {
+          throw new DOMException('任务已停止', 'AbortError');
+        }
+      };
+      const directory = process.env.DATA_DIR ?? path.resolve('data');
+      const context: TaskContext = {
+        task, owner: row.owner_id, store: this.store, records: this.records,
+        configuration: this.options.configuration ?? new CloudConfiguration(this.store, path.join(directory, 'config')),
+        filesDir: this.options.filesDir ?? process.env.FILES_DIR ?? path.join(directory, 'files'),
+        signal, fetch: this.options.fetch ?? fetch, checkActive,
+        report: progress => {
+          checkActive();
+          this.store.db.prepare("UPDATE cloud_tasks SET progress=?,updated_at=? WHERE id=? AND status='running'")
+            .run(JSON.stringify(progress), new Date().toISOString(), row.id);
+        },
+      };
+      const execute = this.options.executors?.[executor] ?? (executor === 'node' ? executeNodeTask
+        : executor === 'media' ? executeMediaTask : (ctx: TaskContext) => executeBrowserTask(ctx, origin));
+      const result = await execute(context);
+      signal.throwIfAborted();
       this.store.db.prepare("UPDATE cloud_tasks SET status='completed',result=?,error=NULL,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
         .run(JSON.stringify(result ?? null), new Date().toISOString(), row.id);
     } catch (error) {
       const message = error instanceof Error ? error.message : '执行器运行失败';
       this.store.db.prepare("UPDATE cloud_tasks SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
-        .run(this.stopped ? 'interrupted' : 'failed', message.slice(0, 1000), new Date().toISOString(), row.id);
+        .run(this.stopped ? 'interrupted' : signal.aborted ? 'cancelled' : 'failed', message.slice(0, 1000), new Date().toISOString(), row.id);
     } finally {
-      workerTokens.delete(token);
-      await context?.close().catch(() => {});
-      await browser?.close().catch(() => {});
       this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE task_id=? AND status IN ('pending','approved','consumed')").run(row.id);
     }
   }

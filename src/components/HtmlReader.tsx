@@ -15,7 +15,10 @@ import { Sym } from '../ui';
 import ReaderProgress from './ReaderProgress';
 import DocSkeleton from './DocSkeleton';
 import { InkLayer, InkToolbar, useMaterialInk } from './MaterialInk';
-import { inkTextKey } from '../materials/ink';
+import { inkTextKey, type InkStroke } from '../materials/ink';
+import { indexText, makeTextAnchor, resolveTextAnchor, selectionOffsets } from '../materials/textHighlight';
+import { uuid } from '../utils/uuid';
+import { useIsMobile } from '../utils/useMobile';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -83,6 +86,7 @@ export default function HtmlReader({
   onUnitChange,
 }: Props) {
   const ink = useMaterialInk();
+  const isMobile = useIsMobile();
   /**
    * 视图**由本组件持有**，而不是受控于 `videos.htmlView`。
    *
@@ -276,7 +280,8 @@ const src = await readHtmlText(blob);
       setCurrent(unit);
     };
 
-    const pushHit = () => {
+    const pushHit = (event?: MouseEvent) => {
+      if (!event && !isMobile) return;
       const sel = doc.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
       const range = sel.getRangeAt(0);
@@ -289,6 +294,24 @@ const src = await readHtmlText(blob);
       const unit = Number.isFinite(n) && n > 0 ? n : undefined;
       const r = range.getBoundingClientRect();
       const box = frame.getBoundingClientRect();
+      const add: InkStroke[] = [];
+      if (event && ink.ready) for (const block of blocks ?? []) for (const original of doc.querySelectorAll<HTMLElement>(`[${MR_UNIT_ATTR}="${block.unit}"]`)) {
+        if (!range.intersectsNode(original)) continue;
+        const originalIndex = indexText(original), offsets = selectionOffsets(originalIndex, range);
+        if (!offsets) continue;
+        const fragment = document.createElement('section');
+        fragment.innerHTML = block.html;
+        fragment.dataset.askLabel = block.label;
+        const index = indexText(fragment), surface = `html:${block.unit}:${inkTextKey(block.html)}`;
+        const quote = makeTextAnchor(originalIndex, offsets.start, offsets.end, original, surface);
+        const resolved = resolveTextAnchor(index.text, quote);
+        if (!resolved) continue;
+        add.push({ id: uuid(), materialId, surface, tool: 'highlight', color: ink.highlightColor,
+          width: 1, height: 1000, points: [], createdAt: Date.now(), renderer: 'freehand-v1',
+          opacity: ink.highlightOpacity, input: 'mouse', rects: [],
+          anchor: makeTextAnchor(index, resolved.start, resolved.end, fragment, surface) });
+      }
+      if (event) event.preventDefault();
       showBar(
         {
           text,
@@ -298,23 +321,30 @@ const src = await readHtmlText(blob);
           unitLabel: unit ? labels.get(unit) : undefined,
         },
         {
-          x: Math.min(Math.max(box.left + r.left + r.width / 2, 104), window.innerWidth - 104),
-          y: box.top + r.bottom,
+          x: event ? box.left + event.clientX : Math.min(Math.max(box.left + r.left + r.width / 2, 104), window.innerWidth - 104),
+          y: box.top + (event ? event.clientY : r.bottom),
         },
+        event ? { mark: add.length ? () => {
+          ink.commit({ add, remove: [] });
+          setCurrent(add[0].anchor!.unit);
+          currentRef.current = add[0].anchor!.unit;
+          changeView('blocks');
+          doc.getSelection()?.removeAllRanges();
+        } : undefined } : undefined,
       );
     };
 
     let selTimer = 0;
     const onSelectionChange = () => {
       window.clearTimeout(selTimer);
-      selTimer = window.setTimeout(pushHit, 140);
+      selTimer = window.setTimeout(() => pushHit(), 140);
     };
     const onPointerDown = () => hideBar();
     const onScroll = () => {
       // 浮层锚点是宿主视口坐标，iframe 一滚就失效 —— 先收起，停稳后按新位置重算
       hideBar();
       window.clearTimeout(selTimer);
-      selTimer = window.setTimeout(pushHit, 120);
+      selTimer = window.setTimeout(() => pushHit(), 120);
       if (rafRef.current) return;
       rafRef.current = window.requestAnimationFrame(() => {
         rafRef.current = 0;
@@ -332,6 +362,7 @@ const src = await readHtmlText(blob);
     };
 
     doc.addEventListener('selectionchange', onSelectionChange);
+    doc.addEventListener('contextmenu', pushHit);
     doc.addEventListener('pointerdown', onPointerDown, true);
     doc.addEventListener('scroll', onScroll, true);
     doc.addEventListener('click', onClick, true);
@@ -362,11 +393,12 @@ const src = await readHtmlText(blob);
       if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
       doc.removeEventListener('selectionchange', onSelectionChange);
+      doc.removeEventListener('contextmenu', pushHit);
       doc.removeEventListener('pointerdown', onPointerDown, true);
       doc.removeEventListener('scroll', onScroll, true);
       doc.removeEventListener('click', onClick, true);
     };
-  }, [view, prepared, labels, initialUnit, showBar, hideBar, frameTick]);
+  }, [view, prepared, labels, initialUnit, showBar, hideBar, frameTick, isMobile, blocks, ink.ready, ink.commit, ink.highlightColor, ink.highlightOpacity, materialId, changeView]);
 
   /* ── 分段视图：定位与断点续读（与原实现一致） ───────────────────────────── */
 
@@ -491,7 +523,7 @@ const src = await readHtmlText(blob);
         <ReaderProgress current={current} total={total} />
       </div>
       <InkToolbar disabled={!ready || !!error} onActivate={() => { if (view === 'raw') changeView('blocks'); }} />
-      {view === 'raw' && <div className="mr-hint">手写批注使用分段视图；选择画笔会自动切换。</div>}
+      {view === 'raw' && <div className="mr-hint">批注使用分段视图；标记文字或选择画笔会自动切换。</div>}
 
       {error && (
         <div className="mr-hint" data-testid="reader-error">

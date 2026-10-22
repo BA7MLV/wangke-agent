@@ -27,7 +27,6 @@ import { StreamParagraph, PendingReply, useMessageEnter } from '../components/mo
 import ResponseProcess from '../components/ResponseProcess';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
-import ChatViewportFade from '../components/ChatViewportFade';
 import { useMessageDeletion } from '../components/useMessageDeletion';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
@@ -1327,7 +1326,6 @@ export default function CourseChat() {
 
           <ChatMessageNav key={activeId} messages={messages} scrollRef={listRef}
             virtualRef={virtualMessagesRef} onNavigate={navigateToQuestion} />
-          <ChatViewportFade />
           </div>
 
           {/* 正文独占上行；底部添加入口固定在左，发送操作固定在右。

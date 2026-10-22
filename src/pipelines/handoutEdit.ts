@@ -5,19 +5,16 @@
  *    连续编辑经串行队列合并（进行中被取代的任务直接视为完成），
  *    重建失败不丢内存状态（下次编辑带全量 IR 重试即自愈）。
  */
-import { chatOnce, textOf } from '../api/siliconflow';
 import { remoteTasks } from '../cloud/state';
 import { runCloudTask } from '../cloud/tasks';
 import { getSettings, targetOfSlot } from '../store/settings';
 import { db } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { extractFramesAt } from '../media/frames';
-import { PROMPTS } from '../harness/prompts';
 import { buildHandoutDocx, type HandoutSection } from '../handout/docx';
-import { collectFigureTimestamps, parseRewrittenBlock, type Block } from '../handout/ir';
+import { collectFigureTimestamps, type Block } from '../handout/ir';
 import type { HandoutImages } from '../handout/render';
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+import { rewriteBlock } from '../handout/rewrite';
 
 /** 块的纯文本摘要（给 LLM 的上下文用） */
 export function blockToText(b: Block): string {
@@ -36,16 +33,6 @@ export function blockToText(b: Block): string {
   }
 }
 
-const KIND_LABEL: Record<Block['type'], string> = {
-  lead: '主旨段',
-  para: '正文段落',
-  h2: '小节标题（名词性短语，不带编号）',
-  list: '列表（保持 items 数组结构）',
-  table: '三线表',
-  figure: '图注',
-  note: '提示段',
-};
-
 /** LLM 改写单个块：失败重试一次，再失败抛错由 UI 提示 */
 export async function rewriteBlockWithLLM(
   original: Block,
@@ -54,37 +41,7 @@ export async function rewriteBlockWithLLM(
 ): Promise<Block> {
   if (remoteTasks()) return runCloudTask('handoutEdit', crypto.randomUUID(), { original, instruction, ctx });
   const target = targetOfSlot(getSettings(), 'chat');
-
-  const extraRule =
-    original.type === 'table'
-      ? `表头列数（${original.header.length} 列）与数据行数（${original.rows.length} 行）必须保持不变，只能修改文字。`
-      : original.type === 'figure'
-        ? '只修改 caption 图注文字。'
-        : undefined;
-  // figure 的 ts 不进提示词，避免模型顺手改掉；解析层强制保留原值
-  const jsonForPrompt =
-    original.type === 'figure' ? JSON.stringify({ caption: original.caption ?? '' }) : JSON.stringify(original);
-  const prompt = PROMPTS.rewriteBlock(jsonForPrompt, KIND_LABEL[original.type], instruction, {
-    ...ctx,
-    extraRule,
-  });
-
-  let lastErr: unknown;
-  for (let attempt = 0; attempt < 2; attempt++) {
-    try {
-      const msg = await chatOnce(target, {
-        max_tokens: 2000,
-        messages: [{ role: 'user', content: prompt }],
-      });
-      return parseRewrittenBlock(textOf(msg), original);
-    } catch (e) {
-      lastErr = e;
-      const status = (e as { status?: number }).status;
-      if (status === 400 || status === 401 || status === 403) throw e;
-      if (attempt === 0) await sleep(800);
-    }
-  }
-  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+  return rewriteBlock(target, original, instruction, ctx);
 }
 
 interface EditJob {

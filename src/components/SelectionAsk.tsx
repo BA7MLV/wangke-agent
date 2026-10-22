@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Button } from '@heroui/react';
+import { Button, Dropdown, Label } from '@heroui/react';
+import { Highlighter } from 'lucide-react';
 import { useIsMobile } from '../utils/useMobile';
 import { cleanSelectionText, isUsableSelection } from '../materials/region';
 import { useSelectionAsk, type AskSource, type Citation } from '../store/selectionAsk';
@@ -7,7 +8,7 @@ import { Sym } from '../ui';
 import './selection-ask.css';
 
 /**
- * 全局选区浮层：在任意「可问答区域」里拖选文字后弹出动作条。
+ * 选区操作：资料桌面端由阅读器投递右键菜单；其余来源保留选区动作条。
  *
  * ## 为什么用 DOM 属性而不是 props 驱动
  *
@@ -36,7 +37,7 @@ interface Hit {
 }
 
 /** 浮层容器本身不吃指针事件，只有按钮吃 —— 否则它会盖住正文，让「继续滚动/继续拖选」失效 */
-function readSelection(): Hit | null {
+function readSelection(isMobile: boolean): Hit | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
   const range = sel.getRangeAt(0);
@@ -44,6 +45,8 @@ function readSelection(): Hit | null {
   const el = start.nodeType === Node.ELEMENT_NODE ? (start as Element) : start.parentElement;
   const host = el?.closest?.('[data-askable]') as HTMLElement | null;
   if (!host) return null;
+  // 资料桌面端只响应右键，不在拖选时抢出旧动作条。字幕、讲义保持原交互。
+  if (!isMobile && host.closest('.ink-input-root')) return null;
 
   const text = cleanSelectionText(sel.toString());
   if (!isUsableSelection(text)) return null;
@@ -84,14 +87,15 @@ export default function SelectionAsk() {
     const onChange = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const next = readSelection();
+        const next = readSelection(isMobile);
         // 选区变空时不要立刻收：可能是刚才点了浮层导致折叠（见文件头注释 1）
         if (!next && Date.now() - insideAt.current < 800) return;
         setHit(next);
       }, 140);
     };
     const onPointerDown = (e: PointerEvent) => {
-      const inside = !!barRef.current && e.target instanceof Node && barRef.current.contains(e.target);
+      const inside = e.target instanceof Element && !!e.target.closest('[data-selection-menu]')
+        || !!barRef.current && e.target instanceof Node && barRef.current.contains(e.target);
       if (inside) {
         insideAt.current = Date.now();
         return;
@@ -128,7 +132,7 @@ export default function SelectionAsk() {
       setHit(null);
       window.clearTimeout(scrollTimer);
       if (wasRegionBar) return;
-      scrollTimer = window.setTimeout(() => setHit(readSelection()), 120);
+      scrollTimer = window.setTimeout(() => setHit(readSelection(isMobile)), 120);
     };
 
     document.addEventListener('selectionchange', onChange);
@@ -143,7 +147,7 @@ export default function SelectionAsk() {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('scroll', onScroll, true);
     };
-  }, [hideBar]);
+  }, [hideBar, isMobile]);
 
   const fire = useCallback(
     (mode: 'explain' | 'compose') => {
@@ -163,6 +167,26 @@ export default function SelectionAsk() {
 
   const active = region ?? hit;
   if (!active) return null;
+
+  if (region?.menu) return (
+    <Dropdown isOpen onOpenChange={(open) => { if (!open) hideBar(); }}>
+      <Dropdown.Trigger className="selection-menu-anchor" aria-label="选中文字操作"
+        style={{ left: region.anchor.x, top: region.anchor.y }} />
+      <Dropdown.Popover placement="bottom start" className="selection-menu" data-selection-menu data-testid="selection-menu">
+        <Dropdown.Menu aria-label="选中文字操作" onAction={(key) => {
+          if (key === 'mark') {
+            region.menu?.mark?.();
+            hideBar();
+            window.getSelection()?.removeAllRanges();
+          } else fire(key === 'explain' ? 'explain' : 'compose');
+        }}>
+          <Dropdown.Item id="mark" textValue="标记" isDisabled={!region.menu.mark} data-testid="selection-mark"><Highlighter size={16} aria-hidden="true" /><Label>标记</Label></Dropdown.Item>
+          <Dropdown.Item id="explain" textValue="解释" data-testid="ask-explain"><Sym name="lightbulb" /><Label>解释</Label></Dropdown.Item>
+          <Dropdown.Item id="compose" textValue="提问" data-testid="ask-compose"><Sym name="chat" /><Label>提问</Label></Dropdown.Item>
+        </Dropdown.Menu>
+      </Dropdown.Popover>
+    </Dropdown>
+  );
 
   const pos = region ? { ...region.anchor, below: true } : hit!.anchor;
   const style = isMobile

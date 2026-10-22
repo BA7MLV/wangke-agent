@@ -36,8 +36,6 @@
   flex-direction: column;
   flex: 1 1 auto;
   min-height: 0;
-  --chat-viewport-bg: var(--surface);
-  --chat-viewport-fade-height: 48px;
 }
 
 /* PanelBody 已负责滚动，这里只管消息的纵向节奏。
@@ -47,8 +45,7 @@
   overflow-anchor: none;
   --reasoning-sticky-gap: 4px;
   display: block;
-  /* 最后一条消息仍能完整滚到模糊带上方，不把末行永久盖在装饰下。 */
-  padding: var(--reasoning-sticky-gap) 0 calc(var(--chat-viewport-fade-height) + 8px);
+  padding: var(--reasoning-sticky-gap) 0 8px;
 }
 
 .chat-msg {

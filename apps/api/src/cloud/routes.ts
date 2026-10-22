@@ -16,7 +16,7 @@ interface Dependencies {
 
 export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
   const { store, records, configuration, requireAuth, checkOrigin } = deps;
-  const runner = new CloudTaskRunner(store);
+  const runner = new CloudTaskRunner(store, { records, configuration, filesDir: deps.filesDir, fetch: deps.fetch });
   const fail = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const ownedTask = (owner: string, id: string) => store.db.prepare('SELECT * FROM cloud_tasks WHERE id=? AND owner_id=?').get(id, owner) as any;
   const authorize = (request: FastifyRequest, reply: FastifyReply, admin = false) => {

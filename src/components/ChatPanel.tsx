@@ -43,7 +43,6 @@ import {
 } from '../ui';
 import { StreamParagraph, useMessageEnter } from './motion';
 import ResponseProcess from './ResponseProcess';
-import ChatViewportFade from './ChatViewportFade';
 import type { ProcessPhase } from '../utils/responseProcess';
 import VirtualMessages from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
@@ -1948,7 +1947,6 @@ export default function ChatPanel({
           );
         }}</VirtualMessages>}
       </PanelBody>
-      {msgs.length > 0 && <ChatViewportFade />}
       </div>
 
       {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}

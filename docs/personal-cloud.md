@@ -15,9 +15,9 @@
 
 ## 运行资源
 
-镜像包含 Playwright Chromium 及系统依赖。每个任务使用独立浏览器进程，默认同时计算 2 个任务（`CLOUD_CONCURRENCY=1..4`），等待审批也占用内存。建议至少 4 GiB 内存，视频解码和讲义生成可提高配置或降低并发。Compose 提供 1 GiB `/dev/shm` 与 2 GiB 临时目录；原文件与产物保存在 `/data`。
+镜像包含 FFmpeg、Playwright Chromium 及系统依赖。任务调度按类型分流：已迁移的文本/模型任务直接在 Node 执行，视频封面使用 FFmpeg 子进程；其他任务暂用浏览器兼容执行器。默认同时计算 2 个任务（`CLOUD_CONCURRENCY=1..4`），等待审批也占用内存。完整功能仍建议至少 4 GiB 内存。Compose 提供 1 GiB `/dev/shm` 与 2 GiB 临时目录；原文件与产物保存在 `/data`。分流清单与迁移边界见 [任务执行架构](task-execution.md)。
 
-非 Docker 启动时先运行 `npx playwright install --with-deps chromium`，然后 `npm run build && npm start`。执行器读取生产 `dist`，开发 API 前也要构建前端。
+非 Docker 启动时先安装系统 FFmpeg（可用 `FFMPEG_PATH` 指定路径），运行 `npx playwright install --with-deps chromium`，然后 `npm run build && npm start`。浏览器兼容执行器读取生产 `dist`；Node/媒体执行器不依赖前端构建。开发 API 前先运行 `npm run build:api`，使用兼容任务前仍需构建前端。
 
 ## 同步与任务
 

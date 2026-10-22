@@ -1,0 +1,9 @@
+{
+  "extends": "./tsconfig.app.json",
+  "compilerOptions": {
+    "composite": false,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "include": ["apps/api/runtime/**/*.ts", "src/vite-env.d.ts"]
+}

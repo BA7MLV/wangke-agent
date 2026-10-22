@@ -72,6 +72,17 @@
   color: var(--danger);
 }
 
+.reasoning-chain__summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.reasoning-chain__summary > svg {
+  width: 14px;
+  height: 14px;
+}
+
 .reasoning-chain__failure {
   display: flex;
   align-items: baseline;

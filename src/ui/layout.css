@@ -252,6 +252,14 @@
 .t-badge.nav-unread {
   top: 8px;
   right: 8px;
+  will-change: auto;
+}
+
+/* 切页或收放侧栏会重新挂载角标，不应重播通用 badge 的滑入动画。
+   优先级高于 .t-badge[data-open='true']，不依赖 CSS 加载顺序；
+   只保留内层圆点在未读状态变化时的显隐过渡。 */
+.t-badge.nav-unread[data-open] {
+  animation: none;
 }
 
 .nav-unread .t-badge-dot {

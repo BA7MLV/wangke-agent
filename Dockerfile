@@ -13,7 +13,8 @@ WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
-RUN npm ci --omit=dev && npx playwright install --with-deps chromium && chmod -R a+rX /opt/playwright && npm cache clean --force
+RUN apt-get update && apt-get install -y --no-install-recommends ffmpeg && rm -rf /var/lib/apt/lists/* \
+  && npm ci --omit=dev && npx playwright install --with-deps chromium && chmod -R a+rX /opt/playwright && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-api ./dist-api
 RUN groupadd --system wangke && useradd --system --gid wangke --home-dir /app wangke \

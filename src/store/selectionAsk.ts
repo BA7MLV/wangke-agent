@@ -37,10 +37,16 @@ export interface Citation {
 
 export type AskMode = 'explain' | 'compose';
 
+export interface SelectionMenu {
+  /** 资料右键菜单；标记动作持有选区快照，不依赖菜单打开后的 DOM 选区。 */
+  mark?: () => void;
+}
+
 interface BarState {
   cite: Citation;
   /** 视口坐标（浮层锚点） */
   anchor: { x: number; y: number };
+  menu?: SelectionMenu;
 }
 
 interface SelectionAskStore {
@@ -49,7 +55,7 @@ interface SelectionAskStore {
   /** 浮层展示请求（框选直接投这条，让两种入口的动作条长得一样） */
   bar: BarState | null;
   ask: (cite: Citation, mode: AskMode) => void;
-  showBar: (cite: Citation, anchor: { x: number; y: number }) => void;
+  showBar: (cite: Citation, anchor: { x: number; y: number }, menu?: SelectionMenu) => void;
   hideBar: () => void;
   take: () => void;
 }
@@ -58,7 +64,7 @@ export const useSelectionAsk = create<SelectionAskStore>()((set) => ({
   pending: null,
   bar: null,
   ask: (cite, mode) => set({ pending: { cite, mode }, bar: null }),
-  showBar: (cite, anchor) => set({ bar: { cite, anchor } }),
+  showBar: (cite, anchor, menu) => set({ bar: { cite, anchor, menu } }),
   hideBar: () => set({ bar: null }),
   take: () => set({ pending: null }),
 }));

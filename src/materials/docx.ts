@@ -170,17 +170,25 @@ export function extractDocxUnitsFromXml(xml: string): RawUnit[] {
  * `filter` 只解 `word/document.xml` —— .docx 里图片能占 90% 体积，
  * 整包解压会白读几十 MB（fflate 的 filter 在 inflate 前就跳过，是真正省下来的）。
  */
-export async function readDocxUnits(blob: Blob): Promise<RawUnit[]> {
+export async function readDocxUnits(blob: Blob, maxDocumentBytes = Infinity): Promise<RawUnit[]> {
   const bytes = new Uint8Array(await blob.arrayBuffer());
   if (looksLikeLegacyDoc(bytes)) {
     throw new Error('这是旧版 .doc 格式，暂不支持。请在 Word / WPS 里「另存为 .docx」后重新导入。');
   }
   if (!isZip(bytes)) throw new Error('文件不是有效的 .docx（不是 ZIP 包，可能已损坏）。');
-  const files = unzipSync(bytes, { filter: (f) => f.name === 'word/document.xml' });
+  let extractedBytes = 0;
+  const files = unzipSync(bytes, { filter: (f) => {
+    if (f.name !== 'word/document.xml') return false;
+    extractedBytes += f.originalSize;
+    // Enforce the server's bound before fflate allocates the inflated buffer.
+    if (extractedBytes > maxDocumentBytes) throw new Error('Word 正文过大，请拆分材料后重新导入');
+    return true;
+  } });
   const docXml = files['word/document.xml'];
   if (!docXml) {
     throw new Error('文件不是有效的 .docx（缺少 word/document.xml）。若是 .doc 请先另存为 .docx。');
   }
+  if (docXml.length > maxDocumentBytes) throw new Error('Word 正文过大，请拆分材料后重新导入');
   const xml = new TextDecoder('utf-8').decode(docXml);
   return extractDocxUnitsFromXml(xml);
 }

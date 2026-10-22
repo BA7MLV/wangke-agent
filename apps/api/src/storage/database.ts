@@ -227,6 +227,7 @@ const MIGRATIONS: Array<[number, string]> = [
       UNIQUE(task_id,nonce)
     );
   `],
+  [12, `ALTER TABLE cloud_tasks ADD COLUMN executor TEXT CHECK(executor IN ('node','media','browser'));`],
 ];
 
 export class DatabaseStore {
