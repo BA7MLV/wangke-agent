@@ -2,12 +2,13 @@ import type { ModelMeta } from './modelMeta';
 
 export const MODEL_KIND_LABEL = {
   llm: 'LLM · 文本', vlm: 'VLM · 视觉', audio: '音频', image: '图像生成', video: '视频生成',
-  multimodal: '多模态', unknown: '能力未知',
+  multimodal: '多模态', decision: '决策模型', unknown: '能力未知',
 } as const;
 export type ModelKind = keyof typeof MODEL_KIND_LABEL;
 
 /** 依据有效模态分类（未声明时默认文本）；生成模型优先按输出分类。 */
 export function modelKind(meta: ModelMeta | null): ModelKind {
+  if (meta?.type === 'decision') return 'decision';
   const input = meta?.inputModalities;
   const output = meta?.outputModalities;
   if (!input?.length || !output?.length) return 'unknown';

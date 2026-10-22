@@ -11,7 +11,7 @@ interface DiscoveryState {
   loading: boolean;
 }
 
-/** 候选列表只是发现结果，不自动覆盖用户保存的模型配置。 */
+/** 仅手动查找时请求接口；本地缓存和发现结果都不自动覆盖已保存的模型。 */
 export function useProviderModels(providers: Provider[], selectedProviderId: string | null) {
   const [states, setStates] = useState<Record<string, DiscoveryState>>({});
   const lifecycle = useRef<AbortController | null>(null);
@@ -65,23 +65,17 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
         });
         return next;
       });
-      const index = configured.findIndex((p) => p.id === selectedProviderId);
-      if (index >= 0) {
-        const cached = readModelList(keys[index]);
-        if (!cached || cached.stale) await refresh(configured[index], controller.signal);
-      }
     })().catch((error) => {
       if (controller.signal.aborted) return;
       const selected = configured.find((p) => p.id === selectedProviderId);
       if (!selected) return;
       const identity = modelListIdentity(selected);
       setStates((prev) => ({ ...prev, [identity]: { ...prev[identity], loading: false,
-        note: prev[identity]?.note?.startsWith('拉取失败') ? prev[identity].note
-          : `拉取失败：${error instanceof Error ? error.message : String(error)}` } }));
+        note: `读取模型缓存失败：${error instanceof Error ? error.message : String(error)}` } }));
     });
     return () => controller.abort();
-    // 只在连接身份或当前详情变化时重新发现，不因其他设置变化而请求。
-  }, [providersKey, selectedProviderId, refresh]);
+    // 切换详情或连接身份时取消旧请求、恢复本地缓存；缺失或过期也不自动联网。
+  }, [providersKey, selectedProviderId]);
 
   const modelOptions: Record<string, string[]> = {};
   const discoveredModels: Record<string, DiscoveredModel[]> = {};

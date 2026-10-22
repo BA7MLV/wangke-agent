@@ -42,9 +42,19 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await mode('live');
     assert.equal(await body.evaluate((el) => el.scrollHeight > el.clientHeight), true);
+    assert.equal(await toggle.locator('.lucide-chevrons-up-down').count(), 1);
+    const mask = await body.evaluate((el) => getComputedStyle(el).maskImage);
+    assert.notEqual(mask, 'none');
+    for (const edge of ['top', 'bottom']) {
+      await body.evaluate((el, edge) => { el.scrollTop = edge === 'top' ? 0 : el.scrollHeight; }, edge);
+      await page.waitForTimeout(100);
+      assert.equal(await body.evaluate((el) => getComputedStyle(el).maskImage), mask);
+    }
     await toggle.click();
     await mode('expanded');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
+    assert.equal(await toggle.locator('.lucide-chevrons-up-down').count(), 0);
+    assert.equal(await body.evaluate((el) => getComputedStyle(el).maskImage), 'none');
     assert.equal(await page.getByRole('button').count(), 1);
     assert.equal(await body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1), true);
     assert.equal(await chain.getAttribute('data-streaming'), 'true');
@@ -66,7 +76,7 @@ try {
     await mode('closed');
     await page.evaluate(() => window.renderReasoning({ active: true }));
     await mode('live');
-    console.log(`PASS single-arrow preview, full expansion, collapse and completion at ${width}px`);
+    console.log(`PASS dual-arrow preview, persistent edge fades, full expansion, collapse and completion at ${width}px`);
   }
   assert.deepEqual(errors, []);
 } finally {

@@ -507,8 +507,7 @@ html.dark {
    拦截），JS 只负责把这一步补间到新位置（见 ReasoningChain 的
    useReasoningStream）。
 
-   正文自己的 data-fade-* 会覆盖这条通用蒙版：贴底时底部不该继续发灰
-   （见 reasoning-chain.css）。 */
+   实时视口始终保留上下蒙版，包括贴顶、贴底和内容尚未溢出时。 */
 .t-reason {
   position: relative;
   overflow: hidden;

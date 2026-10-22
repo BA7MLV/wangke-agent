@@ -24,6 +24,7 @@ export function parseDiscoveredModel(value: unknown): DiscoveredModel | null {
   const tools = caps.tools ?? raw.tool_call ?? raw.toolCalling;
   return {
     id: id.trim(),
+    modelType: typeof raw.type === 'string' ? raw.type : undefined,
     name: typeof raw.name === 'string' ? raw.name.trim() : undefined,
     contextWindow: positive(limit.context, raw.context_window, raw.contextWindow),
     maxOutputTokens: positive(limit.output, raw.max_output_tokens, raw.maxOutputTokens),

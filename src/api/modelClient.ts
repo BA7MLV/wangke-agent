@@ -381,7 +381,9 @@ function normalizeResponse(data: any, protocol: ModelTarget['protocol']): ChatMe
     const calls = output.filter((item: any) => item.type === 'function_call').map((item: any) => ({ id: item.call_id ?? item.id, type: 'function' as const, function: { name: item.name, arguments: item.arguments ?? '{}' } }));
     return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: calls.length ? 'tool_calls' : data.status === 'incomplete' ? 'length' : 'stop' };
   }
-  return data.choices[0].message as ChatMessage;
+  const choice = data.choices?.[0];
+  if (!choice?.message) throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
+  return { ...choice.message, finish_reason: choice.finish_reason ?? choice.message.finish_reason } as ChatMessage;
 }
 
 /**
@@ -396,7 +398,13 @@ export async function chatOnce(t: ModelTarget, opts: ChatOptions, fetcher?: type
     signal: opts.signal,
     body: JSON.stringify(requestBody(t, opts, messages, false)),
   }, messages, fetcher);
-  const data = await res.json();
+  const body = await res.text();
+  if (!body.trim()) throw new Error('模型接口返回为空，请重试或检查模型服务');
+  let data: unknown;
+  try { data = JSON.parse(body); } catch {
+    throw new Error('模型接口返回的数据不完整或不是有效 JSON，请重试或检查模型服务');
+  }
+  if (!data || typeof data !== 'object') throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
   const msg = normalizeResponse(data, t.protocol);
   // 只有声明了工具才需要 DSML 兜底：没给工具时模型没有理由吐 DSML 标记，
   // 那时的尖括号更可能是正文（讲义片段、HTML），吞掉就是毁内容。

@@ -3,9 +3,8 @@
  *
  * ## 为什么需要一个模块级的缓存
  *
- * 这份列表原先只活在 `ModelsModule` 的 `modelOptions` state 里，**设置面板一关就没了**。
- * 用户每次打开设置想选模型，都得重新点一次「拉取模型列表」并等一轮网络往返 ——
- * 而这份列表一天之内几乎不会变。
+ * 手动「查找模型」后保存结果，重新打开设置可直接复用本地数据。
+ * 缓存缺失或过期时也不自动请求；只有用户再次点击查找才联网更新。
  *
  * 业务调用方使用 modelListCacheKey 生成地址 + 协议 + 凭据的 SHA-256 指纹，
  * 不持久化原始凭据。同一端点下不同账户/协议的模型权限不能混用。
@@ -37,7 +36,7 @@ export async function modelListCacheKey(connection: ModelListConnection): Promis
   return Array.from(new Uint8Array(hash), (byte) => byte.toString(16).padStart(2, '0')).join('');
 }
 
-/** 超过这个时长就视为过期：打开设置时会静默重拉，但**过期数据照常先用** */
+/** 超过这个时长标记为过期；仍可复用，等待用户手动查找更新。 */
 const TTL_MS = 24 * 3600 * 1000;
 
 interface ListEntry {
@@ -56,7 +55,7 @@ export interface CachedModelList {
   ids: string[];
   models: DiscoveredModel[];
   updatedAt: number;
-  /** true = 已过 TTL。调用方应当后台重拉，但可以先用这份顶着 */
+  /** true = 已过 TTL。提示过期，等待用户手动更新。 */
   stale: boolean;
 }
 

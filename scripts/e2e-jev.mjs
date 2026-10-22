@@ -18,6 +18,7 @@ await page.addInitScript(() => {
       contextWindow: 32768,
       providers: [{ id: 'sf', name: '假网关', baseUrl: 'https://fake-llm.test/v1', apiKey: 'fake-llm-key', protocol: 'openai-chat', serves: ['chat'], catalogId: '' }],
       llmModel: { providerId: 'sf', model: 'test-model' },
+      jev: { baseUrl: 'https://fake-jev.test/v1', apiKey: 'fake-jev-key', model: 'jev-1.13.0', skillRouting: false, contextCompression: false },
     } }));
   }
   window.__JEV__ = { requests: [], chats: [], mode: 'ok' };
@@ -51,14 +52,11 @@ try {
   await page.goto(`${base}/#/settings`);
   const card = page.getByTestId('card-jev');
   await card.waitFor();
+  await card.getByRole('button', { name: '展开配置', exact: true }).click();
   assert.equal(await page.evaluate(() => window.__JEV__.requests.length), 0);
   assert.equal(await page.getByRole('checkbox', { name: '讲义技能路由', exact: true }).isChecked(), false);
   assert.equal(await page.getByRole('checkbox', { name: '长对话上下文压缩（实验性）', exact: true }).isChecked(), false);
-  await page.getByRole('button', { name: '测试 Jev 连接', exact: true }).click();
-  await page.getByRole('alert').filter({ hasText: '请先填写 Jev API Key' }).waitFor();
-  assert.equal(await page.evaluate(() => window.__JEV__.requests.length), 0);
-  await page.getByRole('textbox', { name: 'Jev API 地址', exact: true }).fill('https://fake-jev.test/v1');
-  await page.locator('input[aria-label="Jev API Key"]').fill('fake-jev-key');
+  assert.equal(await card.getByRole('textbox').count(), 0, '连接配置已归入供应商，不再重复展示');
   // HeroUI 的可见点击目标是 Content label，原生 input 被 Control 覆盖。
   await page.getByTestId('jev-skill-routing').locator('label').click();
   const compressionToggle = page.getByRole('checkbox', { name: '长对话上下文压缩（实验性）', exact: true });
@@ -66,23 +64,27 @@ try {
   await compressionToggle.press('Space');
   assert.equal(await compressionToggle.isChecked(), true);
   assert.equal(await page.evaluate(() => window.__JEV__.requests.length), 0, '修改配置不能自动调用 API');
-  await page.getByRole('button', { name: '测试 Jev 连接', exact: true }).click();
+  await page.getByRole('button', { name: '测试决策连接', exact: true }).click();
   await page.getByRole('status').filter({ hasText: '连接成功' }).waitFor();
   await page.evaluate(() => window.__JEV__.mode = 'fail');
-  await page.getByRole('button', { name: '测试 Jev 连接', exact: true }).click();
+  await page.getByRole('button', { name: '测试决策连接', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: 'HTTP 503' }).waitFor();
   await page.reload();
   await card.waitFor();
+  await card.getByRole('button', { name: '展开配置', exact: true }).click();
   assert.equal(await page.getByRole('checkbox', { name: '长对话上下文压缩（实验性）', exact: true }).isChecked(), true);
-  assert.equal(await page.locator('input[aria-label="Jev API Key"]').inputValue(), 'fake-jev-key');
+  assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings')).state.providers.find((p) => p.name === 'TypeSafe').apiKey), 'fake-jev-key');
   console.log('ok - 默认关闭、配置持久化、显式测试成功与错误提示');
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await card.scrollIntoViewIfNeeded();
+  await page.waitForFunction(() => {
+    const card = document.querySelector('[data-testid="card-jev"]');
+    return card && card.getBoundingClientRect().width > 0 && card.getBoundingClientRect().right <= 390;
+  });
   const box = await card.boundingBox();
   assert.ok(box.x >= 0 && box.x + box.width <= 390, '移动端卡片不横向溢出');
-  const input = await page.getByRole('textbox', { name: 'Jev API 地址', exact: true }).boundingBox();
-  assert.ok(input.x + input.width <= 390);
+  const picker = await page.getByTestId('model-button-decisionModel').boundingBox();
+  assert.ok(picker.x + picker.width <= 390);
   console.log('ok - 手机布局无横向溢出');
 
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -109,17 +111,17 @@ try {
   const beforeLabel = await ring.getAttribute('aria-label');
   await page.evaluate(() => window.__JEV__.mode = 'defer');
   await ring.click();
+  await page.getByRole('button', { name: '压缩上下文', exact: true }).click();
   await page.waitForFunction(() => window.__JEV__.requests.length > 0 && typeof window.__JEV__.release === 'function');
   assert.equal(await ring.getAttribute('data-compression'), 'compressing', await ring.evaluate((el) => el.outerHTML));
-  assert.equal(await ring.isDisabled(), true);
+  assert.equal(await page.getByRole('button', { name: '正在压缩…', exact: true }).isDisabled(), true);
   assert.equal(await ring.locator('.t-icon-swap').first().getAttribute('data-state'), 'b');
-  const animation = await ring.locator('.ctx-usage__spinner').evaluate((el) => getComputedStyle(el).animationName);
-  assert.equal(animation, 'ctx-compress-spin');
-  assert.equal(await ring.locator('.ctx-usage__spinner svg').count(), 1);
+  assert.equal(await ring.locator('.ctx-usage__spinner').count(), 1);
   await page.evaluate(() => { window.__JEV__.mode = 'ok'; window.__JEV__.release(); });
   await page.waitForFunction(() => document.querySelector('[data-testid="chat-context-usage"]')?.dataset.compression === 'success');
   assert.notEqual(await ring.getAttribute('aria-label'), beforeLabel, '压缩成功用量环下降');
   assert.ok(await ring.locator('.t-success-check[data-state="in"]').count());
+  await page.keyboard.press('Escape');
   console.log('ok - 点击立即压缩、压缩中禁重入、transitions.dev 图标切换/成功动效与用量回落');
 
   await page.setViewportSize({ width: 390, height: 844 });
@@ -132,6 +134,11 @@ try {
   console.log('ok - 手机可点击，减少动态效果时禁用旋转与图标过渡');
 
   const requestsAfterManual = await page.evaluate(() => window.__JEV__.requests.length);
+  if (await page.getByRole('button', { name: '压缩上下文', exact: true }).isVisible()) {
+    await page.getByRole('button', { name: '压缩上下文', exact: true }).focus();
+    await page.keyboard.press('Escape');
+  }
+  await page.locator('.course-chat__composer textarea').click();
   await page.locator('.course-chat__composer textarea').fill('请继续当前课程');
   await page.getByTestId('chat-send').click();
   await page.waitForFunction(() => window.__JEV__.chats.length > 0);
@@ -174,7 +181,9 @@ try {
   await page.waitForFunction(() => !document.querySelector('[data-testid="chat-context-usage"]')?.disabled);
   await page.evaluate(() => window.__JEV__.mode = 'hold');
   await ring.click();
+  await page.getByRole('button', { name: '压缩上下文', exact: true }).click();
   await page.waitForFunction(() => window.__JEV__.requests.length > 0);
+  await page.mouse.click(500, 100);
   await page.locator('.course-chat__composer textarea').fill('停止测试');
   await page.getByTestId('chat-send').click();
   await page.getByTestId('chat-stop').click();
@@ -182,6 +191,10 @@ try {
   assert.equal(await page.evaluate(() => window.__JEV__.chats.length), 0);
   assert.deepEqual(errors, []);
   console.log('ok - 等待 Jev 筛选时停止发送，不再发起 LLM 请求；无页面异常');
+} catch (error) {
+  console.error(await page.locator('body').innerText());
+  console.error('Page errors:', errors);
+  throw error;
 } finally {
   await browser.close();
 }

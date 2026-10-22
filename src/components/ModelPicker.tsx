@@ -12,7 +12,7 @@ import { ModelCapabilities } from './ModelCapabilities';
 interface Props {
   slot: ModelSlot;
   /** 当前值（对应的全局槽位字段名） */
-  field: 'asrModel' | 'llmModel' | 'visionModel';
+  field: 'asrModel' | 'llmModel' | 'visionModel' | 'decisionModel';
   /**
    * 触发器的形态。
    *
@@ -44,6 +44,7 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
   asr: <Sym name="mic" />,
   vision: <Sym name="visibility" />,
   chat: <Sym name="neurology" />,
+  decision: <Sym name="account_tree" />,
 };
 
 /** 槽位 → 中文名：不内联展示模型 id 之后，这个信息缺口由 tooltip 补上 */
@@ -51,6 +52,7 @@ const SLOT_LABEL: Record<ModelSlot, string> = {
   asr: '转写模型',
   vision: '视觉模型',
   chat: '主模型',
+  decision: '决策模型',
 };
 
 /**

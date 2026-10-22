@@ -158,14 +158,17 @@ export function MaterialInkProvider({ materialId, children, toolbarActions }: { 
     ready, status, error, retry: () => void (ready ? flush() : load()), strokes, commit, undo, redo,
     canUndo: history.past.length > 0, canRedo: history.future.length > 0, input }}>
     <div ref={inputRoot} className="ink-input-root" data-writing={writing || undefined}
-      onContextMenu={(event) => {
+      onPointerUp={(event) => {
+        if (event.button !== 0 || event.pointerType === 'pen') return;
+        const target = event.target instanceof Element ? event.target : null;
+        if (!target?.closest('[data-askable],.ink-layer')) return;
+        // 抬手后的下一帧再读取，确保浏览器已经提交最后一个选中字形。
+        requestAnimationFrame(() => {
         const selection = window.getSelection();
         if (!ready || !selection?.rangeCount || selection.isCollapsed) return;
         const range = selection.getRangeAt(0);
         const root = inputRoot.current;
         if (!root?.contains(range.startContainer) || !root.contains(range.endContainer)) return;
-        const target = event.target instanceof Element ? event.target : null;
-        if (!target?.closest('[data-askable],.ink-layer')) return;
         const text = cleanSelectionText(selection.toString());
         if (!isUsableSelection(text)) return;
         const add: InkStroke[] = [];
@@ -185,9 +188,10 @@ export function MaterialInkProvider({ materialId, children, toolbarActions }: { 
         }
         const first = add[0]?.anchor;
         if (!first) return;
-        event.preventDefault();
+        const bounds = range.getBoundingClientRect();
         useSelectionAsk.getState().showBar({ text, source: first.source, unit: first.unit, unitLabel: first.unitLabel },
-          { x: event.clientX, y: event.clientY }, { mark: () => commit({ add, remove: [] }) });
+          { x: Math.max(8, Math.min(bounds.right, window.innerWidth - 176)), y: bounds.bottom + 6 }, { mark: () => commit({ add, remove: [] }) });
+        });
       }}>{children}</div>
   </InkContext>;
 }

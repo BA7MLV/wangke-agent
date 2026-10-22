@@ -9,6 +9,11 @@ export interface ProviderPreset extends Omit<Provider, 'id' | 'apiKey'> {
 /** 只展示当前协议层可直接接入的 API Key 端点，不暗示支持订阅账号登录。 */
 export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
+    id: 'typesafe', name: 'TypeSafe', description: 'Jev 决策模型，用于技能路由与上下文筛选',
+    baseUrl: 'https://api.typesafe.ai/v1', protocol: 'openai-chat',
+    serves: ['decision'], catalogId: 'typesafe',
+  },
+  {
     id: 'openai', name: 'OpenAI', description: '使用 API 密钥访问 GPT 模型',
     baseUrl: 'https://api.openai.com/v1', protocol: 'openai-chat',
     serves: ['chat', 'vision', 'asr'], catalogId: 'openai', recommended: true,

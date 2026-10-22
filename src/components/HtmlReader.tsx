@@ -18,7 +18,6 @@ import { InkLayer, InkToolbar, useMaterialInk } from './MaterialInk';
 import { inkTextKey, type InkStroke } from '../materials/ink';
 import { indexText, makeTextAnchor, resolveTextAnchor, selectionOffsets } from '../materials/textHighlight';
 import { uuid } from '../utils/uuid';
-import { useIsMobile } from '../utils/useMobile';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
 import '../materials/material-reader.css';
 
@@ -86,7 +85,6 @@ export default function HtmlReader({
   onUnitChange,
 }: Props) {
   const ink = useMaterialInk();
-  const isMobile = useIsMobile();
   /**
    * 视图**由本组件持有**，而不是受控于 `videos.htmlView`。
    *
@@ -280,8 +278,7 @@ const src = await readHtmlText(blob);
       setCurrent(unit);
     };
 
-    const pushHit = (event?: MouseEvent) => {
-      if (!event && !isMobile) return;
+    const pushHit = () => {
       const sel = doc.getSelection();
       if (!sel || sel.isCollapsed || sel.rangeCount === 0) return;
       const range = sel.getRangeAt(0);
@@ -295,7 +292,7 @@ const src = await readHtmlText(blob);
       const r = range.getBoundingClientRect();
       const box = frame.getBoundingClientRect();
       const add: InkStroke[] = [];
-      if (event && ink.ready) for (const block of blocks ?? []) for (const original of doc.querySelectorAll<HTMLElement>(`[${MR_UNIT_ATTR}="${block.unit}"]`)) {
+      if (ink.ready) for (const block of blocks ?? []) for (const original of doc.querySelectorAll<HTMLElement>(`[${MR_UNIT_ATTR}="${block.unit}"]`)) {
         if (!range.intersectsNode(original)) continue;
         const originalIndex = indexText(original), offsets = selectionOffsets(originalIndex, range);
         if (!offsets) continue;
@@ -311,7 +308,6 @@ const src = await readHtmlText(blob);
           opacity: ink.highlightOpacity, input: 'mouse', rects: [],
           anchor: makeTextAnchor(index, resolved.start, resolved.end, fragment, surface) });
       }
-      if (event) event.preventDefault();
       showBar(
         {
           text,
@@ -321,30 +317,30 @@ const src = await readHtmlText(blob);
           unitLabel: unit ? labels.get(unit) : undefined,
         },
         {
-          x: event ? box.left + event.clientX : Math.min(Math.max(box.left + r.left + r.width / 2, 104), window.innerWidth - 104),
-          y: box.top + (event ? event.clientY : r.bottom),
+          x: Math.max(8, Math.min(box.left + r.right, window.innerWidth - 176)),
+          y: box.top + r.bottom + 6,
         },
-        event ? { mark: add.length ? () => {
+        { mark: add.length ? () => {
           ink.commit({ add, remove: [] });
           setCurrent(add[0].anchor!.unit);
           currentRef.current = add[0].anchor!.unit;
           changeView('blocks');
           doc.getSelection()?.removeAllRanges();
-        } : undefined } : undefined,
+        } : undefined },
       );
     };
 
     let selTimer = 0;
-    const onSelectionChange = () => {
+    const onPointerUp = (event: PointerEvent) => {
+      if (event.button !== 0 || event.pointerType === 'pen') return;
       window.clearTimeout(selTimer);
-      selTimer = window.setTimeout(() => pushHit(), 140);
+      selTimer = window.setTimeout(pushHit, 0);
     };
     const onPointerDown = () => hideBar();
     const onScroll = () => {
-      // 浮层锚点是宿主视口坐标，iframe 一滚就失效 —— 先收起，停稳后按新位置重算
+      // 滚动后收起菜单，不再按旧选区自动弹回。
       hideBar();
       window.clearTimeout(selTimer);
-      selTimer = window.setTimeout(() => pushHit(), 120);
       if (rafRef.current) return;
       rafRef.current = window.requestAnimationFrame(() => {
         rafRef.current = 0;
@@ -361,8 +357,7 @@ const src = await readHtmlText(blob);
       window.open(href, '_blank', 'noopener,noreferrer');
     };
 
-    doc.addEventListener('selectionchange', onSelectionChange);
-    doc.addEventListener('contextmenu', pushHit);
+    doc.addEventListener('pointerup', onPointerUp);
     doc.addEventListener('pointerdown', onPointerDown, true);
     doc.addEventListener('scroll', onScroll, true);
     doc.addEventListener('click', onClick, true);
@@ -392,13 +387,12 @@ const src = await readHtmlText(blob);
       window.clearTimeout(selTimer);
       if (rafRef.current) window.cancelAnimationFrame(rafRef.current);
       rafRef.current = 0;
-      doc.removeEventListener('selectionchange', onSelectionChange);
-      doc.removeEventListener('contextmenu', pushHit);
+      doc.removeEventListener('pointerup', onPointerUp);
       doc.removeEventListener('pointerdown', onPointerDown, true);
       doc.removeEventListener('scroll', onScroll, true);
       doc.removeEventListener('click', onClick, true);
     };
-  }, [view, prepared, labels, initialUnit, showBar, hideBar, frameTick, isMobile, blocks, ink.ready, ink.commit, ink.highlightColor, ink.highlightOpacity, materialId, changeView]);
+  }, [view, prepared, labels, initialUnit, showBar, hideBar, frameTick, blocks, ink.ready, ink.commit, ink.highlightColor, ink.highlightOpacity, materialId, changeView]);
 
   /* ── 分段视图：定位与断点续读（与原实现一致） ───────────────────────────── */
 

@@ -249,6 +249,7 @@ export const SYNC_SETTINGS_KEYS = [
   'asrModel',
   'llmModel',
   'visionModel',
+  'decisionModel',
   'favorites',
   'savedModels',
   'contextWindow',
@@ -289,7 +290,7 @@ export const SYNC_SETTINGS_KEYS = [
 export const NON_SYNC_SETTINGS_KEYS = [
   // 键盘布局与操作习惯按设备独立，避免另一台设备覆盖当前按键映射。
   'shortcuts',
-  // Jev 包含 API Key 与向第三方发送历史的授权；两者都必须在每台设备单独配置。
+  // 决策功能的出网授权必须在每台设备单独确认；凭据已归入供应商。
   'jev',
   'bilibiliCookie',
   'bilibiliProxy',

@@ -39,7 +39,9 @@ try {
     export { routeSkillsWithJev } from '${join(root, 'src/skills/jevRoute.ts')}';
     export { routeHandoutSkills } from '${join(root, 'src/skills/router.ts')}';
     export { loadEnabledSkillMeta } from '${join(root, 'src/skills/store.ts')}';
-    export { useSettings, getSettings, defaultJevSettings, migrateSettings } from '${join(root, 'src/store/settings.ts')}';
+    export { useSettings, getSettings, defaultJevSettings, migrateSettings, decisionConfigOf } from '${join(root, 'src/store/settings.ts')}';
+    export { editModelPatch, modelsForSlot, suggestedModelSlots } from '${join(root, 'src/store/modelLibrary.ts')}';
+    export { refreshModelMeta, parseModelMeta } from '${join(root, 'src/api/modelMeta.ts')}';
     export { pickSyncSettings } from '${join(root, 'src/sync/units.ts')}';
     export { exportMigrationZip } from '${join(root, 'src/store/migration.ts')}';
     export { db } from '${join(root, 'src/store/db.ts')}';
@@ -266,15 +268,55 @@ try {
   });
 
   await test('旧设置补默认值且不自动启用；读取副本不污染凭据', async () => {
-    assert.deepEqual(api.migrateSettings({ apiKey: 'old-key' }, 1).jev, api.defaultJevSettings());
-    api.useSettings.getState().update({ jev: config });
+    assert.deepEqual(api.migrateSettings({ apiKey: 'old-key' }, 1).jev, { skillRouting: false, contextCompression: false });
+    const initial = api.getSettings();
+    const { decisionModel: unused, ...legacy } = initial;
+    const migrated = api.migrateSettings({ ...legacy, jev: config }, 3);
+    api.useSettings.setState(migrated);
+    assert.deepEqual(migrated.jev, { skillRouting: true, contextCompression: true });
+    assert.equal(api.decisionConfigOf(migrated).apiKey, 'jev-secret');
+    assert.equal(migrated.providers.length, initial.providers.length + 1);
+    assert.deepEqual(api.migrateSettings(migrated, 3), migrated, '重复迁移不新增连接或模型');
     const copied = api.getSettings();
-    copied.jev.apiKey = 'changed';
-    assert.equal(api.getSettings().jev.apiKey, 'jev-secret');
-    memory.set('wangke-settings', JSON.stringify({ version: 3, state: { jev: { apiKey: 'local-only' } } }));
+    copied.providers.find((p) => p.id === copied.decisionModel.providerId).apiKey = 'changed';
+    assert.equal(api.decisionConfigOf(api.getSettings()).apiKey, 'jev-secret');
+    memory.set('wangke-settings', JSON.stringify({ version: 3, state: { ...legacy, jev: { apiKey: 'local-only' } } }));
     await api.useSettings.persist.rehydrate();
-    assert.deepEqual(api.getSettings().jev, { ...api.defaultJevSettings(), apiKey: 'local-only' });
-    api.useSettings.getState().update({ jev: config });
+    assert.equal(api.decisionConfigOf(api.getSettings()).apiKey, 'local-only');
+    assert.deepEqual(api.getSettings().jev, { skillRouting: false, contextCompression: false });
+    api.useSettings.setState(migrated);
+  });
+  await test('全类型目录、决策用途和协议确认，不按文本模态误当聊天模型', async () => {
+    let catalogUrl;
+    globalThis.fetch = async (url) => {
+      catalogUrl = String(url);
+      return Response.json({ test: { models: { decision: { type: 'decision', modalities: { input: ['text'], output: ['text'] }, limit: { context: 64000, output: 0 } } } } });
+    };
+    await api.refreshModelMeta();
+    assert.ok(catalogUrl.endsWith('?type=all'));
+    assert.deepEqual(api.suggestedModelSlots('test', 'decision'), ['decision']);
+    const settings = api.getSettings();
+    const draft = { providerId: settings.providers[0].id, model: 'new-decision', name: '', slots: ['decision'] };
+    assert.throws(() => api.editModelPatch(settings, null, draft), /协议/);
+    assert.throws(() => api.editModelPatch(settings, null, { ...draft, slots: ['decision', 'chat'], decisionProtocol: 'typesafe-systemone' }), /混用/);
+    assert.throws(() => api.editModelPatch(settings, null, { ...draft, decisionProtocol: 'typesafe-systemone', decisionBaseUrl: 'https://host.test/v1?key=secret' }), /地址/);
+    const patch = api.editModelPatch(settings, null, { ...draft, decisionProtocol: 'typesafe-systemone', maxOutputTokens: 0 });
+    assert.equal(api.modelsForSlot({ ...settings, ...patch }, 'decision').length, 2);
+    assert.equal(api.parseModelMeta({ type: 'decision', limit: { output: 0 } }).declaredOutput, 0);
+  });
+  await test('决策槽位按模型端点取供应商 Key；切换目标关闭授权，删除供应商不回退聊天', async () => {
+    const settings = api.getSettings();
+    const selected = settings.savedModels.find((m) => m.modelType === 'decision');
+    const patch = api.editModelPatch(settings, selected, { ...selected, decisionBaseUrl: 'https://decision.test/v1' });
+    api.useSettings.getState().update(patch);
+    assert.deepEqual(api.getSettings().jev, { skillRouting: false, contextCompression: false });
+    assert.equal(api.decisionConfigOf(api.getSettings()).baseUrl, 'https://decision.test/v1');
+    assert.equal(api.decisionConfigOf(api.getSettings()).apiKey, 'jev-secret');
+    assert.equal(api.decisionConfigOf({ ...settings, providers: [] }).apiKey, '');
+    assert.equal(api.decisionConfigOf({ ...settings, savedModels: [{ ...selected, decisionProtocol: undefined }] }).apiKey, '');
+    api.useSettings.getState().update({ decisionModel: { providerId: '', model: '' } });
+    assert.equal(api.decisionConfigOf(api.getSettings()).model, '');
+    api.useSettings.setState(settings);
   });
   await test('真实讲义路由保留 pin / drop 覆盖，Jev 失败退回 LLM', async () => {
     await api.loadEnabledSkillMeta();
@@ -284,9 +326,11 @@ try {
     await api.db.videos.put({ id: 'jev-test', name: '课程', skillOverride: { pin: [one], drop: [two] } });
     serve((id) => id === `skill_${two}` ? 0.99 : 0.01);
     const routed = await api.routeHandoutSkills('jev-test', '课程', '字幕');
+    assert.ok(seen.length > 0, '真实路由必须使用决策槽位');
     assert.deepEqual(routed.selected.map((skill) => skill.id), [one]);
     const settings = api.getSettings();
     api.useSettings.getState().update({ providers: settings.providers.map((p) => ({ ...p, apiKey: 'llm-key' })) });
+    api.useSettings.getState().update({ jev: { skillRouting: true, contextCompression: true } });
     const calls = [];
     globalThis.fetch = async (url) => {
       calls.push(String(url));
@@ -294,6 +338,7 @@ try {
       return Response.json({ choices: [{ message: { role: 'assistant', content: '{"skills":["two"]}' } }] });
     };
     await api.routeHandoutSkills('jev-test', '课程', '字幕');
+    assert.ok(calls.some((url) => url.endsWith('/systemone')));
     assert.ok(calls.some((url) => url.endsWith('/chat/completions')));
   });
   await test('Jev 配置与 Key 不进入同步载荷或迁移包', async () => {

@@ -38,7 +38,7 @@ export interface Citation {
 export type AskMode = 'explain' | 'compose';
 
 export interface SelectionMenu {
-  /** 资料右键菜单；标记动作持有选区快照，不依赖菜单打开后的 DOM 选区。 */
+  /** 资料拖选菜单；标记动作持有选区快照，不依赖菜单打开后的 DOM 选区。 */
   mark?: () => void;
 }
 

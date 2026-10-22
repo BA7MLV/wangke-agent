@@ -5,7 +5,10 @@ export const MAX_ARTIFACT_LENGTH = 120_000;
 
 export function parseArtifactReply(reply: string): unknown {
   const clean = reply.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1');
-  return JSON.parse(clean);
+  if (!clean.trim()) throw new Error('模型未返回修改内容，原内容未修改；请重试或切换模型');
+  try { return JSON.parse(clean); } catch {
+    throw new Error('模型返回的修改 JSON 不完整或格式不正确，原内容未修改；请重试、缩小修改范围，或使用“仅重生成此块”');
+  }
 }
 
 export function applyArtifactReply(source: string, reply: unknown, mode: 'patch' | 'rewrite'): string {

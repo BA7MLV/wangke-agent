@@ -7,7 +7,7 @@ const errors = [];
 page.on('pageerror', (error) => errors.push(error.message));
 const state = () => page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings')).state);
 try {
-  await page.route('https://models.dev/api.json', (route) => route.fulfill({ json: {
+  await page.route('https://models.dev/api.json*', (route) => route.fulfill({ json: {
     one: { models: { shared: { modalities: { input: ['text'], output: ['text'] }, limit: { context: 128000 }, tool_call: true } } },
     two: { models: { shared: { modalities: { input: ['text', 'image'], output: ['text'] }, limit: { context: 256000 }, tool_call: true } } },
   } }));
@@ -25,6 +25,7 @@ try {
   await page.reload();
   await page.getByTestId('provider-summary-sf').click();
   await page.getByTestId('btn-check-models').click();
+  await page.getByTestId('discovered-model-select').click();
   await page.getByRole('button', { name: '添加 shared', exact: true }).click();
   assert.equal(await page.getByRole('spinbutton', { name: '上下文窗口', exact: true }).inputValue(), '64000');
   await page.getByRole('button', { name: /模型能力来源/ }).click();
@@ -35,6 +36,7 @@ try {
   assert.equal(shared.contextWindow, 64000);
   assert.equal(shared.toolCalling, false);
   assert.equal(shared.metadataCatalogId, 'two');
+  await page.getByTestId('discovered-model-select').click();
   await page.getByRole('button', { name: '添加 unknown-local', exact: true }).click();
   assert.match(await page.getByTestId('model-metadata-details').innerText(), /默认开启（未验证）/);
   assert.equal(await page.getByRole('checkbox', { name: '支持工具调用', exact: true }).isChecked(), true);

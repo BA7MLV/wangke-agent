@@ -36,9 +36,10 @@ export const GREP_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'grep',
-    description: '按关键词搜索正文。Markdown 原文件可用 raw=true；也可直接传 /wrongbook.md 等根目录 .md 文件路径，支持 regex=true、flags 正则逐行检索。其他资料按关键词检索。返回可交给 read 的路径与定位。',
+    description: '搜索正文，所有资料统一支持 mode：literal 为不区分大小写的完整子串匹配，regex 为正则匹配（flags 默认 i），ranked 为关键词相关性排序（默认，不保证完整短语匹配）。Markdown 原文件可用 raw=true，根目录 .md 路径默认原文逐行搜索。返回命中附近原文、定位、截断提示及可直接调用的 read 上下文参数；回答依赖前因后果或摘要被截断时，先 read 核验，不要仅凭命中片段推断。匹配不跨内容块。',
     parameters: { type: 'object', properties: {
       query: { type: 'string' }, path: { type: 'string' },
+      mode: { type: 'string', enum: ['literal', 'regex', 'ranked'], description: '默认 ranked；regex=true 是 mode=regex 的兼容别名。' },
       raw: { type: 'boolean' }, regex: { type: 'boolean' }, flags: { type: 'string' },
       limit: { type: 'integer', minimum: 1, maximum: 15 },
     }, required: ['query'] },
@@ -172,7 +173,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     }
     if (name === 'grep' && (resource.type === 'courses' || resource.type === 'context')) {
       if (local) return '单课程问答只能搜索 /courses/current 或当前课程的真实路径。';
-      return executeLibrary('search_course_library', { query: args.query, limit: args.limit, scope: resource.type === 'courses' ? 'all' : 'context' });
+      return executeLibrary('search_course_library', { ...args, scope: resource.type === 'courses' ? 'all' : 'context' });
     }
     if (resource.type !== 'course') {
       if (local || name !== 'read') return '当前入口不支持此资源操作。';
@@ -205,15 +206,14 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
       try { return await executeMarkdownResource(name, id, canonical, args); }
       catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
     }
-    if (leaf === 'material' && course.materialFormat === 'md' && (args.raw === true || args.regex === true)) {
+    if (leaf === 'material' && course.materialFormat === 'md' && args.raw === true) {
       const { executeMarkdownResource } = await import('./markdownResource');
       try { return await executeMarkdownResource(name, id, canonical, args); }
       catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
     }
     if (name === 'grep') {
       if (!['material', 'transcript'].includes(leaf)) return 'grep 只支持课程正文。';
-      const result = await execute(kind ? 'search_material' : 'search_transcript', args);
-      return `path=${canonical}\n定位单位：${kind === 'page' ? 'pages' : kind ? 'paragraphs' : 'seconds'}\n${result}`;
+      return executeLibrary('search_course_library', { ...args, courseId: id });
     }
     if (leaf === 'info') return executeLibrary('get_course_details', { courseId: id });
     if (leaf === 'highlights') {

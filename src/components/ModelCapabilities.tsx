@@ -5,7 +5,7 @@ import { Sym, type SymbolName } from '../ui/icons';
 
 const MODEL_KIND_ICON: Record<ModelKind, SymbolName> = {
   llm: 'chat_bubble', vlm: 'visibility', audio: 'graphic_eq', image: 'image',
-  video: 'play_circle', multimodal: 'extension', unknown: 'help',
+  video: 'play_circle', multimodal: 'extension', decision: 'account_tree', unknown: 'help',
 };
 
 type ModelMetadataProps = { catalogId: string; model: string; overrides?: ModelOverrides };

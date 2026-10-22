@@ -31,10 +31,10 @@ export async function evaluateNouls(
   request: JevRequest,
   options: { signal?: AbortSignal; timeoutMs?: number } = {},
 ): Promise<Record<string, number>> {
-  if (!config.apiKey.trim() || !config.model.trim()) throw new Error('请先填写 Jev API Key 和模型 ID');
+  if (!config.apiKey.trim() || !config.model.trim()) throw new Error('请先选择决策模型并配置供应商 Key 和决策协议');
   const baseUrl = config.baseUrl.trim().replace(/\/+$/, '');
   const url = new URL(`${baseUrl}/systemone`);
-  if (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname))) {
+  if (url.username || url.password || url.search || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)))) {
     throw new Error('Jev API 地址必须使用 HTTPS（本机调试除外）');
   }
   if (!fitsJevRequest(config, request)) throw new Error('Jev 决策输入过长或问题数量超限');

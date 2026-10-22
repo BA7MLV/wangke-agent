@@ -18,7 +18,7 @@ try {
       llmModel: { providerId: 'sf', model: '' }, visionModel: { providerId: '', model: '' }, asrModel: { providerId: 'sf', model: '' },
     } }));
   });
-  await page.route('https://models.dev/api.json', (route) => route.fulfill({ json: {
+  await page.route('https://models.dev/api.json*', (route) => route.fulfill({ json: {
     'siliconflow-cn': { models: { 'catalog-vision': entry(['text', 'image']), 'api-vision': entry(['text']) } },
     other: { models: { 'catalog-vision': entry(['text']) } },
   } }));
@@ -37,6 +37,7 @@ try {
   assert.equal(await page.getByRole('button', { name: /API 协议/ }).count(), 0);
   await mkdir('scripts/out', { recursive: true });
   await page.screenshot({ path: 'scripts/out/provider-connection-simple-desktop.png' });
+  await page.getByTestId('btn-check-models').click();
 
   for (const [id, expected] of [
     ['catalog-vision', ['chat', 'vision']],
@@ -44,6 +45,7 @@ try {
     ['opaque-audio', ['asr']],
     ['unknown-vision-asr-name', ['chat']],
   ]) {
+    await page.getByTestId('discovered-model-select').click();
     await page.getByRole('button', { name: `添加 ${id}`, exact: true }).click();
     const editor = page.getByTestId('model-editor');
     for (const [slot, label] of [['chat', '主模型'], ['vision', '图片理解'], ['asr', '语音识别']]) {

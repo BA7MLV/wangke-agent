@@ -16,6 +16,9 @@ assert.throws(() => replaceArtifactFence(content, 'diagram', old, next + '\n```\
 assert.throws(() => replaceArtifactFence('```json\n```diagram\n' + old + '\n```\n```', 'diagram', old, next), /唯一/);
 
 const reply = parseArtifactReply('```json\n{"edits":[{"search":"x^2","replace":"sin(x)"}]}\n```');
+assert.throws(() => parseArtifactReply('   '), /未返回修改内容/);
+assert.throws(() => parseArtifactReply('{"edits":['), /JSON 不完整或格式不正确/);
+assert.throws(() => parseArtifactReply('```json\n{"edits":['), /JSON 不完整或格式不正确/);
 assert.equal(applyArtifactReply(old, reply, 'patch'), next);
 assert.equal(applyArtifactReply('abc def', { edits: [{ search: 'def', replace: 'abc' }, { search: 'abc', replace: 'xyz' }] }, 'patch'), 'xyz abc', 'all edits use the original source');
 assert.equal(applyArtifactReply(old, { source: next }, 'rewrite'), next);

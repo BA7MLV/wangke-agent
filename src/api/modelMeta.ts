@@ -4,7 +4,7 @@
  * 未知模型默认文本输入/输出、开启工具调用（与 OpenChamber 接入行为一致）。
  */
 
-const API_URL = 'https://models.dev/api.json';
+const API_URL = 'https://models.dev/api.json?type=all';
 const CACHE_KEY = 'wangke-model-meta';
 const TTL_MS = 10 * 60 * 1000;
 
@@ -18,9 +18,10 @@ const TTL_MS = 10 * 60 * 1000;
  * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs、
  * scripts/test-thinking-depth.mjs）：版本写错的话那份夹具会被当成过期缓存丢掉。
  */
-export const MODEL_META_CACHE_VERSION = 5;
+export const MODEL_META_CACHE_VERSION = 6;
 
 export interface ModelMeta {
+  type?: string;
   name?: string;
   inputModalities?: string[];
   outputModalities?: string[];
@@ -45,6 +46,7 @@ export interface ModelMeta {
 
 /** undefined = 跟随目录；false / [] = 用户明确关闭，不得被目录覆盖。 */
 export interface ModelOverrides {
+  modelType?: string;
   /** 用户确认的目录供应商；仅影响能力匹配，不改变请求模型 ID 或连接。 */
   metadataCatalogId?: string;
   contextWindow?: number;
@@ -55,7 +57,7 @@ export interface ModelOverrides {
   toolCalling?: boolean;
 }
 
-export const MODEL_OVERRIDE_FIELDS = ['metadataCatalogId', 'contextWindow', 'maxOutputTokens', 'reasoningEffort', 'inputCapabilities', 'outputCapabilities', 'toolCalling'] as const;
+export const MODEL_OVERRIDE_FIELDS = ['modelType', 'metadataCatalogId', 'contextWindow', 'maxOutputTokens', 'reasoningEffort', 'inputCapabilities', 'outputCapabilities', 'toolCalling'] as const;
 
 export function hasModelOverrides(value?: ModelOverrides): boolean {
   return !!value && MODEL_OVERRIDE_FIELDS.some((field) => value[field] !== undefined);
@@ -98,6 +100,7 @@ interface ReasoningOption {
 
 /** models.dev 条目（只取需要的字段） */
 interface ModelsDevEntry {
+  type?: string;
   name?: string;
   last_updated?: string;
   structured_output?: boolean;
@@ -202,6 +205,7 @@ export function getModelMeta(catalogId: string, modelId: string, overrides?: Mod
   const catalog = match.status === 'exact' ? match.candidates[0].meta : null;
   if (!hasModelOverrides(overrides)) return catalog ?? parseModelMeta({});
   const meta = { ...(catalog ?? parseModelMeta({})) };
+  if (overrides?.modelType !== undefined) meta.type = overrides.modelType;
   if (overrides?.inputCapabilities !== undefined) {
     meta.inputModalities = [...overrides.inputCapabilities];
     meta.vision = meta.inputModalities.includes('image');
@@ -258,6 +262,7 @@ export function parseModelMeta(m: ModelsDevEntry): ModelMeta {
   const output = finiteNumber(m.limit?.output);
   const input = modalities(m.modalities?.input);
   return {
+    type: typeof m.type === 'string' ? m.type : undefined,
     name: typeof m.name === 'string' ? m.name : undefined,
     inputModalities: input ?? ['text'],
     outputModalities: modalities(m.modalities?.output) ?? ['text'],

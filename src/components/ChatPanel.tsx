@@ -6,7 +6,7 @@ import { parseMaterialImageHref } from '../materials/imageRefs';
 import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
-import { catalogOf, getSettings, modelOverridesOf, targetOrNull, useSettings, visionTargetOrNull } from '../store/settings';
+import { catalogOf, decisionConfigOf, getSettings, modelOverridesOf, targetOrNull, useSettings, visionTargetOrNull } from '../store/settings';
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from '../harness/agent';
 import { resolveMaxRounds } from '../harness/loopGuard';
 import { mdEditorOpen } from '../harness/tools';
@@ -469,12 +469,8 @@ export default function ChatPanel({
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const localRequest = useRef(false);
-  const [hasSubtitles, setHasSubtitles] = useState(isMaterial);
   const [indexReady, setIndexReady] = useState(false);
-  /**
-   * 索引为什么不可用（材料专属文案）。扫描件 / 空文档永远不会就绪，
-   * 光禁掉输入框而不说明原因，用户只会以为是坏了 —— 尤其窄屏下阅读区不可见时。
-   */
+  /** 缺少可检索正文时的说明，不阻止聊天或截图提问。 */
   const [indexNote, setIndexNote] = useState<string | null>(null);
   const [sessions, setSessions] = useState<ChatSessionRow[]>([]);
   const [activeId, setActiveId] = useState<number | null>(null);
@@ -529,7 +525,7 @@ export default function ChatPanel({
   const thinking = useSettings((s) => s.thinkingEnabled);
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
-  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
+  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!decisionConfigOf(s).apiKey.trim());
   const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   /**
    * 思考能力分两层，工具行上给什么控件就看这两层：
@@ -716,7 +712,7 @@ export default function ChatPanel({
    * 2026-09-24：检索改为词法后，这里**不再有建索引这一步**。原来是一段
    * 「查向量计数 → 缺就建 → 建好才置 indexReady」的流程，也带来过一整类 bug
    * （索引过期后计数仍然达标，于是永远不重建）。没有索引就没有这些问题。
-   * 现在只剩一件事：判断有没有可检索的正文。
+    * 现在只检查有没有可检索的正文以显示提示；没有字幕也允许提问。
    */
   useEffect(() => {
     let cancelled = false;
@@ -733,8 +729,6 @@ export default function ChatPanel({
 
       // ── 阅读材料：检索的是文本块（materialBlocks）──
       if (isMaterial) {
-        // 材料没有「字幕」，但 hasSubtitles 在上游是「内容是否就绪」的语义，材料解析完就算就绪
-        setHasSubtitles(true);
         const blockCount = await db.materialBlocks.where('materialId').equals(videoId).count();
         if (cancelled) return;
         // 没有可检索文字也能读取图片目录、展示原图或框选提问，不能把整个聊天锁死。
@@ -758,9 +752,9 @@ export default function ChatPanel({
         .filter((r) => r.status === 1 && !!r.text)
         .count();
       if (cancelled) return;
-      setHasSubtitles(segCount > 0);
-      if (segCount === 0) return;
-
+      setIndexNote(segCount === 0
+        ? '尚未生成字幕，暂时无法检索课程正文；可以直接聊天或附带截图提问'
+        : null);
       setIndexReady(true);
     })();
     return () => {
@@ -1326,7 +1320,7 @@ export default function ChatPanel({
         estimateTokens(currentText) -
         (imageParts ? curShots.length * 1200 : 0) - // 多模态图片每张约 1.2k tokens
         4096; // 输出预留
-      const recent = await prepareSessionHistory(sessionId, history.slice(0, -1), Math.max(2000, budget), currentText, settings.jev, {
+      const recent = await prepareSessionHistory(sessionId, history.slice(0, -1), Math.max(2000, budget), currentText, decisionConfigOf(settings), {
         signal: abort.signal,
         onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
         onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),
@@ -1715,18 +1709,6 @@ export default function ChatPanel({
     pinList();
   }, [scrollSignal, pinList]);
 
-  if (!hasSubtitles) {
-    return (
-      <Panel testId="panel-chat">
-        <PanelPlaceholder testId="chat-empty">
-          {isMaterial
-            ? '这份材料还没有解析出可检索的文本，暂时无法提问'
-            : '请先在「字幕」页生成字幕，然后才能针对课程内容提问'}
-        </PanelPlaceholder>
-      </Panel>
-    );
-  }
-
   /** 删除当前会话前确认（危险操作：确认按钮上错误色，文案写清动作） */
   const confirmDeleteSession = async () => {
     const ok = await confirmDialog({
@@ -1949,7 +1931,7 @@ export default function ChatPanel({
       </PanelBody>
       </div>
 
-      {/* 索引不可用的原因（扫描件）。必须显式说明，否则用户只会看到输入框是灰的 */}
+      {/* 缺少可检索正文时提示能力边界，不禁用输入区 */}
       {indexNote && (
         <div className="chat-note" data-testid="chat-index-note">
           <Sym name="warning" className="chat-note__icon" />

@@ -24,7 +24,7 @@ const fail = (msg) => { console.error(`❌ ${msg}`); process.exitCode = 1; };
 const ok = (msg) => console.log(`   ✓ ${msg}`);
 
 console.log('1. 手机视口打开首页并导入测试视频');
-await page.goto(BASE, { waitUntil: 'networkidle' });
+await page.goto(`${BASE}/#/library`, { waitUntil: 'networkidle' });
 await page.setInputFiles('input[type="file"]', TEST_FILE);
 await page.waitForSelector('[data-testid="video-item"]', { timeout: 30000 });
 await page.screenshot({ path: 'e2e-shots/mobile-library.png' });
@@ -91,12 +91,18 @@ const subsNowHidden = await page.evaluate(() => document.querySelectorAll('.pane
 if (!subsNowHidden) fail('切走后字幕面板应隐藏');
 else ok('字幕面板已隐藏（display:none 保活）');
 
-console.log('7. 切换到「问答」：无字幕时显示引导文案');
+console.log('7. 切换到「问答」：无字幕也可提问');
 await page.click('[data-testid="panel-tab-chat"]');
 await page.waitForTimeout(300);
-const chatGuide = await page.locator('.panel-slot:not([hidden])', { hasText: '请先在「字幕」页生成字幕' }).count();
-if (!chatGuide) fail('问答面板应显示字幕引导文案');
-else ok('问答引导文案显示');
+const chatInput = page.locator('.panel-slot:not([hidden]) textarea');
+await chatInput.waitFor();
+if (!(await chatInput.isEnabled())) fail('无字幕时问答输入框应可用');
+else ok('无字幕也能输入问题');
+await chatInput.fill('解释一下这个知识点');
+if (!(await page.getByTestId('chat-send').isEnabled())) fail('无字幕时应允许发送问题');
+else ok('无字幕也能发送问题');
+if (!(await page.getByTestId('chat-index-note').isVisible())) fail('应提示暂时无法检索课程正文');
+else ok('显示检索能力提示，不阻止聊天');
 
 console.log('8. 切回「字幕」：状态保留（按钮仍在）');
 await page.click('[data-testid="panel-tab-subs"]');

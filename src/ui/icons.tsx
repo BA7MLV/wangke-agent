@@ -152,6 +152,7 @@ const ICONS: Record<string, LucideIcon> = {
   /** 来源：回答引用了哪门课、引到哪一处 */
   bookmark: Bookmark,
   neurology: Brain,
+  account_tree: GitBranch,
   open_in_full: Expand,
   /** 顶栏的侧栏折叠开关 */
   panel_left: PanelLeft,

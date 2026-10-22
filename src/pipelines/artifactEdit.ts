@@ -28,12 +28,17 @@ export async function editArtifact(input: {
     ],
   });
   if (response.finish_reason === 'length') throw new Error('修改输出被截断，原内容未修改；请缩小修改范围');
+  if (response.finish_reason === 'content_filter') throw new Error('模型服务未能返回修改内容，原内容未修改；请调整要求后重试');
   return applyArtifactReply(input.source, parseArtifactReply(textOf(response)), input.mode);
 }
 
 export async function validateArtifact(kind: ArtifactKind, source: string): Promise<void> {
   if (kind === 'diagram') {
-    sanitizeSvg(renderDiagram(validateDiagram(JSON.parse(source))).svg);
+    let diagram: unknown;
+    try { diagram = JSON.parse(source); } catch {
+      throw new Error('修改后的图形 JSON 不完整或格式不正确，原内容未修改；请重新生成修改');
+    }
+    sanitizeSvg(renderDiagram(validateDiagram(diagram)).svg);
   } else if (kind === 'svg') {
     sanitizeSvg(source);
   } else if (kind === 'mermaid') {

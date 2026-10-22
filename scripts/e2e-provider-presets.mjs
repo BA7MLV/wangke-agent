@@ -31,7 +31,7 @@ let failMeta = false;
 let releaseMeta;
 let holdMeta = false;
 try {
-  await page.route('https://models.dev/api.json', async (route) => {
+  await page.route('https://models.dev/api.json*', async (route) => {
     if (holdMeta) await new Promise((resolve) => { releaseMeta = resolve; });
     if (failMeta) return route.fulfill({ status: 503, body: 'Unavailable' });
     return route.fulfill({ json: {
@@ -54,7 +54,8 @@ try {
   const initial = await settings();
   await openPicker();
   assert.equal((await settings()).providers.length, initial.providers.length, 'opening the picker does not create an empty connection');
-  assert.equal(await page.getByTestId('provider-presets').locator('button[data-testid^="provider-preset-"]').count(), 8);
+  for (const [id] of presets) await page.getByTestId(`provider-preset-${id}`).waitFor();
+  await page.getByTestId('provider-preset-custom').waitFor();
   assert.equal(await page.getByTestId('card-models').count(), 0, 'picker is a dedicated page');
   assert.deepEqual(modelRequests, [], 'browsing presets never sends credentials or fetches provider models');
   await mkdir('scripts/out', { recursive: true });
@@ -137,6 +138,7 @@ try {
     assert.equal(await page.getByTestId(`api-key-${provider.id}`).isVisible(), true);
     await page.getByTestId('provider-back').click();
   }
+  assert.deepEqual(modelRequests, [], 'saving and reopening providers never fetches models automatically');
 
   // 旧版 DeepSeek 的 /v1/ 写法也复用，且保留所有用户配置，不只保留密钥。
   await page.evaluate(async () => {

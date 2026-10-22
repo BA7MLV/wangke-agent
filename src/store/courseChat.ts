@@ -6,7 +6,7 @@ import { useChatNotifications } from './chatNotifications';
 import { readChatPage } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
 import type { ProcessPhase } from '../utils/responseProcess';
-import { catalogOf, getSettings, modelOverridesOf } from './settings';
+import { catalogOf, decisionConfigOf, getSettings, modelOverridesOf } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
 import { estimateTokens, fitHistoryToBudget } from '../harness/context';
 import { prepareSessionHistory } from './contextCompression';
@@ -1561,7 +1561,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       // 挂起续跑保持原有历史与工具链，不重新做语义筛选。
       const recent = resume
         ? fitHistoryToBudget(baseRows, Math.max(2000, budget))
-        : await prepareSessionHistory(turnKey, baseRows, Math.max(2000, budget), text, settings.jev, {
+        : await prepareSessionHistory(turnKey, baseRows, Math.max(2000, budget), text, decisionConfigOf(settings), {
             signal: abort.signal,
             onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
             onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),

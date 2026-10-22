@@ -117,7 +117,6 @@ export default function ReasoningChain({
   const [full, setFull] = useState(false);
   const fullRef = useRef(false);
   const innerRef = useRef<HTMLDivElement>(null);
-  const viewportRef = useRef<HTMLDivElement>(null);
   const lastTop = useRef(0);
   /** `since` 缺失时的兜底起点（见 prop 注释） */
   const mountedAt = useRef(Date.now());
@@ -152,31 +151,6 @@ export default function ReasoningChain({
     if (nextFull && innerRef.current) innerRef.current.scrollTop = 0;
   };
 
-  /**
-   * 渐隐的两端是**各自**开关的，不是「内容溢出就上下一起淡」：
-   * 贴底时下面没有内容，底部那截渐隐只是在把最后一行抹灰，读者会以为字没显示全。
-   * 直接写 dataset 而不走 state —— 这只是 paint 提示，不该每个 token 多触发一次渲染。
-   */
-  const syncFade = (el: HTMLDivElement) => {
-    el.dataset.fadeTop = String(el.scrollTop > 4);
-    el.dataset.fadeBottom = String(el.scrollHeight - el.clientHeight - el.scrollTop > 4);
-    if (viewportRef.current) {
-      viewportRef.current.dataset.fadeTop = el.dataset.fadeTop;
-      viewportRef.current.dataset.fadeBottom = el.dataset.fadeBottom;
-    }
-  };
-
-  // 自动跟随由 useReasoningStream 负责向上送；这里只同步上下渐隐。
-  useEffect(() => {
-    const el = innerRef.current;
-    if (!el || !open) return;
-    const frame = requestAnimationFrame(() => {
-      lastTop.current = el.scrollTop;
-      syncFade(el);
-    });
-    return () => cancelAnimationFrame(frame);
-  }, [reasoning, revision, live, open]);
-
   // 用户自己滚 → 更新「还粘不粘底」。scroll 不冒泡，只能挂在滚动容器自己身上。
   useEffect(() => {
     const el = innerRef.current;
@@ -189,7 +163,6 @@ export default function ReasoningChain({
         stopStream();
       }
       lastTop.current = el.scrollTop;
-      syncFade(el);
     };
     el.addEventListener('scroll', onScroll, { passive: true });
     const observer = new ResizeObserver(() => {
@@ -201,7 +174,6 @@ export default function ReasoningChain({
         el.scrollTop = el.scrollHeight;
       }
       lastTop.current = el.scrollTop;
-      syncFade(el);
     });
     observer.observe(el);
     return () => { el.removeEventListener('scroll', onScroll); observer.disconnect(); };
@@ -229,12 +201,14 @@ export default function ReasoningChain({
         {summary}
         {/* 思考中展开时保留计时，包括用户选择的全文视图。 */}
         {active && open && !waiting && <LiveElapsed from={since ?? mountedAt.current} />}
-        <Disclosure.Indicator className="reasoning-chain__indicator" />
+        {live
+          ? <Sym name="unfold_more" className="reasoning-chain__indicator" aria-hidden="true" />
+          : <Disclosure.Indicator className="reasoning-chain__indicator" />}
       </Disclosure.Trigger>
       </Disclosure.Heading>
       <Disclosure.Content className="reasoning-chain__content">
         <Disclosure.Body className="reasoning-chain__panel">
-        <div className="reasoning-chain__viewport" ref={viewportRef}>
+        <div className="reasoning-chain__viewport">
           <div ref={innerRef}
             className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">

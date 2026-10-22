@@ -8,7 +8,7 @@ import { Sym } from '../ui';
 import './selection-ask.css';
 
 /**
- * 选区操作：资料桌面端由阅读器投递右键菜单；其余来源保留选区动作条。
+ * 选区操作：资料由阅读器在拖选结束后投递菜单；其余来源保留选区动作条。
  *
  * ## 为什么用 DOM 属性而不是 props 驱动
  *
@@ -37,7 +37,7 @@ interface Hit {
 }
 
 /** 浮层容器本身不吃指针事件，只有按钮吃 —— 否则它会盖住正文，让「继续滚动/继续拖选」失效 */
-function readSelection(isMobile: boolean): Hit | null {
+function readSelection(): Hit | null {
   const sel = window.getSelection();
   if (!sel || sel.isCollapsed || sel.rangeCount === 0) return null;
   const range = sel.getRangeAt(0);
@@ -45,8 +45,8 @@ function readSelection(isMobile: boolean): Hit | null {
   const el = start.nodeType === Node.ELEMENT_NODE ? (start as Element) : start.parentElement;
   const host = el?.closest?.('[data-askable]') as HTMLElement | null;
   if (!host) return null;
-  // 资料桌面端只响应右键，不在拖选时抢出旧动作条。字幕、讲义保持原交互。
-  if (!isMobile && host.closest('.ink-input-root')) return null;
+  // 资料统一使用拖选结束菜单，不再弹出旧动作条。字幕、讲义保持原交互。
+  if (host.closest('.ink-input-root')) return null;
 
   const text = cleanSelectionText(sel.toString());
   if (!isUsableSelection(text)) return null;
@@ -87,7 +87,7 @@ export default function SelectionAsk() {
     const onChange = () => {
       window.clearTimeout(timer);
       timer = window.setTimeout(() => {
-        const next = readSelection(isMobile);
+        const next = readSelection();
         // 选区变空时不要立刻收：可能是刚才点了浮层导致折叠（见文件头注释 1）
         if (!next && Date.now() - insideAt.current < 800) return;
         setHit(next);
@@ -132,7 +132,7 @@ export default function SelectionAsk() {
       setHit(null);
       window.clearTimeout(scrollTimer);
       if (wasRegionBar) return;
-      scrollTimer = window.setTimeout(() => setHit(readSelection(isMobile)), 120);
+      scrollTimer = window.setTimeout(() => setHit(readSelection()), 120);
     };
 
     document.addEventListener('selectionchange', onChange);
@@ -147,7 +147,7 @@ export default function SelectionAsk() {
       document.removeEventListener('keydown', onKey);
       document.removeEventListener('scroll', onScroll, true);
     };
-  }, [hideBar, isMobile]);
+  }, [hideBar]);
 
   const fire = useCallback(
     (mode: 'explain' | 'compose') => {

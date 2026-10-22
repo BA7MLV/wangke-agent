@@ -41,7 +41,7 @@ import { EMPTY_COMPRESSION, retainedContext, useContextCompressionStore } from '
 import { useCourseChat, reflectArtifactEdit, type CourseChatMessage, type QueuedMessage, type SendMode } from '../store/courseChat';
 import { useChatNotifications } from '../store/chatNotifications';
 import { useSettingsDialog } from '../components/settingsDialogStore';
-import { useSettings } from '../store/settings';
+import { decisionConfigOf, useSettings } from '../store/settings';
 import { estimateTokens } from '../harness/context';
 import { libraryAssistantSystemPrompt } from '../harness/libraryAssistant';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
@@ -693,7 +693,7 @@ export default function CourseChat() {
   const forkSession = useCourseChat((s) => s.forkSession);
   /** 上下文窗口（输入 + 输出的总容量）：用量环的分母，也是历史裁剪的预算来源 */
   const ctxWin = useSettings((s) => s.contextWindow);
-  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!s.jev.apiKey.trim());
+  const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!decisionConfigOf(s).apiKey.trim());
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));
   const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   /**

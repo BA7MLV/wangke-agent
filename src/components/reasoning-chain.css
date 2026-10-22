@@ -154,28 +154,8 @@
 }
 .reasoning-chain__body--live::-webkit-scrollbar-track { background: transparent; }
 
-/* 渐隐长度与 transitions.css 的 --reason-fade 同一个 token
-   （29 Reasoning stream 的蒙版）。通用 .t-reason 默认上下都淡；
-   这里按 data-fade-* **各自**开关：贴底时底部那截不该再把最后一行抹灰。 */
-.reasoning-chain__body--live[data-fade-top='true'] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade));
-  mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade));
-}
-
-.reasoning-chain__body--live[data-fade-bottom='true'] {
-  -webkit-mask-image: linear-gradient(to bottom, black calc(100% - var(--reason-fade)), transparent);
-  mask-image: linear-gradient(to bottom, black calc(100% - var(--reason-fade)), transparent);
-}
-
-.reasoning-chain__body--live[data-fade-top='true'][data-fade-bottom='true'] {
-  -webkit-mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade), black calc(100% - var(--reason-fade)), transparent);
-  mask-image: linear-gradient(to bottom, transparent, black var(--reason-fade), black calc(100% - var(--reason-fade)), transparent);
-}
-
-.reasoning-chain__body--live[data-fade-top='false'][data-fade-bottom='false'] {
-  -webkit-mask-image: none;
-  mask-image: none;
-}
+/* 实时视口始终使用 .t-reason 的上下渐隐，抵达滚动边界时也不切换。
+   全文视图没有 .t-reason，不影响完整阅读。 */
 
 /* HeroUI exposes the measured panel height through --disclosure-panel-height.
    Use that native height transition, but replace the default near-linear

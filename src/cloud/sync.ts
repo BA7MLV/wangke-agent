@@ -21,7 +21,8 @@ export function applyCloudConfig(config: CloudConfig) {
     providers: config.providers.map(p => ({ ...p, baseUrl: `/api/v1/cloud/models/${encodeURIComponent(p.id)}`, apiKey: p.configured ? 'server-managed' : 'server-local' })),
     llmModel: config.llmModel, visionModel: config.visionModel, asrModel: config.asrModel,
     // Optional decision-model credentials from a former local installation must not bypass the server.
-    jev: { baseUrl: '', apiKey: '', model: '', skillRouting: false, contextCompression: false },
+    jev: { skillRouting: false, contextCompression: false },
+    decisionModel: { providerId: '', model: '' },
     syncEnabled: false,
   });
 }

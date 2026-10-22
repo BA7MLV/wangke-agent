@@ -1,5 +1,5 @@
 import { chatOnce, textOf } from '../api/siliconflow';
-import { getSettings, targetOfSlot } from '../store/settings';
+import { decisionConfigOf, getSettings, targetOfSlot } from '../store/settings';
 import { db } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
 import { loadEnabledSkillMeta, loadSkillBodies, skillMetaBlock, type SkillMeta } from './store';
@@ -43,7 +43,7 @@ export async function routeHandoutSkills(
   try {
     // 解析失败会掉进下面的兜底（全部启用），所以这里不让凭据问题炸掉整条讲义流水线
     const settings = getSettings();
-    const decision = await routeSkillsWithJev(settings.jev, metas, videoName, sample);
+    const decision = await routeSkillsWithJev(decisionConfigOf(settings), metas, videoName, sample);
     if (decision !== null) {
       autoIds = decision;
     } else {

@@ -2,6 +2,7 @@ import { db } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { planAgentEdits, type AgentEdit, type EditChange } from '../md-editor/edits';
 import { saveMarkdownMaterial } from '../materials/markdownFile';
+import { grepDocs } from './grep';
 
 export function markdownRegex(pattern: unknown, flags: unknown = 'm'): RegExp {
   if (typeof pattern !== 'string' || !pattern || pattern.length > 1000) throw new Error('正则需为 1–1000 字符。');
@@ -30,10 +31,8 @@ export async function executeMarkdownResource(name: string, id: string, path: st
     return `path=${path}\n总行数：${lines.length}\n` + lines.slice(start, start + count).map((s, i) => `${start + i + 1}: ${s}`).join('\n');
   }
   if (name === 'grep') {
-    const regex = args.regex === true ? markdownRegex(args.query, args.flags) : undefined;
-    const query = String(args.query);
-    const hits = lines.flatMap((s, i) => (regex ? regex.test(s) : s.toLowerCase().includes(query.toLowerCase())) ? [`${i + 1}: ${s}`] : []);
-    return `path=${path}\n${hits.slice(0, Math.min(Number(args.limit ?? 15), 50)).join('\n') || '没有匹配。'}`;
+    const result = grepDocs(lines.map((text, i) => ({ text, path, start: i + 1, end: i + 1, unit: 'lines' as const })), args);
+    return `${result.header}\n${result.hits.map((hit) => hit.evidence).join('\n\n') || '没有匹配。'}`;
   }
   if (args.create === true) {
     if (file || course) return '文件已存在，请先 read，再用 edits 修改。';

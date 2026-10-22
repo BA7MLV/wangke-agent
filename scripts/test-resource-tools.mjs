@@ -44,7 +44,24 @@ try {
   assert.equal(parseResource('/courses/%2e%2e/info'), undefined);
   assert.equal(parseResource('/courses/v/unknown'), undefined);
   assert.match(await local('grep', { query: '贝叶斯', limit: 1 }), /path=\/courses\/v\/transcript/);
-  assert.equal((await local('grep', { query: '贝叶斯', limit: 1 })).split('\n').length, 3);
+  const limited = await local('grep', { query: '贝叶斯', limit: 1 });
+  assert.match(limited, /结果已截断/);
+  const readContext = (output) => JSON.parse(output.split('\n').find((line) => line.startsWith('read 上下文：')).slice('read 上下文：'.length));
+  const exact = await local('grep', { query: '贝叶斯 后续', mode: 'literal' });
+  assert.match(exact, /start=20 end=30/);
+  assert.match(await local('read', readContext(exact)), /后续/);
+  assert.match(await local('grep', { query: '贝叶斯.*后续', mode: 'regex' }), /后续/);
+  assert.match(await local('grep', { query: '[', mode: 'regex' }), /regular expression/i);
+  assert.match(await local('grep', { query: '贝叶斯', mode: 'bad' }), /mode 必须/);
+  assert.match(await local('grep', { query: '贝叶斯', mode: 'literal', regex: true }), /冲突/);
+  assert.match(await local('grep', { query: '贝叶斯 后续不存在', mode: 'literal' }), /没有检索到/);
+  await db.materialBlocks.add({ materialId: 'm', idx: 2, unit: 4, text: '前文'.repeat(400) + '唯一命中词' + '后文'.repeat(400) });
+  const longHit = await material('grep', { query: '唯一命中词', mode: 'literal' });
+  assert.match(longHit, /唯一命中词/);
+  assert.match(longHit, /摘要已截断/);
+  const context = await material('read', readContext(longHit));
+  assert.match(context, /第三页/);
+  assert.match(context, /唯一命中词/);
   assert.match(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 0 } }), /起点/);
   assert.doesNotMatch(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 0 } }), /后续/);
   assert.doesNotMatch(await local('read', { path: '/courses/current/transcript', range: { unit: 'seconds', start: 0, end: 1000 } }), /远处内容/);
@@ -77,7 +94,7 @@ try {
   assert.doesNotMatch(await library('grep', { query: '贝叶斯' }), /courseId=m/);
   const results = await library('grep', { path: '/courses', query: '贝叶斯' });
   assert.match(results, /path=\/courses\/m\/material/);
-  assert.match(results, /start\/end 单位：页码/);
+  assert.match(results, /定位：pages start=3 end=3/);
   assert.doesNotMatch(results, /range\.unit/);
   assert.doesNotMatch(await library('read', { path: '/courses/v/info' }), /range\.unit/);
   assert.match(await library('read', { path: '/courses/m/material', range: { unit: 'pages', start: 3, end: 3 } }), /第三页/);
@@ -116,6 +133,12 @@ try {
   assert.equal((await db.videos.get('wrongbook.md')).materialFormat, 'md');
   assert.match(await local('read', { path: '/wrongbook.md' }), /## q-1/);
   assert.match(await library('grep', { path: '/wrongbook.md', query: '^## q-[12]$', regex: true }), /q-2/);
+  for (const mode of ['literal', 'ranked', 'regex']) {
+    const hit = await library('grep', { path: '/wrongbook.md', query: 'q-1', mode });
+    assert.match(hit, new RegExp(`mode=${mode}`));
+    const surrounding = await library('read', readContext(hit));
+    assert.match(surrounding, /答案：A/);
+  }
   assert.match(await library('edit', { path: '/wrongbook.md', edits: [{ old_string: '^答案：[AB]$', new_string: '答案：C', regex: true, replace_all: true }] }), /2 处/);
   assert.match(await library('edit', { path: '/wrongbook.md', edits: [{ old_string: '## q-1[\\s\\S]*?(?=## q-2)', new_string: '', regex: true }] }), /1 处/);
   const raw = await library('read', { path: '/wrongbook.md' });

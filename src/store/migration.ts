@@ -157,6 +157,8 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
     asrModel: s.asrModel,
     llmModel: s.llmModel,
     visionModel: s.visionModel,
+    decisionModel: s.decisionModel,
+    savedModels: s.savedModels,
     favorites: s.favorites,
     contextWindow: s.contextWindow,
     asrConcurrency: s.asrConcurrency,

@@ -197,6 +197,8 @@
 /* ── 消息流 ───────────────────────────────────────────────────────────── */
 .course-chat__messages {
   overflow-anchor: none;
+  /* 直接裁掉输入区内的消息，不靠背景遮挡；边界随输入区高度同步变化。 */
+  clip-path: inset(0 0 var(--chat-composer-height, 116px) 0);
   /* 首屏消息让出浮动顶栏，再留 28px 阅读间距；吸顶标题单独贴顶栏下沿，
      不继承首屏的阅读间距。 */
   --reasoning-sticky-gap: 28px;
@@ -814,8 +816,7 @@
   flex: 0 0 auto;
   padding: 8px max(20px, calc((100% - var(--course-chat-column)) / 2))
     max(12px, env(safe-area-inset-bottom));
-  /* 整个输入区（含两侧与底部安全间距）实色遮挡，避免消息从卡片下方漏出。 */
-  background: var(--background-secondary);
+  background: transparent;
 }
 
 /* ── 回到底部 ─────────────────────────────────────────────────────────────

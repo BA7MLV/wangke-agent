@@ -61,6 +61,7 @@ const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string, overrides
   // 而 /audio/transcriptions 只认 ASR 模型，两者在数据上区分不开。这里仍按名字排，
    // 但真正的准入只看具体模型保存的用途，不限制供应商。
   asr: (_cat, id) => ASR_MODEL_RE.test(id),
+  decision: (cat, id, overrides) => getModelMeta(cat, id, overrides)?.type === 'decision',
 };
 
 /** 槽位 → 图标。三个槽位并排出现时，图标是唯一能一眼分开它们的东西 */
@@ -68,6 +69,7 @@ const SLOT_ICON: Record<ModelSlot, ReactNode> = {
   chat: <Sym name="neurology" />,
   vision: <Sym name="visibility" />,
   asr: <Sym name="mic" />,
+  decision: <Sym name="account_tree" />,
 };
 
 /** 槽位 → 一句话说明它负责什么。放在槽位名下，替代原来分散在各处的长 hint */
@@ -75,9 +77,10 @@ const SLOT_HINT: Record<ModelSlot, string> = {
   chat: '负责讲义生成与课程问答，支持视觉时也可直接读图',
   vision: '主模型可读图时自动复用，否则使用已添加的图片理解模型；也可独立指定',
   asr: '把视频音轨转成字幕，可以和文本模型不在同一家',
+  decision: '可选：负责技能路由与历史筛选，不生成回答；选择后需单独开启功能',
 };
 
-const SLOT_ORDER: readonly ModelSlot[] = ['chat', 'vision', 'asr'];
+const SLOT_ORDER: readonly ModelSlot[] = ['chat', 'vision', 'asr', 'decision'];
 
 /** 上下文窗口的紧凑写法：128000 → 128K，1048576 → 1M。列表里每行都要显示，太长会挤掉模型名 */
 /** 能力徽标：多模态 / 可思考。模型 id 长的行里这两枚最占地方，所以做成小圆角标签 */
@@ -376,6 +379,7 @@ function SlotModelSelect({
         </Select>}
       </div>
 
+      {slot === 'decision' && ref.model && <Button variant="tertiary" className="self-start" onPress={() => update({ decisionModel: { providerId: '', model: '' } })}>不使用决策模型</Button>}
       {slot === 'vision' && <Checkbox
         aria-label="自动：优先主模型，否则使用读图模型"
         isSelected={!ref.model}
@@ -1001,9 +1005,10 @@ export default function ModelsModule() {
     const rest = settings.providers.filter((x) => x.id !== p.id);
     const fallback = rest[0].id;
     const patch: Partial<Settings> = { providers: rest, savedModels: savedModelsOf(settings).filter((m) => m.providerId !== p.id) };
-    for (const name of ['asrModel', 'llmModel', 'visionModel'] as ModelFieldName[]) {
+    for (const name of ['asrModel', 'llmModel', 'visionModel', 'decisionModel'] as ModelFieldName[]) {
       if (settings[name].providerId === p.id) {
-        const slot = name === 'llmModel' ? 'chat' : name === 'visionModel' ? 'vision' : 'asr';
+        const slot = name === 'llmModel' ? 'chat' : name === 'visionModel' ? 'vision' : name === 'decisionModel' ? 'decision' : 'asr';
+        if (slot === 'decision') { patch.decisionModel = { providerId: '', model: '' }; continue; }
         const replacement = modelsForSlot(settings, slot).find((m) => m.providerId !== p.id);
         patch[name] = { providerId: replacement?.providerId ?? fallback, model: replacement?.model ?? '' };
       }
@@ -1029,7 +1034,7 @@ export default function ModelsModule() {
         title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
         subtitle={draftProvider ? '填写 API Key 后保存。返回、取消或关闭设置不会新增供应商，也不会保存密钥。' : selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
-        actions={selectedProvider ? <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>拉取模型列表</LoadingButton> : undefined}
+        actions={selectedProvider ? <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>查找模型</LoadingButton> : undefined}
       >
         {draftProvider ? (
           <form className="flex flex-col gap-4" data-testid="provider-draft" onSubmit={(event) => {
@@ -1056,7 +1061,7 @@ export default function ModelsModule() {
                 setDraftError('');
               }}
             >
-              <p className="text-xs text-pretty text-muted">保存后才会添加供应商并获取模型列表。</p>
+              <p className="text-xs text-pretty text-muted">保存后才会添加供应商；模型列表需点击“查找模型”获取。</p>
               {draftError && <p role="alert" className="text-sm text-pretty text-danger">{draftError}</p>}
               <div className="flex gap-2">
                 <Button type="submit" data-testid="provider-draft-save">保存供应商</Button>
@@ -1162,13 +1167,13 @@ export default function ModelsModule() {
       {!draftProvider && !selectedProvider && !connectingProvider && <>
       <SectionCard
         title="选择模型"
-        subtitle="选择主模型与语音转写模型；图片理解可自动复用主模型或单独指定。Chat 可随时切换。"
+        subtitle="按用途选择已添加的模型；图片理解可自动复用，决策模型为可选项。"
         testId="card-models"
       >
         <div className="flex flex-col gap-2.5">
           {SLOT_ORDER.map((slot) => {
             const name = (
-              { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel' } as const
+              { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel', decision: 'decisionModel' } as const
             )[slot];
             return (
               <SlotModelSelect

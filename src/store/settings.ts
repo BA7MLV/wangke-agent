@@ -4,13 +4,13 @@ import type { ReasoningEffort } from '../api/siliconflow';
 import { normalizeThinkingEffort } from '../api/modelCaps';
 import { getModelMeta, matchModelMeta, type ModelOverrides } from '../api/modelMeta';
 import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
-import { modelsForSlot } from './modelLibrary';
+import { modelsForSlot, savedModelsOf } from './modelLibrary';
 import { providerCatalogId } from './providerPresets';
 
-export type ModelSlot = 'chat' | 'vision' | 'asr';
+export type ModelSlot = 'chat' | 'vision' | 'asr' | 'decision';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
 
-/** 独立的决策模型连接。含凭据与出网授权，整项仅保存在本机。 */
+/** 从供应商、决策槽位与本机授权解析出的运行时配置。 */
 export interface JevSettings {
   baseUrl: string;
   apiKey: string;
@@ -18,6 +18,9 @@ export interface JevSettings {
   skillRouting: boolean;
   contextCompression: boolean;
 }
+
+/** 功能授权仅存本机；凭据统一由供应商管理。 */
+export type DecisionFeatures = Pick<JevSettings, 'skillRouting' | 'contextCompression'>;
 
 export function defaultJevSettings(): JevSettings {
   return {
@@ -29,14 +32,10 @@ export function defaultJevSettings(): JevSettings {
   };
 }
 
-function normalizeJevSettings(value: unknown): JevSettings {
-  const defaults = defaultJevSettings();
-  if (value == null || typeof value !== 'object') return defaults;
+function normalizeJevSettings(value: unknown): DecisionFeatures {
+  if (value == null || typeof value !== 'object') return { skillRouting: false, contextCompression: false };
   const raw = value as Record<string, unknown>;
   return {
-    baseUrl: typeof raw.baseUrl === 'string' ? raw.baseUrl : defaults.baseUrl,
-    apiKey: typeof raw.apiKey === 'string' ? raw.apiKey : defaults.apiKey,
-    model: typeof raw.model === 'string' ? raw.model : defaults.model,
     skillRouting: raw.skillRouting === true,
     contextCompression: raw.contextCompression === true,
   };
@@ -47,7 +46,8 @@ const SLOT_FIELD = {
   asr: 'asrModel',
   chat: 'llmModel',
   vision: 'visionModel',
-} as const satisfies Record<ModelSlot, 'asrModel' | 'llmModel' | 'visionModel'>;
+  decision: 'decisionModel',
+} as const satisfies Record<ModelSlot, 'asrModel' | 'llmModel' | 'visionModel' | 'decisionModel'>;
 
 type ModelFieldName = (typeof SLOT_FIELD)[ModelSlot];
 
@@ -56,6 +56,7 @@ export const SLOT_LABEL: Record<ModelSlot, string> = {
   asr: '语音识别',
   vision: '图片理解',
   chat: '主模型',
+  decision: '决策模型',
 };
 
 /**
@@ -91,6 +92,9 @@ export interface ModelRef {
 }
 
 export interface SavedModel extends ModelRef, ModelOverrides {
+  decisionProtocol?: 'typesafe-systemone';
+  /** 可选的独立决策 API 根地址（包含 /v1，不含 /systemone）。 */
+  decisionBaseUrl?: string;
   name: string;
   slots: ModelSlot[];
 }
@@ -134,7 +138,8 @@ export type AccentColor = 'blue' | 'violet' | 'rose' | 'orange' | 'green' | 'amb
 export type FontScale = 'small' | 'standard' | 'large' | 'xlarge';
 
 export interface Settings {
-  jev: JevSettings;
+  jev: DecisionFeatures;
+  decisionModel: ModelRef;
   /** 模型供应商注册表（凭据在这里，不在顶层） */
   providers: Provider[];
   asrModel: ModelRef;
@@ -244,6 +249,7 @@ function defaultModels(): Record<ModelFieldName, ModelRef> {
     asrModel: { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODELS.asrModel },
     llmModel: { providerId: DEFAULT_PROVIDER_ID, model: DEFAULT_MODELS.llmModel },
     visionModel: { providerId: '', model: '' },
+    decisionModel: { providerId: '', model: '' },
   };
 }
 
@@ -258,10 +264,10 @@ function defaultModels(): Record<ModelFieldName, ModelRef> {
  */
 function initialSettings(): Settings {
   return {
-    jev: defaultJevSettings(),
+    jev: { skillRouting: false, contextCompression: false },
     providers: [defaultProvider()],
     ...defaultModels(),
-    favorites: { chat: [], vision: [], asr: [] },
+    favorites: { chat: [], vision: [], asr: [], decision: [] },
     contextWindow: 131072,
     asrConcurrency: 4,
     thinkingEnabled: false,
@@ -291,9 +297,53 @@ interface SettingsStore extends Settings {
   update: (patch: Partial<Settings>) => void;
 }
 
+/** 可重复执行：仅旧版独立 Jev 配置迁入，不覆盖已有决策槽位。 */
+function migrateDecisionSettings(settings: Settings, raw?: Record<string, unknown>): Settings {
+  const next: Settings = {
+    ...settings,
+    jev: normalizeJevSettings(raw?.jev),
+    decisionModel: settings.decisionModel ?? { providerId: '', model: '' },
+    favorites: { ...settings.favorites, decision: settings.favorites?.decision ?? [] },
+  };
+  const legacy = raw?.jev as Partial<JevSettings> | undefined;
+  if (raw && !Object.hasOwn(raw, 'decisionModel') && legacy && typeof legacy === 'object' &&
+      (legacy.apiKey?.trim() || legacy.skillRouting || legacy.contextCompression)) {
+    const defaults = defaultJevSettings();
+    const baseUrl = typeof legacy.baseUrl === 'string' ? legacy.baseUrl : defaults.baseUrl;
+    const apiKey = typeof legacy.apiKey === 'string' ? legacy.apiKey : '';
+    // 相同地址但不同 Key 是独立连接，不能覆盖本机其他凭据。
+    let provider = next.providers.find((p) => p.baseUrl.replace(/\/+$/, '') === baseUrl.replace(/\/+$/, '') && p.apiKey === apiKey);
+    if (!provider) {
+      provider = { id: nextProviderId(next), name: 'TypeSafe', baseUrl, apiKey, protocol: 'openai-chat', catalogId: '', serves: [] };
+      next.providers = [...next.providers, provider];
+    }
+    const models = savedModelsOf(next);
+    next.decisionModel = { providerId: provider.id, model: typeof legacy.model === 'string' ? legacy.model : defaults.model };
+    const existing = models.find((m) => sameRef(m, next.decisionModel));
+    const migrated: SavedModel = { ...existing, ...next.decisionModel, name: existing?.name ?? 'Jev',
+      slots: [...new Set([...(existing?.slots ?? []), 'decision' as const])], modelType: 'decision', decisionProtocol: 'typesafe-systemone' };
+    next.savedModels = [...models.filter((m) => !sameRef(m, next.decisionModel)), migrated];
+  }
+  return next;
+}
+
+/** 决策连接由当前槽位解析，绝不回退到另一供应商或聊天接口。 */
+export function decisionConfigOf(s: Settings): JevSettings {
+  const ref = s.decisionModel;
+  const provider = s.providers.find((p) => p.id === ref.providerId);
+  const model = savedModelsOf(s).find((m) => sameRef(m, ref) && m.slots.includes('decision'));
+  const valid = !!provider && !!model && model.decisionProtocol === 'typesafe-systemone';
+  return {
+    ...s.jev,
+    baseUrl: model?.decisionBaseUrl?.trim() || provider?.baseUrl || '',
+    apiKey: valid ? provider.apiKey : '',
+    model: valid ? ref.model : '',
+  };
+}
+
 export const useSettings = create<SettingsStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       ...initialSettings(),
       /**
        * 写入前收敛思考档位。**所有写入路径都过这里** —— 界面、迁移包导入、将来的同步载荷，
@@ -303,6 +353,20 @@ export const useSettings = create<SettingsStore>()(
        * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
        */
       update: (patch) => {
+        if (patch.favorites) patch = { ...patch, favorites: { ...patch.favorites, decision: patch.favorites.decision ?? get().favorites.decision } };
+        if (patch.jev) patch = { ...patch, jev: normalizeJevSettings(patch.jev) };
+        // 换目标后重新确认授权，不把旧模型的概率阈值默认为已验证。
+        if (patch.decisionModel && !sameRef(patch.decisionModel, get().decisionModel)) {
+          patch = { ...patch, jev: { skillRouting: false, contextCompression: false } };
+        }
+        if (patch.providers || patch.savedModels) {
+          const current = get();
+          const before = decisionConfigOf(current);
+          const after = decisionConfigOf({ ...current, ...patch });
+          if (before.baseUrl !== after.baseUrl || before.model !== after.model || before.apiKey !== after.apiKey) {
+            patch = { ...patch, jev: { skillRouting: false, contextCompression: false } };
+          }
+        }
         if (patch.shortcuts !== undefined) patch = { ...patch, shortcuts: normalizeShortcutSettings(patch.shortcuts) };
         if (patch.thinkingEffort === undefined) {
           set(patch);
@@ -320,8 +384,7 @@ export const useSettings = create<SettingsStore>()(
       // 新字段可加性升级：旧版或不完整的连接配置也要补齐默认值，且不自动开启出网。
       merge: (persisted, current) => ({
         ...current,
-        ...(persisted as Partial<Settings>),
-        jev: normalizeJevSettings((persisted as Partial<Settings> | undefined)?.jev),
+        ...migrateDecisionSettings({ ...current, ...(persisted as Partial<Settings>) }, persisted as Record<string, unknown> | undefined),
         shortcuts: normalizeShortcutSettings((persisted as Partial<Settings> | undefined)?.shortcuts),
       }),
       /**
@@ -332,7 +395,7 @@ export const useSettings = create<SettingsStore>()(
        * 老用户 localStorage 里那个 `'max'` 会原样读进来 —— 而这正是 `update` 拦不到的那条路
        * （hydrate 不经过 `update`）。
        */
-      version: 3,
+      version: 4,
       migrate: (persisted, version) => migrateSettings(persisted as Record<string, unknown>, version),
     },
   ),
@@ -372,14 +435,13 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   // 也不能凭一个数字字段销毁用户数据。
   if (Array.isArray(persisted.providers)) {
     const current = { ...initialSettings(), ...(persisted as unknown as Settings) };
-    current.jev = normalizeJevSettings(persisted.jev);
     current.shortcuts = normalizeShortcutSettings(persisted.shortcuts);
     // v2 → v3：档位从 3 档扩成 6 档，`max` 改名 `xhigh`。hydrate **不经过 store 的
     // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
     current.accentColor = isAccentColor(current.accentColor) ? current.accentColor : initialSettings().accentColor;
     current.fontScale = isFontScale(current.fontScale) ? current.fontScale : initialSettings().fontScale;
-    return current;
+    return migrateDecisionSettings(current, persisted);
   }
   const s = persisted as unknown as LegacySettings;
   // v0 → v1：视觉模型仍是旧默认值（用户未自定义）时，跟随新默认提速
@@ -401,9 +463,10 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   // 从默认值起步再逐字段覆盖：新增字段（syncToken 等）自动拿到默认值，
   // 不会因为旧包里没有这个键而变成 undefined。
   const base = initialSettings();
-  return {
+  return migrateDecisionSettings({
     providers: [provider],
     jev: base.jev,
+    decisionModel: base.decisionModel,
     asrModel: { providerId: provider.id, model: s.asrModel ?? base.asrModel.model },
     llmModel: { providerId: provider.id, model: s.llmModel ?? base.llmModel.model },
     visionModel: { providerId: provider.id, model: visionModel ?? base.visionModel.model },
@@ -430,7 +493,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     syncEnabled: s.syncEnabled ?? base.syncEnabled,
     syncEndpoint: s.syncEndpoint ?? base.syncEndpoint,
     syncToken: s.syncToken ?? base.syncToken,
-  };
+  }, persisted);
 }
 
 function isAccentColor(value: unknown): value is AccentColor {
@@ -458,11 +521,13 @@ export function getSettings(): Settings {
     asrModel: { ...s.asrModel },
     llmModel: { ...s.llmModel },
     visionModel: { ...s.visionModel },
+    decisionModel: { ...s.decisionModel },
     savedModels: s.savedModels?.map((m) => ({ ...m, slots: [...m.slots], inputCapabilities: m.inputCapabilities && [...m.inputCapabilities], outputCapabilities: m.outputCapabilities && [...m.outputCapabilities] })),
     favorites: {
       chat: s.favorites.chat.map((r) => ({ ...r })),
       vision: s.favorites.vision.map((r) => ({ ...r })),
       asr: s.favorites.asr.map((r) => ({ ...r })),
+      decision: s.favorites.decision.map((r) => ({ ...r })),
     },
     contextWindow: s.contextWindow,
     asrConcurrency: s.asrConcurrency,
@@ -633,7 +698,7 @@ function isApiProtocol(value: unknown): value is ApiProtocol {
 }
 
 function isModelSlot(v: unknown): v is ModelSlot {
-  return v === 'chat' || v === 'vision' || v === 'asr';
+  return v === 'chat' || v === 'vision' || v === 'asr' || v === 'decision';
 }
 
 /** 新建供应商时分配一个不撞的短 id */

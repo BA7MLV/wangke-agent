@@ -7,7 +7,7 @@ import { MAX_COURSE_CONTEXT, normalizeCourseContextIds, resolveCourseSearchScope
 import { validateAskUser, askUserToolResult, type AskUserData, type AskUserAnswer } from './askUser';
 import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
-import { lexicalSearch } from './lexical';
+import { grepDocs, type GrepDoc } from './grep';
 import { MATERIAL_IMAGE_RULE, RUNTIME_CAPABILITY_RULE } from './prompts';
 import { handoutFileOf } from '../materials/handoutFile';
 
@@ -25,7 +25,7 @@ interface CourseProgress {
   label: string;
 }
 
-interface SearchableCourseDoc {
+interface SearchableCourseDoc extends GrepDoc {
   courseId: string;
   courseName: string;
   kind: 'video' | 'material';
@@ -444,8 +444,9 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       const limit = Math.min(15, Math.max(1, Number(args.limit) || 8));
       const [courses, segments, materialBlocks] = await Promise.all([
         db.videos.toArray(),
-        db.segments.filter((row) => row.status === 1 && !!row.text).toArray(),
-        db.materialBlocks.toArray(),
+        (requestedCourseId ? db.segments.where('videoId').equals(requestedCourseId) : db.segments)
+          .filter((row) => row.status === 1 && !!row.text).toArray(),
+        requestedCourseId ? db.materialBlocks.where('materialId').equals(requestedCourseId).toArray() : db.materialBlocks.toArray(),
       ]);
       const courseMap = new Map(courses.map((course) => [course.id, course]));
       if (requestedCourseId && !courseMap.has(requestedCourseId)) {
@@ -467,6 +468,10 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
           kind: 'video',
           location: fmtTime(segment.start),
           text: segment.text,
+          path: `/courses/${encodeURIComponent(course.id)}/transcript`,
+          start: segment.start,
+          end: segment.end,
+          unit: 'seconds',
         });
       }
       for (const block of materialBlocks) {
@@ -478,20 +483,26 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
           kind: 'material',
           location: block.unitLabel || fmtUnitRef(materialKindOf(course), block.unit),
           text: block.text,
+          path: `/courses/${encodeURIComponent(course.id)}/material`,
+          start: block.unit,
+          end: block.unit,
+          unit: materialKindOf(course) === 'page' ? 'pages' : 'paragraphs',
         });
       }
 
-      const hits = lexicalSearch(docs, (doc) => `${doc.courseName}\n${doc.text}`, query, limit);
+      let result;
+      try { result = grepDocs(docs, { ...args, query, limit }); }
+      catch (error) { return error instanceof Error ? error.message : '检索参数无效。'; }
+      const { hits } = result;
       if (hits.length === 0) {
         return scopedCourseIds
           ? '当前课程上下文中没有检索到相关内容。可以换关键词重试，或重新选择课程上下文。'
           : '资料库中没有检索到相关内容。请尝试更短的关键词或同义说法。';
       }
-      return hits
+      return result.header + '\n\n' + hits
         .map((hit, index) => {
           const course = courseMap.get(hit.doc.courseId)!;
-          const excerpt = hit.doc.text.length > 500 ? `${hit.doc.text.slice(0, 500)}…` : hit.doc.text;
-          return `${index + 1}. 课程：${courseLink(course)}\n   来源：[${hit.doc.location}]\n   原文：${excerpt}\n   courseId=${course.id}\n   path=/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}\n   start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码（从 1 起）' : '段号（从 1 起）') : '秒（从 0 起）'}`;
+          return `${index + 1}. 课程：${courseLink(course)}\n来源：[${hit.doc.location}]\ncourseId=${course.id}\n${hit.evidence}`;
         })
         .join('\n\n');
     }
