@@ -16,6 +16,7 @@ const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const context = await browser.newContext({
     viewport: { width: 1100, height: 900 },
+    hasTouch: true,
     permissions: ['clipboard-read', 'clipboard-write'],
   });
   const page = await context.newPage();
@@ -189,7 +190,11 @@ try {
   // ── 手机：Bottom Sheet ───────────────────────────────────────────────────
   await page.setViewportSize({ width: 390, height: 844 });
   await page.waitForTimeout(150);
-  await page.evaluate((content) => window.renderTable(content, false), content);
+  const mobileContent = wide.split('\n').slice(0, 2).join('\n') + '\n' +
+    Array.from({ length: 40 }, (_, i) =>
+      `| row_${i} | value_b | value_c | value_d | value_e | value_f | value_g | value_h |`,
+    ).join('\n');
+  await page.evaluate((content) => window.renderTable(content, false), mobileContent);
   await page.waitForTimeout(150);
 
   const mobileExpand = page.locator('#markdown-table-test .md-table-expand');
@@ -199,14 +204,51 @@ try {
   const sheet = page.getByTestId('md-table-sheet');
   await sheet.waitFor();
   assert.equal(await sheet.getAttribute('data-snap'), 'half');
-  assert.equal(await sheet.locator('tr[data-md-row="body"]').count(), 12);
+  assert.equal(await sheet.locator('tr[data-md-row="body"]').count(), 40);
   assert.equal(await sheet.locator('table').count(), 1);
-  assert.equal(await sheet.locator('thead th').count(), 3);
+  assert.equal(await sheet.locator('thead th').count(), 8);
+
+  // 从真实表格内容起滑，而不是赋 scrollTop（后者无法发现手势被截住）。
+  const cdp = await context.newCDPSession(page);
+  const swipeTable = async (dx, dy) => {
+    const box = await sheet.locator('.md-table-sheet__body').boundingBox();
+    assert.ok(box);
+    const x = box.x + box.width * 0.8;
+    const y = box.y + box.height * 0.8;
+    await cdp.send('Input.dispatchTouchEvent', {
+      type: 'touchStart', touchPoints: [{ x, y }],
+    });
+    for (let i = 1; i <= 12; i++) {
+      await cdp.send('Input.dispatchTouchEvent', {
+        type: 'touchMove', touchPoints: [{ x: x + dx * i / 12, y: y + dy * i / 12 }],
+      });
+      await page.waitForTimeout(16);
+    }
+    await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
+  };
+  const waitForScroll = (axis) => page.waitForFunction((axis) =>
+    document.querySelector('.md-table-sheet__body')?.[axis] > 40, axis,
+  );
+  await page.waitForTimeout(400);
+  await swipeTable(0, -120);
+  await waitForScroll('scrollTop');
+  await swipeTable(-180, 0);
+  await waitForScroll('scrollLeft');
+  assert.equal(await sheet.getAttribute('data-snap'), 'half', 'scrolling must not drag the sheet');
 
   await sheet.getByRole('button', { name: '展开表格' }).click();
   await page.waitForFunction(
     () => document.querySelector('[data-testid="md-table-sheet"]')?.getAttribute('data-snap') === 'full',
   );
+  await page.waitForTimeout(400);
+  await sheet.locator('.md-table-sheet__body').evaluate((el) => {
+    el.scrollTop = 0;
+    el.scrollLeft = 0;
+  });
+  await swipeTable(0, -180);
+  await waitForScroll('scrollTop');
+  await swipeTable(-180, 0);
+  await waitForScroll('scrollLeft');
 
   await sheet.getByRole('button', { name: '关闭表格' }).click();
   await sheet.waitFor({ state: 'detached' });
@@ -227,7 +269,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS streaming rows stay complete, 6-row preview, expand/collapse, Markdown copy, short table, mobile sheet snap/close',
+    'PASS streaming rows stay complete, 6-row preview, expand/collapse, Markdown copy, short table, mobile sheet touch scroll in both axes at both snaps/close',
   );
 } finally {
   await browser.close();

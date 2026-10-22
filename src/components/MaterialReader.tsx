@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { liveQuery } from 'dexie';
 import { Button } from '@heroui/react';
-import { Maximize, Minimize } from 'lucide-react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
 import { formatCaughtError } from '../utils/errorText';
@@ -149,7 +148,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
     <MaterialInkProvider key={`${materialId}:${requestedUnit ?? ''}`} materialId={materialId} toolbarActions={
       <Button isIconOnly variant="tertiary" onPress={toggleFullscreen} data-testid="reader-fullscreen"
         aria-label={fullscreen ? '退出全屏' : '全屏阅读'}>
-        {fullscreen ? <Minimize size={18} /> : <Maximize size={18} />}
+        <Sym name={fullscreen ? 'fullscreen_exit' : 'fullscreen'} size={18} />
       </Button>
     }>
     <div className="mr-shell" ref={shellRef} data-fullscreen={fullscreen || undefined}>

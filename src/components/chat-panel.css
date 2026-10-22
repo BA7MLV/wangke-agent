@@ -329,8 +329,8 @@ html[data-keyboard='open'] .chat-composer {
 
 .chat-composer__row {
   display: flex;
-  flex-direction: column;
-  align-items: stretch;
+  flex-direction: row;
+  align-items: flex-end;
   gap: 4px;
   padding: 8px 12px;
   border: 1px solid var(--border);
@@ -340,11 +340,13 @@ html[data-keyboard='open'] .chat-composer {
 }
 
 .chat-composer__tools {
-  display: flex;
+  display: contents;
   align-items: center;
   gap: 4px;
   min-width: 0;
 }
+.chat-composer__tools > [data-testid='panel-chat-add'] { order: -1; }
+.chat-composer__tools .model-picker__chip-name { display: none; }
 .chat-composer__tools .model-picker__trigger--chip { min-width: 0; max-width: 100%; }
 .chat-composer__tools .tooltip__trigger { min-width: 0; max-width: 60%; }
 
@@ -355,8 +357,7 @@ html[data-keyboard='open'] .chat-composer {
 .chat-input textarea {
   width: 100%;
   min-height: 34px;
-  max-height: 144px;
-  field-sizing: content;
+  max-height: min(180px, 25dvh);
   padding: 5px 0;
   resize: none;
   border: 0;

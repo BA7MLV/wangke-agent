@@ -9,6 +9,7 @@ import {
   type Ref,
   type RefObject,
 } from 'react';
+import { Sym } from '../ui/icons';
 
 /**
  * 新消息入场动画的 key 跟踪（配 .t-msg-enter，见 transitions.css）。
@@ -483,15 +484,7 @@ export function SuccessCheck({
       aria-hidden="true"
       style={{ ['--check-y-amount' as string]: '8px', verticalAlign: '-2px', ...style }}
     >
-      <svg viewBox="0 0 16 16" fill="none" width={size} height={size}>
-        <path
-          d="M3 8.5l3.2 3.2L13 4.5"
-          stroke={color}
-          strokeWidth="2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-      </svg>
+      <Sym name="check" size={size} style={{ color }} />
     </span>
   );
 }

@@ -1,5 +1,6 @@
 import { Button } from '@heroui/react';
 import { useMediaPlayer, useMediaState } from '@vidstack/react';
+import { Sym } from '../ui/icons';
 
 /**
  * 中央大播放按钮（YouTube 首帧的行为）。
@@ -38,9 +39,7 @@ export default function PlayerBigPlayButton() {
         void player?.play();
       }}
     >
-      <svg className="player-big-play__icon" viewBox="0 0 24 24" aria-hidden>
-        <path d="M8 5.14v13.72a1 1 0 0 0 1.54.84l10.29-6.86a1 1 0 0 0 0-1.68L9.54 4.3A1 1 0 0 0 8 5.14Z" />
-      </svg>
+      <Sym name="play" filled className="player-big-play__icon" />
     </Button>
   );
 }

@@ -3,7 +3,10 @@
   position: relative;
   margin: 8px 0;
   padding: 12px;
-  overflow: hidden;
+  max-height: min(640px, 65dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  overflow-wrap: anywhere;
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius, 10px);
   background: var(--background-secondary, var(--background));
@@ -42,6 +45,10 @@
   max-width: 100%;
   border-collapse: collapse;
 }
+
+.widget-stream-preview :where(img, input, select, textarea) { max-width: 100%; }
+.widget-stream-preview img { height: auto; }
+.widget-stream-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; }
 
 .widget-stream-preview :where(th, td) {
   padding: 4px 8px;

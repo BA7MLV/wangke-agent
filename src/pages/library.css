@@ -60,7 +60,7 @@
 .finder-navigation, .finder-tools { display: flex; align-items: center; gap: 4px; }
 .finder-navigation { gap: 0; }
 .finder-title { min-width: 72px; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; font-weight: 600; }
-.finder-toolbar svg { width: 20px; height: 20px; stroke-width: 1.7; }
+.finder-toolbar svg { width: 20px; height: 20px; }
 .finder-toolbar [data-slot='button'], .finder-tool {
   display: inline-flex;
   align-items: center;

@@ -17,8 +17,7 @@ import { useCourseChat } from '../store/courseChat';
 export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig {
   const navigate = useNavigate();
   const createSession = useCourseChat((s) => s.createSession);
-  // 图标只有一套 Lucide 描边字形，选中态靠 ListBox 的选中底色表达 ——
-  // MD3 那套「未选中描边、选中实心」在 Lucide 下没有对应字形，硬凑会显得是两个图标集。
+  // 导航统一使用 Tabler 描边字形；选中态仍由 ListBox 的底色表达。
   const items: NavItem[] = [
     {
       /**

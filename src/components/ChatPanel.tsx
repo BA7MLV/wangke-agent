@@ -15,6 +15,7 @@ import { PROMPTS } from '../harness/prompts';
 import { estimateTokens, subtitleWindow } from '../harness/context';
 import { EMPTY_COMPRESSION, prepareSessionHistory, retainedContext, useContextCompressionStore } from '../store/contextCompression';
 import ContextUsageButton from './ContextUsageButton';
+import ComposerExpand, { useComposerSize } from './ComposerExpand';
 import { useContextCompression } from './useContextCompression';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
@@ -507,6 +508,7 @@ export default function ChatPanel({
   // 声明放在这里（而不是靠近 JSX）是因为那个 effect 在组件体上方就要用到 ——
   // 常量声明在使用之后会被 TS 判为 use-before-declaration。
   const composerInput = useRef<HTMLTextAreaElement>(null);
+  const composerOverflow = useComposerSize(composerInput, input);
   /**
    * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
    *
@@ -2046,6 +2048,7 @@ export default function ChatPanel({
             />
           </div>
           <div className="chat-composer__tools">
+          <ComposerExpand visible={composerOverflow} key={activeId} value={input} onChange={setInput} />
           <Dropdown>
             <Button isIconOnly variant="tertiary" size="sm" data-testid="panel-chat-add"
               aria-label="添加截图、讲义、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>

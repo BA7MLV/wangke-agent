@@ -76,7 +76,9 @@
 /* —— 渲染成功 —— */
 .xmd-mermaid-canvas {
   padding: 12px;
-  overflow-x: auto;
+  max-height: min(640px, 65dvh);
+  overflow: auto;
+  overscroll-behavior: contain;
   text-align: center;
 }
 

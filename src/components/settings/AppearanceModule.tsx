@@ -1,7 +1,6 @@
 import { ColorSwatchPicker, Switch, ToggleButton, ToggleButtonGroup } from '@heroui/react';
-import { Check } from 'lucide-react';
 import { useSettings, type AppTheme, type FontScale } from '../../store/settings';
-import { Field, SectionCard } from '../../ui';
+import { Field, SectionCard, Sym } from '../../ui';
 import { ACCENT_COLOR_OPTIONS, FONT_SCALE_OPTIONS } from '../../ui/theme';
 
 /**
@@ -84,7 +83,7 @@ export default function AppearanceModule() {
               <ColorSwatchPicker.Item key={id} color={value} aria-label={label}>
                 <ColorSwatchPicker.Swatch />
                 <ColorSwatchPicker.Indicator>
-                  <Check aria-hidden="true" />
+                  <Sym name="check" size={24} />
                 </ColorSwatchPicker.Indicator>
               </ColorSwatchPicker.Item>
             ))}

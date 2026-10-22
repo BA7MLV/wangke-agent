@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { MediaPlayer, MediaProvider, Track, type MediaPlayerInstance, type MediaStorage } from '@vidstack/react';
-import { DefaultVideoLayout, defaultLayoutIcons } from '@vidstack/react/player/layouts/default';
+import { DefaultVideoLayout } from '@vidstack/react/player/layouts/default';
+import { playerLayoutIcons } from '../ui/player-icons';
 import '@vidstack/react/player/styles/default/theme.css';
 import '@vidstack/react/player/styles/default/layouts/video.css';
 import '../player-enhance.css';
@@ -573,7 +574,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
               <DanmakuLayer videoId={id} />
               {/* 滑块方向键跟随小幅跳转步长。映射改变时重挂布局，刷新 vidstack 在控件
                   挂载时生成的 aria-keyshortcuts，避免旧映射反向覆盖新配置。只重挂控制栏，不重载视频。 */}
-              <DefaultVideoLayout key={JSON.stringify(shortcuts.bindings)} icons={defaultLayoutIcons} slots={layoutSlots} seekStep={shortcuts.arrowSeek} />
+              <DefaultVideoLayout key={JSON.stringify(shortcuts.bindings)} icons={playerLayoutIcons} slots={layoutSlots} seekStep={shortcuts.arrowSeek} />
             </MediaPlayer>
           )}
 

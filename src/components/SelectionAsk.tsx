@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Button, Dropdown, Label } from '@heroui/react';
-import { Highlighter } from 'lucide-react';
 import { useIsMobile } from '../utils/useMobile';
 import { cleanSelectionText, isUsableSelection } from '../materials/region';
 import { useSelectionAsk, type AskSource, type Citation } from '../store/selectionAsk';
@@ -180,7 +179,7 @@ export default function SelectionAsk() {
             window.getSelection()?.removeAllRanges();
           } else fire(key === 'explain' ? 'explain' : 'compose');
         }}>
-          <Dropdown.Item id="mark" textValue="标记" isDisabled={!region.menu.mark} data-testid="selection-mark"><Highlighter size={16} aria-hidden="true" /><Label>标记</Label></Dropdown.Item>
+          <Dropdown.Item id="mark" textValue="标记" isDisabled={!region.menu.mark} data-testid="selection-mark"><Sym name="highlighter" size={16} /><Label>标记</Label></Dropdown.Item>
           <Dropdown.Item id="explain" textValue="解释" data-testid="ask-explain"><Sym name="lightbulb" /><Label>解释</Label></Dropdown.Item>
           <Dropdown.Item id="compose" textValue="提问" data-testid="ask-compose"><Sym name="chat" /><Label>提问</Label></Dropdown.Item>
         </Dropdown.Menu>

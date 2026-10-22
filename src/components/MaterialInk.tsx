@@ -1,6 +1,6 @@
 import { createContext, memo, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
-import { ChevronDown, ChevronUp, Eraser, Highlighter, MousePointer2, PenLine, Redo2, TextCursor, Undo2 } from 'lucide-react';
+import { Sym } from '../ui/icons';
 import { db } from '../store/db';
 import { hitsInk, inkPath, inkOpacity, type InkNib, type InkPoint, type InkStroke, type InkTool } from '../materials/ink';
 import { useSelectionAsk } from '../store/selectionAsk';
@@ -221,7 +221,7 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
               if (ink.tool !== 'read') ink.setTool('smart');
             }
           }}>
-          <PenLine size={18} /><span>批注工具</span>{expanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+          <Sym name="edit" size={18} /><span>批注工具</span><Sym name={expanded ? 'chevron_up' : 'keyboard_arrow_down'} size={16} />
         </Button>
         {ink.toolbarActions}
       </div>
@@ -232,15 +232,15 @@ export function InkToolbar({ disabled = false, onActivate }: { disabled?: boolea
             const key = [...keys][0] as InkTool | undefined;
             if (key) select(key);
           }}>
-          <ToggleButton id="smart" aria-label="智能批注：笔写字，手指滚动" data-testid="ink-smart"><PenLine size={18} /><span>智能批注</span></ToggleButton>
-          <ToggleButton id="read" aria-label="阅读模式" data-testid="ink-read"><MousePointer2 size={18} /><span>阅读 / 选字</span></ToggleButton>
-          <ToggleButton id="pen" aria-label="画笔" data-testid="ink-pen"><PenLine size={18} /><span>画笔</span></ToggleButton>
-          <ToggleButton id="text-highlight" aria-label="文字荧光笔：拖过文字，一次后返回智能批注" data-testid="ink-text-highlight"><TextCursor size={18} /><span>文字荧光笔</span></ToggleButton>
-          <ToggleButton id="highlight" aria-label="自由荧光笔（画一笔后返回智能批注）" data-testid="ink-highlight"><Highlighter size={18} /><span>自由荧光笔</span></ToggleButton>
-          <ToggleButton id="erase" aria-label="橡皮擦（整笔）" data-testid="ink-erase"><Eraser size={18} /></ToggleButton>
+          <ToggleButton id="smart" aria-label="智能批注：笔写字，手指滚动" data-testid="ink-smart"><Sym name="edit" size={18} /><span>智能批注</span></ToggleButton>
+          <ToggleButton id="read" aria-label="阅读模式" data-testid="ink-read"><Sym name="pointer" size={18} /><span>阅读 / 选字</span></ToggleButton>
+          <ToggleButton id="pen" aria-label="画笔" data-testid="ink-pen"><Sym name="edit" size={18} /><span>画笔</span></ToggleButton>
+          <ToggleButton id="text-highlight" aria-label="文字荧光笔：拖过文字，一次后返回智能批注" data-testid="ink-text-highlight"><Sym name="text_cursor" size={18} /><span>文字荧光笔</span></ToggleButton>
+          <ToggleButton id="highlight" aria-label="自由荧光笔（画一笔后返回智能批注）" data-testid="ink-highlight"><Sym name="highlighter" size={18} /><span>自由荧光笔</span></ToggleButton>
+          <ToggleButton id="erase" aria-label="橡皮擦（整笔）" data-testid="ink-erase"><Sym name="eraser" size={18} /></ToggleButton>
         </ToggleButtonGroup>
-        <Button isIconOnly variant="tertiary" aria-label="撤销批注" data-testid="ink-undo" isDisabled={!ink.canUndo || disabled} onPress={ink.undo}><Undo2 size={18} /></Button>
-        <Button isIconOnly variant="tertiary" aria-label="重做批注" data-testid="ink-redo" isDisabled={!ink.canRedo || disabled} onPress={ink.redo}><Redo2 size={18} /></Button>
+        <Button isIconOnly variant="tertiary" aria-label="撤销批注" data-testid="ink-undo" isDisabled={!ink.canUndo || disabled} onPress={ink.undo}><Sym name="undo" size={18} /></Button>
+        <Button isIconOnly variant="tertiary" aria-label="重做批注" data-testid="ink-redo" isDisabled={!ink.canRedo || disabled} onPress={ink.redo}><Sym name="redo" size={18} /></Button>
         {!['read', 'erase'].includes(ink.tool) && !disabled && <>
           {(ink.tool === 'pen' || ink.tool === 'smart') && <label className="ink-width">笔型 <select aria-label="笔型" value={ink.nib} onChange={(e) => ink.setNib(e.target.value as InkNib)}>
             <option value="pressure">压感笔</option><option value="ballpoint">圆珠笔</option><option value="brush">毛笔</option>

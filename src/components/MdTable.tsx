@@ -401,7 +401,7 @@ type SheetSnap = 'half' | 'full';
  *
  * HeroUI Drawer 负责遮罩 / 焦点陷阱 / Esc / 下拉关闭；这里额外做两件事：
  *   1. 两档 snap（半屏 → 接近全屏），拖拽手柄或点标题栏按钮切换；
- *   2. 完整表放进独立的横向滚动容器，竖向滚动交给 Drawer.Body。
+ *   2. 完整表的横向、竖向滚动都交给 Drawer.Body，避免嵌套滚动截住触屏手势。
  *
  * `onPointerDown` 必须 `stopPropagation`：HeroUI 的 Dialog 自己也挂了拖拽关闭，
  * 不拦住的话一次上拉会同时被解释成「关掉」。

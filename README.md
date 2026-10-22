@@ -529,9 +529,9 @@ Markdown 是唯一能改的材料。点工具条上的「**编辑**」进入所�
 
 - **注释解释取舍**，不写代码复述。踩过的坑与被证伪的假设要留在注释里，否则下一个人会再踩一次
 - **UI 一律走 HeroUI 主题令牌**，不自造颜色与间距；通用布局、反馈和主题逻辑从 `src/ui/` 的统一入口进，业务代码不要各自复制设计令牌
-- **图标统一使用 Lucide**：业务组件通过 `src/ui/icons.tsx` 的 `<Sym name="..." />` 映射使用，避免在页面里散落图标实现。新增图标时只需在映射表中登记，不需要生成额外的 Web Component 类型文件
+- **图标统一使用 Tabler Icons**：业务组件通过 `src/ui/icons.tsx` 的 `<Sym name="..." />` 映射使用，默认线宽 1.75、尺寸跟随字号；实心态使用官方 Filled 变体，没有对应变体则保留描边。新增图标只需在映射表登记，避免在页面里散落图标实现。播放器由 `src/ui/player-icons.tsx` 全量适配同一套图标
 
-`src/ui/icons.tsx` 是唯一的图标适配层；升级 HeroUI 或 Lucide 后直接运行类型检查和测试即可。
+`src/ui/icons.tsx` 是业务图标的唯一适配层；升级 HeroUI 或 Tabler Icons 后运行类型检查与 `scripts/e2e-icons.mjs` 即可检查图标映射、尺寸和实心状态。
 
 ### 3️⃣ 两层测试
 
@@ -674,7 +674,7 @@ node scripts/e2e-all.mjs # 至少跑一遍无 key 档
 |---|---|
 | 前端框架 | React 19 + Vite 5 + TypeScript 5.9 |
 | UI | **HeroUI v3**（React Aria 基础组件 + 主题令牌）· Tailwind CSS 4 |
-| 图标与字体 | Lucide React · Roboto（拉丁字符自托管，中文使用系统字体） |
+| 图标与字体 | Tabler Icons React · Roboto（拉丁字符自托管，中文使用系统字体） |
 | Markdown | @ant-design/x-markdown（流式渲染）· DOMPurify（模型直出 SVG 净化） |
 | 播放与媒体 | Vidstack · mediabunny（抽音频 / DASH 重封装） |
 | 音频与视觉 | @ricky0123/vad-web + onnxruntime-web（wasm 自托管） |
@@ -732,7 +732,7 @@ src/
   store/        db.ts(Dexie schema) settings.ts(zustand persist) studyTime.ts fileStore.ts(OPFS)
                 storageStats.ts jobs.ts covers.ts subtitles.ts selectionAsk.ts migration.ts
   ui/           theme.ts(dynamic color) layout.tsx panel.tsx feedback.tsx
-                 icons.tsx(Lucide 映射) loading-button.tsx skeleton.tsx rail.tsx
+                 icons.tsx(Tabler 映射) player-icons.tsx loading-button.tsx skeleton.tsx rail.tsx
   utils/        studyLog.ts videoProgress.ts buildInfo.ts rate.ts cues.ts vtt.ts bilingual.ts
                 linkify.ts chatExport.ts clipboard.ts concurrency.ts cancel.ts wakeLock.ts
                 useMobile.ts errorText.ts format.ts

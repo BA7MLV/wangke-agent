@@ -162,10 +162,6 @@
   --button-fg: var(--accent-soft-foreground);
 }
 
-[data-media-player] .theater-mode-btn svg {
-  fill: currentColor;
-}
-
 /* 页内影院模式只对桌面有意义；平板堆叠和手机继续使用现有面板布局。
    连 Tooltip 的包装层一起藏 —— 只藏按钮会留下一个空的 inline-block。 */
 @media (max-width: 900px),

@@ -20,6 +20,7 @@ import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
 import ModelPicker from '../components/ModelPicker';
 import ChatAddMenu from '../components/ChatAddMenu';
+import ComposerExpand, { useComposerSize } from '../components/ComposerExpand';
 import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
 import { useChatAttachments } from '../store/chatAttachments';
 import VoiceInput from '../components/VoiceInput';
@@ -662,6 +663,7 @@ export default function CourseChat() {
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
   const pendingQuestion = pendingAsk ? messages.find((message) => message.key === pendingAsk.messageKey)?.ask : undefined;
   const composerAsk = pendingQuestion?.picked == null ? pendingQuestion : undefined;
+  const composerOverflow = useComposerSize(composerRef, draft, !composerAsk);
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
@@ -719,28 +721,6 @@ export default function CourseChat() {
   useEffect(() => {
     void bootstrap();
   }, [bootstrap]);
-
-  /**
-   * 输入框随内容自动长高（最多到 CSS 的 max-height，之后框内自己滚）。
-   *
-   * 手机上键盘一弹，整页高度少掉小一半，单行的输入框打三行字就见不着自己
-   * 写了什么；而 `rows={1}` 的 textarea 默认不会长。先塌回 `auto` 再量
-   * `scrollHeight`，否则每次只增不减。内联高度会被 CSS 的 max-height 夹住，
-   * 超长文本在框内滚动，不会把输入卡顶出屏幕。
-   */
-  useLayoutEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-    // The empty-state card reserves three lines, so dictation/typing cannot move
-    // the heading and starter cards. Only an actual conversation may grow.
-    if (messages.length === 0) {
-      el.style.removeProperty('height');
-      return;
-    }
-    el.style.height = '0px';
-    const maxHeight = parseFloat(getComputedStyle(el).maxHeight);
-    el.style.height = `${Math.min(el.scrollHeight, maxHeight)}px`;
-  }, [draft, messages.length]);
 
   // 每次挂载都重新数一次课程：`courseCount` 是 bootstrap 时的快照，
   // 而「去课程库导入 → 切回对话页」是这里的常规动线，刷新晚了空状态会一直停在
@@ -1112,10 +1092,7 @@ export default function CourseChat() {
                             </span>
                             <span className="course-chat__starter-label">{starter.label}</span>
                             <span className="t-learn-chevron" aria-hidden="true">
-                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                                <path className="t-learn-arm t-learn-arm-top" d="M6 4L10 8" />
-                                <path className="t-learn-arm t-learn-arm-bot" d="M10 8L6 12" />
-                              </svg>
+                              <Sym name="chevron_right" size={16} />
                             </span>
                           </Button>
                         ))}
@@ -1495,6 +1472,10 @@ export default function CourseChat() {
                 aria-label="输入区工具"
                 orientation="horizontal"
               >
+                <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onChange={(value) => {
+                  setVoiceEditVersion((version) => version + 1);
+                  setDraft(value);
+                }} />
                 {/* 模型 chip 那一格点开是张下拉面板：模型列表 + 思考开关 + 思考深度。
                     后两者原先是工具行上的两颗独立控件（灯泡 icon + 横向滑块），
                     但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——

@@ -42,7 +42,7 @@ try {
     await page.setViewportSize({ width, height: 900 });
     await mode('live');
     assert.equal(await body.evaluate((el) => el.scrollHeight > el.clientHeight), true);
-    assert.equal(await toggle.locator('.lucide-chevrons-up-down').count(), 1);
+    assert.equal(await toggle.locator('.tabler-icon-selector').count(), 1);
     const mask = await body.evaluate((el) => getComputedStyle(el).maskImage);
     assert.notEqual(mask, 'none');
     for (const edge of ['top', 'bottom']) {
@@ -53,7 +53,7 @@ try {
     await toggle.click();
     await mode('expanded');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
-    assert.equal(await toggle.locator('.lucide-chevrons-up-down').count(), 0);
+    assert.equal(await toggle.locator('.tabler-icon-selector').count(), 0);
     assert.equal(await body.evaluate((el) => getComputedStyle(el).maskImage), 'none');
     assert.equal(await page.getByRole('button').count(), 1);
     assert.equal(await body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1), true);

@@ -1,5 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { ChevronLeft, ChevronRight, LayoutGrid, List, ArrowDownWideNarrow, MoreHorizontal, FolderPlus, Upload, Info, Check } from 'lucide-react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import {
@@ -277,19 +276,9 @@ const FOLDER_COLORS = [
 ] as const;
 
 function FolderIcon({ color = 'blue' }: { color?: FolderRow['color'] }) {
-  const id = useId();
   const palette = FOLDER_COLORS.find((entry) => entry.id === color) ?? FOLDER_COLORS[0];
   return (
-    <svg className="finder-folder-icon" data-folder-color={palette.id} style={{ filter: `hue-rotate(${palette.hue - 198}deg) saturate(${palette.id === 'gray' ? 0 : 1}) drop-shadow(0 2px 1px rgb(0 0 0 / 20%))` }} viewBox="0 0 120 96" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id={`${id}-back`} x1="60" y1="10" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#48b8e8" /><stop offset=".3" stopColor="#168dc3" /><stop offset="1" stopColor="#56bce4" /></linearGradient>
-        <linearGradient id={`${id}-front`} x1="60" y1="29" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#87ddfa" /><stop offset="1" stopColor="#50bfe8" /></linearGradient>
-      </defs>
-      <path d="M8 18a8 8 0 0 1 8-8h23c4 0 6 2 10 5l7 5h48a8 8 0 0 1 8 8v53a7 7 0 0 1-7 7H15a7 7 0 0 1-7-7Z" fill={`url(#${id}-back)`} />
-      <rect x="12" y="25" width="96" height="55" rx="5" fill="#c5eeff" />
-      <rect x="8" y="25" width="104" height="63" rx="7" fill={`url(#${id}-front)`} stroke="#39afe0" />
-      <path d="M15 32h90M12 82h96" stroke="#a2e2fa" strokeLinecap="round" />
-    </svg>
+    <Sym name="folder" filled className="finder-folder-icon" data-folder-color={palette.id} style={{ color: palette.swatch }} />
   );
 }
 
@@ -1695,33 +1684,33 @@ export default function Library() {
       >
         <header className="finder-toolbar">
           <div className="finder-navigation">
-            <Button isIconOnly variant="ghost" aria-label="后退" isDisabled={folderHistory.index === 0} onPress={() => travelFolder(-1)}><ChevronLeft /></Button>
-            <Button isIconOnly variant="ghost" aria-label="前进" isDisabled={folderHistory.index === folderHistory.entries.length - 1} onPress={() => travelFolder(1)}><ChevronRight /></Button>
+            <Button isIconOnly variant="ghost" aria-label="后退" isDisabled={folderHistory.index === 0} onPress={() => travelFolder(-1)}><Sym name="chevron_left" /></Button>
+            <Button isIconOnly variant="ghost" aria-label="前进" isDisabled={folderHistory.index === folderHistory.entries.length - 1} onPress={() => travelFolder(1)}><Sym name="chevron_right" /></Button>
           </div>
           <h2 className="finder-title">{currentFolder?.name ?? '全部资料'}</h2>
           <div className="finder-tools">
             <ToggleButtonGroup className="finder-view-switch" selectionMode="single" disallowEmptySelection selectedKeys={[view]} onSelectionChange={(keys) => { const key = [...keys][0]; if (key === 'icons' || key === 'list') setView(key); }} aria-label="显示方式">
-              <ToggleButton id="icons" aria-label="图标视图"><LayoutGrid /></ToggleButton>
-              <ToggleButton id="list" aria-label="列表视图"><List /></ToggleButton>
+              <ToggleButton id="icons" aria-label="图标视图"><Sym name="grid_view" /></ToggleButton>
+              <ToggleButton id="list" aria-label="列表视图"><Sym name="list" /></ToggleButton>
             </ToggleButtonGroup>
             <Dropdown>
-              <Dropdown.Trigger className="finder-tool" aria-label="排序与筛选"><ArrowDownWideNarrow /></Dropdown.Trigger>
+              <Dropdown.Trigger className="finder-tool" aria-label="排序与筛选"><Sym name="sort" /></Dropdown.Trigger>
               <Dropdown.Popover><Dropdown.Menu aria-label="排序与筛选" onAction={(key) => {
                 if (key === 'name' || key === 'recent') setSort(key);
                 else { setFilter(key as LibraryFilter); setSelection(new Set()); }
               }}>
-                <Dropdown.Item id="name" textValue="按名称排序">按名称排序 {sort === 'name' && <Check className="size-4" />}</Dropdown.Item>
-                <Dropdown.Item id="recent" textValue="最近导入优先">最近导入优先 {sort === 'recent' && <Check className="size-4" />}</Dropdown.Item>
+                <Dropdown.Item id="name" textValue="按名称排序">按名称排序 {sort === 'name' && <Sym name="check" className="size-4" />}</Dropdown.Item>
+                <Dropdown.Item id="recent" textValue="最近导入优先">最近导入优先 {sort === 'recent' && <Sym name="check" className="size-4" />}</Dropdown.Item>
                 <Dropdown.Section>
-                  {LIBRARY_FILTERS.map((item) => <Dropdown.Item key={item.value} id={item.value} textValue={item.label}>{item.label} {filter === item.value && <Check className="size-4" />}</Dropdown.Item>)}
+                  {LIBRARY_FILTERS.map((item) => <Dropdown.Item key={item.value} id={item.value} textValue={item.label}>{item.label} {filter === item.value && <Sym name="check" className="size-4" />}</Dropdown.Item>)}
                 </Dropdown.Section>
               </Dropdown.Menu></Dropdown.Popover>
             </Dropdown>
             <span className="finder-tool-divider" />
-            <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" onPress={() => openFolderModal('create')}><FolderPlus /></Button>
-            <Button isIconOnly variant="ghost" aria-label="导入资料" onPress={() => setImportOpen(true)}><Upload /></Button>
+            <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" onPress={() => openFolderModal('create')}><Sym name="create_new_folder" /></Button>
+            <Button isIconOnly variant="ghost" aria-label="导入资料" onPress={() => setImportOpen(true)}><Sym name="upload" /></Button>
             <Dropdown isOpen={actionMenuOpen} onOpenChange={(open) => { setActionMenuOpen(open); if (!open) setContextPoint(null); }}>
-              <Dropdown.Trigger className="finder-tool" aria-label="所选项目的操作" isDisabled={!selectedFolder && !selectedVideo}><MoreHorizontal /></Dropdown.Trigger>
+              <Dropdown.Trigger className="finder-tool" aria-label="所选项目的操作" isDisabled={!selectedFolder && !selectedVideo}><Sym name="more_horiz" /></Dropdown.Trigger>
               <Dropdown.Popover {...(contextPoint ? { triggerRef: contextAnchor, placement: 'bottom start' as const } : {})}><Dropdown.Menu aria-label="项目操作" onAction={(key) => {
                 if (key === 'open' && selectedKey) openItem(selectedKey);
                 if (selectedFolder?.folder) {
@@ -1867,9 +1856,9 @@ export default function Library() {
       </div>
         <footer className="finder-footer">
           {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
-          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><ChevronRight /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><ChevronRight /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
           {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}
-          <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Info /></Button>}</div>
+          <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Sym name="info" /></Button>}</div>
         </footer>
         {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
       </section>

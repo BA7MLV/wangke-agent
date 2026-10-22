@@ -341,11 +341,9 @@
 }
 
 .md-table-scroll--sheet {
-  overflow-x: auto;
-  overflow-y: visible;
-  /* 横向滑表格、纵向滑 Sheet 都要能用；只写 pan-x 会把纵向手势锁死，
-     半屏时用户就没法在表格区域上下滚动。 */
-  touch-action: pan-x pan-y;
+  /* 两个方向都交给 Drawer.Body。auto / visible 实际会计算成 auto / auto，
+     形成只能横滚的内层滚动容器，触屏从表格起滑时可能截住外层纵向滚动。 */
+  overflow: visible;
 }
 
 .md-table-sheet__footer {
