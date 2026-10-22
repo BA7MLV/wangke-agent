@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button, Checkbox, Input, ListBox, SearchField, Select } from '@heroui/react';
-import { SLOT_LABEL, useSettings, type ModelSlot, type SavedModel } from '../../store/settings';
-import { editModelPatch, modelKey, savedModelsOf } from '../../store/modelLibrary';
+import { catalogOf, SLOT_LABEL, useSettings, type ModelSlot, type SavedModel } from '../../store/settings';
+import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
 import { Field, SectionCard, toast } from '../../ui';
 import { getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
 import type { DiscoveredModel } from '../../api/modelDiscoveryData';
@@ -15,10 +15,10 @@ type Draft = SavedModel & { contextWindowText: string; maxOutputTokensText: stri
 export default function ModelLibrary({ providerId, discovered = [] }: { providerId: string; discovered?: DiscoveredModel[] }) {
   const settings = useSettings();
   useModelMetaRevision();
-  const provider = settings.providers.find((p) => p.id === providerId);
+  const catalogId = catalogOf(settings, providerId);
   const saved = savedModelsOf(settings).filter((m) => m.providerId === providerId);
   const [query, setQuery] = useState('');
-  const [editor, setEditor] = useState<{ original: SavedModel | null; draft: Draft } | null>(null);
+  const [editor, setEditor] = useState<{ original: SavedModel | null; draft: Draft; slotsEdited?: boolean } | null>(null);
   const [error, setError] = useState('');
   const filtered = saved.filter((m) => `${m.model} ${m.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const available = discovered.filter((m) => !saved.some((s) => s.model === m.id)
@@ -28,7 +28,7 @@ export default function ModelLibrary({ providerId, discovered = [] }: { provider
   const openEditor = (model: SavedModel | null, found?: DiscoveredModel) => {
     const { id: discoveredId, ...declared } = found ?? { id: '' };
     const base = model ? { ...model, slots: [...model.slots] } : {
-      ...declared, providerId, model: discoveredId, name: found?.name ?? '', slots: [provider?.serves[0] ?? 'chat'] as ModelSlot[],
+      ...declared, providerId, model: discoveredId, name: found?.name ?? '', slots: [] as ModelSlot[],
     };
     setError('');
     setEditor({ original: model, draft: { ...base, contextWindowText: base.contextWindow?.toString() ?? '', maxOutputTokensText: base.maxOutputTokens?.toString() ?? '' } });
@@ -40,8 +40,11 @@ export default function ModelLibrary({ providerId, discovered = [] }: { provider
     setEditor({ ...editor, draft: { ...editor.draft, [field]: on ? [...new Set([...current, value])] : current.filter((x) => x !== value) } });
   };
 
-  const catalogMeta = editor ? getModelMeta(editor.draft.metadataCatalogId ?? provider?.catalogId ?? '', editor.draft.model) : null;
-  const match = editor ? matchModelMeta(provider?.catalogId ?? '', editor.draft.model) : null;
+  const catalogMeta = editor ? getModelMeta(editor.draft.metadataCatalogId ?? catalogId, editor.draft.model) : null;
+  const match = editor ? matchModelMeta(catalogId, editor.draft.model) : null;
+  const selectedSlots = editor && !editor.original && !editor.slotsEdited
+    ? suggestedModelSlots(catalogId, editor.draft.model, editor.draft)
+    : editor?.draft.slots ?? [];
 
   return <SectionCard title="模型" subtitle="从接口发现模型或手动添加；接口能力优先，models.dev 只补全。未知模型默认开启工具调用。" testId="card-model-library"
     actions={<Button variant="secondary" onPress={() => openEditor(null)}>新模型</Button>}>
@@ -52,6 +55,7 @@ export default function ModelLibrary({ providerId, discovered = [] }: { provider
           const { contextWindowText, maxOutputTokensText, ...draft } = editor.draft;
           settings.update(editModelPatch(useSettings.getState(), editor.original, {
             ...draft,
+            slots: selectedSlots,
             contextWindow: contextWindowText ? Number(contextWindowText) : undefined,
             maxOutputTokens: maxOutputTokensText ? Number(maxOutputTokensText) : undefined,
           }));
@@ -85,13 +89,13 @@ export default function ModelLibrary({ providerId, discovered = [] }: { provider
             <Checkbox aria-label="支持工具调用" isDisabled={editor.draft.toolCalling === undefined} isSelected={editor.draft.toolCalling ?? catalogMeta?.toolCall ?? true} onChange={(on) => setEditor({ ...editor, draft: { ...editor.draft, toolCalling: on } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>支持工具调用</Checkbox.Content></Checkbox>
           </div>
         </Field>
-        <ModelMetadataDetails catalogId={provider?.catalogId ?? ''} model={editor.draft.model} overrides={{ ...editor.draft, contextWindow: editor.draft.contextWindowText ? Number(editor.draft.contextWindowText) : undefined, maxOutputTokens: editor.draft.maxOutputTokensText ? Number(editor.draft.maxOutputTokensText) : undefined }} />
+        <ModelMetadataDetails catalogId={catalogId} model={editor.draft.model} overrides={{ ...editor.draft, contextWindow: editor.draft.contextWindowText ? Number(editor.draft.contextWindowText) : undefined, maxOutputTokens: editor.draft.maxOutputTokensText ? Number(editor.draft.maxOutputTokensText) : undefined }} />
         <Button variant="secondary" className="self-start" onPress={() => {
           const draft = { ...editor.draft, contextWindowText: '', maxOutputTokensText: '' };
           for (const field of MODEL_OVERRIDE_FIELDS) delete draft[field];
           setEditor({ ...editor, draft });
         }}>恢复 models.dev 默认能力</Button>
-        <Field label="使用用途"><div className="flex flex-wrap gap-4">{slots.map((slot) => <Checkbox key={slot} isDisabled={!provider?.serves.includes(slot)} isSelected={editor.draft.slots.includes(slot)} onChange={(on) => setEditor({ ...editor, draft: { ...editor.draft, slots: on ? [...editor.draft.slots, slot] : editor.draft.slots.filter((s) => s !== slot) } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>{SLOT_LABEL[slot]}</Checkbox.Content></Checkbox>)}</div></Field>
+        <Field label="使用用途" hint="新模型按输入/输出能力预选用途，可按实际接口支持情况调整；不受供应商层限制。"><div className="flex flex-wrap gap-4">{slots.map((slot) => <Checkbox key={slot} isSelected={selectedSlots.includes(slot)} onChange={(on) => setEditor({ ...editor, slotsEdited: true, draft: { ...editor.draft, slots: on ? [...new Set([...selectedSlots, slot])] : selectedSlots.filter((s) => s !== slot) } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>{SLOT_LABEL[slot]}</Checkbox.Content></Checkbox>)}</div></Field>
         {error && <p role="alert" className="text-sm text-danger">{error}</p>}
         <div className="flex gap-2"><Button type="submit">{editor.original ? '保存修改' : '添加模型'}</Button><Button variant="ghost" onPress={() => setEditor(null)}>取消</Button></div>
       </form>}

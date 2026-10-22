@@ -39,6 +39,7 @@ import {
 } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { useCourseChat } from '../store/courseChat';
+import { useLibraryNavigation } from '../store/libraryNavigation';
 import { useRecentChats } from '../components/useRecentChats';
 import { SettingsButton } from '../components/SettingsModal';
 import { db, type FolderRow, type VideoRow } from '../store/db';
@@ -335,7 +336,8 @@ export default function Library() {
   const [searchText, setSearchText] = useState('');
   const [filter, setFilter] = useState<LibraryFilter>('all');
   const searchInputRef = useRef<HTMLInputElement>(null);
-  const [folderHistory, setFolderHistory] = useState<{ entries: (string | null)[]; index: number }>({ entries: [null], index: 0 });
+  const folderHistory = useLibraryNavigation((s) => s.folderHistory);
+  const setFolderHistory = useLibraryNavigation((s) => s.setFolderHistory);
   const folderKey = folderHistory.entries[folderHistory.index];
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const marquee = useMarqueeSelection(selection, setSelection);

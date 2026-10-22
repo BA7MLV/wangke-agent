@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from 'react';
 import { Dropdown, ListBox, ScrollShadow, SearchField, Separator, Switch, Tooltip } from '@heroui/react';
 import { Sym } from '../ui';
-import { useSettings, sameRef, modelOverridesOf, type ModelRef, type ModelSlot } from '../store/settings';
+import { catalogOf as settingsCatalogOf, useSettings, sameRef, modelOverridesOf, type ModelRef, type ModelSlot } from '../store/settings';
 import { guessContextWindow, hasThinkingDepth, supportsThinking } from '../api/modelCaps';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import ReasoningEffortSlider from './ReasoningEffortSlider';
@@ -87,14 +87,14 @@ export default function ModelPicker({
   const candidates: ModelRef[] = [
     ...new Map(
       [...modelsForSlot(settings, slot).sort((a, b) => Number(favs.some((f) => sameRef(f, b))) - Number(favs.some((f) => sameRef(f, a)))), value]
-        .filter((r) => r.model && settings.providers.some((p) => p.id === r.providerId && p.serves.includes(slot)))
+        .filter((r) => r.model && settings.providers.some((p) => p.id === r.providerId))
         .map((r) => [`${r.providerId}\0${r.model}`, r]),
     ).values(),
   ];
   if (slot === 'vision') candidates.unshift({ providerId: '', model: '' });
   /** 供应商被删掉的收藏项：仍列出但标出来，否则用户会以为菜单漏了东西 */
   const nameOf = (id: string) => settings.providers.find((p) => p.id === id)?.name ?? '（已删除的供应商）';
-  const catalogOf = (id: string) => settings.providers.find((p) => p.id === id)?.catalogId ?? '';
+  const catalogOf = (id: string) => settingsCatalogOf(settings, id);
 
   const pick = (ref: ModelRef) => {
     // 切文本模型时按能力表回填上下文窗口默认值（仍可手改），与设置页行为一致

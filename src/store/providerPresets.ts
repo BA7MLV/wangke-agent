@@ -60,6 +60,11 @@ export function matchesProviderPreset(provider: Provider, preset: ProviderPreset
   return endpointKey(provider.baseUrl) === endpointKey(preset.baseUrl);
 }
 
+/** 常用端点的目录由地址确定；自定义连接保留兼容的历史提示，歧义可在模型上确认。 */
+export function providerCatalogId(provider: Provider): string {
+  return PROVIDER_PRESETS.find((preset) => matchesProviderPreset(provider, preset))?.catalogId ?? provider.catalogId ?? '';
+}
+
 export function createPresetProvider(preset: ProviderPreset, id: string): Provider {
   return {
     id, name: preset.name, baseUrl: preset.baseUrl, apiKey: '',

@@ -5,6 +5,7 @@ import { normalizeThinkingEffort } from '../api/modelCaps';
 import { getModelMeta, matchModelMeta, type ModelOverrides } from '../api/modelMeta';
 import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
 import { modelsForSlot } from './modelLibrary';
+import { providerCatalogId } from './providerPresets';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
@@ -61,8 +62,7 @@ export const SLOT_LABEL: Record<ModelSlot, string> = {
  * 一家模型供应商（连接）。
  *
  * **凭据与模型配置分开的锚点**：`baseUrl` + `apiKey` 属于「连接」，模型 id 属于「槽位」。
- * 供应商层只声明**它实现了哪些端点**（`serves`），不猜模型名 —— 一家纯 ASR 服务里
- * 没有任何带 `asr` 字样的模型名，靠正则猜必然错。
+ * 用途由具体模型配置决定；连接只负责地址、凭据与请求协议。
  */
 export interface Provider {
   /** 本机唯一短 id；槽位与收藏夹靠它引用，改名等于换一家（所以 UI 不提供改名） */
@@ -75,7 +75,7 @@ export interface Provider {
   protocol: ApiProtocol;
   /** 凭据。**永不参与同步**（见 `sync/units.ts`），也不参与迁移包导出 */
   apiKey: string;
-  /** 这家能填哪些槽位（= 实现了哪些端点）。用户手动声明 */
+  /** 旧版供应商用途，仅保留用于兼容持久化/同步，不再限制模型用途。 */
   serves: ModelSlot[];
   /**
    * 可选的 models.dev 供应商匹配提示（如 `siliconflow-cn`）。
@@ -494,9 +494,10 @@ export function providerOf(s: Settings, providerId: string): Provider | undefine
   return s.providers.find((p) => p.id === providerId);
 }
 
-/** 某个供应商能填哪些槽位（用它筛槽位下拉里的候选供应商） */
+/** 候选供应商取决于已添加模型的用途，不再读取旧版供应商 serves。 */
 export function providersForSlot(s: Settings, slot: ModelSlot): Provider[] {
-  return s.providers.filter((p) => p.serves.includes(slot));
+  const ids = new Set(modelsForSlot(s, slot).map((m) => m.providerId));
+  return s.providers.filter((p) => ids.has(p.id));
 }
 
 /**
@@ -522,7 +523,7 @@ export function targetOfSlot(s: Settings, slot: ModelSlot): ModelTarget {
     baseUrl: p.baseUrl.replace(/\/+$/, ''),
     apiKey: p.apiKey.trim(),
     model: ref.model,
-    catalogId: p.catalogId,
+    catalogId: providerCatalogId(p),
     protocol: p.protocol ?? 'openai-chat',
     capabilities: modelOverridesOf(s, ref),
   };
@@ -540,7 +541,7 @@ export function targetOrNull(s: Settings, ref: ModelRef): ModelTarget | null {
     baseUrl: p.baseUrl.replace(/\/+$/, ''),
     apiKey: p.apiKey,
     model: ref.model,
-    catalogId: p.catalogId,
+    catalogId: providerCatalogId(p),
     protocol: p.protocol ?? 'openai-chat',
     capabilities: modelOverridesOf(s, ref),
   };
@@ -577,7 +578,8 @@ export function visionTargetOrNull(s: Settings): ModelTarget | null {
 
 /** 可选的能力目录供应商提示，不是连接或能力查询的前置条件。 */
 export function catalogOf(s: Settings, providerId: string): string {
-  return providerOf(s, providerId)?.catalogId ?? '';
+  const provider = providerOf(s, providerId);
+  return provider ? providerCatalogId(provider) : '';
 }
 
 /**

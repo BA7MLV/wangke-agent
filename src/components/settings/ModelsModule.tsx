@@ -43,8 +43,9 @@ import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibra
 import { ModelCapabilities } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
 import { formatModelTokens } from '../../api/modelPresentation';
-import { createPresetProvider, matchesProviderPreset, PROVIDER_PRESETS, type ProviderPreset } from '../../store/providerPresets';
+import { createPresetProvider, matchesProviderPreset, providerCatalogId, PROVIDER_PRESETS, type ProviderPreset } from '../../store/providerPresets';
 import ProviderPresets, { ProviderLogo } from './ProviderPresets';
+import { useSettingsDialog } from '../settingsDialogStore';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -58,7 +59,7 @@ const SLOT_RELEVANT: Record<ModelSlot, (catalogId: string, id: string, overrides
   vision: (cat, id, overrides) => isVisionModel(cat, id, overrides),
   // ASR 只能靠名字猜 —— models.dev 的 modalities.input 里有 'audio'，但那含 TTS，
   // 而 /audio/transcriptions 只认 ASR 模型，两者在数据上区分不开。这里仍按名字排，
-  // 但真正的准入靠供应商的 serves 勾选（见 ProviderRow）。
+   // 但真正的准入只看具体模型保存的用途，不限制供应商。
   asr: (_cat, id) => ASR_MODEL_RE.test(id),
 };
 
@@ -266,7 +267,7 @@ function SlotModelSelect({
     panelRef.current?.querySelector('input')?.focus({ preventScroll: true });
   }, [open]);
 
-  /** 面板里要列的供应商：勾了该槽位的那些家；当前指的那家即便没勾也列出（否则改不回去） */
+  /** 只列已添加该用途模型的供应商；保留当前选择，便于修正旧配置。 */
   const candidates = useMemo(() => {
     const list = providersForSlot(settings, slot);
     if (!list.some((p) => p.id === ref.providerId) && provider) return [provider, ...list];
@@ -311,13 +312,14 @@ function SlotModelSelect({
 
   /** 分组：收藏优先置顶（Pi 的 /model 也是收藏先列），其余按供应商分组 */
   const groups = candidates.map((p) => {
+    const catalogId = providerCatalogId(p);
     const ids = Array.from(
       new Set(
         modelsForSlot(settings, slot).filter((m) => m.providerId === p.id).map((m) => m.model).filter(
            (id) => !needle || `${id} ${modelLabel(settings, { providerId: p.id, model: id })} ${p.name}`.toLowerCase().includes(needle),
         ),
       ),
-    ).sort((a, b) => Number(relevant(p.catalogId, b, modelOverridesOf(settings, { providerId: p.id, model: b }))) - Number(relevant(p.catalogId, a, modelOverridesOf(settings, { providerId: p.id, model: a }))));
+    ).sort((a, b) => Number(relevant(catalogId, b, modelOverridesOf(settings, { providerId: p.id, model: b }))) - Number(relevant(catalogId, a, modelOverridesOf(settings, { providerId: p.id, model: a }))));
     return { provider: p, ids };
   });
   const favRows = candidates.flatMap((p) =>
@@ -325,7 +327,7 @@ function SlotModelSelect({
       .filter((f) => f.providerId === p.id && (!needle || f.model.toLowerCase().includes(needle)))
       .map((f) => ({ provider: p, id: f.model })),
   );
-  // 收藏夹里指向已删供应商 / 已取消能力的项仍要列出来，否则勾过的东西凭空消失
+  // 收藏夹里指向已删供应商或已取消模型用途的项仍保留，便于用户处理。
   const orphanFavs = favs.filter(
     (f) => !candidates.some((p) => p.id === f.providerId) && (!needle || f.model.toLowerCase().includes(needle)),
   );
@@ -342,7 +344,7 @@ function SlotModelSelect({
           <div className="text-[13px] font-semibold leading-tight text-foreground">{SLOT_LABEL[slot]}</div>
           <div className="mt-px truncate text-xs text-muted">{SLOT_HINT[slot]}</div>
         </div>
-        {/* 候选供应商只列勾了该能力的那些家 —— 这是「手动标能力」的实际用途 */}
+        {/* 候选供应商由具体模型的用途决定。 */}
         {(slot !== 'vision' || ref.model) && <Select
           className="w-[148px] shrink-0"
           data-testid={`provider-${name}`}
@@ -511,8 +513,8 @@ function SlotModelSelect({
                         providerId={provider.id}
                         providerName={provider.name}
                         model={id}
-                        catalogId={provider.catalogId}
-                        catalogKnown={provider.catalogId.trim().length > 0}
+                        catalogId={providerCatalogId(provider)}
+                        catalogKnown={providerCatalogId(provider).trim().length > 0}
                         selected={sameRef({ providerId: provider.id, model: id }, ref)}
                         favorite={true}
                         label={modelLabel(settings, { providerId: provider.id, model: id })}
@@ -565,8 +567,8 @@ function SlotModelSelect({
                           providerId={provider.id}
                           providerName={provider.name}
                           model={id}
-                          catalogId={provider.catalogId}
-                          catalogKnown={provider.catalogId.trim().length > 0}
+                          catalogId={providerCatalogId(provider)}
+                          catalogKnown={providerCatalogId(provider).trim().length > 0}
                           selected={sameRef({ providerId: provider.id, model: id }, ref)}
                           favorite={isFav(provider, id)}
                           label={modelLabel(settings, { providerId: provider.id, model: id })}
@@ -605,7 +607,7 @@ function SlotModelSelect({
  *
  * 为什么默认折叠：这是「配一次就长期不动」的配置，四个输入框常驻会让模型选择器
  * （真正需要反复操作的那部分）被推到屏幕外。摘要行已经把要紧的信息全给了 ——
- * 名字、地址、实现了哪些端点、有没有 Key、能不能连通。
+ * 名字、连接状态与模型数量；常用端点无需重复配置地址和协议。
  */
 function ProviderRow({
   provider,
@@ -619,12 +621,13 @@ function ProviderRow({
   onRemove,
   removable,
   shaking,
+  customConnection = false,
   children,
 }: {
   provider: Provider;
   others: readonly Provider[];
   note?: string;
-  status: 'ready' | 'unconfigured' | 'failed' | 'unchecked';
+  status: 'ready' | 'unconfigured' | 'failed' | 'unchecked' | 'draft';
   modelCount: number | null;
   open: boolean;
   onToggle: () => void;
@@ -632,6 +635,7 @@ function ProviderRow({
   onRemove: () => void;
   removable: boolean;
   shaking: boolean;
+  customConnection?: boolean;
   children: ReactNode;
 }) {
   const inputRef = useRef<HTMLDivElement>(null);
@@ -661,6 +665,7 @@ function ProviderRow({
   }, [shaking]);
 
   const STATUS_HINT: Record<typeof status, string> = {
+    draft: '未保存',
     ready: '列表已获取',
     unchecked: '未获取列表',
     failed: '列表获取失败',
@@ -668,6 +673,7 @@ function ProviderRow({
   };
 
   const preset = PROVIDER_PRESETS.find((p) => matchesProviderPreset(provider, p));
+  const showEndpoint = customConnection || !preset;
 
   const statusColor =
     status === 'ready'
@@ -702,9 +708,9 @@ function ProviderRow({
             {provider.name.trim() || '未命名供应商'}
             {dupName && <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">重名</Chip>}
           </span>
-          <span className="truncate font-mono text-xs text-muted max-[640px]:text-[9px]" title={provider.baseUrl}>
+          {showEndpoint && <span className="truncate font-mono text-xs text-muted max-[640px]:text-[9px]" title={provider.baseUrl}>
             {provider.baseUrl.trim() || 'API 地址未配置'}
-          </span>
+          </span>}
         </span>
         <span className="flex items-center gap-2 text-sm text-muted max-[640px]:gap-1 max-[640px]:text-[10px]">
           <Sym name="toc" className="max-[640px]:size-3" />
@@ -730,9 +736,9 @@ function ProviderRow({
       {open && (
         <div className="flex flex-col gap-3 border-t border-border/70 px-5 pt-4 pb-5">
           <details open={showConnection} onToggle={(event) => setShowConnection(event.currentTarget.open)}>
-            <summary className="cursor-pointer py-2 text-sm font-medium">连接设置 · 地址、密钥与协议</summary>
+            <summary className="cursor-pointer py-2 text-sm font-medium">{showEndpoint ? '连接设置 · 地址、密钥与协议' : '连接设置'}</summary>
             <div className="flex flex-col gap-3 pt-3">
-          <div className="flex flex-nowrap items-center gap-2">
+          <Field label="名称">
             <Input
               value={provider.name}
               data-testid={`provider-name-${provider.id}`}
@@ -740,9 +746,10 @@ function ProviderRow({
               placeholder="供应商名称，如「硅基流动」"
               aria-invalid={dupName || undefined}
               onChange={(e) => onChange({ name: e.target.value })}
-              className="flex-1"
+              className="w-full"
             />
-          </div>
+          </Field>
+          {showEndpoint && <>
           <Field label="API 地址" testId={`field-base-url-${provider.id}`}>
             <Input
               value={provider.baseUrl}
@@ -773,9 +780,10 @@ function ProviderRow({
               </Select.Popover>
             </Select>
           </Field>
+          </>}
           <Field
             label="API Key"
-            hint="仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它"
+            hint={status === 'draft' ? '点击保存后仅存于本机浏览器；不参与云同步与迁移导出' : '仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它'}
             testId={`field-api-key-${provider.id}`}
           >
             <div>
@@ -814,48 +822,6 @@ function ProviderRow({
               </p>
             </div>
           </Field>
-          <Field
-            label="能做的活"
-            hint="手动勾选它实现了哪些接口。槽位的候选供应商只列勾选了该能力的那些家 —— 靠模型名猜不出来"
-            layout="block"
-            testId={`field-serves-${provider.id}`}
-          >
-            <div className="flex flex-wrap items-center gap-2" data-testid={`serves-${provider.id}`}>
-              {ALL_SLOTS.map((slot) => (
-                <Checkbox
-                  key={slot}
-                  isSelected={provider.serves.includes(slot)}
-                  data-testid={`serves-${provider.id}-${slot}`}
-                  onChange={(on) => {
-                    const next = on
-                      ? [...new Set([...provider.serves, slot])]
-                      : provider.serves.filter((s) => s !== slot);
-                    onChange({ serves: next });
-                  }}
-                >
-                  <Checkbox.Content>
-                    <Checkbox.Control>
-                      <Checkbox.Indicator />
-                    </Checkbox.Control>
-                    <span>{SLOT_LABEL[slot]}</span>
-                  </Checkbox.Content>
-                </Checkbox>
-              ))}
-            </div>
-          </Field>
-          <Field
-            label="能力目录供应商（可选）"
-            hint="通常无需填写。默认按模型 ID 精确匹配能力；同名有歧义时，可指定 models.dev 供应商 key。不影响连接与模型列表。"
-            testId={`field-catalog-${provider.id}`}
-          >
-            <Input
-              value={provider.catalogId}
-              data-testid={`catalog-${provider.id}`}
-              aria-label="models.dev 供应商 key"
-              placeholder="自动匹配（可选，如 siliconflow-cn）"
-              onChange={(e) => onChange({ catalogId: e.target.value.trim() })}
-            />
-          </Field>
             </div>
           </details>
           {note && (
@@ -883,15 +849,27 @@ export default function ModelsModule() {
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
   const [connectingProvider, setConnectingProvider] = useState(false);
+  /** 新连接只放在组件内存中；明确保存前不进入持久化设置或模型发现。 */
+  const [draftProvider, setDraftProvider] = useState<Provider | null>(null);
+  const [draftError, setDraftError] = useState('');
+  const { open: settingsOpen } = useSettingsDialog();
   const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const [metaError, setMetaError] = useState('');
   const revertTimerRef = useRef<number | undefined>(undefined);
 
+  // 关闭动画可能暂时保留子树；立即清空草稿，快速重新打开也不能带回未保存的密钥。
+  useEffect(() => {
+    if (settingsOpen) return;
+    setDraftProvider(null);
+    setDraftError('');
+    setConnectingProvider(false);
+  }, [settingsOpen]);
+
   /** 供应商 key 仅用于消除同名歧义；未填写也能刷新和使用能力目录。 */
   const catalogs = useMemo(
-    () => settings.providers.map((p) => p.catalogId).filter((c) => c.trim().length > 0),
+    () => settings.providers.map(providerCatalogId).filter((c) => c.trim().length > 0),
     [settings.providers],
   );
   const catalogsKey = catalogs.join('\0');
@@ -969,31 +947,51 @@ export default function ModelsModule() {
   };
 
   const addProvider = () => {
-    const id = nextProviderId(settings);
-    settings.update({
-      providers: [
-        ...settings.providers,
-        { id, name: '', baseUrl: '', apiKey: '', protocol: 'openai-chat', serves: ['chat'], catalogId: '' },
-      ],
-    });
-    // 新加的那家没有地址没有 Key，不摊开就是一行没用的空壳
+    setDraftProvider({ id: 'draft', name: '', baseUrl: '', apiKey: '', protocol: 'openai-chat', serves: ['chat'], catalogId: '' });
+    setDraftError('');
     setConnectingProvider(false);
-    setSelectedProviderId(id);
+    setSelectedProviderId(null);
   };
 
   const connectPreset = (preset: ProviderPreset) => {
     // 已有同端点的连接时直接打开，保留名称、密钥、协议及用户配置。
     const existing = settings.providers.find((p) => matchesProviderPreset(p, preset));
+    setDraftError('');
     setConnectingProvider(false);
     if (existing) {
+      setDraftProvider(null);
       setSelectedProviderId(existing.id);
       return;
     }
-    const id = nextProviderId(settings);
-    settings.update({
-      providers: [...settings.providers, createPresetProvider(preset, id)],
-    });
-    setSelectedProviderId(id);
+    setDraftProvider(createPresetProvider(preset, 'draft'));
+    setSelectedProviderId(null);
+  };
+
+  const discardDraftProvider = () => {
+    setDraftProvider(null);
+    setDraftError('');
+    setConnectingProvider(true);
+  };
+
+  const saveDraftProvider = () => {
+    if (!draftProvider) return;
+    if (!draftProvider.name.trim()) { setDraftError('请填写供应商名称'); return; }
+    if (!draftProvider.baseUrl.trim()) { setDraftError('请填写 API 地址'); return; }
+    try {
+      const url = new URL(draftProvider.baseUrl);
+      if (url.protocol !== 'https:' && url.protocol !== 'http:') throw new Error('invalid protocol');
+    } catch {
+      setDraftError('请填写有效的 HTTP 或 HTTPS API 地址');
+      return;
+    }
+    if (!draftProvider.apiKey.trim()) { setDraftError('请填写 API Key 后再保存'); return; }
+    // 保存时才分配正式 id，并基于最新设置追加，不覆盖同时发生的设置变更。
+    const current = useSettings.getState();
+    const provider = { ...draftProvider, id: nextProviderId(current), name: draftProvider.name.trim() };
+    current.update({ providers: [...current.providers, provider] });
+    setDraftProvider(null);
+    setDraftError('');
+    setSelectedProviderId(provider.id);
   };
 
   const removeProvider = (p: Provider) => {
@@ -1028,12 +1026,45 @@ export default function ModelsModule() {
   return (
     <>
       <SectionCard
-        title={selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
-        subtitle={selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
+        title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
+        subtitle={draftProvider ? '填写 API Key 后保存。返回、取消或关闭设置不会新增供应商，也不会保存密钥。' : selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
         actions={selectedProvider ? <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>拉取模型列表</LoadingButton> : undefined}
       >
-        {selectedProvider ? (
+        {draftProvider ? (
+          <form className="flex flex-col gap-4" data-testid="provider-draft" onSubmit={(event) => {
+            event.preventDefault();
+            saveDraftProvider();
+          }}>
+            <Button type="button" variant="tertiary" className="self-start" data-testid="provider-draft-back" onPress={discardDraftProvider}>
+              <Sym name="arrow_back" />返回常用端点
+            </Button>
+            <ProviderRow
+              key={draftProvider.id}
+              provider={draftProvider}
+              others={settings.providers}
+              status="draft"
+              modelCount={null}
+              open
+              shaking={false}
+              removable={false}
+              customConnection={!draftProvider.catalogId}
+              onToggle={() => undefined}
+              onRemove={() => undefined}
+              onChange={(patch) => {
+                setDraftProvider((current) => current ? { ...current, ...patch } : null);
+                setDraftError('');
+              }}
+            >
+              <p className="text-xs text-pretty text-muted">保存后才会添加供应商并获取模型列表。</p>
+              {draftError && <p role="alert" className="text-sm text-pretty text-danger">{draftError}</p>}
+              <div className="flex gap-2">
+                <Button type="submit" data-testid="provider-draft-save">保存供应商</Button>
+                <Button type="button" variant="ghost" data-testid="provider-draft-cancel" onPress={discardDraftProvider}>取消</Button>
+              </div>
+            </ProviderRow>
+          </form>
+        ) : selectedProvider ? (
           <div className="flex flex-col gap-4">
             <Button
               variant="tertiary"
@@ -1128,7 +1159,7 @@ export default function ModelsModule() {
         </div>
         {metaError && <p role="alert" className="mt-1 text-xs text-pretty text-danger">{metaError}</p>}
       </SectionCard>
-      {!selectedProvider && !connectingProvider && <>
+      {!draftProvider && !selectedProvider && !connectingProvider && <>
       <SectionCard
         title="选择模型"
         subtitle="选择主模型与语音转写模型；图片理解可自动复用主模型或单独指定。Chat 可随时切换。"

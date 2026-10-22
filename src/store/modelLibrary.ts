@@ -1,4 +1,5 @@
 import type { ModelRef, ModelSlot, SavedModel, Settings } from './settings';
+import { getModelMeta, type ModelOverrides } from '../api/modelMeta';
 
 export const modelKey = (ref: ModelRef) => JSON.stringify([ref.providerId, ref.model]);
 const fields = { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel' } as const;
@@ -21,7 +22,20 @@ export function savedModelsOf(settings: Settings): SavedModel[] {
 
 export function modelsForSlot(settings: Settings, slot: ModelSlot): SavedModel[] {
   return savedModelsOf(settings).filter((m) => m.slots.includes(slot)
-    && settings.providers.some((p) => p.id === m.providerId && p.serves.includes(slot)));
+    && settings.providers.some((p) => p.id === m.providerId));
+}
+
+/** 只按模型声明的输入/输出预选用途，不按供应商或模型名称猜测；用户可在模型上调整。 */
+export function suggestedModelSlots(catalogId: string, model: string, overrides?: ModelOverrides): ModelSlot[] {
+  const meta = getModelMeta(catalogId, model, overrides);
+  const input = meta?.inputModalities ?? ['text'];
+  const output = meta?.outputModalities ?? ['text'];
+  if (!output.includes('text')) return [];
+  const slots: ModelSlot[] = [];
+  if (input.includes('text')) slots.push('chat');
+  if (input.includes('image')) slots.push('vision');
+  if (input.includes('audio')) slots.push('asr');
+  return slots;
 }
 
 export function modelLabel(settings: Settings, ref: ModelRef): string {
@@ -46,8 +60,8 @@ export function editModelPatch(settings: Settings, original: ModelRef | null, dr
   }
   const provider = settings.providers.find((p) => p.id === next.providerId);
   if (!provider) throw new Error('请选择有效的供应商');
-  if (!next.slots.length || next.slots.some((slot) => !provider.serves.includes(slot))) {
-    throw new Error('请选择供应商支持的用途');
+  if (!next.slots.length || next.slots.some((slot) => !Object.hasOwn(fields, slot))) {
+    throw new Error('请至少选择一个模型用途');
   }
   const list = savedModelsOf(settings);
   const originalKey = original ? modelKey(original) : null;
