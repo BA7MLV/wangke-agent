@@ -178,6 +178,55 @@ const MIGRATIONS: Array<[number, string]> = [
     );
     CREATE INDEX run_steps_run_idx ON run_steps(run_id, created_at);
   `],
+  [10, `
+    CREATE TABLE cloud_records (
+      revision INTEGER PRIMARY KEY AUTOINCREMENT,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      table_name TEXT NOT NULL, record_key TEXT NOT NULL, value TEXT,
+      UNIQUE(owner_id,table_name,record_key)
+    );
+    CREATE INDEX cloud_records_cursor ON cloud_records(owner_id,revision);
+    CREATE TABLE cloud_operations (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      id TEXT NOT NULL, PRIMARY KEY(owner_id,id)
+    );
+    CREATE TABLE cloud_config (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      value TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE TABLE cloud_tasks (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      nonce TEXT NOT NULL, kind TEXT NOT NULL, resource TEXT NOT NULL,
+      input TEXT NOT NULL, status TEXT NOT NULL, progress TEXT, result TEXT, error TEXT,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(owner_id,nonce)
+    );
+    CREATE INDEX cloud_tasks_queue ON cloud_tasks(status,created_at);
+    CREATE TABLE cloud_task_events (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT,
+      task_id TEXT NOT NULL REFERENCES cloud_tasks(id) ON DELETE CASCADE,
+      event TEXT NOT NULL
+    );
+    CREATE TABLE cloud_permissions (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      task_id TEXT REFERENCES cloud_tasks(id) ON DELETE CASCADE,
+      capability TEXT NOT NULL, arguments TEXT NOT NULL,
+      status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, resolved_at TEXT
+    );
+    CREATE TABLE cloud_audit (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, owner_id TEXT NOT NULL,
+      action TEXT NOT NULL, detail TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+  `],
+  [11, `
+    ALTER TABLE approvals ADD COLUMN step_id TEXT REFERENCES run_steps(id);
+    CREATE UNIQUE INDEX approvals_step ON approvals(step_id);
+    CREATE TABLE cloud_task_commands (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, task_id TEXT NOT NULL REFERENCES cloud_tasks(id) ON DELETE CASCADE,
+      nonce TEXT NOT NULL, action TEXT NOT NULL, value TEXT, consumed INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(task_id,nonce)
+    );
+  `],
 ];
 
 export class DatabaseStore {

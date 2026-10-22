@@ -8,12 +8,12 @@ COPY . .
 RUN npm run build
 
 FROM node:22-bookworm-slim AS runtime
-ENV NODE_ENV=production DATA_DIR=/data DB_PATH=/data/db/wangke.sqlite FILES_DIR=/data/files
+ENV NODE_ENV=production DATA_DIR=/data DB_PATH=/data/db/wangke.sqlite FILES_DIR=/data/files PLAYWRIGHT_BROWSERS_PATH=/opt/playwright HOME=/tmp
 WORKDIR /app
 COPY package*.json ./
 COPY apps/api/package.json apps/api/package.json
 COPY packages/contracts/package.json packages/contracts/package.json
-RUN npm ci --omit=dev && npm cache clean --force
+RUN npm ci --omit=dev && npx playwright install --with-deps chromium && chmod -R a+rX /opt/playwright && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-api ./dist-api
 RUN groupadd --system wangke && useradd --system --gid wangke --home-dir /app wangke \

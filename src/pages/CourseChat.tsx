@@ -57,6 +57,9 @@ import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
 
+// Replay only after a full reload, not when returning from another route.
+let welcomeEntrancePlayed = false;
+
 /**
  * 有课程时的快捷提问：全部围绕「问我的课程库」。
  *
@@ -572,6 +575,7 @@ export default function CourseChat() {
    * ② 聚焦时把消息流吸底（键盘弹出会顶矮面板）。
    */
   const composerRef = useRef<HTMLTextAreaElement>(null);
+  const welcomeRef = useRef<HTMLDivElement>(null);
   const composerHoldRef = useRef<HTMLDivElement>(null);
   const composerWrapRef = useRef<HTMLDivElement>(null);
   const voiceDraftBase = useRef('');
@@ -956,6 +960,14 @@ export default function CourseChat() {
   const coursesStuck = useSkeletonGate(courseCount == null, { delayMs: 3000, minVisibleMs: 0 });
   /** 真正出骨架的条件：还在数 **且** 没到「数不出来」的兜底线 */
   const coursesLoading = useSkeletonGate(courseCount == null) && !coursesStuck;
+  const welcomeReady = loaded && messages.length === 0 && !coursesLoading && (courseCount != null || coursesStuck);
+  useLayoutEffect(() => {
+    const block = welcomeRef.current;
+    if (!welcomeReady || !block || welcomeEntrancePlayed) return;
+    void block.offsetHeight;
+    block.classList.add('is-shown');
+    welcomeEntrancePlayed = true;
+  }, [welcomeReady]);
   /** 顶栏标题跟着当前会话走：标题栏写死「课程助手」的话，用户在 Recent 里切了会话，
       顶栏毫无反应，分不清自己看的是哪一段对话。 */
   const activeSession = sessions.find((session) => session.id === activeId);
@@ -1060,7 +1072,8 @@ export default function CourseChat() {
       ) : undefined}
     >
       <div
-        className={`course-chat${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
+        className={`course-chat t-stagger${welcomeEntrancePlayed ? ' is-shown' : ''}${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
+        ref={welcomeRef}
         data-testid="course-chat-page"
       >
         <section className="course-chat__main" aria-label="AI 助手聊天">
@@ -1082,15 +1095,15 @@ export default function CourseChat() {
                   <CourseCountSkeleton />
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
-                    <h2>{hasCourses ? libraryHeadline : '有什么想聊的？'}</h2>
-                    <div className="course-chat__starters" aria-label="快捷提问">
+                    <h2 className="t-stagger-line">{hasCourses ? libraryHeadline : '有什么想聊的？'}</h2>
+                    <div className="course-chat__starters t-stagger-line t-stagger-line--2" aria-label="快捷提问">
                       <div className="course-chat__starters-heading">试试这样问</div>
                       <div className="course-chat__starter-list">
                         {(hasCourses ? LIBRARY_STARTERS : GENERAL_STARTERS).map((starter) => (
                           <Button
                             key={starter.label}
                             variant="secondary"
-                            className="course-chat__starter"
+                            className="course-chat__starter t-learn"
                             data-testid={`chat-starter-${starter.label}`}
                             onPress={() => void send(starter.prompt)}
                             isDisabled={loading || !sessionReady}
@@ -1099,7 +1112,12 @@ export default function CourseChat() {
                               {starter.icon}
                             </span>
                             <span className="course-chat__starter-label">{starter.label}</span>
-                            <Sym name="chevron_right" aria-hidden="true" />
+                            <span className="t-learn-chevron" aria-hidden="true">
+                              <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                                <path className="t-learn-arm t-learn-arm-top" d="M6 4L10 8" />
+                                <path className="t-learn-arm t-learn-arm-bot" d="M10 8L6 12" />
+                              </svg>
+                            </span>
                           </Button>
                         ))}
                       </div>

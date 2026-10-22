@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
 import { executeSandbox, type SandboxExecutor } from './sandbox.js';
+import type { CloudConfiguration } from '../cloud/config.js';
+import { DEFAULT_AGENT_POLICY } from '../../../../packages/contracts/src/cloud.js';
+import { botRequest, botCalls, type ModelMessage as Message, type ModelCall as Call } from './model.js';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
-type Message = { role: string; content: string | null; tool_call_id?: string; tool_calls?: Call[] };
-type Call = { id: string; type: 'function'; function: { name: string; arguments: string } };
 const now = () => new Date().toISOString();
 const tool = (name: string, description: string, properties: object, required: string[]) => ({ type: 'function', function: { name, description, parameters: { type: 'object', additionalProperties: false, properties, required } } });
 const tools = [
@@ -21,7 +22,9 @@ export class BotRunner {
   private draining = false;
   private readonly fetcher: typeof fetch;
   private readonly sandbox: SandboxExecutor;
-  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor } = {}) {
+  private readonly configuration?: CloudConfiguration;
+  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; configuration?: CloudConfiguration } = {}) {
+    this.configuration = options.configuration;
     this.fetcher = options.fetch ?? fetch;
     this.sandbox = options.sandbox ?? executeSandbox;
   }
@@ -78,20 +81,37 @@ export class BotRunner {
   private async execute(run: Run, signal: AbortSignal) {
     let context: Message[] = [];
     try {
-      if (!process.env.MODEL_API_KEY) throw new Error('model_not_configured');
+      const owner = (this.store.db.prepare('SELECT owner_id FROM threads WHERE id=?').get(run.thread_id) as { owner_id: string }).owner_id;
+      const config = this.configuration?.get(owner, true);
+      const provider = config?.providers.find(p => p.id === config.llmModel.providerId);
+      const model = config?.llmModel.model ?? process.env.MODEL_NAME ?? 'gpt-4o-mini';
+      if (!(provider?.baseUrl || process.env.MODEL_API_KEY) || !model) throw new Error('model_not_configured');
       context = run.context_json ? JSON.parse(run.context_json) : this.initialContext(run);
       // Complete a persisted tool-call envelope after a crash, without re-executing the command.
       const last = context.at(-1);
       if (last?.tool_calls?.length) {
         for (const call of last.tool_calls) {
-          const step = this.store.db.prepare('SELECT result FROM run_steps WHERE id=? AND run_id=?').get(call.id, run.id) as { result: string | null } | undefined;
+          const step = this.store.db.prepare('SELECT * FROM run_steps WHERE id=? AND run_id=?').get(call.id, run.id) as any;
+          if (step?.status === 'waiting_approval') {
+            const approval = this.store.db.prepare('SELECT status FROM approvals WHERE step_id=? AND run_id=?').get(step.id, run.id) as { status: string } | undefined;
+            if (!approval || approval.status === 'pending') { this.store.db.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(run.id); return; }
+            const args = JSON.parse(step.arguments);
+            const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
+            const allowed = approval.status === 'approved' && policy.shell !== 'deny' && (!args.network || policy.network === 'allow');
+            if (allowed) {
+              this.store.db.prepare("UPDATE run_steps SET status='running' WHERE id=? AND status='waiting_approval'").run(step.id);
+              step.result = JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: step.id, command: args.command, network: args.network }, signal));
+            } else step.result = 'Command denied by user or current policy.';
+            this.store.db.prepare("UPDATE run_steps SET status='completed',result=?,completed_at=? WHERE id=?").run(step.result, now(), step.id);
+            this.configuration?.audit(owner, 'shell.resolved', { step: step.id, allowed });
+          }
           context.push({ role: 'tool', tool_call_id: call.id, content: step?.result ?? 'Interrupted before result was saved. Inspect workspace before retrying.' });
         }
         this.save(run, context);
       }
       const approvals = this.store.db.prepare("SELECT status,resolution FROM approvals WHERE run_id=? AND status!='pending'").all(run.id);
       if (approvals.length) context.push({ role: 'user', content: `Approval decisions: ${JSON.stringify(approvals)}` });
-      const maxSteps = Math.max(1, Math.min(1000, Number(process.env.BOT_MAX_STEPS) || 100));
+      const maxSteps = config?.policy.maxSteps ?? Math.max(1, Math.min(1000, Number(process.env.BOT_MAX_STEPS) || 100));
       while (!signal.aborted) {
         // Keep tool envelopes intact while bounding old command output in long tasks.
         for (let i = 1; i < context.length - 8; i++) {
@@ -103,14 +123,17 @@ export class BotRunner {
           this.append(run.thread_id, 'text', `本次任务已达到 ${maxSteps} 步执行预算。工作区已保存，可以发送消息继续。`);
           this.finish(run.id, 'completed'); return;
         }
-        const response = await this.fetcher(`${process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/chat/completions`, {
+        const selected = provider ?? { protocol: 'openai-chat' as const, apiKey: process.env.MODEL_API_KEY };
+        const request = botRequest(selected, model, context, tools);
+        const response = await this.fetcher(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
           method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS) || 30000))]),
-          headers: { 'content-type': 'application/json', authorization: `Bearer ${process.env.MODEL_API_KEY}` },
-          body: JSON.stringify({ model: process.env.MODEL_NAME ?? 'gpt-4o-mini', messages: context, tools, tool_choice: 'required', parallel_tool_calls: false, max_tokens: 4096 }),
+          headers: request.headers,
+          redirect: 'error',
+          body: JSON.stringify(request.body),
         });
         if (!response.ok) throw new Error('model_request_failed');
         const body = await response.json() as any;
-        const calls = body?.choices?.[0]?.message?.tool_calls;
+        const calls = botCalls(selected.protocol, body);
         if (!Array.isArray(calls) || calls.length !== 1 || !calls[0]?.function) throw new Error('invalid_structured_response');
         const call: Call = { id: crypto.randomUUID(), type: 'function', function: { name: calls[0].function.name, arguments: calls[0].function.arguments } };
         if (typeof call.function.arguments !== 'string' || call.function.arguments.length > 20000) throw new Error('invalid_structured_response');
@@ -128,9 +151,24 @@ export class BotRunner {
         let state: 'completed' | 'waiting_user' | 'queued' | undefined;
         let wake: string | null = null;
         if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
+          const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
+          const network = policy.network === 'allow';
+          if (policy.shell === 'ask') {
+            this.store.transaction(() => {
+              this.store.db.prepare("UPDATE run_steps SET status='waiting_approval',arguments=? WHERE id=?").run(JSON.stringify({ command: args.command, network }), call.id);
+              const message = this.append(run.thread_id, 'approval', `请求执行命令（联网：${network ? '允许' : '禁止'}）：\n${args.command}`);
+              this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,step_id,status,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, call.id, 'pending', now());
+              this.store.db.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(run.id);
+            });
+            this.configuration?.audit(owner, 'shell.requested', { step: call.id, command: args.command, network });
+            return;
+          }
+          if (policy.shell === 'deny') result = 'Command denied by policy.';
+          else {
           this.append(run.thread_id, 'progress', `执行第 ${run.step_count} 步：\n${args.command.slice(0, 2000)}`);
-          try { result = JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: call.id, command: args.command }, signal)); }
+          try { result = JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: call.id, command: args.command, network }, signal)); }
           catch { if (signal.aborted) throw new Error('cancelled'); throw new Error('sandbox_unavailable'); }
+          }
         } else if (call.function.name === 'wait' && Number.isInteger(args.seconds) && args.seconds >= 1 && args.seconds <= 86400 && typeof args.reason === 'string') {
           wake = new Date(Date.now() + args.seconds * 1000).toISOString();
           result = `Scheduled wake: ${wake}`; state = 'queued';

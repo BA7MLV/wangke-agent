@@ -9,19 +9,24 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NO_START=0
 AGENT=0
 MAX_FILE_MB=""
-usage() { echo "Usage: ./install.sh [--data-dir DIR] [--port PORT] [--max-file-mb 1..512] [--agent] [--version VERSION] [--no-start]"; }
+PUBLIC_URL=""
+usage() { echo "Usage: ./install.sh [--data-dir DIR] [--port PORT] [--public-url https://host] [--max-file-mb 1..512] [--agent] [--version VERSION] [--no-start]"; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || { echo "--version requires a value" >&2; exit 2; }; VERSION="$2"; VERSION_SET=1; shift 2 ;;
     --data-dir) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; DATA_DIR="$2"; shift 2 ;;
     --port) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; PORT="$2"; shift 2 ;;
     --max-file-mb) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; MAX_FILE_MB="$2"; shift 2 ;;
+    --public-url) [ "$#" -ge 2 ] || { usage >&2; exit 2; }; PUBLIC_URL="${2%/}"; shift 2 ;;
     -h|--help) usage; exit 0 ;;
     --no-start) NO_START=1; shift ;;
     --agent) AGENT=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+if [ -n "$PUBLIC_URL" ]; then
+  [[ "$PUBLIC_URL" =~ ^https?://[a-zA-Z0-9.-]+(:[0-9]+)?$ ]] || { echo "--public-url requires an HTTP(S) origin without a path" >&2; exit 2; }
+fi
 [[ "$PORT" =~ ^[1-9][0-9]{0,4}$ ]] && [ "$PORT" -le 65535 ] || { echo "--port must be 1..65535" >&2; exit 2; }
 if [ -n "$MAX_FILE_MB" ]; then
   [[ "$MAX_FILE_MB" =~ ^[1-9][0-9]{0,2}$ ]] && [ "$MAX_FILE_MB" -le 512 ] || { echo "--max-file-mb must be 1..512" >&2; exit 2; }
@@ -48,12 +53,13 @@ BOOTSTRAP_TTL_MS=900000
 PUBLIC_ORIGIN=http://localhost:$PORT
 WEBAUTHN_RP_ID=localhost
 WEBAUTHN_RP_NAME=Wangke Agent
-# Bot model credentials are read only by the API container.
+# Initial model defaults. Configure all model services in the setup web page.
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_API_KEY=
 MODEL_NAME=gpt-4o-mini
 MODEL_TIMEOUT_MS=30000
-MAX_FILE_BYTES=52428800
+MAX_FILE_BYTES=536870912
+CLOUD_CONCURRENCY=2
 EOF
 elif [ "$VERSION_SET" -eq 1 ]; then
   # An explicit --version changes only the two release-controlled keys.
@@ -79,7 +85,14 @@ if [ -n "$MAX_FILE_MB" ]; then
   chmod 600 "$tmp"
   mv -f "$tmp" "$DATA_DIR/.env"
 elif ! grep -q '^MAX_FILE_BYTES=' "$DATA_DIR/.env"; then
-  printf '\nMAX_FILE_BYTES=52428800\n' >> "$DATA_DIR/.env"
+  printf '\nMAX_FILE_BYTES=536870912\n' >> "$DATA_DIR/.env"
+fi
+if [ -n "$PUBLIC_URL" ]; then
+  rp="${PUBLIC_URL#*://}"; rp="${rp%%:*}"
+  tmp="$(mktemp "$DATA_DIR/.env.XXXXXX")"
+  awk -v origin="$PUBLIC_URL" -v rp="$rp" '!/^PUBLIC_ORIGIN=/ && !/^WEBAUTHN_RP_ID=/ {print} END { print "PUBLIC_ORIGIN=" origin; print "WEBAUTHN_RP_ID=" rp }' "$DATA_DIR/.env" > "$tmp"
+  chmod 600 "$tmp"
+  mv -f "$tmp" "$DATA_DIR/.env"
 fi
 if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
   printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
@@ -105,6 +118,8 @@ if [ "$NO_START" -eq 0 ]; then
   fi
   WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" \
     docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" "${EXTRA[@]}" up -d --build --wait --wait-timeout 120
-  echo "Wangke is available at http://localhost:$PORT"
-  echo "Uploads persist in $DATA_DIR/data/files; initialize/login at /#/bot, then use + in /#/chat."
+  url="$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DATA_DIR/.env" | tail -1)"
+  echo "Setup URL: ${url:-http://localhost:$PORT}/#/setup"
+  echo "Create your administrator, configure models and add Passkeys at this URL."
+  echo "Course files, learning data, credentials and tasks persist in $DATA_DIR/data."
 fi

@@ -141,7 +141,7 @@ try {
   const uploadedFile = upload.json();
   assert.equal(uploadedFile.sizeBytes, 12);
   const fileConfig = await app.inject({ method: 'GET', url: '/api/v1/files/config' });
-  assert.equal(fileConfig.json().maxFileBytes, 50 * 1024 * 1024);
+  assert.equal(fileConfig.json().maxFileBytes, 512 * 1024 * 1024);
   assert.equal((await app.inject({ method: 'GET', url: `/api/v1/files/${uploadedFile.id}` })).statusCode, 401);
   assert.equal((await app.inject({ method: 'POST', url: '/api/v1/files', headers: { cookie, origin: 'https://evil.example', 'content-type': 'application/octet-stream' }, payload: Buffer.from('forged') })).statusCode, 403);
   assert.equal((await app.inject({ method: 'POST', url: '/api/v1/files', headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent('../escape.txt') }, payload: Buffer.from('invalid') })).statusCode, 400);

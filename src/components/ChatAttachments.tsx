@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Modal, Spinner } from '@heroui/react';
 import { useChatAttachments } from '../store/chatAttachments';
 import { attachmentSize, type ChatAttachment } from '../chat/attachments';
 import { downloadAttachment, readAttachmentBlob } from '../chat/prepareAttachment';
 import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
+import { prefersReducedMotion } from '../utils/motion';
 import './chat-attachments.css';
 
 /** The same accessible viewer serves composer thumbnails and persisted messages. */
@@ -85,6 +86,41 @@ function PendingImage({ file, removing }: { file: File; removing: boolean }) {
 }
 
 export function ChatAttachmentDraft() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+    // Observe only attachments: typing must not animate the textarea's height.
+    const resize = () => {
+      const height = content.getBoundingClientRect().height;
+      if (height > 0) {
+        container.dataset.open = 'true';
+        // Commit the collapsed size before starting the first expansion.
+        void container.offsetHeight;
+      }
+      container.style.height = `${height}px`;
+      if (height === 0 && (prefersReducedMotion() || container.getBoundingClientRect().height === 0)) {
+        container.dataset.open = 'false';
+      }
+    };
+    resize();
+    const observer = new ResizeObserver(resize);
+    observer.observe(content);
+    return () => observer.disconnect();
+  }, []);
+  return <div ref={containerRef} className="chat-attachment-resize t-resize" style={{ height: 0 }}
+    onTransitionEnd={(event) => {
+      if (event.target === event.currentTarget && event.propertyName === 'height' && contentRef.current?.getBoundingClientRect().height === 0) {
+        event.currentTarget.dataset.open = 'false';
+      }
+    }}>
+    <div ref={contentRef}><ChatAttachmentDraftContent /></div>
+  </div>;
+}
+
+function ChatAttachmentDraftContent() {
   const { items, error, retry, remove } = useChatAttachments();
   const images = items.flatMap((item) => item.value?.dataUrl ? [item.value] : []);
   if (!items.length && !error) return null;

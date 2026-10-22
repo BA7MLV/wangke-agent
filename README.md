@@ -53,7 +53,7 @@ flowchart LR
     QA --> ASK["✍️ 划词 / 框选 / 截图提问 · 出题"]
 ```
 
-**运行形态：Linux Docker 服务端 + 薄客户端。** 普通课程聊天仍保留原有聊天窗口；Bot 工作空间由后端持久化线程、运行状态和结构化消息，浏览器只通过版本化 API/SSE 交互。课程材料的本地缓存仍可使用 IndexedDB/OPFS，服务端数据以 Docker volume 为权威存储。
+**运行形态：个人云端，一套部署一个管理员，多设备登录同步。** 课程原文件、普通聊天、学习记录、生成结果和任务保存在服务器；IndexedDB 是按账号隔离的缓存。普通聊天、课程问答和媒体/材料流水线在服务器 Chromium 执行，关闭网页后任务继续运行。Bot 工作空间另有独立命令沙盒。
 
 ```mermaid
 flowchart TB
@@ -100,7 +100,7 @@ flowchart TB
 | | |
 |---|---|
 | **Node.js** | 22+（两个代码生成器用 Node 原生剥类型直接读 `.ts`，需要 22.6+） |
-| **模型凭据** | 配置在 Linux Docker 服务的 `.env`；不会放进浏览器 |
+| **模型凭据** | 在安装输出的 `/#/setup` 网页配置，加密保存在服务器，读取接口不返回明文 |
 | **浏览器** | Chrome / Edge / Safari。PWA 安装与离线需要 HTTPS 或 localhost |
 
 ### 跑起来（Linux Docker）
@@ -108,7 +108,7 @@ flowchart TB
 推荐使用一键安装脚本：
 
 ```bash
-git clone --branch v0.1.0 https://github.com/BA7MLV/wangke-agent.git
+git clone https://github.com/BA7MLV/wangke-agent.git
 cd wangke-agent
 ./install.sh
 ```
@@ -119,7 +119,11 @@ cd wangke-agent
 ./install.sh --data-dir "$HOME/.wangke-agent" --port 3000
 ```
 
-脚本会检查 Docker、创建带权限保护的数据目录、生成一次性 Bootstrap Secret、构建并启动服务。重复执行会保留数据库、文件和已有配置；初始化 secret 只在初始化前有效。首次进入 `/bot` 完成管理员初始化，模型密钥写入安装目录的 `.env`，只由 API 容器读取。
+脚本会检查 Docker、创建数据目录、生成一次性 Bootstrap Secret、构建并启动服务，最后打印 **Setup URL**（默认 `http://localhost:3000/#/setup`）。按该 URL 创建管理员，填写模型服务、设置 Agent 权限并添加 Passkey。初始化密钥从安装输出指定的文件读取，有效期默认 15 分钟。
+
+公网部署先配置 HTTPS 反向代理，再运行 `./install.sh --public-url https://learn.example.com`；脚本自动写入公开 origin 和 Passkey RP ID。代理需允许至少 `512m` 的请求体及较长的上传超时。Passkey 需要 HTTPS 域名或 localhost，注册后保持域名不变。详见 [个人云端部署](docs/personal-cloud.md)。
+
+重复安装保留已有数据及配置；默认单文件上限为 **512 MiB**。已有安装若仍保留旧的 50 MiB 限制，显式传入 `--max-file-mb 512` 更新。
 
 安装后可用管理入口（不依赖 systemd）：
 
@@ -131,7 +135,9 @@ cd wangke-agent
 ~/.wangke-agent/bin/wangke-agent backup
 ```
 
-也可直接执行 `scripts/backup.sh --data-dir DIR --output-dir DIR`。备份包含 `data/db`（SQLite 主库及 WAL/SHM）、`data/files`、`data/config`、校验清单和受 `0600` 保护的 `.env`，文件名带 UTC 时间戳。Compose 服务运行时备份脚本会先短暂停止服务，复制后再启动，以避免 SQLite WAL 处于不一致状态；因此请预留短暂不可用时间。恢复必须显式指定目录：
+源码升级先在干净的源码目录执行 `git pull --ff-only`，再运行管理入口的 `update`（备份并重建当前源码）。
+
+也可执行 `scripts/backup.sh --data-dir DIR --compose-file /path/to/compose.yaml --output-dir DIR`。备份包含 `data/db`（SQLite 主库及 WAL/SHM）、`data/files`、`data/config`（包括解密模型配置必需的 `credentials.key`）、校验清单和受 `0600` 保护的 `.env`。指定 Compose 文件时会短暂停止运行中的服务；否则应自行先停服务。恢复必须显式指定目录：
 
 ```bash
 scripts/restore.sh --data-dir "$HOME/.wangke-agent" backups/wangke-agent-YYYYmmddTHHMMSSZ.tar.gz
@@ -169,7 +175,8 @@ curl http://localhost:3000/api/v1/health
 - `/chat`（默认首页）保留普通聊天窗口，适合课程问答、Markdown、引用和现有工具状态。
 - `/bot` 是独立的 Bot 工作空间：线程、消息气泡、结构化进度/附件/提问/审批消息、SSE 断线恢复和后端持久运行。
 - Bot API 支持 Agent profile、线程参与者、`@提及`、消息反应和可恢复审批；审批结果会恢复对应的 Agent run。
-- Bot 模型通过 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME` 配置在服务端；没有配置密钥时不会访问外部模型，会返回安全的失败状态。
+- 普通聊天与 Bot 共用云端模型设置，支持 OpenAI Chat、Responses 和 Anthropic Messages。旧版 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME` 仅作为尚未保存网页配置时的初始值。
+- 默认读取允许，资料修改、删除和沙盒命令需要审批，联网单独控制。可长期信任指定 Bot，或在设置中撤销信任。
 
 ### 聊天中的课程与附件
 
@@ -177,15 +184,15 @@ curl http://localhost:3000/api/v1/health
 
 - **课程**：从资料库选择最多 5 门，作为当前会话的检索上下文；选择随会话保存，可逐项移除或恢复自动选择。新课程可从课程库导入。
 - **图片**：支持 PNG、JPEG、WebP、GIF（取首帧），每张最多 10 MiB。发送前显示缩略图；多模态聊天模型直接看图，纯文本模型使用设置中的视觉模型提取内容。
-- **文件**：支持 PDF、DOCX、TXT、Markdown、CSV、JSON、HTML、日志和 YAML。每条消息最多 8 个附件，单文件不超过 50 MiB，并服从服务端更低的限制。文件正文最多提取 12000 字并显示截取提示；长资料建议导入课程库检索。扫描 PDF 无正文时提示转换为图片或先做 OCR。
+- **文件**：支持 PDF、DOCX、TXT、Markdown、CSV、JSON、HTML、日志和 YAML。每条消息最多 8 个附件，单文件不超过 512 MiB，并服从服务端更低的限制。文件正文最多提取 12000 字并显示截取提示；长资料建议导入课程库检索。扫描 PDF 无正文时提示转换为图片或先做 OCR。
 - 附件处理完成后才能发送，可移除或重试失败项，也可粘贴图片。附件跟随消息保存，排队、重试、分支、刷新回放均保留附件；点击历史附件可下载原文件。
 
-**Docker 数据流程**：先在 `/#/bot` 初始化并登录账号，再回到 `/#/chat` 上传。文件经同源 `/api/v1/files` 写入 `/data/files`，文件名、大小、校验值和所属用户写入 `/data/db/wangke.sqlite`；下载需登录。Compose 将整个 `/data` 挂载到安装目录，现有备份 / 恢复脚本包含原文件和文件索引。普通聊天记录、课程选择和提取后的附件上下文仍保存在当前浏览器 IndexedDB，跨设备迁移需使用设置中的数据导出；Docker 文件备份不替代浏览器聊天记录备份。纯静态部署的附件保存在本机，界面明确标注保存位置；服务端故障或未登录会显示错误，不会悄悄退回本机保存。
+**Docker 数据流程**：在 `/#/setup` 初始化并登录。文件经同源 `/api/v1/files` 流式写入 `/data/files`；课程、聊天、学习记录、文件索引与账号保存在 `/data/db/wangke.sqlite`，下载需登录且支持 Range。其他设备登录后自动同步。旧版浏览器资料可在云端设置中明确选择导入，原数据保留。纯静态部署仍采用本机存储；部署了 API 后统一经过登录门禁。
 
 一键部署可设置服务端上传上限（MiB），重复运行保留已有配置，只有显式传入该选项时才修改上限：
 
 ```bash
-./install.sh --data-dir "$HOME/.wangke-agent" --port 3000 --max-file-mb 50
+./install.sh --data-dir "$HOME/.wangke-agent" --port 3000 --max-file-mb 512
 ```
 
 也可在安装目录 `.env` 设置 `MAX_FILE_BYTES` 后通过管理命令 `update` 重建容器。安装脚本等待健康检查通过才报告成功。开发环境需要连接 API 时，使用 `WANGKE_API_PROXY=http://127.0.0.1:3000 npm run dev`，并将 API 的 `PUBLIC_ORIGIN` 设置为实际前端地址；未设置代理时保持纯前端本机存储模式。

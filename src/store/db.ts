@@ -1,4 +1,5 @@
 import Dexie, { type Table } from 'dexie';
+import { installCloudCache } from '../cloud/cache';
 import type { QuizData } from '../harness/quiz';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import type { WidgetState } from '../harness/widgetState';
@@ -506,8 +507,8 @@ class WangkeDB extends Dexie {
   studyDays!: Table<StudyDayRow, string>;
   comments!: Table<CommentRow, number>;
 
-  constructor() {
-    super('wangke');
+  constructor(name = 'wangke', cloudCache = false) {
+    super(name);
     this.version(1).stores({
       videos: 'id, createdAt',
       files: 'id',
@@ -601,7 +602,16 @@ class WangkeDB extends Dexie {
     this.version(15).stores({
       chats: '++id, videoId, sessionId, createdAt, [sessionId+createdAt+id]',
     });
+    this.version(16).stores({
+      courseFiles: 'id', _cloudOutbox: '++sequence, transaction', _cloudMeta: 'id', _cloudBlobs: 'hash',
+    });
+    this.version(17).stores({ preferences: 'id' });
+    if (cloudCache) installCloudCache(this);
   }
 }
 
-export const db = new WangkeDB();
+export let db = new WangkeDB();
+export function useCloudDatabase(owner: string) {
+  db.close();
+  db = new WangkeDB(`wangke-cloud-${owner}`, true);
+}

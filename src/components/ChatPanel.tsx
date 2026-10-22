@@ -469,6 +469,7 @@ export default function ChatPanel({
   const historyRequest = useRef(false);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
+  const localRequest = useRef(false);
   const [hasSubtitles, setHasSubtitles] = useState(isMaterial);
   const [indexReady, setIndexReady] = useState(false);
   /**
@@ -850,6 +851,35 @@ export default function ChatPanel({
     };
   }, [activeId]);
 
+  // A server-owned QA turn may originate on another device, or outlive this panel.
+  useEffect(() => {
+    let cancelled = false;
+    let previous = '';
+    const refresh = async (event: Event) => {
+      if (localRequest.current) return;
+      const { tasks, dataChanged } = (event as CustomEvent<{ tasks: import('../../packages/contracts/src/cloud').CloudTask[]; dataChanged: boolean }>).detail;
+      const list = await db.chatSessions.where('videoId').equals(videoId).sortBy('createdAt');
+      if (cancelled || localRequest.current) return;
+      setSessions(list);
+      if (activeId == null) return;
+      const task = tasks.find(t => t.kind === 'qa' && t.input.sessionId === activeId);
+      const running = task && ['queued', 'running', 'waiting_user'].includes(task.status);
+      if (!dataChanged && !task) return;
+      const signature = JSON.stringify([task?.id, task?.status, task?.progress]);
+      if (!dataChanged && signature === previous) return;
+      previous = signature;
+      const page = await readChatPage(activeId);
+      if (cancelled || localRequest.current) return;
+      const messages: ChatMsg[] = page.rows.map(row => ({ ...row, key: `h-${row.id}`, rowId: row.id, role: row.role === 'user' ? 'user' : 'ai' }));
+      if (running) messages.push({ key: `cloud-${task.id}`, role: 'ai', content: String(task.progress?.content ?? ''), reasoning: String(task.progress?.reasoning ?? ''), streaming: true });
+      else if (task && ['failed', 'interrupted', 'cancelled'].includes(task.status)) messages.push({ key: `cloud-${task.id}`, role: 'ai', content: task.error || '任务已停止，可重新提问。' });
+      setMsgs(messages); setHasOlder(page.hasOlder); setLoading(Boolean(running)); setLoadedSessionId(activeId);
+    };
+    const listener = (event: Event) => { void refresh(event).catch(() => setHistoryError(true)); };
+    window.addEventListener('cloud-tasks-changed', listener);
+    return () => { cancelled = true; window.removeEventListener('cloud-tasks-changed', listener); };
+  }, [activeId, videoId]);
+
   const loadOlder = useCallback(async () => {
     const first = msgs[0];
     if (activeId == null || !hasOlder || historyRequest.current || first?.rowId == null) return;
@@ -1039,6 +1069,7 @@ export default function ChatPanel({
     setRefs([]);
     refsRef.current = [];
     setLoading(true);
+    localRequest.current = true;
 
     const userKey = nextKey();
     const aiKey = nextKey();
@@ -1121,6 +1152,21 @@ export default function ChatPanel({
         { key: aiKey, role: 'ai', content: '', streaming: true, processStartedAt: Date.now() },
       ]);
 
+      const { remoteTasks } = await import('../cloud/state');
+      if (remoteTasks()) {
+        const { runQa } = await import('../harness/qaRunner');
+        const result = await runQa({ videoId, sessionId, text: (quoteBlock ? `${quoteBlock}\n\n` : '') + q,
+          displayText: displayContent, chatImages: userImages, videoName, skillIds,
+          materialKind, materialFormat, refsCount: curRefs.length, shotCount: curShots.length,
+          images: curShots.flatMap(s => [{ type: 'text' as const, text: shotTag(s) }, { type: 'image_url' as const, image_url: { url: s.dataUrl } }]),
+        }, { signal: abort.signal,
+          onDelta: text => { answer += text; updates.stream({ content: answer, processPhase: 'answering' }); },
+          onReasoning: text => { reasoning += text; updates.stream({ reasoning, processPhase: 'thinking' }); },
+          onRoundStart: () => { answer = ''; patchAi({ content: '' }); },
+        });
+        patchAi({ ...result, streaming: false, hint: undefined });
+        return;
+      }
       // 用户消息立即落库：tier 2 描述可能耗时数秒，避免期间关页丢失已上屏消息
       const userRowId = await db.chats.add({
         videoId,
@@ -1526,6 +1572,7 @@ export default function ChatPanel({
       }
     } finally {
       if (inflightAbort === abort) inflightAbort = null;
+      localRequest.current = false;
       setLoading(false);
     }
   };
@@ -1627,6 +1674,9 @@ export default function ChatPanel({
   /** 停止生成：断掉当前的 LLM 请求与 agent 循环（已流出的内容保留） */
   const stopGenerating = () => {
     inflightAbort?.abort();
+    void import('../cloud/state').then(async ({ remoteTasks }) => {
+      if (remoteTasks() && activeId != null) await (await import('../cloud/tasks')).cancelResourceTasks(`session:${activeId}`);
+    }).catch(error => toast.error((error as Error).message));
   };
 
   // 会话下拉：selectedKey 是字符串（HeroUI 的 Key），会话 id 是数字 —— 回传时转回数字。

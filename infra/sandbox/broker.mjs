@@ -8,11 +8,11 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const active = new Map();
 const remove = (name) => new Promise((resolve) => execFile('docker', ['rm', '-f', name], { timeout: 10_000 }, () => resolve()));
 
-export function sandboxArgs({ threadId, executionId, command }) {
+export function sandboxArgs({ threadId, executionId, command, network = false }) {
   return ['run', '--rm', '--name', `wangke-exec-${executionId}`, '--label', 'wangke.sandbox=true',
     '--init', '--user', '1000:1000', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
     '--read-only', '--pids-limit=128', '--memory=1g', '--memory-swap=1g', '--cpus=1',
-    '--network', process.env.SANDBOX_NETWORK || 'none', '--tmpfs', '/tmp:rw,nosuid,size=256m',
+    '--network', network ? process.env.SANDBOX_NETWORK || 'none' : 'none', '--tmpfs', '/tmp:rw,nosuid,size=256m',
     '--mount', `type=volume,source=wangke-workspace-${threadId},target=/workspace`,
     '--workdir', '/workspace', '--env', 'HOME=/workspace',
     process.env.SANDBOX_IMAGE || 'wangke-sandbox:0.1.0',

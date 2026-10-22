@@ -389,6 +389,13 @@ function normalizeResponse(data: any, protocol: ModelTarget['protocol']): ChatMe
  * `target` 同时给出端点与模型 id —— 两者不再分开传，调用方无法把它们配错。
  */
 export async function chatOnce(t: ModelTarget, opts: ChatOptions): Promise<ChatMessage> {
+  const { remoteTasks } = await import('../cloud/state');
+  if (remoteTasks()) {
+    const { runCloudTask } = await import('../cloud/tasks');
+    const { signal, ...options } = opts;
+    const providerId = t.baseUrl.split('/').filter(Boolean).pop();
+    return runCloudTask('modelOnce', crypto.randomUUID(), { providerId, model: t.model, options }, undefined, signal);
+  }
   const messages = wire(opts.messages);
   const res = await request(t, chatPath(t), {
     method: 'POST',

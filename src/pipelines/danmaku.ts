@@ -1,4 +1,6 @@
 import { chatOnce, textOf } from '../api/siliconflow';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { getSettings, targetOfSlot } from '../store/settings';
 import { db, type SegmentRow } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
@@ -88,6 +90,7 @@ export async function runDanmaku(
   videoId: string,
   onProgress: (p: DanmakuProgress) => void,
 ): Promise<number> {
+  if (remoteTasks()) return runCloudTask('danmaku', `course:${videoId}`, { videoId }, onProgress);
   const target = targetOfSlot(getSettings(), 'chat');
 
   const video = await db.videos.get(videoId);

@@ -5,6 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import { DatabaseStore } from '../apps/api/src/storage/database.ts';
 import { BotRunner } from '../apps/api/src/agent/runner.ts';
+import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-runtime-'));
 const store = new DatabaseStore(path.join(dir, 'db.sqlite'));
@@ -13,6 +14,9 @@ const now = new Date().toISOString();
 process.env.MODEL_API_KEY = 'test-only';
 store.db.prepare('INSERT INTO users(id,name,created_at) VALUES(?,?,?)').run(user, 'Test', now);
 store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(thread, user, 'bot', 'Test', now, now);
+const configuration = new CloudConfiguration(store, path.join(dir, 'config'));
+const defaults = configuration.get(user, true);
+configuration.save(user, { ...defaults, policy: { ...defaults.policy, shell: 'allow' } });
 const createRun = () => {
   const id = crypto.randomUUID();
   store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,?,?,?)').run(id, thread, 'bot', 'queued', now);
@@ -29,6 +33,7 @@ try {
   // Multiple model turns, tool result in context, persisted wait across runtime restart.
   const id = createRun(); let commands = 0; let calls = 0;
   runner = new BotRunner(store, {
+    configuration,
     sandbox: async (req) => { commands++; assert.equal(req.threadId, thread); return { stdout: '42', stderr: '', exitCode: 0 }; },
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body); calls++;
@@ -64,6 +69,7 @@ try {
   // Cancellation propagates to the running sandbox and does not complete the run.
   const cancelled = createRun(); let started = false; let aborted = false;
   runner = new BotRunner(store, {
+    configuration,
     fetch: async () => response('shell', { command: 'sleep 60' }),
     sandbox: async (_req, signal) => new Promise((_resolve, reject) => {
       started = true; signal.addEventListener('abort', () => { aborted = true; reject(new Error('aborted')); }, { once: true });

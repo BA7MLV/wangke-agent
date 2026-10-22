@@ -1,4 +1,4 @@
-export type SandboxRequest = { threadId: string; executionId: string; command: string };
+export type SandboxRequest = { threadId: string; executionId: string; command: string; network?: boolean };
 export type SandboxResult = { stdout: string; stderr: string; exitCode: number };
 export type SandboxExecutor = (request: SandboxRequest, signal: AbortSignal) => Promise<SandboxResult>;
 

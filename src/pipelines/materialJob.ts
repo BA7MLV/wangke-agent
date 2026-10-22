@@ -1,4 +1,6 @@
 import { useJobStore } from '../store/jobs';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { formatCaughtError } from '../utils/errorText';
 import { parseMaterial, type MaterialFormat } from '../materials/parse';
 
@@ -30,6 +32,7 @@ export async function startMaterialJob(
   materialId: string,
   format: MaterialFormat,
 ): Promise<MaterialJobResult> {
+  if (remoteTasks()) return runCloudTask('material', `course:${materialId}`, { videoId: materialId, format }, p => useJobStore.getState().upsert(materialId, p));
   if (running.has(materialId)) return { parsed: 0, scanned: false, empty: false };
   running.add(materialId);
   const { upsert } = useJobStore.getState();

@@ -2,7 +2,7 @@ import { serverClient, ServerApiError } from '../api/serverClient';
 import { db } from '../store/db';
 import { MAX_ATTACHMENT_TEXT, type ChatAttachment } from './attachments';
 
-const LOCAL_MAX_BYTES = 50 * 1024 * 1024;
+const LOCAL_MAX_BYTES = 512 * 1024 * 1024;
 
 async function extract(file: File): Promise<Pick<ChatAttachment, 'text' | 'dataUrl' | 'truncated'>> {
   if (/^image\/(png|jpeg|webp|gif)$/.test(file.type) || /\.(png|jpe?g|webp|gif)$/i.test(file.name)) {
@@ -48,7 +48,7 @@ async function extract(file: File): Promise<Pick<ChatAttachment, 'text' | 'dataU
 
 export async function prepareAttachment(id: string, file: File, onPhase: (phase: string) => void): Promise<ChatAttachment> {
   if (!file.size) throw new Error('文件为空，请选择有内容的文件');
-  if (file.size > LOCAL_MAX_BYTES) throw new Error('单个聊天附件不能超过 50 MB');
+  if (file.size > LOCAL_MAX_BYTES) throw new Error('单个聊天附件不能超过 512 MiB');
   // A static-only deployment explicitly returns 404/HTML. Network/server failures never silently downgrade storage.
   const response = await fetch('/api/v1/files/config', { credentials: 'include' });
   const localOnly = response.status === 404 || (response.ok && !response.headers.get('content-type')?.includes('application/json'));

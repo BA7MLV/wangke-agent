@@ -1,0 +1,1 @@
+Provider marks are sourced from https://models.dev/logos/ and identify their respective providers. All trademarks belong to their respective owners. These monochrome copies are bundled locally for offline display and theme support.

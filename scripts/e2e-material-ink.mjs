@@ -309,7 +309,7 @@ try {
 
   await byId('study-assistant-toggle').click();
   await byId('chat-input').locator('textarea').fill('这段内容还没发送');
-  await byId('study-assistant-toggle').click();
+  await byId('study-assistant-close').click();
   await byId('study-assistant-toggle').click();
   assert.equal(await byId('chat-input').locator('textarea').inputValue(), '这段内容还没发送', '收起保留草稿');
   for (const viewport of [{ width: 768, height: 1024 }, { width: 390, height: 844 }, { width: 844, height: 390 }]) {
@@ -324,7 +324,7 @@ try {
     assert.ok(input.y >= panel.y && input.y + input.height <= panel.y + panel.height + 1, '输入框没有被面板裁掉');
   }
   await page.setViewportSize({ width: 1024, height: 900 });
-  await byId('study-assistant-toggle').click();
+  await byId('study-assistant-close').click();
   const text = page.locator('.mr-page .textLayer span').first();
   await text.waitFor();
   await text.evaluate((e) => { const range = document.createRange(); range.selectNodeContents(e); const s = getSelection(); s.removeAllRanges(); s.addRange(range); document.dispatchEvent(new Event('selectionchange')); });

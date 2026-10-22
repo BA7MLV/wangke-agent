@@ -9,6 +9,8 @@
  * 进度写在 `store/jobs.ts` 里，因此切视频、回资料库都不会丢。
  */
 import { db } from '../store/db';
+import { remoteTasks } from '../cloud/state';
+import { cancelResourceTasks } from '../cloud/tasks';
 import { getVideoFile } from '../store/fileStore';
 import { isJobActive, useJobStore } from '../store/jobs';
 import { runTranscription, type TranscribeProgress } from './transcribe';
@@ -35,12 +37,19 @@ export function startTranscription(videoId: string, opts: { resume?: boolean } =
     error: undefined,
     resume: !!opts.resume,
   });
+  if (remoteTasks()) {
+    // Submit every requested job immediately; the server owns concurrency and queue
+    // lifetime, including videos behind the currently running transcription.
+    void runOne(videoId);
+    return;
+  }
   state.enqueue(videoId);
   void pump();
 }
 
 /** 取消：抽音频/VAD 阶段直接终止 Worker，ASR 阶段让在途的几个请求跑完就停 */
 export function cancelTranscription(videoId: string): void {
+  if (remoteTasks()) { void cancelResourceTasks(`course:${videoId}`).catch(e => toast.error(e.message)); markCanceled(videoId); return; }
   const job = useJobStore.getState().jobs[videoId];
   if (!isJobActive(job)) return;
   const signal = signals.get(videoId);
@@ -142,6 +151,7 @@ async function settleCanceled(videoId: string): Promise<void> {
  * 不再额外建任务表。流水线本身支持断点续做（已完成段跳过），无需其它状态。
  */
 export async function resumePendingTranscriptions(): Promise<void> {
+  if (remoteTasks()) return;
   // status 不是索引（videos 只索引了 id, createdAt），只能全表过滤；视频量级无所谓
   const rows = await db.videos.filter((v) => v.status === 'transcribing').toArray();
   let resumed = 0;

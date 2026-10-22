@@ -10,13 +10,13 @@ From this source checkout, with Docker Engine and Compose running:
 ./install.sh --agent
 ```
 
-Set `MODEL_API_KEY`, `MODEL_BASE_URL`, and `MODEL_NAME` in `~/.wangke-agent/.env`, then use the installed management command to **recreate** containers after configuration changes:
+Open the installer's `/#/setup` URL to initialize the administrator, save model services and configure permissions. Model configuration changes apply without rebuilding containers. Environment settings require container recreation:
 
 ```bash
 ~/.wangke-agent/bin/wangke-agent update
 ```
 
-The installer builds the execution image, starts the API and sandbox broker, and preserves the broker configuration for subsequent installations and management commands. Initialize the administrator at `/bot` using the installation secret.
+The installer builds the execution image, starts the API and sandbox broker, and preserves the broker configuration for subsequent installations and management commands. Use `--public-url https://your-domain` for a public HTTPS deployment and Passkeys. See [Personal Cloud](personal-cloud.md).
 
 Manual Compose deployment:
 
@@ -40,9 +40,9 @@ Start the Node API with the same `SANDBOX_TOKEN`, `SANDBOX_URL=http://127.0.0.1:
 
 - Each thread has its own Docker named volume, `wangke-workspace-<thread-id>`, mounted at `/workspace`. This is also where agents can keep notes, scripts, Python virtual environments and Node dependencies.
 - Each shell step runs in a fresh non-root container with Node, Python, bash, git and curl. The root filesystem is read-only; only its workspace and temporary directory are writable.
-- Commands have broad freedom inside that workspace. There is no per-command approval requirement. The model can explicitly request approval when appropriate.
+- Commands require approval by default. Approvals bind the exact command and network setting and are consumed once. Cloud settings can deny commands, allow them, or trust selected Bot profiles for long-term authorization. Revoking trust takes effect before the next command.
 - Only the trusted broker has the host Docker socket. The API and execution containers never receive it. The execution container receives neither model credentials nor application database/configuration mounts.
-- Default network is `none`. Set `SANDBOX_NETWORK=bridge` to allow downloads and network tools, including package installation into the workspace. Bridge networking also permits reachable LAN services; it is not an internet-only egress policy.
+- Default network is `none`. Downloads require both `SANDBOX_NETWORK=bridge` in deployment and the cloud policy's network switch to allow access. Bridge networking also permits reachable LAN services; it is not an internet-only egress policy.
 - Each command is limited to 120 seconds, 1 CPU, 1 GiB RAM, 128 processes and bounded output. Detached child processes die with the step container. Use persisted `wait` and subsequent steps for recurring work.
 - Run a single API/runtime instance per SQLite database. Tasks in the same thread execute serially. Restart recovery does not blindly replay interrupted shell steps: their side effects may already have occurred, so the model receives an interruption result and can inspect its workspace.
 - The frontend's “停止当前线程任务” cancels running and scheduled tasks for that thread. `/api/v1/threads/:id/runs` exposes status, steps, wake time and error code.

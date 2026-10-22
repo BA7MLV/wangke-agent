@@ -8,7 +8,7 @@ import { useLibraryRevision } from '../pipelines/folderPlan';
 /** Ordinary Markdown persistence shared by editor and tools; no notebook schema. */
 export async function saveMarkdownMaterial(id: string, text: string, expected?: string, name?: string,
   creation?: { folderId?: number; createOnly?: boolean }) {
-  const result = await db.transaction('rw', db.files, db.videos, db.materialBlocks, async () => {
+  const result = await db.transaction('rw', [db.files, db.videos, db.materialBlocks, db.table('courseFiles')], async () => {
     const row = await db.videos.get(id);
     if (row && (row.kind !== 'material' || row.materialFormat !== 'md')) throw new Error('只能修改 Markdown 资料。');
     const file = await Dexie.waitFor(getMaterialFile(id));

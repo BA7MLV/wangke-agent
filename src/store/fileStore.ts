@@ -1,4 +1,6 @@
 import { db } from './db';
+import { cloud } from '../cloud/state';
+import { flushCloud } from '../cloud/sync';
 
 /**
  * 课程文件存储层（视频 + 阅读材料共用）。
@@ -88,6 +90,21 @@ async function saveFile(
   onProgress?: (ratio: number) => void,
   dirName: string = DIR_VIDEOS,
 ): Promise<void> {
+  if (cloud.enabled) {
+    const response = await fetch('/api/v1/files', { method: 'POST', credentials: 'include', headers: {
+      'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(id.slice(0, 255)),
+      'x-file-mime': blob.type || 'application/octet-stream',
+    }, body: blob });
+    if (!response.ok) throw new Error(response.status === 413 ? '文件超过服务器上传上限（默认 512 MiB）' : `上传失败（${response.status}）`);
+    const file = await response.json();
+    await db.transaction('rw', db.table('courseFiles'), db.files, async () => {
+      await db.table('courseFiles').put({ id, fileId: file.id, mimeType: blob.type, size: blob.size, directory: dirName });
+      await db.files.delete(id);
+    });
+    await flushCloud();
+    onProgress?.(1);
+    return;
+  }
   const dir = await getDir(dirName);
   if (!dir) {
     await db.files.put({ id, blob });
@@ -169,6 +186,18 @@ export async function saveCourseFile(
  * 不在读取时迁移：读取不应触发大文件复制或与保存、删除竞争。
  */
 export async function getCourseFile(id: string, dirName: string = DIR_VIDEOS): Promise<Blob | null> {
+  if (cloud.enabled) {
+    // Markdown edits are committed atomically with their index in files; a newer
+    // editable copy takes precedence over the originally uploaded course file.
+    const edited = await db.files.get(id);
+    if (edited) return edited.blob;
+    const file = await db.table('courseFiles').get(id);
+    if (!file) return null;
+    const response = await fetch(`/api/v1/files/${encodeURIComponent(file.fileId)}`, { credentials: 'include' });
+    if (response.status === 404) return null;
+    if (!response.ok) throw new Error(`读取服务器文件失败（${response.status}）`);
+    return new Blob([await response.blob()], { type: file.mimeType });
+  }
   const row = await db.files.get(id);
   if (row) return row.blob;
   const dir = await getDir(dirName);
@@ -185,6 +214,12 @@ export async function getCourseFile(id: string, dirName: string = DIR_VIDEOS): P
 
 /** 删除课程文件（OPFS 与 IndexedDB 旧数据都清） */
 export async function deleteCourseFile(id: string, dirName: string = DIR_VIDEOS): Promise<void> {
+  if (cloud.enabled) {
+    await db.table('courseFiles').delete(id);
+    await db.files.delete(id);
+    await flushCloud();
+    return;
+  }
   const dir = await getDir(dirName);
   if (dir) {
     try {

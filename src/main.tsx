@@ -1,6 +1,8 @@
 import React from 'react';
 import ReactDOM from 'react-dom/client';
-import App from './App';
+import CloudGate from './cloud/Gate';
+import { serverClient } from './api/serverClient';
+import { startCloud, stopCloud } from './cloud/sync';
 import { useSettings } from './store/settings';
 import { applyAccentColor, applyFontScale, applyTheme } from './ui/theme';
 // MD3 的参考字体是 Roboto。只自托管**拉丁/数字子集**（latin，约 15KB/字重，离线可用）：
@@ -47,6 +49,7 @@ if ('scrollRestoration' in history) history.scrollRestoration = 'manual';
 const root = ReactDOM.createRoot(document.getElementById('root')!);
 
 /** 同步主题类与 HeroUI 强调色令牌，实际配色由 CSS 变量控制。 */
+let bootView: React.ReactNode;
 function Root() {
   const theme = useSettings((s) => s.theme);
   const accentColor = useSettings((s) => s.accentColor);
@@ -60,7 +63,7 @@ function Root() {
   React.useEffect(() => {
     applyFontScale(fontScale);
   }, [fontScale]);
-  return <App />;
+  return bootView;
 }
 
 function render() {
@@ -72,4 +75,26 @@ function render() {
 }
 
 // HeroUI 的组件是纯 React 实现（无 Web Components 注册等待），直接渲染首帧。
-render();
+async function boot() {
+  try {
+    const response = await fetch('/api/v1/cloud/status', { cache: 'no-store' });
+    const status = await response.json().catch(() => null);
+    if (!status?.cloud) {
+      if (response.status >= 500) throw new Error('服务器暂时不可用，请刷新重试');
+      const { default: App } = await import('./App'); bootView = <App />;
+    } else {
+      const [bootstrap, session] = await Promise.all([serverClient.bootstrapStatus(), serverClient.session()]);
+      if (session.authenticated && session.user) {
+        const worker = new URLSearchParams(location.search).has('cloud-worker');
+        await startCloud(session.user.id, worker);
+        if (worker) { await import('./cloud/worker'); return; }
+      }
+      window.addEventListener('cloud-session-expired', stopCloud);
+      bootView = <CloudGate initialized={bootstrap.initialized} authenticated={session.authenticated} />;
+    }
+  } catch (error) {
+    bootView = <CloudGate initialized authenticated={false} error={(error as Error).message} />;
+  }
+  render();
+}
+void boot();

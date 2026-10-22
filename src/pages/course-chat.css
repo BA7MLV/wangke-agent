@@ -262,23 +262,18 @@
   font-size: 0.8125rem;
 }
 
-/* 展开的耗时标题跟顶栏菜单图标同轴：20px 顶栏内边距 + (34px 按钮 - 16px 图标) / 2。
-   用消息容器的宽度计算列缩进，避免按钮自身的百分比参照导致宽屏错位。
-   不改正文列；标题顶部也不再由 40px 点击区域的垂直居中额外撑开。 */
+/* 展开的耗时标题留在正文列里，与思考正文同一条左轴。
+   曾经把它横向撑到顶栏菜单图标（29px）上：宽屏下消息列居中后留白很大，
+   标题会比正文左出几百像素，看起来像「飘到页面最左边」。
+   只保留纵向吸顶，不再改动宽度和左边距。 */
 .course-chat__messages .reasoning-chain[data-mode='expanded'] {
   /* sticky 包含消息区的 padding 起点，减掉阅读间距后恰好落在顶栏下沿。 */
   --reasoning-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
-  width: calc(100% + var(--course-chat-message-inset) - 29px);
-  margin-left: calc(29px - var(--course-chat-message-inset));
 }
 
 .course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
   align-items: center;
   padding-top: 0;
-}
-
-.course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__content {
-  margin-left: calc(var(--course-chat-message-inset) - 29px);
 }
 
 /* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，
@@ -382,9 +377,19 @@
   text-overflow: ellipsis;
 }
 
-.course-chat__starter > svg:last-child {
+.course-chat__starter > .t-learn-chevron {
   flex: none;
   color: color-mix(in oklch, var(--muted) 70%, transparent);
+}
+
+.course-chat__starter[data-focus-visible='true'] .t-learn-chevron {
+  transform: translateX(var(--learn-shift));
+  transition-duration: var(--learn-in);
+}
+
+@media (hover: none) {
+  .course-chat__starter.t-learn:hover .t-learn-chevron,
+  .course-chat__starter.t-learn:hover .t-learn-arm { transform: none; }
 }
 
 .course-chat__import {

@@ -44,6 +44,11 @@ export interface AppliedPlanResult {
  *    课程没进去」的空壳，而用户看不出是哪一步坏了。
  */
 export async function applyFolderPlan(plan: FolderPlan): Promise<AppliedPlanResult> {
+  const { withToolPermission } = await import('../cloud/state');
+  return withToolPermission('write', { tool: 'apply_folder_plan', plan }, () => applyApprovedFolderPlan(plan));
+}
+
+async function applyApprovedFolderPlan(plan: FolderPlan): Promise<AppliedPlanResult> {
   const result: AppliedPlanResult = { createdFolders: [], moved: 0, missing: [], perFolder: [] };
 
   await db.transaction('rw', [db.folders, db.videos], async () => {

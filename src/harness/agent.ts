@@ -125,6 +125,8 @@ export async function runAgentLoop(
   cb: AgentCallbacks = {},
   maxRounds = 6,
 ): Promise<ChatMessage[]> {
+  const { cloud, withToolPermission } = await import('../cloud/state');
+  if (cloud.worker) maxRounds = Math.min(maxRounds, cloud.maxSteps);
   const settings = getSettings();
   const target = cb.target ?? targetOfSlot(settings, 'chat');
   const { catalogId, model } = target;
@@ -235,7 +237,15 @@ export async function runAgentLoop(
         // 挂起点落库：在 `executeTool` 之前把当前 `out` 交出去（见 onCheckpoint 注释）
         cb.onCheckpoint?.(out);
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
-        result = await executeTool(call.function.name, args);
+        const name = call.function.name;
+        if (['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
+          result = await executeTool(name, args);
+        } else {
+          const reads = ['read', 'grep', 'search_transcript', 'get_transcript_range', 'search_material', 'get_material_range', 'use_skill', 'read_skill_reference', 'list_frames', 'get_learning_overview', 'list_courses', 'search_course_library', 'get_course_details', 'list_folders'];
+          if (cloud.worker && !reads.includes(name) && !['edit', 'edit_markdown'].includes(name)) throw new Error(`未注册权限的工具：${name}`);
+          const capability = ['edit', 'edit_markdown'].includes(name) ? 'write' : 'read';
+          result = await withToolPermission(capability, { tool: name, arguments: args }, () => executeTool(name, args));
+        }
       } catch (e) {
         result = `工具执行失败：${e instanceof Error ? e.message : String(e)}`;
       }

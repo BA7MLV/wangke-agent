@@ -1,4 +1,6 @@
 import { transcribe } from '../api/siliconflow';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { getSettings, targetOfSlot } from '../store/settings';
 import { db, type SegmentRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
@@ -32,6 +34,7 @@ export async function runTranscription(
   onProgress: (p: TranscribeProgress) => void,
   opts: TranscribeOptions = {},
 ): Promise<void> {
+  if (remoteTasks()) return runCloudTask('transcribe', `course:${videoId}`, { videoId }, onProgress);
   const settings = getSettings();
   // 供应商与凭据都在这里一次性解析完：ASR 可以配在跟文本模型完全不同的一家
   const target = targetOfSlot(settings, 'asr');

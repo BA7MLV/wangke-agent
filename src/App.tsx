@@ -17,6 +17,7 @@ import WidgetPreview from './pages/WidgetPreview';
 import SettingsModal from './components/SettingsModal';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
+import CloudActivity from './cloud/Activity';
 
 
 export default function App() {
@@ -71,6 +72,7 @@ export default function App() {
           完整理由见 components/live-share-bar.css 顶部注释。 */}
       <div className="live-share-host">
         <LiveShareBar />
+        <CloudActivity />
         <FeedbackHost />
         {/* 设置是全局弹窗而不是路由：挂在 App 根部一次，任何页面都能唤起，
             且唤起时不会把用户当前位置顶掉（见 components/SettingsModal.tsx）。 */}

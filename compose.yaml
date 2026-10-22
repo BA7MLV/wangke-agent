@@ -6,6 +6,8 @@ services:
       dockerfile: Dockerfile
     image: "${WANGKE_IMAGE:-wangke-agent:0.1.0}"
     restart: unless-stopped
+    init: true
+    shm_size: 1gb
     environment:
       APP_VERSION: "${APP_VERSION:-0.1.0}"
       PORT: "3000"
@@ -22,14 +24,15 @@ services:
       MODEL_API_KEY: "${MODEL_API_KEY:-}"
       MODEL_NAME: "${MODEL_NAME:-gpt-4o-mini}"
       MODEL_TIMEOUT_MS: "${MODEL_TIMEOUT_MS:-30000}"
-      MAX_FILE_BYTES: "${MAX_FILE_BYTES:-52428800}"
+      MAX_FILE_BYTES: "${MAX_FILE_BYTES:-536870912}"
+      CLOUD_CONCURRENCY: "${CLOUD_CONCURRENCY:-2}"
     ports:
       - "${WANGKE_BIND_HOST:-0.0.0.0}:${PORT:-3000}:3000"
     volumes:
       - "${WANGKE_HOST_DATA_DIR:-./data}:/data"
     read_only: true
     tmpfs:
-      - /tmp:size=64m
+      - /tmp:size=2g
     security_opt:
       - no-new-privileges:true
     healthcheck:

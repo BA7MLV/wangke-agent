@@ -14,6 +14,8 @@ import ShortcutsModule from './settings/ShortcutsModule';
 import StudyModule from './settings/StudyModule';
 import DataModule from './settings/DataModule';
 import SkillsModule from './settings/SkillsModule';
+import CloudSettings from '../cloud/Settings';
+import { cloud } from '../cloud/state';
 
 /**
  * 设置模块登记表：桌面左侧导航，移动端顶部横向模块栏，只渲染当前模块。
@@ -80,7 +82,7 @@ export default function SettingsModal() {
   }, [open, module]);
 
   const active = MODULES.find((m) => m.key === localModule) ?? MODULES[0];
-  const ActiveContent = active.Component;
+  const ActiveContent = cloud.enabled && (localModule === 'models' || localModule === 'data') ? CloudSettings : active.Component;
 
   if (mobile) {
     return (

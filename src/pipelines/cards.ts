@@ -1,4 +1,6 @@
 import { chatOnce, textOf } from '../api/siliconflow';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { getSettings, targetOfSlot } from '../store/settings';
 import { db, type SegmentRow } from '../store/db';
 import { PROMPTS } from '../harness/prompts';
@@ -66,6 +68,7 @@ export async function runCards(
   videoId: string,
   onProgress: (p: CardsProgress) => void,
 ): Promise<number> {
+  if (remoteTasks()) return runCloudTask('cards', `course:${videoId}`, { videoId }, onProgress);
   const target = targetOfSlot(getSettings(), 'chat');
 
   const video = await db.videos.get(videoId);

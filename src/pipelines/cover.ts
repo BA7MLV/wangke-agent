@@ -171,6 +171,8 @@ async function extractColor(source: Blob): Promise<string | undefined> {
  * @returns 是否真的写入了新封面（调用方据此决定要不要通知界面刷新）
  */
 export async function ensureCover(id: string, opts: { force?: boolean } = {}): Promise<boolean> {
+  const { remoteTasks } = await import('../cloud/state');
+  if (remoteTasks()) return (await import('../cloud/tasks')).runCloudTask('cover', `course:${id}`, { videoId: id, options: opts });
   const row = await db.videos.get(id);
   if (!row) return false;
 

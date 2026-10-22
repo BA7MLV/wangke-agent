@@ -1,4 +1,7 @@
 import { create } from 'zustand';
+import { remoteTasks } from '../cloud/state';
+import { cancelResourceTasks, commandChatTask, submitCloudTask } from '../cloud/tasks';
+import type { CloudTask } from '../../packages/contracts/src/cloud';
 import { useChatNotifications } from './chatNotifications';
 import { readChatPage } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
@@ -688,6 +691,27 @@ export function reflectArtifactEdit(row: ChatRow): void {
     ? { ...message, content: row.content, widget: row.widget, widgets: row.widgets } : message) });
 }
 
+/** Reconcile server-owned turns on every device, including reconnects. */
+export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false) {
+  if (!remoteTasks()) return;
+  const active = tasks.filter(t => t.kind === 'chat' && ['queued', 'running', 'waiting_user'].includes(t.status));
+  const runningIds = [...new Set(active.map(t => Number(t.input.sessionId)))];
+  useCourseChat.setState({ runningIds, sessions: await unarchivedSessions() });
+  for (const task of active) {
+    const id = Number(task.input.sessionId);
+    const view = task.progress?.view as Partial<SessionView> | undefined;
+    if (view) writeView(id, { ...view, loaded: true, loading: true });
+    else writeView(id, { loading: true });
+  }
+  const id = useCourseChat.getState().activeId;
+  if (id != null && !runningIds.includes(id) && (dataChanged || useCourseChat.getState().loading)) {
+    parked.delete(id);
+    useCourseChat.setState({ loaded: false, loading: false });
+    await useCourseChat.getState().loadSession(id);
+  }
+  if (dataChanged) for (const key of parked.keys()) if (!runningIds.includes(key)) parked.delete(key);
+}
+
 /** 把当前顶层的活动视图存回它那条会话（切走前调）。草稿态不 park：它每次由「新会话」重开 */
 function parkActive(): void {
   const state = useCourseChat.getState();
@@ -1097,6 +1121,27 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      */
     if (!view.loaded) return;
     if (!resume && !text) return;
+
+    if (remoteTasks()) {
+      if (view.pendingAsk && !resume && await commandChatTask(state.activeId, 'answerAsk', text)) { set({ draft: '' }); return; }
+      let id = resume?.sessionId ?? (key || null);
+      try {
+        if (id == null) {
+          writeView(0, { loading: true });
+          const row = await newSessionRow(view.skillIds, view.contextCourses.map(c => c.id));
+          id = row.id!;
+          set(s => ({ sessions: [...s.sessions, row], activeId: id, loaded: true }));
+        }
+        if ((mode ?? state.sendMode) === 'steer') await cancelResourceTasks(`session:${id}`);
+        await submitCloudTask('chat', `session:${id}`, { sessionId: id, text, mode, resume, attachments, modelRef: getSettings().llmModel });
+        consumeAttachments();
+        if (isActive) set({ draft: '' });
+        writeView(id, { loading: true }); markRunning(id, true);
+      } catch (e) {
+        writeView(id ?? 0, { loading: false, historyError: (e as Error).message });
+      }
+      return;
+    }
 
     /**
      * 有提问卡悬着时，输入框里的文字是**对这次提问的回答**，不是新一轮提问。
@@ -1948,6 +1993,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
   // ── 停止生成 ──────────────────────────────────────────────────────────────
   stop: () => {
+    if (remoteTasks()) { void cancelResourceTasks(`session:${activeKey()}`); return; }
     // 只断**当前在看的那条会话**的 LLM 请求与循环；悬着的提问/方案由 releasePending 收掉
     // （`finally` 里统一做）。后台另有一条在跑时，它不受影响 —— 这是「真并发」的应有之义。
     const turn = inflight.get(activeKey());
@@ -2052,6 +2098,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
     // ① 中断过的回答 → **续写**：不碰历史，只把没写完的部分补完
     if (message.interrupted) {
+      if (remoteTasks()) { await submitCloudTask('chat', `session:${sessionId}`, { sessionId, action: 'continue', messageKey: key, text: '' }); return; }
       await continueInterrupted(key, message, sessionId);
       return;
     }
@@ -2154,6 +2201,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
   // ── 提问卡作答 ────────────────────────────────────────────────────────────
   answerAsk: async (option) => {
+    if (remoteTasks() && await commandChatTask(get().activeId, 'answerAsk', option)) return;
     const { pendingAsk, activeId } = get();
     /**
      * `activeId == null`（草稿态）在这里**不可能**发生：提问卡只能由 agent 循环产生，
@@ -2208,6 +2256,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
   // ── 目录整理方案 ──────────────────────────────────────────────────────────
   confirmPlan: async () => {
+    if (remoteTasks() && await commandChatTask(get().activeId, 'confirmPlan')) return { ok: true };
     const { pendingPlan } = get();
     if (!pendingPlan) return { ok: false };
     const plan = get().messages.find((m) => m.key === pendingPlan.messageKey)?.folderPlan;
@@ -2283,6 +2332,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   },
 
   cancelPlan: async () => {
+    if (remoteTasks() && await commandChatTask(get().activeId, 'cancelPlan')) return;
     const { pendingPlan } = get();
     if (!pendingPlan) return;
     set((s) => ({

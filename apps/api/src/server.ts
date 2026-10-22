@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import helmet from '@fastify/helmet';
 import fastifyStatic from '@fastify/static';
@@ -10,6 +11,11 @@ import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '
 import { DatabaseStore } from './storage/database.js';
 import { BootstrapRepository } from './storage/bootstrapRepository.js';
 import { BotRunner } from './agent/runner.js';
+import { CloudRecords } from './cloud/records.js';
+import { CloudConfiguration } from './cloud/config.js';
+import { receiveFile, byteRange } from './cloud/files.js';
+import { registerCloudRoutes } from './cloud/routes.js';
+import { workerIdentity } from './cloud/tasks.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -58,17 +64,20 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 15 * 60 * 1000);
   const sessionTtlMs = Number(process.env.SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
   const filesDir = process.env.FILES_DIR ?? path.join(defaultDataDir, 'files');
-  const configuredMaxFileBytes = Number(process.env.MAX_FILE_BYTES ?? 50 * 1024 * 1024);
-  const maxFileBytes = Number.isFinite(configuredMaxFileBytes) ? Math.max(1, Math.min(512 * 1024 * 1024, Math.floor(configuredMaxFileBytes))) : 50 * 1024 * 1024;
+  const configuredMaxFileBytes = Number(process.env.MAX_FILE_BYTES ?? 512 * 1024 * 1024);
+  const maxFileBytes = Number.isFinite(configuredMaxFileBytes) ? Math.max(1, Math.min(512 * 1024 * 1024, Math.floor(configuredMaxFileBytes))) : 512 * 1024 * 1024;
   fs.mkdirSync(filesDir, { recursive: true });
   const store = new DatabaseStore(dbPath);
+  const cloudRecords = new CloudRecords(store);
+  const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
-  const runner = new BotRunner(store, { fetch: options.fetch });
+  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig });
   // Never recreate a bootstrap secret after the database has been initialized.
   const bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
-  const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: maxFileBytes });
-  app.addContentTypeParser('application/octet-stream', { parseAs: 'buffer' }, (_request, body, done) => done(null, body));
+  const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 16 * 1024 * 1024 });
+  app.addContentTypeParser('application/octet-stream', (_request, stream, done) => done(null, stream));
+  app.addContentTypeParser(/^multipart\/form-data/, (_request, stream, done) => done(null, stream));
   runner.start();
   const attempts = new Map<string, { count: number; until: number; seen: number }>();
   const dummyHash = argon2.hash('unusable-login-dummy', { type: argon2.argon2id });
@@ -77,11 +86,13 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const rpID = process.env.WEBAUTHN_RP_ID;
   const rpName = process.env.WEBAUTHN_RP_NAME;
 
-  app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: false });
+  app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: { policy: 'require-corp' } });
   const staticDir = options.staticDir ?? path.resolve(process.cwd(), 'dist');
   if (fs.existsSync(staticDir)) app.register(fastifyStatic, { root: staticDir, wildcard: false });
 
   function session(request: FastifyRequest) {
+    const worker = workerIdentity(request);
+    if (worker) return store.db.prepare('SELECT id,name FROM users WHERE id=?').get(worker.id);
     const cookieToken = parseCookies(request.headers.cookie).wangke_session;
     if (cookieToken) {
       const cookieSession = store.db.prepare(`SELECT s.id AS session_id, u.id, u.name FROM sessions s JOIN users u ON u.id=s.user_id WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>?`).get(hashToken(cookieToken), now()) as any;
@@ -99,6 +110,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     return user;
   }
   function checkOrigin(request: FastifyRequest, reply: FastifyReply) {
+    if (workerIdentity(request)) return true;
     const origin = request.headers.origin;
     if (!origin) return true;
     const allowed = expectedOrigin ?? `${request.protocol}://${request.headers.host}`;
@@ -114,7 +126,26 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const bad = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
-  app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0' }));
+   const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
+  app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true }));
+  app.addHook('onRequest', async (request, reply) => {
+    const worker = workerIdentity(request);
+    if (worker && request.url.startsWith('/api/')) {
+      const url = request.url.split('?')[0];
+      const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status'].includes(url) || /^\/api\/v1\/files\/[^/]+$/.test(url));
+      const write = request.method === 'POST' && (url === '/api/v1/cloud/records' || url === '/api/v1/files' || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+      if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
+      const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
+      if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });
+    }
+    if (request.url.split('?')[0] === '/api/v1/files' && request.method === 'POST') {
+      if (!checkOrigin(request, reply)) return;
+      if (!requireAuth(request, reply)) return;
+      const size = request.headers['content-length'];
+      if (size && (!Number.isSafeInteger(Number(size)) || Number(size) > maxFileBytes)) return reply.code(413).send({ error: 'file_too_large_or_invalid' });
+    }
+    if (request.url.startsWith('/api/')) reply.header('cache-control', 'no-store');
+  });
    app.get('/api/v1/bootstrap/status', async () => { const initialized = repo.isInitialized(); const available = !initialized && Date.now() < bootstrap.createdAt + bootstrapTtlMs; return { initialized, bootstrapAvailable: available, expiresAt: available ? new Date(bootstrap.createdAt + bootstrapTtlMs).toISOString() : null }; });
   app.post<{ Body: BootstrapInitializeRequest }>('/api/v1/bootstrap/initialize', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -198,7 +229,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user || !webauthnConfigured(reply)) return;
     store.db.prepare("DELETE FROM webauthn_challenges WHERE (used_at IS NOT NULL OR expires_at<=?) AND (user_id=? OR user_id IS NULL)").run(now(), user.id);
     const credentials = store.db.prepare('SELECT id FROM passkey_credentials WHERE user_id=?').all(user.id) as any[];
-    const options = await generateRegistrationOptions({ rpName: rpName!, rpID: rpID!, userName: user.name, userID: user.id, attestationType: 'none', excludeCredentials: credentials.map((x) => ({ id: x.id })) });
+      const options = await generateRegistrationOptions({ rpName: rpName!, rpID: rpID!, userName: user.name, userID: new TextEncoder().encode(user.id), attestationType: 'none', authenticatorSelection: { residentKey: 'required', userVerification: 'required' }, excludeCredentials: credentials.map((x) => ({ id: x.id })) });
     store.db.prepare('INSERT INTO webauthn_challenges(id,user_id,kind,challenge,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), user.id, 'registration', options.challenge, now(), new Date(Date.now() + 120000).toISOString());
     return options;
   });
@@ -306,34 +337,16 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.post('/api/v1/files', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
-    const body = Buffer.isBuffer(request.body) ? request.body : null;
-    const declaredSize = Number(request.headers['content-length'] ?? body?.length ?? 0);
-    if (!body || !Number.isSafeInteger(declaredSize) || declaredSize !== body.length || body.length < 1 || body.length > maxFileBytes) return bad(reply, 413, 'file_too_large_or_invalid');
+    const body = request.body instanceof Readable ? request.body : null;
+    const declaredSize = request.headers['content-length'] === undefined ? undefined : Number(request.headers['content-length']);
+    if (!body || (declaredSize !== undefined && (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize > maxFileBytes))) return bad(reply, 413, 'file_too_large_or_invalid');
     const encodedName = request.headers['x-file-name'];
     const mimeHeader = request.headers['x-file-mime'];
     let originalName = typeof encodedName === 'string' ? encodedName : 'attachment';
     try { originalName = decodeURIComponent(originalName); } catch { return bad(reply, 400, 'invalid_file_name'); }
     if (!originalName || originalName.length > 255 || /[\u0000\\/]/.test(originalName)) return bad(reply, 400, 'invalid_file_name');
     const mimeType = typeof mimeHeader === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(mimeHeader) ? mimeHeader.slice(0, 200) : 'application/octet-stream';
-    const id = crypto.randomUUID();
-    const storageName = `${id}.bin`;
-    const temporaryName = `.upload-${id}.tmp`;
-    const temporaryPath = path.join(filesDir, temporaryName);
-    const storagePath = path.join(filesDir, storageName);
-    const sha256 = crypto.createHash('sha256').update(body).digest('hex');
-    try {
-      const fd = fs.openSync(temporaryPath, 'wx', 0o600);
-      try { fs.writeFileSync(fd, body); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
-      fs.renameSync(temporaryPath, storagePath);
-      const createdAt = now();
-      const row = { id, original_name: originalName, mime_type: mimeType, size_bytes: body.length, sha256, created_at: createdAt };
-      store.db.prepare('INSERT INTO files(id,owner_id,storage_name,original_name,mime_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, user.id, storageName, originalName, mimeType, body.length, sha256, createdAt);
-      return reply.code(201).send(fileDto(row));
-    } catch (error) {
-      fs.rmSync(temporaryPath, { force: true });
-      fs.rmSync(storagePath, { force: true });
-      throw error;
-    }
+    return reply.code(201).send(await receiveFile(store, filesDir, user.id, body, originalName, mimeType, maxFileBytes, declaredSize));
   });
   app.get<{ Params: { id: string } }>('/api/v1/files/:id', async (request, reply) => {
     const user = requireAuth(request, reply); if (!user) return;
@@ -344,6 +357,14 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!fs.existsSync(resolved)) return bad(reply, 404, 'file_not_found');
     reply.header('content-disposition', `attachment; filename*=UTF-8''${encodeURIComponent(file.original_name)}`);
     reply.type(file.mime_type);
+    reply.header('accept-ranges', 'bytes');
+    const range = byteRange(request.headers.range, file.size_bytes);
+    if (range === false) return reply.code(416).header('content-range', `bytes */${file.size_bytes}`).send();
+    if (range) {
+      reply.code(206).header('content-range', `bytes ${range.start}-${range.end}/${file.size_bytes}`).header('content-length', range.end - range.start + 1);
+      return reply.send(fs.createReadStream(resolved, range));
+    }
+    reply.header('content-length', file.size_bytes);
     return reply.send(fs.createReadStream(resolved));
   });
   app.delete<{ Params: { id: string } }>('/api/v1/files/:id', async (request, reply) => {
@@ -517,7 +538,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); if (!['completed', 'failed', 'cancelled'].includes(run.status)) store.transaction(() => { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), run.id); }); runner.cancel(run.id); const updated = store.db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as any; return { id: updated.id, threadId: updated.thread_id, mode: updated.mode, status: updated.status, createdAt: updated.created_at, startedAt: updated.started_at ?? null, completedAt: updated.completed_at ?? null, errorCode: updated.error_code ?? null }; });
 
   if (fs.existsSync(staticDir)) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
-  app.addHook('onClose', async () => { await runner.close(); store.close(); });
+  app.addHook('onClose', async () => { await cloudRunner.close(); await runner.close(); store.close(); });
   return app;
 }
 

@@ -1,4 +1,6 @@
 import { chatOnce, textOf } from '../api/siliconflow';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { getSettings, targetOfSlot } from '../store/settings';
 import { applyArtifactReply, MAX_ARTIFACT_LENGTH, parseArtifactReply, type ArtifactKind } from '../utils/artifactEdit';
 import { validateDiagram } from '../components/mermaid/diagramSchema';
@@ -12,6 +14,7 @@ export async function editArtifact(input: {
   libraries?: readonly string[];
   mode: 'patch' | 'rewrite'; signal: AbortSignal;
 }): Promise<string> {
+  if (remoteTasks()) { const { signal, ...data } = input; return runCloudTask('artifactEdit', crypto.randomUUID(), data, undefined, signal); }
   if (input.source.length > MAX_ARTIFACT_LENGTH) throw new Error('此块过大，请先缩小内容范围');
   const contract = input.mode === 'patch'
     ? '只返回 JSON：{"edits":[{"search":"原源码中精确且仅出现一次的片段","replace":"替换片段"}]}。所有 search 都针对原源码，范围不可重叠。仅输出必要修改；不要重写无关部分。'

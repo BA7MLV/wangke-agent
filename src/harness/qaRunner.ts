@@ -1,4 +1,6 @@
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from './agent';
+import { remoteTasks } from '../cloud/state';
+import { runCloudTask } from '../cloud/tasks';
 import { resolveMaxRounds } from './loopGuard';
 import { mdEditorOpen } from './tools';
 import { courseResourceTools, createResourceExecutor } from './resources';
@@ -115,6 +117,16 @@ export interface QaRunResult {
 
 /** 跑完一轮单课程问答；只有「网络/模型/护栏真出错」才会抛（抛给调用方渲染错误） */
 export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRunResult> {
+  if (remoteTasks()) {
+    let content = '', reasoning = '';
+    return runCloudTask('qa', `session:${input.sessionId}`, { ...input, modelTarget: undefined, modelRef: input.modelTarget ? { providerId: input.modelTarget.providerId, model: input.modelTarget.model } : getSettings().llmModel }, p => {
+      if (typeof p.content === 'string') {
+        if (!p.content.startsWith(content)) { sink.onRoundStart?.(0); content = ''; }
+        sink.onDelta?.(p.content.slice(content.length)); content = p.content;
+      }
+      if (typeof p.reasoning === 'string') { sink.onReasoning?.(p.reasoning.slice(reasoning.length)); reasoning = p.reasoning; }
+    }, sink.signal);
+  }
   const settings = getSettings();
   const { videoId, sessionId, text, skillIds } = input;
   /** 阅读材料 = 有定位单元；视频课程走字幕检索 + 时间戳引用 */

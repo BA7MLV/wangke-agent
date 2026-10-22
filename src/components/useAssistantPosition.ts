@@ -1,35 +1,39 @@
 import { useLayoutEffect, useRef } from 'react';
+import {
+  ASSISTANT_DEFAULT_SIZE, ASSISTANT_TRIGGER_SIZE, clamp, getAssistantLayout, resizeAssistantLayout,
+  type AssistantAnchor, type AssistantLayout, type AssistantResizeEdge, type AssistantSize,
+} from './assistantGeometry';
 
 const POSITION_KEY = 'wangke-study-assistant-position';
 const SIZE_KEY = 'wangke-study-assistant-size';
 interface Position { right: number; bottom: number }
-interface Size { width: number; height: number }
 
-function readSize(): Size {
+function readSize(): AssistantSize {
   try {
     const value = JSON.parse(localStorage.getItem(SIZE_KEY) ?? 'null');
     if (value && Number.isFinite(value.width) && Number.isFinite(value.height)) {
       return { width: Math.max(320, value.width), height: Math.max(300, value.height) };
     }
   } catch { /* 存储不可用时使用默认尺寸。 */ }
-  return { width: 480, height: 640 };
+  return { ...ASSISTANT_DEFAULT_SIZE };
 }
 
 function readPosition(): Position {
   try {
     const value = JSON.parse(localStorage.getItem(POSITION_KEY) ?? 'null');
     if (value && Number.isFinite(value.right) && Number.isFinite(value.bottom)) {
-      return { right: Math.max(0, Math.min(1, value.right)), bottom: Math.max(0, Math.min(1, value.bottom)) };
+      return { right: clamp(value.right, 0, 1), bottom: clamp(value.bottom, 0, 1) };
     }
   } catch { /* 存储不可用时仍可拖动。 */ }
   return { right: 0, bottom: 0 };
 }
 
-/** 只移动浮层 DOM，不在 pointermove 时重渲染问答和字幕。位置按可视区比例记忆。 */
-export function useAssistantPosition() {
+/** 入口独立定位；拖动和缩放只写 DOM，不重渲染问答、字幕或输入草稿。 */
+export function useAssistantPosition(open: boolean) {
   const boundsRef = useRef<HTMLDivElement>(null);
   const assistantRef = useRef<HTMLDivElement>(null);
   const suppressToggle = useRef(false);
+  const syncRef = useRef<(() => void) | null>(null);
 
   useLayoutEffect(() => {
     const viewportElement = boundsRef.current;
@@ -37,65 +41,71 @@ export function useAssistantPosition() {
     if (!viewportElement || !assistant) return;
     let position = readPosition();
     let size = readSize();
-    const applySize = (next: Size) => {
-      size = next;
-      assistant.style.setProperty('--assistant-width', `${size.width}px`);
-      assistant.style.setProperty('--assistant-height', `${size.height}px`);
-    };
+    let anchor: AssistantAnchor = { x: 0, y: 0 };
+    let layout: AssistantLayout;
+    const readBounds = () => ({ width: viewportElement.clientWidth, height: viewportElement.clientHeight });
     const saveSize = () => {
       try { localStorage.setItem(SIZE_KEY, JSON.stringify(size)); } catch { /* 仅保留本次尺寸。 */ }
     };
-    applySize(size);
-    let gesture: {
-      id: number; x: number; y: number; right: number; bottom: number;
-      previous: Position; moved: boolean; target: Element;
-      resize: boolean; width: number; height: number; previousSize: Size;
-    } | null = null;
-    // 透明边框是安全区；绝对定位的 containing block 从边框内沿开始。
-    const readBounds = () => {
-      const rect = viewportElement.getBoundingClientRect();
-      const width = viewportElement.clientWidth, height = viewportElement.clientHeight;
-      return { width, height, right: rect.left + viewportElement.clientLeft + width, bottom: rect.top + viewportElement.clientTop + height };
-    };
-    // 展开、旋转、弹出键盘时只约束显示位置，不覆盖用户原来的位置偏好。
-    const place = (preferred: Position): Position => {
+    const applyAnchor = (next: AssistantAnchor) => {
       const bounds = readBounds();
-      assistant.style.setProperty('--assistant-max-width', `${bounds.width}px`);
-      const trigger = assistant.querySelector<HTMLElement>('.study-assistant__heading');
-      const gap = parseFloat(getComputedStyle(assistant).rowGap) || 0;
-      assistant.style.setProperty('--assistant-max-height', `${Math.max(0, bounds.height - (trigger?.offsetHeight ?? 48) - gap)}px`);
-      const rect = assistant.getBoundingClientRect();
-      const right = Math.max(0, Math.min(preferred.right * bounds.width, bounds.width - rect.width));
-      const bottom = Math.max(0, Math.min(preferred.bottom * bounds.height, bounds.height - rect.height));
-      assistant.style.right = `${right}px`;
-      assistant.style.bottom = `${bottom}px`;
-      return { right: right / (bounds.width || 1), bottom: bottom / (bounds.height || 1) };
+      anchor = next;
+      assistant.style.right = `${bounds.width - next.x - ASSISTANT_TRIGGER_SIZE}px`;
+      assistant.style.bottom = `${bounds.height - next.y - ASSISTANT_TRIGGER_SIZE}px`;
     };
+    const applyPanel = (next: AssistantLayout) => {
+      layout = next;
+      assistant.style.setProperty('--assistant-panel-left', `${next.x - anchor.x}px`);
+      assistant.style.setProperty('--assistant-panel-top', `${next.y - anchor.y}px`);
+      assistant.style.setProperty('--assistant-width', `${next.width}px`);
+      assistant.style.setProperty('--assistant-height', `${next.height}px`);
+      assistant.dataset.placement = next.placement;
+      const panel = assistant.querySelector<HTMLElement>('.study-assistant__content');
+      if (panel) panel.dataset.origin = `${next.resizeY === 'top' ? 'bottom' : 'top'}-${next.resizeX === 'left' ? 'right' : 'left'}`;
+    };
+    // 展开、旋转、弹出键盘都不改入口的位置偏好，也不覆盖用户保存的尺寸。
+    const place = () => {
+      const bounds = readBounds();
+      applyAnchor({
+        x: bounds.width - ASSISTANT_TRIGGER_SIZE - clamp(position.right * bounds.width, 0, bounds.width - ASSISTANT_TRIGGER_SIZE),
+        y: bounds.height - ASSISTANT_TRIGGER_SIZE - clamp(position.bottom * bounds.height, 0, bounds.height - ASSISTANT_TRIGGER_SIZE),
+      });
+      applyPanel(getAssistantLayout(bounds, anchor, size, layout?.placement));
+    };
+    let gesture: {
+      id: number; x: number; y: number; target: Element; moved: boolean; resize: AssistantResizeEdge | null;
+      previous: Position; previousSize: AssistantSize; anchor: AssistantAnchor; layout: AssistantLayout;
+      minX: number; minY: number; maxX: number; maxY: number;
+    } | null = null;
     const down = (event: PointerEvent) => {
       if (gesture || !event.isPrimary || event.button !== 0) return;
       suppressToggle.current = false;
       if (!(event.target instanceof Element)) return;
       const handle = event.target.closest('[data-assistant-drag-handle], [data-assistant-resize-handle]');
       if (!handle) return;
-      const bounds = readBounds();
-      const rect = assistant.getBoundingClientRect();
+      const expanded = assistant.hasAttribute('data-expanded');
       const target = event.target.closest('button') ?? handle;
       gesture = {
-        id: event.pointerId, x: event.clientX, y: event.clientY,
-        right: bounds.right - rect.right, bottom: bounds.bottom - rect.bottom,
-        previous: position, moved: false, target,
-        resize: handle.hasAttribute('data-assistant-resize-handle'),
-        width: assistant.querySelector('.study-assistant__content')!.getBoundingClientRect().width,
-        height: assistant.querySelector('.study-assistant__content')!.getBoundingClientRect().height,
-        previousSize: size,
+        id: event.pointerId, x: event.clientX, y: event.clientY, target, moved: false,
+        resize: handle.getAttribute('data-assistant-resize-handle') as AssistantResizeEdge | null,
+        previous: position, previousSize: size, anchor, layout,
+        minX: expanded ? Math.min(anchor.x, layout.x) : anchor.x,
+        minY: expanded ? Math.min(anchor.y, layout.y) : anchor.y,
+        maxX: expanded ? Math.max(anchor.x + ASSISTANT_TRIGGER_SIZE, layout.x + layout.width) : anchor.x + ASSISTANT_TRIGGER_SIZE,
+        maxY: expanded ? Math.max(anchor.y + ASSISTANT_TRIGGER_SIZE, layout.y + layout.height) : anchor.y + ASSISTANT_TRIGGER_SIZE,
       };
-      // RAC 的 Press 会在 pointerdown 释放隐式捕获；随后捕获到原按钮，轻点仍能正常触发。
-      // 捕获也确保快速拖到 HTML iframe 上时不会丢失后续移动/抬起事件。
+      // RAC 的 Press 会在 pointerdown 释放隐式捕获；随后捕获，轻点仍能正常触发。
+      // 捕获也确保拖到 HTML iframe 上时不会丢失后续移动/抬起事件。
       queueMicrotask(() => {
         if (gesture?.id === event.pointerId && target.isConnected) {
           try { target.setPointerCapture(event.pointerId); } catch { /* 指针已被系统取消。 */ }
         }
       });
+    };
+    const resizePanel = (original: AssistantLayout, edge: AssistantResizeEdge, dx: number, dy: number) => {
+      const next = resizeAssistantLayout(readBounds(), anchor, original, edge, dx, dy);
+      size = { width: next.width, height: next.height };
+      applyPanel(next);
     };
     const move = (event: PointerEvent) => {
       if (!gesture || gesture.id !== event.pointerId) return;
@@ -104,19 +114,26 @@ export function useAssistantPosition() {
       gesture.moved = true;
       suppressToggle.current = true;
       event.preventDefault();
-      const bounds = readBounds();
       if (gesture.resize) {
         assistant.dataset.resizing = 'true';
-        const maxHeight = parseFloat(assistant.style.getPropertyValue('--assistant-max-height')) - gesture.bottom;
-        applySize({
-          width: Math.min(Math.max(320, gesture.width - dx), bounds.width - gesture.right),
-          height: Math.min(Math.max(300, gesture.height - dy), maxHeight),
-        });
-        place(position);
+        resizePanel(gesture.layout, gesture.resize, dx, dy);
         return;
       }
       assistant.dataset.dragging = 'true';
-      position = place({ right: (gesture.right - dx) / (bounds.width || 1), bottom: (gesture.bottom - dy) / (bounds.height || 1) });
+      const bounds = readBounds();
+      const moveX = clamp(dx, -gesture.minX, bounds.width - gesture.maxX);
+      const moveY = clamp(dy, -gesture.minY, bounds.height - gesture.maxY);
+      applyAnchor({ x: gesture.anchor.x + moveX, y: gesture.anchor.y + moveY });
+      position = {
+        right: (bounds.width - anchor.x - ASSISTANT_TRIGGER_SIZE) / (bounds.width || 1),
+        bottom: (bounds.height - anchor.y - ASSISTANT_TRIGGER_SIZE) / (bounds.height || 1),
+      };
+      if (assistant.hasAttribute('data-expanded')) {
+        // 手势期间保持展开方向和相对位置，避免越过中线时浮窗突然翻到另一侧。
+        applyPanel({ ...gesture.layout, x: gesture.layout.x + moveX, y: gesture.layout.y + moveY });
+      } else {
+        applyPanel(getAssistantLayout(bounds, anchor, size));
+      }
     };
     const finish = (event: PointerEvent, cancelled: boolean) => {
       if (!gesture || gesture.id !== event.pointerId) return;
@@ -127,8 +144,9 @@ export function useAssistantPosition() {
       if (drag.moved) {
         if (cancelled) {
           position = drag.previous;
-          if (drag.resize) applySize(drag.previousSize);
-          place(position);
+          size = drag.previousSize;
+          applyAnchor(drag.anchor);
+          applyPanel(drag.layout);
         } else {
           if (drag.resize) saveSize();
           else try { localStorage.setItem(POSITION_KEY, JSON.stringify(position)); } catch { /* 仅保留本次位置。 */ }
@@ -140,18 +158,20 @@ export function useAssistantPosition() {
     const cancel = (event: PointerEvent) => finish(event, true);
     const keydown = (event: KeyboardEvent) => {
       suppressToggle.current = false;
-      if (!(event.target instanceof Element) || !event.target.closest('[data-assistant-resize-handle]')) return;
+      if (!(event.target instanceof Element)) return;
+      const edge = event.target.closest('[data-assistant-resize-handle]')?.getAttribute('data-assistant-resize-handle') as AssistantResizeEdge | undefined;
+      if (!edge) return;
       if (!['ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown', 'Home'].includes(event.key)) return;
       event.preventDefault();
-      const content = assistant.querySelector('.study-assistant__content')!.getBoundingClientRect();
-      const bounds = readBounds();
-      const rect = assistant.getBoundingClientRect();
-      const step = event.shiftKey ? 40 : 10;
-      applySize(event.key === 'Home' ? { width: 480, height: 640 } : {
-        width: Math.min(Math.max(320, content.width + (event.key === 'ArrowLeft' ? step : event.key === 'ArrowRight' ? -step : 0)), rect.right - (bounds.right - bounds.width)),
-        height: Math.min(Math.max(300, content.height + (event.key === 'ArrowUp' ? step : event.key === 'ArrowDown' ? -step : 0)), parseFloat(assistant.style.getPropertyValue('--assistant-max-height')) - (bounds.bottom - rect.bottom)),
-      });
-      place(position);
+      if (event.key === 'Home') {
+        size = { ...ASSISTANT_DEFAULT_SIZE };
+        place();
+      } else {
+        const step = event.shiftKey ? 40 : 10;
+        resizePanel(layout, edge,
+          event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0,
+          event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0);
+      }
       saveSize();
     };
     const viewport = window.visualViewport;
@@ -161,11 +181,11 @@ export function useAssistantPosition() {
       viewportElement.style.left = `${viewport?.offsetLeft ?? 0}px`;
       viewportElement.style.width = `${viewport?.width ?? window.innerWidth}px`;
       viewportElement.style.height = `${viewport?.height ?? window.innerHeight}px`;
-      place(position);
+      place();
     };
+    syncRef.current = sync;
     sync();
-    const observer = new ResizeObserver(() => place(position));
-    observer.observe(assistant);
+    const observer = new ResizeObserver(sync);
     observer.observe(viewportElement);
     assistant.addEventListener('pointerdown', down, true);
     assistant.addEventListener('keydown', keydown, true);
@@ -177,6 +197,7 @@ export function useAssistantPosition() {
     viewport?.addEventListener('resize', sync);
     viewport?.addEventListener('scroll', sync);
     return () => {
+      syncRef.current = null;
       observer.disconnect();
       assistant.removeEventListener('pointerdown', down, true);
       assistant.removeEventListener('keydown', keydown, true);
@@ -190,5 +211,6 @@ export function useAssistantPosition() {
     };
   }, []);
 
+  useLayoutEffect(() => { syncRef.current?.(); }, [open]);
   return { boundsRef, assistantRef, suppressToggle };
 }

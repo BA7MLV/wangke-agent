@@ -43,6 +43,8 @@ import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibra
 import { ModelCapabilities } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
 import { formatModelTokens } from '../../api/modelPresentation';
+import { createPresetProvider, matchesProviderPreset, PROVIDER_PRESETS, type ProviderPreset } from '../../store/providerPresets';
+import ProviderPresets, { ProviderLogo } from './ProviderPresets';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -665,13 +667,7 @@ function ProviderRow({
     unconfigured: '未配置',
   };
 
-  const providerIcon = /deepseek/i.test(provider.name)
-    ? 'neurology'
-    : /anthropic|claude/i.test(provider.name)
-      ? 'bolt'
-      : /openai/i.test(provider.name)
-        ? 'code'
-        : 'dns';
+  const preset = PROVIDER_PRESETS.find((p) => matchesProviderPreset(provider, p));
 
   const statusColor =
     status === 'ready'
@@ -695,7 +691,7 @@ function ProviderRow({
       >
         <span className="flex items-start justify-between gap-3">
           <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true">
-            <Sym name={providerIcon} />
+            {preset ? <ProviderLogo id={preset.id} /> : <Sym name="dns" />}
           </span>
           <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
             {STATUS_HINT[status]}
@@ -886,9 +882,11 @@ export default function ModelsModule() {
   const [keyError, setKeyError] = useState<string | null>(null);
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
+  const [connectingProvider, setConnectingProvider] = useState(false);
   const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
-  const [, setMetaInfo] = useState(modelMetaInfo);
+  const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
+  const [metaError, setMetaError] = useState('');
   const revertTimerRef = useRef<number | undefined>(undefined);
 
   /** 供应商 key 仅用于消除同名歧义；未填写也能刷新和使用能力目录。 */
@@ -915,12 +913,13 @@ export default function ModelsModule() {
   /** 只刷新目录；不改用户能力覆盖或手动设置的历史预算。 */
   const handleRefreshMeta = async () => {
     setMetaRefreshing(true);
+    setMetaError('');
     try {
       const { count } = await refreshModelMeta(catalogs);
       setMetaInfo(modelMetaInfo());
       toast.success(`已更新 ${count} 个模型的能力数据`);
     } catch (e) {
-      toast.error(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
+      setMetaError(`刷新失败：${e instanceof Error ? e.message : String(e)}`);
     } finally {
       setMetaRefreshing(false);
     }
@@ -978,6 +977,22 @@ export default function ModelsModule() {
       ],
     });
     // 新加的那家没有地址没有 Key，不摊开就是一行没用的空壳
+    setConnectingProvider(false);
+    setSelectedProviderId(id);
+  };
+
+  const connectPreset = (preset: ProviderPreset) => {
+    // 已有同端点的连接时直接打开，保留名称、密钥、协议及用户配置。
+    const existing = settings.providers.find((p) => matchesProviderPreset(p, preset));
+    setConnectingProvider(false);
+    if (existing) {
+      setSelectedProviderId(existing.id);
+      return;
+    }
+    const id = nextProviderId(settings);
+    settings.update({
+      providers: [...settings.providers, createPresetProvider(preset, id)],
+    });
     setSelectedProviderId(id);
   };
 
@@ -1013,14 +1028,10 @@ export default function ModelsModule() {
   return (
     <>
       <SectionCard
-        title={selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : '模型供应商'}
-        subtitle={selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : '选择供应商后进入独立详情页，管理连接和模型。'}
+        title={selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
+        subtitle={selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
-        actions={<>
-          {selectedProvider && <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>拉取模型列表</LoadingButton>}
-          <LoadingButton variant="tertiary" loading={metaRefreshing} data-testid="btn-refresh-meta" onPress={() => void handleRefreshMeta()}>刷新能力数据</LoadingButton>
-          {!selectedProvider && <Button variant="secondary" data-testid="btn-add-provider" onPress={addProvider}><Sym name="add" />添加供应商</Button>}
-        </>}
+        actions={selectedProvider ? <LoadingButton variant="secondary" loading={checking} data-testid="btn-check-models" onPress={() => void handleCheck(selectedProvider.id)}>拉取模型列表</LoadingButton> : undefined}
       >
         {selectedProvider ? (
           <div className="flex flex-col gap-4">
@@ -1053,14 +1064,21 @@ export default function ModelsModule() {
               <ModelLibrary key={selectedProvider.id} providerId={selectedProvider.id} discovered={discoveredModels[selectedProvider.id]} />
             </ProviderRow>
           </div>
+        ) : connectingProvider ? (
+          <ProviderPresets
+            providers={settings.providers}
+            onSelect={connectPreset}
+            onCustom={addProvider}
+            onBack={() => setConnectingProvider(false)}
+          />
         ) : (
           <div className="grid grid-cols-3 gap-4 max-[640px]:gap-1.5">
             <button
               type="button"
               className="flex min-h-[218px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted transition-colors duration-200 hover:border-accent/55 hover:bg-background-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[640px]:min-h-[150px] max-[640px]:gap-2 max-[640px]:rounded-xl max-[640px]:p-2"
               data-testid="provider-add-card"
-              aria-label="添加供应商"
-              onClick={addProvider}
+              aria-label="连接提供商"
+              onClick={() => setConnectingProvider(true)}
             >
               <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg">
                 <Sym name="add" />
@@ -1092,11 +1110,25 @@ export default function ModelsModule() {
             ))}
           </div>
         )}
-        <p className="mt-3 text-xs leading-relaxed text-muted">
-          能力数据由 models.dev 提供。
-        </p>
+        <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted">
+          <span>能力数据由 <a href="https://models.dev" target="_blank" rel="noreferrer" className="underline underline-offset-2">models.dev</a> 提供。</span>
+          <LoadingButton
+            variant="ghost"
+            size="sm"
+            isIconOnly
+            className="size-7 min-w-7 text-muted"
+            loading={metaRefreshing}
+            data-testid="btn-refresh-meta"
+            aria-label={metaRefreshing ? '正在刷新能力数据' : '刷新能力数据'}
+            onPress={() => void handleRefreshMeta()}
+          ><Sym name="refresh" /></LoadingButton>
+          <span className="tabular-nums" data-testid="model-meta-updated-at" aria-live="polite">
+            {metaInfo ? <time dateTime={new Date(metaInfo.updatedAt).toISOString()} title="本机能力目录的最近成功更新时间">更新于 {new Date(metaInfo.updatedAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</time> : '尚未更新'}
+          </span>
+        </div>
+        {metaError && <p role="alert" className="mt-1 text-xs text-pretty text-danger">{metaError}</p>}
       </SectionCard>
-      {!selectedProvider && <>
+      {!selectedProvider && !connectingProvider && <>
       <SectionCard
         title="选择模型"
         subtitle="选择主模型与语音转写模型；图片理解可自动复用主模型或单独指定。Chat 可随时切换。"
