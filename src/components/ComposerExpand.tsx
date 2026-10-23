@@ -1,5 +1,5 @@
 import { useLayoutEffect, useState, type RefObject } from 'react';
-import { Button, Modal, TextArea } from '@heroui/react';
+import { Button, Drawer, TextArea } from '@heroui/react';
 import { Sym } from '../ui';
 import './composer-expand.css';
 
@@ -11,9 +11,10 @@ export function useComposerSize(ref: RefObject<HTMLTextAreaElement | null>, valu
     if (!input || !active) return;
     const measure = () => {
       input.style.height = '0px';
-      const limit = parseFloat(getComputedStyle(input).maxHeight);
+      const style = getComputedStyle(input);
+      const limit = parseFloat(style.maxHeight);
       // A wrapping placeholder must not grow an empty composer on narrow screens.
-      const height = input.value ? input.scrollHeight : parseFloat(getComputedStyle(input).minHeight);
+      const height = input.value ? input.scrollHeight : Math.ceil(parseFloat(style.minHeight));
       input.style.height = `${Math.min(height, limit)}px`;
       setOverflow(height > limit + 1);
     };
@@ -38,23 +39,25 @@ export function useComposerSize(ref: RefObject<HTMLTextAreaElement | null>, valu
 
 export default function ComposerExpand({ value, onChange, visible }: { value: string; onChange: (value: string) => void; visible: boolean }) {
   const [open, setOpen] = useState(false);
-  return <Modal isOpen={open} onOpenChange={setOpen}>
-    <Button hidden={!visible && !open} isIconOnly size="sm" variant="tertiary" aria-label="展开输入框" data-testid="composer-expand">
+  return <Drawer.Root isOpen={open} onOpenChange={setOpen}>
+    <Button hidden={!visible && !open} isIconOnly size="sm" variant="tertiary" aria-label="展开输入框" aria-haspopup="dialog" aria-expanded={open} data-testid="composer-expand">
       <Sym name="open_in_full" />
     </Button>
-    <Modal.Backdrop>
-      <Modal.Container placement="bottom" size="lg" scroll="inside" className="composer-sheet-container">
-        <Modal.Dialog className="composer-sheet" data-testid="composer-sheet">
-          {({ close }) => <>
-            <Modal.Header><Modal.Heading>编辑完整消息</Modal.Heading></Modal.Header>
-            <Modal.Body className="composer-sheet__body">
-              <TextArea autoFocus aria-label="完整消息" value={value} onChange={(event) => onChange(event.target.value)}
-                className="composer-sheet__input" />
-            </Modal.Body>
-            <Modal.Footer><Button onPress={close}>完成</Button></Modal.Footer>
-          </>}
-        </Modal.Dialog>
-      </Modal.Container>
-    </Modal.Backdrop>
-  </Modal>;
+    <Drawer.Backdrop variant="opaque" className="composer-sheet__backdrop">
+      <Drawer.Content placement="bottom" className="composer-sheet__content">
+        <Drawer.Dialog className="composer-sheet" data-testid="composer-sheet">
+          <Drawer.Handle />
+          <Drawer.Header className="composer-sheet__header">
+            <Drawer.Heading>编辑完整消息</Drawer.Heading>
+            <Drawer.CloseTrigger aria-label="收起输入框"><Sym name="fullscreen_exit" /></Drawer.CloseTrigger>
+          </Drawer.Header>
+          <Drawer.Body className="composer-sheet__body">
+            <TextArea autoFocus aria-label="完整消息" value={value} onChange={(event) => onChange(event.target.value)}
+              className="composer-sheet__input" />
+          </Drawer.Body>
+          <Drawer.Footer className="composer-sheet__footer"><Button slot="close">完成</Button></Drawer.Footer>
+        </Drawer.Dialog>
+      </Drawer.Content>
+    </Drawer.Backdrop>
+  </Drawer.Root>;
 }

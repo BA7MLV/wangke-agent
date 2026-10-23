@@ -32,7 +32,11 @@ import DanmakuLayer from '../components/DanmakuLayer';
 import PlayerBigPlayButton from '../components/PlayerBigPlayButton';
 import TimeSliderWithPreview from '../components/TimeSliderWithPreview';
 import TheaterModeButton from '../components/TheaterModeButton';
-import { createYoutubeKeyShortcuts } from '../utils/playerKeys';
+import WebFullscreenButton from '../components/WebFullscreenButton';
+import PlayerShortcutsMenu from '../components/PlayerShortcutsMenu';
+import PlayerFeedback from '../components/PlayerFeedback';
+import { usePlayerWebFullscreen } from '../components/usePlayerWebFullscreen';
+import { createBilibiliKeyboard } from '../utils/playerKeys';
 import StudyAssistant, { STUDY_PANEL_KEYS, type StudyPanelKey } from '../components/StudyAssistant';
 
 /** 常驻字幕轨的固定 id：vidstack 的 NativeTextRenderer 会把轨的 id 写到它创建的原生 <track> 上，
@@ -44,12 +48,20 @@ const SUBS_TRACK_ID = 'live-subs';
 /** 把被替换掉的旧 cue 挪到这个时间点：远超任何媒体时长，等于永久失效（不能删，见 syncTrack 注释） */
 const CUE_DISABLED_TIME = 1e9;
 
-/** 控制栏的「无操作自动隐藏」延迟。这里刻意设成 24 小时，等于关掉 vidstack 的静止自动隐藏：
- *  显隐完全由鼠标悬停决定（hiding 仍发生在 mouseleave，那一路的 delay 是 0，不受此值影响），
- *  这样 vds 内部状态（data-visible / 焦点 / 菜单）与 CSS 的 hover 视觉始终一致
- *  —— 否则悬停静止 2s 后状态翻成不可见，`.vds-controls[data-visible]` 的底部渐变背景会掉。
- *  注意不能写 Infinity 或超过 2^31-1 的值：setTimeout 会溢出成 ~1ms 立即触发。 */
-const CONTROLS_IDLE_DELAY = 24 * 60 * 60 * 1000;
+const PLAYER_TRANSLATIONS = {
+  Play: '播放', Pause: '暂停', Replay: '重新播放', Mute: '静音', Unmute: '取消静音',
+  Volume: '音量', Seek: '播放进度', Settings: '设置', Speed: '播放速度', Normal: '正常',
+  Fullscreen: '全屏', 'Enter Fullscreen': '进入全屏', 'Exit Fullscreen': '退出全屏',
+  PiP: '画中画', 'Enter PiP': '进入画中画', 'Exit PiP': '退出画中画',
+  Captions: '字幕', 'Closed-Captions On': '开启字幕', 'Closed-Captions Off': '关闭字幕',
+  'Caption Styles': '字幕样式', 'Captions look like this': '字幕将以这样的样式显示',
+  Accessibility: '辅助功能', Announcements: '语音提示', 'Keyboard Animations': '按键反馈',
+  Playback: '播放', Audio: '音频', Boost: '增强', Quality: '画质', Auto: '自动',
+  Chapters: '章节', Off: '关闭', Default: '默认', Disabled: '已禁用', Continue: '继续',
+  Loop: '循环播放', Reset: '重置', Font: '字体', Family: '字体', Size: '大小',
+  Color: '颜色', Opacity: '不透明度', Shadow: '阴影', Text: '文字', Track: '轨道',
+  'Text Background': '文字背景', 'Display Background': '显示背景',
+};
 
 /** 把任意 MIME 映射到 vidstack 支持的联合类型，未知则按 mp4 处理 */
 function toPlayerMime(mime: string): 'video/mp4' | 'video/webm' | 'video/ogg' | 'audio/mpeg' | 'audio/ogg' {
@@ -86,6 +98,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
   const [segments, setSegments] = useState<Cue[]>([]);
   const [currentTime, setCurrentTime] = useState(0);
   const playerRef = useRef<MediaPlayerInstance>(null);
+  const { webFullscreen, setWebFullscreen, toggleWebFullscreen } = usePlayerWebFullscreen(playerRef);
   const captionScale = useSettings((s) => s.captionScale);
   const shortcuts = useSettings((s) => s.shortcuts);
   const { open: settingsOpen } = useSettingsDialog();
@@ -358,38 +371,60 @@ function PlayerResource({ id }: { id: string | undefined }) {
   // 弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
   const hasSubtitles = subsLoaded ? segments.length > 0 && !subsRunning : null;
 
-  // 默认 YouTube 式映射，设置改变时重建；其余渲染保留连按累加游标。
-  const keyShortcuts = useMemo(() => createYoutubeKeyShortcuts(shortcuts), [shortcuts]);
+  const keyboard = useMemo(() => createBilibiliKeyboard(shortcuts, {
+    toggleDanmaku: () => {
+      const { danmakuEnabled, update } = useSettings.getState();
+      update({ danmakuEnabled: !danmakuEnabled });
+    },
+    toggleWebFullscreen,
+    toggleTheater: toggleTheaterMode,
+  }), [shortcuts, toggleWebFullscreen, toggleTheaterMode]);
+
+  // 松手事件可能因切标签、打开设置或焦点离开而丢失，不能把临时 3x 留在视频上。
+  useEffect(() => {
+    const cancel = () => keyboard.cancel();
+    const onVisibility = () => { if (document.hidden) cancel(); };
+    window.addEventListener('blur', cancel);
+    window.addEventListener('keyup', keyboard.release, true);
+    document.addEventListener('visibilitychange', onVisibility);
+    if (!shortcuts.enabled || settingsOpen) cancel();
+    return () => {
+      cancel();
+      window.removeEventListener('blur', cancel);
+      window.removeEventListener('keyup', keyboard.release, true);
+      document.removeEventListener('visibilitychange', onVisibility);
+    };
+  }, [keyboard, shortcuts.enabled, settingsOpen]);
 
   /**
    * 布局槽位。
    *
    * 两点讲究：
-   * 1. 对象引用要尽量稳定 —— 每次渲染都传新字面量会让 Vidstack 重建 slot 内容并重置控制栏
-   *    idle 状态（手机断点切换触发重渲染时，控制栏会意外自动隐藏）。依赖只有 `videoUrl`
-   *    （进播放器时已就位，之后不再变）。
+   * 1. 对象引用保持稳定，避免播放进度更新时重建控制栏并重置菜单 / idle 状态。
    * 2. `googleCastButton: null` 是**替换**默认按钮而不是禁用：vidstack 的 `slot()` 用
    *    `isUndefined(slot) ? 默认值 : slot` 判断，传 null 正好把默认投屏按钮摘掉。
    *    本项目没接 Google Cast 框架，那颗按钮点了没有任何反应，留着只是视觉噪音。
    */
   const layoutSlots = useMemo(
     () => ({
-      topControlsGroupStart: <RateButtons />,
-      topControlsGroupEnd: (
-        <>
-          <DanmakuToggleButton />
-          <CaptionSizeButton />
-        </>
-      ),
-      // 进度条换成带缩略图预览的版本（YouTube 的 hover 预览）
+      chapterTitle: <div className="vds-controls-spacer" />,
+      beforeCaptionButton: <><DanmakuToggleButton /><RateButtons /></>,
+      beforeSettingsMenu: <PlayerShortcutsMenu />,
+      settingsMenuItemsStart: <div className="player-caption-setting"><span>字幕大小</span><CaptionSizeButton /></div>,
       timeSlider: <TimeSliderWithPreview previewSrc={videoUrl} />,
-      // 放在默认全屏按钮左边：影院模式是页内扩展，全屏仍保留为更强的一档。
-      beforeFullscreenButton: (
-        <TheaterModeButton active={theaterMode} onToggle={toggleTheaterMode} />
-      ),
+      beforeFullscreenButton: <><TheaterModeButton active={theaterMode} onToggle={toggleTheaterMode} /><WebFullscreenButton active={webFullscreen} onToggle={toggleWebFullscreen} /></>,
+      // 小屏保留中央播放键与顶部工具区，不把桌面整条底栏硬塞进手机。
+      smallLayout: {
+        beforeCaptionButton: <RateButtons />,
+        topControlsGroupStart: <DanmakuToggleButton />,
+        beforeSettingsMenu: null,
+        beforeFullscreenButton: null,
+        startDuration: null,
+        chapterTitle: <div className="vds-controls-spacer" />,
+      },
       googleCastButton: null,
     }),
-    [theaterMode, toggleTheaterMode, videoUrl],
+    [theaterMode, toggleTheaterMode, videoUrl, webFullscreen, toggleWebFullscreen],
   );
 
   if (loading) {
@@ -520,27 +555,24 @@ function PlayerResource({ id }: { id: string | undefined }) {
           ) : (
             <MediaPlayer
               ref={playerRef}
+              className={`bili-player${webFullscreen ? ' player-web-fullscreen' : ''}`}
               title={video.name}
               src={{ src: videoUrl, type: toPlayerMime(video.mimeType) }}
               storage={resumeStorage}
               playsInline
               crossOrigin
-              // 控制栏只在鼠标悬停播放器时出现（YouTube 行为）：mouseenter → show(0)、
-              // mouseleave → hide(0) 立即收起；静态隐藏关掉（见 CONTROLS_IDLE_DELAY）。
-              // 「未播放过」那段 vds 不注册鼠标监听，由 player-enhance.css 的 :hover 兜住。
-              // 键盘焦点在播放器内部时暂时保持控制栏，确保 Tab 不会把控制键从焦点顺序中
-              // 隐藏；焦点离开整个播放器后再恢复 YouTube 式的移出即隐藏。
+              // 移动鼠标唤醒，静止 2.5 秒收起；键盘操作和打开菜单时保留控制栏。
               hideControlsOnMouseLeave={!keyboardControls}
               onFocus={() => setKeyboardControls(true)}
               onBlur={(event) => {
                 const next = event.relatedTarget;
                 if (!(next instanceof Node) || !event.currentTarget.contains(next)) {
                   setKeyboardControls(false);
+                  keyboard.cancel();
                 }
               }}
-              controlsDelay={CONTROLS_IDLE_DELAY}
-              // YouTube 式快捷键（←/→ 5s、j/l 10s、Home/End、暂停逐帧…）。见 utils/playerKeys.ts
-              keyShortcuts={keyShortcuts}
+              controlsDelay={2500}
+              keyShortcuts={keyboard.shortcuts}
               keyTarget="player"
               keyDisabled={!shortcuts.enabled || settingsOpen}
               onKeyDownCapture={(event) => {
@@ -555,8 +587,9 @@ function PlayerResource({ id }: { id: string | undefined }) {
               // 暂停/播完/卸载都恢复普通判定，见 store/studyTime.ts。
               onPlay={() => setStudyMediaPlaying(true)}
               onPlaying={() => setStudyMediaPlaying(true)}
-              onPause={() => setStudyMediaPlaying(false)}
-              onEnded={() => setStudyMediaPlaying(false)}
+              onPause={() => { setStudyMediaPlaying(false); keyboard.cancel(); }}
+              onEnded={() => { setStudyMediaPlaying(false); keyboard.cancel(); }}
+              onFullscreenChange={(fullscreen) => { if (fullscreen) setWebFullscreen(false); }}
               // 这里刻意**不带** style：播放器是直角，真正的实现在 player-enhance.css 的
               // `[data-media-player] { --video-border-radius: 0 }` —— vds 默认布局会在宿主上写
               // `border-radius: var(--video-border-radius, 6px)`，只删这里的内联圆角是盖不住它的。
@@ -571,10 +604,12 @@ function PlayerResource({ id }: { id: string | undefined }) {
                   监听 pointerup 的（单击暂停 / 双击全屏），挂在里面会被它连点两下。 */}
               <PlayerBigPlayButton />
               <SeekFeedback />
+              <PlayerFeedback />
               <DanmakuLayer videoId={id} />
               {/* 滑块方向键跟随小幅跳转步长。映射改变时重挂布局，刷新 vidstack 在控件
                   挂载时生成的 aria-keyshortcuts，避免旧映射反向覆盖新配置。只重挂控制栏，不重载视频。 */}
-              <DefaultVideoLayout key={JSON.stringify(shortcuts.bindings)} icons={playerLayoutIcons} slots={layoutSlots} seekStep={shortcuts.arrowSeek} />
+              <DefaultVideoLayout key={JSON.stringify(shortcuts.bindings)} icons={playerLayoutIcons} slots={layoutSlots}
+                translations={PLAYER_TRANSLATIONS} colorScheme="dark" showTooltipDelay={350} seekStep={shortcuts.arrowSeek} />
             </MediaPlayer>
           )}
 

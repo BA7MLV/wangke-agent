@@ -40,7 +40,7 @@ function ShortcutRecorder({ action, label, value, bindings, onChange }: {
               if (event.key === 'Escape') { setFocused(false); setError(''); return; }
               if (['Control', 'Alt', 'Meta', 'Shift'].includes(event.key) || event.repeat) return;
               const keys = recordedShortcut(event.nativeEvent);
-              if (!keys) { setError('支持字母、空格、方向键、Home / End 和标点，可搭配修饰键；数字键保留用于进度跳转。'); return; }
+              if (!keys) { setError('支持字母、空格、方向键、Home / End 和标点，可搭配修饰键；Shift + 数字可用于倍速，单独数字保留用于进度跳转。'); return; }
               const conflict = shortcutConflict(bindings, action, keys);
               if (conflict) { setError(`该按键已用于「${conflict}」，请先清除原绑定或换一个按键。`); return; }
               onChange(keys);
@@ -110,7 +110,7 @@ export default function ShortcutsModule() {
           <ShortcutRecorder key={id} action={id} label={label} value={shortcuts.bindings[id]} bindings={shortcuts.bindings}
             onChange={(value) => change({ bindings: { ...shortcuts.bindings, [id]: value } })} />
         ))}
-        <p className="mt-4 text-sm text-muted">数字键 0–9 跳到视频的 0%–90%；逐帧按约 30 fps 计算，仅暂停时生效。滑块、菜单等控件获得焦点后，方向键优先操作控件本身。</p>
+        <p className="mt-4 text-sm text-muted">默认采用 B 站式操作：播放时长按小幅快进键临时 3 倍速，松开恢复；↑ / ↓ 每次调整 10% 音量。数字键 0–9 跳到视频的 0%–90%；逐帧按约 30 fps 计算，仅暂停时生效。滑块、菜单等控件获得焦点后，方向键优先操作控件本身。</p>
       </SectionCard>
     </>
   );

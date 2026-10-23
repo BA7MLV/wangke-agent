@@ -50,6 +50,17 @@ try {
     }, file);
     await page.goto(`${base}/#/player/shortcut-test`);
     await page.waitForFunction(() => document.querySelector('video')?.readyState >= 2);
+    await page.evaluate(() => {
+      window.shortcutDebug = [];
+      for (const type of ['keydown', 'keyup', 'focusin', 'focusout', 'media-play-request', 'media-pause-request', 'play', 'pause']) {
+        document.addEventListener(type, (event) => window.shortcutDebug.push({
+          type, key: event.key, target: event.target.className,
+          active: document.activeElement?.className,
+          paused: document.querySelector('video')?.paused,
+          storePaused: document.querySelector('[data-media-player]')?.hasAttribute('data-paused'),
+        }), true);
+      }
+    });
     const player = page.locator('[data-media-player]');
     await player.focus();
     await page.keyboard.press('ArrowRight');
@@ -82,6 +93,14 @@ try {
     console.log('✓ 实际播放器：动态绑定、旧键失效、两档跳转、逐帧、总开关、恢复默认');
   }
   assert.deepEqual(errors, []);
+} catch (error) {
+  console.error('shortcut debug:', await page.evaluate(() => ({
+    events: window.shortcutDebug,
+    bindings: JSON.parse(localStorage.getItem('wangke-settings'))?.state.shortcuts.bindings,
+    active: document.activeElement?.outerHTML.slice(0, 500),
+    controls: Array.from(document.querySelectorAll('[aria-keyshortcuts]')).map((el) => ({ className: el.className, keys: el.getAttribute('aria-keyshortcuts') })),
+  })));
+  throw error;
 } finally {
   await browser.close();
 }

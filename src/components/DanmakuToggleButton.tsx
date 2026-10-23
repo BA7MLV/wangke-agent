@@ -3,7 +3,7 @@ import { useSettings } from '../store/settings';
 
 /**
  * 思考题弹幕开关（B 站风格「弹」字按钮），写入 settings.danmakuEnabled 持久化。
- * 经 DefaultVideoLayout 的 slots.topControlsGroupEnd 注入顶栏右端。
+ * 桌面位于底栏，小屏放在顶栏。
  *
  * 换成 HeroUI 的 Button：形状（药丸）、按下 scale、焦点环、缓动都交给 HeroUI，
  * 颜色走 player-enhance.css 里给 .player-ctl 的「视频半透明白」契约；开启态由

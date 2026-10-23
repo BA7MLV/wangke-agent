@@ -1941,7 +1941,7 @@ export default function ChatPanel({
         </div>
       )}
 
-      {/* 输入区与首页一致：文本在上，添加菜单、模型和发送在下。
+      {/* 输入区与首页一致：添加、文本、模型和发送共用一行，长文本按需增高。
           Enter 发送、Shift+Enter 换行；isComposing 时放行（中文输入法选词的回车不是提交意图）。 */}
       <div className="chat-composer" data-testid="chat-composer">
         {/*

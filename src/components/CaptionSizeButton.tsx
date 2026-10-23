@@ -12,7 +12,7 @@ const SCALES = [
 /**
  * 字幕字号循环按钮（小/中/大/特大），写入 settings.captionScale 持久化；
  * Player 页把它映射为 --media-user-font-size，Vidstack 字幕渲染器按此缩放。
- * 经 DefaultVideoLayout 的 slots.topControlsGroupEnd 注入顶栏右端。
+ * 经 DefaultVideoLayout 的设置菜单槽位注入，不再占用画面顶部。
  *
  * HeroUI 的 isIconOnly Button：圆形、40/36px、按下 scale、焦点环都来自 HeroUI；
  * 图标是 Material Symbols 元素（跟着 font-size），尺寸在 player-enhance.css 里定。

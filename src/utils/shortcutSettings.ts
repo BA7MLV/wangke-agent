@@ -5,6 +5,11 @@ export const SHORTCUT_ACTIONS = [
   { id: 'toggleFullscreen', label: '进入 / 退出全屏', keys: 'f' },
   { id: 'togglePictureInPicture', label: '画中画', keys: 'i' },
   { id: 'toggleCaptions', label: '显示 / 隐藏字幕', keys: 'c' },
+  { id: 'toggleDanmaku', label: '开启 / 关闭弹幕', keys: 'd' },
+  { id: 'toggleWebFullscreen', label: '网页全屏', keys: 'w' },
+  { id: 'toggleTheater', label: '宽屏模式', keys: 't' },
+  { id: 'normalSpeed', label: '恢复正常速度', keys: 'Shift+1' },
+  { id: 'doubleSpeed', label: '切换二倍速', keys: 'Shift+2' },
   { id: 'volumeUp', label: '提高音量', keys: 'ArrowUp' },
   { id: 'volumeDown', label: '降低音量', keys: 'ArrowDown' },
   { id: 'speedUp', label: '加快播放速度', keys: '>' },
@@ -36,7 +41,14 @@ export function defaultShortcutSettings(): ShortcutSettings {
   };
 }
 
-const KEY = /^(?:(?:Ctrl|Alt|Meta|Shift)\+)*(?:[a-zA-Z,./;\[\]\\'`=\-<>]|Space|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End)$/;
+const KEY = /^(?:(?:Ctrl|Alt|Meta|Shift)\+)*(?:[a-zA-Z,./;\[\]\\'`=\-<>]|Space|ArrowLeft|ArrowRight|ArrowUp|ArrowDown|Home|End|Shift\+[0-9])$/;
+
+const SHIFT_DIGITS = ')!@#$%^&*(';
+
+/** Vidstack 会把 Shift+数字替换成符号但丢掉 Shift 条件；显式保留它。 */
+export function toMediaShortcutKeys(keys: string): string {
+  return keys.replace(/Shift\+(\d)/g, (_, digit: string) => `Shift+${SHIFT_DIGITS[Number(digit)]}`);
+}
 
 /** 与 vidstack 的 Shift 隐含匹配一致，供冲突检查使用。 */
 function canonicalKey(key: string): string {
@@ -60,13 +72,19 @@ export function normalizeShortcutSettings(value: unknown): ShortcutSettings {
     if (typeof n === 'number' && Number.isFinite(n)) result[key] = Math.min(120, Math.max(1, Math.round(n)));
   }
   if (raw.bindings && typeof raw.bindings === 'object') {
+    const explicit = new Set<ShortcutAction>();
     for (const { id } of SHORTCUT_ACTIONS) {
       const keys = raw.bindings[id];
-      if (typeof keys === 'string' && (keys === '' || keys.split(' ').every((key) => KEY.test(key)))) result.bindings[id] = keys;
+      if (typeof keys === 'string' && (keys === '' || keys.split(' ').every((key) => KEY.test(key)))) {
+        result.bindings[id] = keys;
+        explicit.add(id);
+      }
     }
-    // 损坏或外部导入的重复映射不能让同一键静默执行另一动作。
+    // 先保留合法的显式绑定，再补默认值：升级时新增的默认键不能抢占旧自定义键。
+    // 显式配置内部若有重复，仍按登记顺序确定唯一动作。
     const used = new Set<string>();
-    for (const { id } of SHORTCUT_ACTIONS) {
+    const ordered = [...SHORTCUT_ACTIONS.filter(({ id }) => explicit.has(id)), ...SHORTCUT_ACTIONS.filter(({ id }) => !explicit.has(id))];
+    for (const { id } of ordered) {
       result.bindings[id] = result.bindings[id].split(' ').filter((key) => {
         if (!key || used.has(canonicalKey(key))) return false;
         used.add(canonicalKey(key));
@@ -78,7 +96,8 @@ export function normalizeShortcutSettings(value: unknown): ShortcutSettings {
 }
 
 export function recordedShortcut(event: Pick<KeyboardEvent, 'key' | 'ctrlKey' | 'altKey' | 'metaKey' | 'shiftKey'>): string | undefined {
-  const key = event.key === ' ' ? 'Space' : event.key;
+  const shiftedDigit = event.shiftKey ? SHIFT_DIGITS.indexOf(event.key) : -1;
+  const key = event.key === ' ' ? 'Space' : shiftedDigit >= 0 ? String(shiftedDigit) : event.key;
   const parts = [event.ctrlKey ? 'Ctrl' : '', event.altKey ? 'Alt' : '', event.metaKey ? 'Meta' : '',
     event.shiftKey && key !== '<' && key !== '>' ? 'Shift' : '', key].filter(Boolean);
   const combo = parts.join('+');

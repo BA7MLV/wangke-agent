@@ -80,7 +80,7 @@ function PreviewFrame({ src }: { src: string }) {
 }
 
 /**
- * YouTube 式时间滑块：官方默认布局的 `<DefaultTimeSlider>` 只渲染一个纯文字时间提示，
+ * 带悬停预览的时间滑块：官方默认布局的 `<DefaultTimeSlider>` 只渲染一个纯文字时间提示，
  * 这里换成「缩略图卡片 + 压在卡片底部的时间胶囊」。
  *
  * 为什么要整体替换 `timeSlider` 槽位而不是在默认布局上叠一层：预览卡片的位置由 vidstack

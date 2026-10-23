@@ -1,198 +1,332 @@
-/* 播放器增强：控制栏 hover 显隐 / 倍速档位（HeroUI ToggleButtonGroup）/ 弹幕开关 /
-   字幕字号 / 影院模式 / 双击 ±10s 涟漪反馈。
-   ----------------------------------------------------------------------------
-   控制栏的**行为**（显隐、键盘、手势、无障碍）来自 Vidstack 默认布局；**外观向
-   HeroUI 对齐**：自研按钮改用 HeroUI 的 Button / ToggleButton / Tooltip，配色只覆盖
-   它们自身的 --button-* / --toggle-button-* 契约（见下方「控制栏里的 HeroUI 组件」一节），
-   形状 / 尺寸 / 按下反馈 / 焦点环 / 缓动由 HeroUI 提供。
-   Vidstack 默认布局的规则都包在 :where() 里（0 特异性），普通类选择器即可覆盖。 */
-
-/* ── 播放器直角（用户要求） ──────────────────────────────────────────
-   vds 的默认视频布局会**在宿主元素上**圆角 + 描边：
-     [data-media-player][data-layout=video]:not([data-fullscreen]) {
-       border-radius: var(--video-border-radius, 6px);
-       border: var(--video-border, 1px solid rgb(255 255 255 / .1));
-     }
-   （node_modules/@vidstack/react/player/styles/default/layouts/video.css）
-
-   ⚠️ 只删掉 Player.tsx 里那个内联 `style={{ borderRadius: 12 }}` 是**不够的** ——
-   内联样式只是盖住了它，删掉之后 vds 那 6px 就顶上来，肉眼在浅色背景上仍看得出圆角。
-   正确做法是把这条规则消费的变量置 0（变量在元素自身上解析，不必跟那条选择器拼特异性；
-   它也不带 `:where()`，用 `[data-media-player]` 覆盖会被 3 个选择器单位压过去）。
-
-   只改圆角、保留那圈 1px 描边：请求只说不要圆角，描边是另一件事。 */
-[data-media-player] {
+/* B 站式播放器：底部操作栏、蓝色细进度条、暗色浮层与右下角暂停标记。
+   播放管道、ARIA、菜单焦点和触屏手势仍由 Vidstack 负责。 */
+.bili-player {
   --video-border-radius: 0;
+  --video-brand: #00aeec;
+  --video-focus-ring-color: #00aeec;
+  --video-font-family: inherit;
+  --bili-blue: #00aeec;
 }
 
-/* ── 控制栏：只在悬停播放器时出现（YouTube 行为） ────────────── */
-/* 两处配合：
-   ① JS 侧 <MediaPlayer hideControlsOnMouseLeave controlsDelay=24h>（Player.tsx）——
-      鼠标进入 show(0)、离开 hide(0)（这一路 delay 是 0，立即生效）；静止自动隐藏被
-      那个 24h 的 controlsDelay 关掉，好让 vds 内部状态（data-visible / 焦点 / 菜单 /
-      `[data-visible]` 才有的底部渐变背景）与「悬停即显示」的视觉始终一致。
-   ② 下面这一段负责「样式」与 JS 不接管的边界：vds 只在 pointer: fine 且已 started
-      （播放过）时才注册 mouseenter/mouseleave，首次加载、以及触摸设备都不在那个状态机里。
-      所以 desktop 一端直接由 :hover 决定显隐（鼠标在视频上就有操作栏，移开立刻收起），
-      触摸端完全不动（保持点一下才出控制栏）。
-   特异性说明：vds 的默认规则都写在 :where(...) 里（计 0 特异性），
-   这里的 [data-media-player]:hover .vds-controls 一定赢。 */
-.vds-video-layout {
-  /* 出现 0.15s 淡入（默认 0.2s 偏拖沓）；消失由 out 过渡控制，
-     visibility 比 opacity 晚 0.1s 落地，这才有「淡出」而不是闪没 */
-  --media-controls-in-transition: opacity var(--duration-quick, 150ms) var(--ease-out);
-  --media-controls-out-transition:
-    opacity 0.1s var(--ease-out),
-    visibility 0s linear 0.1s;
-}
-
-@media (hover: hover) and (pointer: fine) {
-  [data-media-player]:hover .vds-controls,
-  [data-media-player]:focus-visible .vds-controls,
-  [data-media-player]:has(:focus-visible) .vds-controls {
-    opacity: 1;
-    visibility: visible;
-    /* Vidstack keeps the overlay's inline pointer-events:none while its
-       mouse state is hidden. Keyboard focus must be able to tab into the
-       real controls as soon as the overlay is made visible. */
-    pointer-events: auto !important;
-  }
-
-  /* Vidstack can keep individual control groups in their transient hidden
-     state while focus moves from the player surface to the first button.
-     Reveal the groups for the duration of keyboard focus so Tab reaches the
-     actual play, volume, captions, and seek controls. */
-  [data-media-player]:focus-visible .vds-controls .vds-controls-group,
-  [data-media-player]:has(:focus-visible) .vds-controls .vds-controls-group {
-    opacity: 1 !important;
-    visibility: visible !important;
-    pointer-events: auto !important;
-  }
-
-  /* 键盘用户先聚焦播放器，再 Tab 到控制键；不能在鼠标离开时把焦点目标隐藏。
-     用 focus-visible 而不是任意 focus-within，鼠标点过播放后仍可正常移出收起。 */
-  [data-media-player]:not(:hover):not(:focus-visible):not(:has(:focus-visible)) .vds-controls {
-    opacity: 0;
-    visibility: hidden;
-  }
-}
-
-/* 控制层遮罩：vidstack 默认是一条约 0.6 黑的底渐变 + 顶部只剩 0.3 黑。
-   顶部那一档在本项目不够用 —— 顶栏放的是自研按钮（倍速档位 / 弹幕 / 字号），
-   压在浅色课件录制、白底 PPT 上会整片发白（2x/3x 几乎看不见）。这里把顶档提到 0.55，
-   遮罩沿用播放器的直角令牌，避免再次覆盖上方用户指定的 --video-border-radius: 0。 */
-.vds-video-layout .vds-controls[data-visible],
-[data-media-player]:focus-visible .vds-controls,
-[data-media-player]:has(:focus-visible) .vds-controls {
-  background-image: linear-gradient(
-    to top,
-    rgb(0 0 0 / 0.6),
-    10%,
-    transparent,
-    88%,
-    rgb(0 0 0 / 0.55)
-  );
-}
-
-/* ── 控制栏：YouTube 视觉（进度条 / 按钮） ───────────────────── */
-/* 只覆盖 vidstack 的令牌 —— 它的默认样式都包在 `:where()` 里（0 特异性），
-   普通类选择器即可覆盖，不需要 `!important`。
-   进度条：静止 3px → hover / 拖动 6px（vds 在 `[data-active]` 时自动切到 focused 高度），
-   已播部分用主题色（动态取色后随课程封面变），hover 冒出的圆点播放头也交给 vds
-   —— thumb 默认 `opacity: 0`、`[data-active]` 才现，与 YouTube 一致。 */
-.vds-video-layout {
+.bili-player .vds-video-layout {
   --media-slider-track-height: 3px;
-  --media-slider-focused-track-height: 6px;
-  --media-slider-thumb-size: 13px;
+  --media-slider-focused-track-height: 5px;
+  --media-slider-thumb-size: 12px;
   --media-slider-track-bg: rgb(255 255 255 / 0.25);
-  --media-slider-track-fill-bg: var(--accent);
-  --media-slider-track-border-radius: 9999px;
-
-  /* 按钮：38px → 40px；图标占比 70% → 60%（YouTube 的图标小而精致）；
-     hover 底色压到 0.12（默认 0.2 在深色画面上过亮） */
-  --media-button-size: 40px;
-  --media-button-icon-size: 60%;
-  --media-button-hover-bg: rgb(255 255 255 / 0.12);
-
-  /* 时间「当前 / 总长」：YouTube 是 13px、无内边距；默认 15px + 2px 内边距偏大，
-     在 40px 的按钮行里显得比图标还重 */
+  --media-slider-track-fill-bg: var(--bili-blue);
+  --media-slider-track-border-radius: 2px;
+  --media-button-size: 36px;
+  --media-button-icon-size: 62%;
+  --media-button-hover-bg: transparent;
+  --media-button-border-radius: 4px;
   --media-time-font-size: 13px;
   --media-time-padding: 0;
   --media-time-letter-spacing: 0;
-  /* 章节标题（本项目没有章节轨，默认布局退化显示视频名）：YouTube 用 14px 的次要色 */
-  --media-chapter-title-font-size: 14px;
-  --media-chapter-title-color: rgb(255 255 255 / 0.7);
+  --media-menu-bg: rgb(28 29 32 / 0.96);
+  --media-menu-border: 1px solid rgb(255 255 255 / 0.1);
+  --media-controls-in-transition: opacity var(--duration-quick, 150ms) var(--ease-out, ease-out);
+  --media-controls-out-transition: opacity var(--duration-quick, 150ms) var(--ease-out, ease-out);
 }
 
-/* 时间数字等宽：不然「当前时间」每秒重排，右侧的「/ 总长」会跟着左右抖 */
-.vds-video-layout .vds-time {
+/* 不再用 :hover 强行显示，让「静止收起」与 Vidstack 内部状态保持一致。 */
+.bili-player .vds-controls[data-visible],
+.bili-player:focus-visible .vds-controls,
+.bili-player:has(:focus-visible) .vds-controls {
+  background-image: linear-gradient(to top, rgb(0 0 0 / 0.82), rgb(0 0 0 / 0.3) 64px, transparent 150px);
+}
+
+.bili-player:focus-visible .vds-controls,
+.bili-player:has(:focus-visible) .vds-controls,
+.bili-player:focus-visible .vds-controls-group,
+.bili-player:has(:focus-visible) .vds-controls-group {
+  opacity: 1 !important;
+  visibility: visible !important;
+}
+
+/* 整层保持穿透，只有控件行接收指针；否则键盘聚焦后会挡住画面单双击。 */
+.bili-player:focus-visible .vds-controls-group,
+.bili-player:has(:focus-visible) .vds-controls-group {
+  pointer-events: auto !important;
+}
+
+.bili-player .vds-video-layout:not([data-sm]) .vds-controls-group:first-child {
+  display: none;
+}
+
+.bili-player .vds-video-layout:not([data-sm]) .vds-controls-group:last-child {
+  padding: 2px 16px 8px;
+  gap: 4px;
+}
+
+.bili-player .vds-video-layout:not([data-sm]) .vds-controls-group:nth-last-child(2) {
+  padding: 0 20px;
+  margin-bottom: -10px;
+}
+
+.bili-player .vds-time-slider {
+  --media-slider-height: 28px;
+}
+
+.bili-player .vds-time {
   font-variant-numeric: tabular-nums;
 }
 
-/* 分隔斜杠压暗一档（默认 #e0e0e0 和数字同亮，看起来像两个计时器） */
-.vds-video-layout .vds-time-divider {
-  color: rgb(255 255 255 / 0.55);
+.bili-player .vds-time-divider {
+  color: rgb(255 255 255 / 0.5);
 }
 
-/* 压在浅色画面上时的可读性：底部的渐变遮罩到顶部只剩 0.3 的黑，
-   倍速文字、时间、图标落在白底画面（比如课件截图、浅色 PPT 录制）上会糊掉。
-   YouTube 同样给控制栏的图标与文字加了淡投影 —— 这是它「压在什么画面上都看得清」的原因。
-   text-shadow 会继承，挂在 .vds-controls 上一次就够；SVG 图标不吃 text-shadow，
-   单独补一层 drop-shadow。 */
-.vds-video-layout .vds-controls {
-  text-shadow: 0 0 2px rgb(0 0 0 / 0.45);
+.bili-player .vds-controls {
+  text-shadow: 0 1px 2px rgb(0 0 0 / 0.5);
 }
 
-.vds-video-layout .vds-controls .vds-icon {
-  filter: drop-shadow(0 0 2px rgb(0 0 0 / 0.45));
+.bili-player .vds-button {
+  margin-right: 0;
 }
 
-/* 按钮间距：vidstack 默认 2.5px 太挤，YouTube 大约 8px */
-.vds-video-layout .vds-button {
-  margin-right: 6px;
+.bili-player .vds-button:is(:hover, [data-hocus], [aria-expanded="true"]) {
+  color: var(--bili-blue);
 }
 
-/* ── 影院模式按钮 ────────────────────────────────────────────────
-   放在全屏按钮左侧。选中态只用一层主色软底（--accent-soft），比弹幕开关的实心
-   主色低一档，避免与「真正全屏」争夺视觉权重。 */
-[data-media-player] .theater-mode-btn[data-active] {
-  --button-bg: var(--accent-soft);
-  --button-bg-hover: var(--accent-soft-hover);
-  --button-bg-pressed: var(--accent-soft-hover);
-  --button-fg: var(--accent-soft-foreground);
-}
-
-/* 页内影院模式只对桌面有意义；平板堆叠和手机继续使用现有面板布局。
-   连 Tooltip 的包装层一起藏 —— 只藏按钮会留下一个空的 inline-block。 */
-@media (max-width: 900px),
-  (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
-  .vds-video-layout .theater-mode-btn,
-  .vds-video-layout .tooltip__trigger:has(.theater-mode-btn) {
+/* 桌面双击任意画面均切全屏；触屏保留两侧双击 ±10 秒。 */
+@media (pointer: fine) {
+  .bili-player .vds-gesture[action^="seek:"] {
     display: none;
   }
 }
 
-/* ── 进度条 hover 预览：缩略图 + 时间胶囊（YouTube 的招牌细节） ────── */
-/* 结构来自 components/TimeSliderWithPreview.tsx：
-     .vds-slider-preview            ← 跟随指针的盒子（left/bottom 由 vidstack 内联算出来）
-       .player-preview-frame > video ← 停在指针时间点的预览帧（.player-preview-frame 上写死尺寸）
-       .vds-slider-value             ← 时间胶囊，绝对定位叠在卡片底部
-   这里不用 vidstack 官方的 .vds-slider-video：它的默认样式带 1px 白描边，而且未就绪时
-   整个元素被 display: none 掉（详见组件里 PreviewFrame 的注释）。 */
-.vds-video-layout .vds-time-slider .vds-slider-preview {
-  /* 卡片外观全交给 .player-preview-frame，外层不再画背景 */
+/* 播放器内自研按钮用透明底，与相邻 Vidstack 按钮保持同一视觉重量。 */
+.bili-player .player-ctl {
+  --button-bg: transparent;
+  --button-bg-hover: rgb(255 255 255 / 0.08);
+  --button-bg-pressed: rgb(255 255 255 / 0.12);
+  --button-fg: #fff;
+  border-radius: 4px;
+  min-width: 32px;
+  height: 32px;
+}
+
+.bili-player .player-ctl[data-active] {
+  --button-fg: var(--bili-blue);
+}
+
+.bili-player .player-dm-toggle {
+  font-size: 16px;
+  font-weight: 600;
+}
+
+.bili-player .player-dm-toggle:not([data-active]) {
+  opacity: 0.55;
+}
+
+.bili-player .player-caption-size {
+  font-size: 18px;
+}
+
+.player-caption-setting {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 6px 10px;
+  font-size: 14px;
+}
+
+.bili-player .player-ctl:focus-visible,
+.bili-player .player-big-play:focus-visible,
+.bili-player .vds-button:focus-visible {
+  outline: 2px solid var(--bili-blue);
+  outline-offset: 2px;
+}
+
+.player-speed-menu {
+  position: relative;
+  flex: none;
+}
+
+.bili-player .player-speed-trigger {
+  width: auto;
+  min-width: 52px;
+  padding: 0 8px;
+  font-size: 14px;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.bili-player .player-speed-options {
+  min-width: 124px;
+  padding: 6px;
+  max-height: min(320px, calc(var(--player-height, 400px) - 76px));
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.bili-player .player-speed-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 12px;
+  border-radius: 4px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+.bili-player .player-speed-option[data-checked] {
+  color: var(--bili-blue);
+}
+
+.player-speed-check {
+  visibility: hidden;
+}
+
+.player-speed-option[data-checked] .player-speed-check {
+  visibility: visible;
+}
+
+.bili-player .player-speed-option[data-hocus] {
+  background: rgb(255 255 255 / 0.08);
+}
+
+.bili-player .player-shortcuts-content {
+  width: min(390px, calc(100vw - 40px));
+  max-height: min(420px, calc(var(--player-height, 480px) - 90px));
+  padding: 16px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  white-space: normal;
+  font-size: 12px;
+}
+
+.player-shortcuts-content h3 {
+  margin: 0 0 8px;
+  color: #fff;
+  font-size: 14px;
+}
+
+.player-shortcuts-content p {
+  margin: 8px 0;
+  color: rgb(255 255 255 / 0.6);
+  line-height: 1.6;
+}
+
+.player-shortcuts-content dl > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+}
+
+.player-shortcuts-content dd {
+  margin: 0;
+  text-align: right;
+}
+
+.player-shortcuts-content kbd {
+  color: #fff;
+  font: inherit;
+  font-variant-numeric: tabular-nums;
+}
+
+.player-shortcuts-content .player-shortcuts-notice {
+  color: #ffcb70;
+}
+
+/* 暂停时右下角出现大播放标记，不遮住课件中心。 */
+.bili-player .player-big-play {
+  position: absolute;
+  right: 28px;
+  bottom: 88px;
+  z-index: 14;
+  width: 60px;
+  height: 52px;
+  border-radius: 12px;
+  --button-bg: rgb(0 0 0 / 0.45);
+  --button-bg-hover: rgb(0 0 0 / 0.65);
+  --button-bg-pressed: rgb(0 0 0 / 0.75);
+  --button-fg: #fff;
+}
+
+.bili-player .player-big-play__icon {
+  width: 30px;
+  height: 30px;
+  fill: currentColor;
+  margin: 0 0 0 3px;
+}
+
+.bili-player:has(.vds-video-layout[data-sm]) .player-big-play {
+  display: none;
+}
+
+.player-feedback {
+  position: absolute;
+  top: 24px;
+  left: 24px;
+  z-index: 60;
+  max-width: calc(100% - 48px);
+  padding: 8px 14px;
+  border-radius: 4px;
+  background: rgb(0 0 0 / 0.72);
+  color: #fff;
+  font-size: 14px;
+  pointer-events: none;
+  visibility: hidden;
+}
+
+.player-feedback[data-active] {
+  visibility: visible;
+}
+
+.player-feedback[data-boost] {
+  top: 10%;
+  left: 50%;
+  transform: translateX(-50%);
+  white-space: nowrap;
+}
+
+/* 网页全屏与浏览器原生全屏分开；提高特异性覆盖普通 / 宽屏的尺寸预算。 */
+.page-player .player-layout .video-pane .bili-player.player-web-fullscreen[data-media-player] {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  width: 100%;
+  height: 100dvh;
+  min-height: 0;
+  max-height: none;
+  margin: 0;
+  aspect-ratio: auto;
+  background: #000;
+}
+
+.bili-player.player-web-fullscreen [data-media-provider],
+.bili-player.player-web-fullscreen [data-media-provider] video {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+
+@media (max-width: 900px),
+  (orientation: landscape) and (max-height: 520px) and (max-width: 1100px) {
+  .bili-player .theater-mode-btn,
+  .bili-player .tooltip__trigger:has(.theater-mode-btn) {
+    display: none;
+  }
+}
+
+/* 缩略图与时间一体化，卡片不随浅色课件丢失边界。 */
+.bili-player .vds-time-slider .vds-slider-preview {
   --media-slider-preview-bg: transparent;
-  /* 预览卡圆角跟随 HeroUI 的卡片档（--radius = 8px → --radius-lg） */
-  --media-slider-preview-border-radius: var(--radius-lg, 10px);
+  --media-slider-preview-border-radius: 4px;
   gap: 0;
 }
 
 .player-preview-frame {
   position: relative;
   overflow: hidden;
-  border-radius: var(--radius-lg, 10px);
+  border: 1px solid rgb(255 255 255 / 0.5);
+  border-radius: 4px;
   background: #000;
-  box-shadow: 0 2px 10px rgb(0 0 0 / 0.55);
+  box-shadow: 0 2px 10px rgb(0 0 0 / 0.4);
 }
 
 .player-preview-video {
@@ -200,211 +334,64 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  /* 第一帧解出来之前先不显示，否则会闪一下纯黑 */
   opacity: 0;
-  transition: opacity var(--duration-quick, 150ms) var(--ease-out);
 }
 
 .player-preview-video[data-ready] {
   opacity: 1;
 }
 
-.vds-video-layout .vds-time-slider .vds-slider-value {
+.bili-player .vds-time-slider .vds-slider-value {
   position: absolute;
   left: 50%;
-  bottom: 6px;
+  bottom: 4px;
   transform: translateX(-50%);
-  /* 默认是「图下方另起一行」的 2px 顶距，改成叠在图上就不需要了 */
   margin: 0;
-  padding: 3px 7px;
+  padding: 2px 6px;
   border: 0;
-  border-radius: var(--radius-sm, 6px);
-  background: rgb(0 0 0 / 0.85);
+  border-radius: 2px;
+  background: rgb(0 0 0 / 0.8);
   color: #fff;
   font-size: 12px;
-  font-weight: 500;
-  line-height: 14px;
-  letter-spacing: 0;
+  line-height: 16px;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
   pointer-events: none;
 }
 
-/* ── 中央大播放按钮（YouTube 首帧） ─────────────────────────────── */
-/* 组件是 HeroUI 的**圆形 isIconOnly Button**（PlayerBigPlayButton）：药丸/圆、按下
-   scale、焦点环、缓动都来自 HeroUI。这里只补三件 HeroUI 不管的事 —— 绝对居中、
-   体量、半透明黑底（压在首帧上）；颜色同样走 --button-* 契约。
-   只在「本次打开还没播过」时出现，所以不必考虑和播放中的画面争视线。
-   层级压在字幕(10)之上、弹幕(15)之下：它是静态元素，弹幕经过时应该在它上面。 */
-[data-media-player] .player-big-play {
-  position: absolute;
+/* 小屏顶栏保持克制，给字幕和画面让位。 */
+.bili-player:not([data-started]) .vds-video-layout[data-sm] .vds-controls[data-visible] .vds-controls-group,
+.bili-player:not([data-started]) .vds-video-layout[data-sm] .vds-time-group {
+  opacity: 1;
+  visibility: visible;
+}
+
+.bili-player .vds-video-layout[data-sm] .vds-controls[data-visible] {
+  background-image: linear-gradient(to top, rgb(0 0 0 / 0.65), transparent 40%, transparent 60%, rgb(0 0 0 / 0.5));
+}
+
+.bili-player .vds-video-layout[data-sm] .player-speed-trigger {
+  min-width: 44px;
+  padding: 0 4px;
+  font-size: 13px;
+}
+
+.bili-player:has(.vds-video-layout[data-sm]) .player-feedback:not([data-boost]) {
   top: 50%;
   left: 50%;
-  z-index: 14;
-  /* HeroUI 默认 lg 是 44px；中央大播放键按 YouTube 的体量给到 56px，
-     圆形与交互仍由 HeroUI 提供 */
-  width: 56px;
-  height: 56px;
-  --button-bg: rgb(0 0 0 / 0.55);
-  --button-bg-hover: rgb(0 0 0 / 0.72);
-  --button-bg-pressed: rgb(0 0 0 / 0.72);
-  --button-fg: #fff;
   transform: translate(-50%, -50%);
-  animation: big-play-in var(--duration-medium, 350ms) var(--ease-smooth-out);
+  white-space: nowrap;
 }
 
-@media (hover: hover) {
-  [data-media-player] .player-big-play:hover {
-    transform: translate(-50%, -50%) scale(1.06);
-  }
-}
-
-[data-media-player] .player-big-play:active {
-  transform: translate(-50%, -50%) scale(0.96);
-}
-
-/* HeroUI 的 .button svg 会给图标 size-5（20px）+ 负外边距；大按钮按 24px 给，
-   并清掉那对负边距，只保留「三角形视觉居中」的右移。 */
-[data-media-player] .player-big-play__icon {
-  width: 24px;
-  height: 24px;
-  fill: currentColor;
-  margin: 0 0 0 3px;
-}
-
-@keyframes big-play-in {
-  from {
-    opacity: 0;
-    transform: translate(-50%, -50%) scale(0.8);
-  }
-  to {
-    opacity: 1;
-    transform: translate(-50%, -50%) scale(1);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .player-big-play {
-    animation: none;
-  }
-}
-
-/* ── 控制栏里的 HeroUI 组件：颜色契约 ────────────────────────────
-   HeroUI 的 Button / ToggleButton 把配色全部收敛到自身的自定义属性：
-     .button        →  --button-bg / -hover / -pressed / -fg
-     .toggle-button →  再加 --toggle-button-bg-selected / -selected-hover /
-                        -selected-pressed / -fg-selected
-   形状（rounded-3xl 药丸）、尺寸、按下 scale(0.97)、焦点环、缓动都来自 HeroUI。
-   这里只把「应用表面色」覆盖成「压在视频上的半透明白」，于是组件保持 HeroUI 的
-   外观与交互，又在任何画面上读得清。选中 / 开启态用动态主色 --accent 填充，
-   与 HeroUI primary 一致（--accent 在本项目随课程封面动态取色）。 */
-[data-media-player] .player-ctl {
-  --button-bg: rgb(255 255 255 / 0.1);
-  --button-bg-hover: rgb(255 255 255 / 0.2);
-  --button-bg-pressed: rgb(255 255 255 / 0.26);
-  --button-fg: #fff;
-}
-
-[data-media-player] .player-ctl[data-active] {
-  --button-bg: var(--accent);
-  --button-bg-hover: var(--accent-hover);
-  --button-bg-pressed: var(--accent-hover);
-  --button-fg: var(--accent-foreground);
-}
-
-[data-media-player] .player-rate-group .toggle-button {
-  --toggle-button-bg: rgb(255 255 255 / 0.1);
-  --toggle-button-bg-hover: rgb(255 255 255 / 0.2);
-  --toggle-button-bg-pressed: rgb(255 255 255 / 0.26);
-  --toggle-button-fg: #fff;
-  --toggle-button-bg-selected: var(--accent);
-  --toggle-button-bg-selected-hover: var(--accent-hover);
-  --toggle-button-bg-selected-pressed: var(--accent-hover);
-  --toggle-button-fg-selected: var(--accent-foreground);
-}
-
-/* 键盘焦点环：主色内环 + 半透明白外描边。
-   HeroUI 默认只用 --focus 单环（outline: none + box-shadow），压在浅色画面上
-   可能不够显眼，白描边兜底对比度。特异性高于 HeroUI 的 .button:focus-visible
-   与 .toggle-button-group .toggle-button:focus-visible。 */
-[data-media-player] :is(.player-ctl, .player-rate-group .toggle-button, .player-big-play):focus-visible {
-  outline: 2px solid var(--focus, var(--accent));
-  outline-offset: 2px;
-  box-shadow: 0 0 0 4px rgb(255 255 255 / 0.55);
-}
-
-/* ── 倍速档位（ToggleButtonGroup） ───────────────────────────── */
-/* 档位多于一屏时横向滚动（隐藏滚动条），不撑破顶栏 */
-.player-rate-group {
-  flex: 0 0 auto;
-  max-width: 100%;
-  overflow-x: auto;
-  scrollbar-width: none;
-  /* 焦点环（outline + 白色外描边）画在药丸之外，而 overflow-x:auto 会让另一轴也按
-     auto 计算并把它裁掉（滚动容器只在自己 padding 盒内绘制）。用「内边距 + 等量负
-     外边距」给环留出空间，视觉与布局都不变。 */
-  padding: 6px;
-  margin: -6px;
-}
-
-.player-rate-group::-webkit-scrollbar {
-  display: none;
-}
-
-/* 档位药丸的尺寸交给 HeroUI 的 size="sm"（桌面 32px，与顶栏的弹幕/字号按钮一致）；
-   这里只把数字对齐成等宽，切换档位时宽度不跳。 */
-[data-media-player] .player-rate-group .toggle-button {
-  font-variant-numeric: tabular-nums;
-}
-
-/* 窄屏（小布局）折叠为单个循环按钮，避免挤占顶栏 */
-[data-media-player] .player-rate-cycle {
-  display: none;
-}
-
-/* 桌面端：循环按钮整块（连 Tooltip 包装层）一起隐藏。
-   HeroUI 的 Tooltip 包装层固定是 role=button + tabindex=0，只藏里面的按钮会留下
-   一个看不见的 Tab 停靠点。 */
-.vds-video-layout:not([data-sm]) .tooltip__trigger:has(.player-rate-cycle) {
-  display: none;
-}
-
-.vds-video-layout[data-sm] .player-rate-group {
-  display: none;
-}
-
-.vds-video-layout[data-sm] .player-rate-cycle {
-  display: inline-flex;
-}
-
-/* ── 字幕字号按钮 ───────────────────────────────────────────── */
-/* Material Symbols 图标是 1em 见方、跟随 font-size；HeroUI 的 sm 图标键在桌面是
-   32px，这里把图标定到 18px 才不显得空。 */
-[data-media-player] .player-caption-size {
-  font-size: 18px;
-}
-
-/* ── 思考题弹幕：开关按钮 ───────────────────────────────────── */
-/* 「弹」字按钮（B 站风格）：尺寸与药丸形状交给 HeroUI 的 size="sm" */
-[data-media-player] .player-dm-toggle:not([data-active]) {
-  opacity: 0.55;
-}
-
-/* ── 思考题弹幕：渲染层 ─────────────────────────────────────── */
+/* 思考题弹幕：暂停时冻结，结束时允许退场。 */
 .danmaku-layer {
   position: absolute;
   inset: 0;
-  z-index: 15; /* 字幕(10)之上、控制栏(50)之下，与涟漪同层 */
+  z-index: 15;
   overflow: hidden;
   pointer-events: none;
 }
 
-/* 自右向左飘过。位移量没法纯 CSS 算：百分比是相对**自身宽度**的，而「整条飘完刚好
-   出屏」要走的距离是「容器宽 + 自身宽」，容器宽 CSS 自己拿不到。所以沿用下面的居中
-   定位（left/right:0 + margin:auto，可用宽度就是整层宽），起点与终点天然关于中心
-   对称 —— 只要往右挪 (容器宽 + 自身宽) / 2，左边缘就正好落在层右边界外；往左挪同样
-   的距离，右边缘正好落在层左边界外。这个 --dm-shift 由 DanmakuLayer 量出来。
-   走 transform 而不是 left，是为了留在合成层上，别去动播放时的布局。 */
 .dm-item {
   position: absolute;
   top: 12%;
@@ -415,18 +402,16 @@
   margin: 0 auto;
   padding: 8px 16px;
   border-radius: 18px;
-  background: rgba(0, 0, 0, 0.62);
+  background: rgb(0 0 0 / 0.62);
   color: #fff;
   font-size: 16px;
   line-height: 1.55;
   text-align: center;
   will-change: transform;
   animation: dm-scroll var(--dm-dur, 10s) linear forwards;
-  /* 宽度量出来之前先别跑：animation-duration 中途被改，进度会跟着重算、画面会跳 */
   animation-play-state: paused;
 }
 
-/* 量与时长都写好了，放行 */
 .dm-item[data-ready] {
   animation-play-state: running;
 }
@@ -443,53 +428,25 @@
   vertical-align: 2px;
 }
 
-/* 暂停时弹幕动画一并暂停（onAnimationEnd 在恢复后才触发，state 清理正常）。
-   但「播完」不算：「视频结束」也是一种 paused，此刻半路那条会冻结在画面中间 ——
-   动画停在 100% 之前，animationend 永不触发，state 清不掉，画面正中就永远杵着一条
-   弹幕（10s 的 e2e 样片上必现）。视频都放完了，让它把这几十像素飘完退场更合理。
-   特异性 (0,4,0) 高于 .dm-item[data-ready] (0,2,0)，谁先谁后都赢。 */
 [data-media-player][data-paused]:not([data-ended]) .dm-item {
   animation-play-state: paused;
 }
 
 @keyframes dm-scroll {
-  from {
-    transform: translateX(var(--dm-shift, 50vw));
-  }
-  to {
-    transform: translateX(calc(var(--dm-shift, 50vw) * -1));
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 保留淡入淡出（onAnimationEnd 仍触发），去掉位移；
-     时长写死：这个分支跟飘屏距离无关，不该跟着 --dm-dur 变 */
-  .dm-item {
-    animation-name: dm-pop-fade;
-    animation-duration: 7s;
-  }
+  from { transform: translateX(var(--dm-shift, 50vw)); }
+  to { transform: translateX(calc(var(--dm-shift, 50vw) * -1)); }
 }
 
 @keyframes dm-pop-fade {
-  0% {
-    opacity: 0;
-  }
-  8% {
-    opacity: 1;
-  }
-  88% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-  }
+  0%, 100% { opacity: 0; }
+  8%, 88% { opacity: 1; }
 }
 
-/* ── 双击 ±10s 涟漪反馈 ─────────────────────────────────────── */
+/* 触屏双击跳转反馈，沿用已有的短暂涟漪。 */
 .seek-feedback {
   position: absolute;
   inset: 0;
-  z-index: 15; /* 字幕(10)之上、控制栏(50)之下，区域在两侧互不重叠 */
+  z-index: 15;
   overflow: hidden;
   pointer-events: none;
 }
@@ -500,56 +457,36 @@
   width: 88px;
   height: 88px;
   border-radius: 50%;
-  background: rgba(0, 0, 0, 0.65);
+  background: rgb(0 0 0 / 0.65);
   color: #fff;
   font-size: 15px;
   font-weight: 600;
   display: flex;
   align-items: center;
   justify-content: center;
-  animation: seek-pulse var(--duration-very-slow, 500ms) var(--ease-smooth-out) forwards;
+  animation: seek-pulse var(--duration-very-slow, 500ms) var(--ease-smooth-out, ease-out) forwards;
 }
 
-.seek-pulse-left {
-  left: 10%;
-}
-
-.seek-pulse-right {
-  right: 10%;
-}
+.seek-pulse-left { left: 10%; }
+.seek-pulse-right { right: 10%; }
 
 @keyframes seek-pulse {
-  0% {
-    opacity: 0;
-    transform: translateY(-50%) scale(0.7);
-  }
-  25% {
-    opacity: 1;
-    transform: translateY(-50%) scale(1);
-  }
-  70% {
-    opacity: 1;
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-50%) scale(1.12);
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  /* 保留淡出反馈（onAnimationEnd 仍触发，state 能正常清理），仅去掉缩放 */
-  .seek-pulse {
-    animation: seek-pulse-fade var(--duration-medium, 350ms) var(--ease-out) forwards;
-  }
+  0% { opacity: 0; transform: translateY(-50%) scale(0.7); }
+  25%, 70% { opacity: 1; transform: translateY(-50%) scale(1); }
+  100% { opacity: 0; transform: translateY(-50%) scale(1.12); }
 }
 
 @keyframes seek-pulse-fade {
-  0% {
-    opacity: 1;
+  from { opacity: 1; }
+  to { opacity: 0; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bili-player .vds-controls,
+  .bili-player .vds-menu-items { transition: none !important; }
+  .dm-item { animation-name: dm-pop-fade; animation-duration: 7s; }
+  .seek-pulse {
     transform: translateY(-50%);
-  }
-  100% {
-    opacity: 0;
-    transform: translateY(-50%);
+    animation: seek-pulse-fade var(--duration-medium, 350ms) var(--ease-out, ease-out) forwards;
   }
 }

@@ -1,10 +1,50 @@
-.composer-sheet-container { padding-bottom: env(safe-area-inset-bottom); }
-.composer-sheet {
-  height: min(720px, 85dvh, calc(var(--vvh, 100dvh) - 24px));
+.composer-sheet__content {
+  width: 100%;
+}
+
+/* Edge-attached sheet on every screen size, never a floating modal card. */
+.composer-sheet[data-placement='bottom'] {
+  width: 100%;
+  height: min(85dvh, calc(var(--vvh, 100dvh) - 16px));
+  max-height: calc(var(--visual-viewport-height, 100dvh) - 16px);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
+  padding: 8px 16px max(16px, env(safe-area-inset-bottom));
+  border-radius: 24px 24px 0 0;
+  background: var(--background);
+  --drawer-enter-duration: var(--duration-slow);
+  --drawer-exit-duration: var(--duration-medium);
+  --drawer-enter-ease: var(--ease-smooth-out);
+  --drawer-exit-ease: var(--ease-smooth-out);
 }
-.composer-sheet__body { flex: 1; min-height: 0; display: flex; }
+
+.composer-sheet__header,
+.composer-sheet__body,
+.composer-sheet__footer {
+  width: min(100%, 960px);
+  margin-inline: auto;
+}
+
+.composer-sheet__header {
+  flex: none;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  padding-block: 4px 12px;
+}
+
+.composer-sheet__body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+}
+
+.composer-sheet__footer {
+  flex: none;
+}
+
 .composer-sheet__input {
   width: 100%;
   height: 100%;
@@ -14,4 +54,13 @@
   overscroll-behavior: contain;
   font-size: 1rem;
   line-height: 1.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-sheet__content,
+  .composer-sheet__backdrop,
+  .composer-sheet {
+    transition: none !important;
+    animation: none !important;
+  }
 }

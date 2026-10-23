@@ -356,7 +356,7 @@ html[data-keyboard='open'] .chat-composer {
 
 .chat-input textarea {
   width: 100%;
-  min-height: 34px;
+  min-height: calc(1.6em + 10px);
   max-height: min(180px, 25dvh);
   padding: 5px 0;
   resize: none;
