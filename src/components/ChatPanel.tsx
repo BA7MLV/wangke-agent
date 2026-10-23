@@ -31,7 +31,7 @@ import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citatio
 import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { messageTime } from '../utils/messageTime';
-import { useMediaQuery, useViewportResize } from '../utils/useMobile';
+import { useMediaQuery } from '../utils/useMobile';
 import { useModelMetaRevision } from '../utils/useModelMeta';
 import {
   Panel,
@@ -47,6 +47,7 @@ import ResponseProcess from './ResponseProcess';
 import type { ProcessPhase } from '../utils/responseProcess';
 import VirtualMessages from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
+import { useChatScroll } from './useChatScroll';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
 import { readChatPage } from '../store/chatHistory';
 import { framePatch } from '../utils/framePatch';
@@ -562,23 +563,6 @@ export default function ChatPanel({
     }
     return true;
   });
-  /**
-   * 消息流吸底。新消息 / 流式追加 / 键盘弹收 / 聚焦输入框都走它 ——
-   * 键盘弹出时面板被顶矮一截，停在原 scrollTop 的最新消息会掉出可视区，
-   * 而那是用户正盯着要看的地方（刚发出去的问题、正在流的回答）。
-   */
-  const pinRafRef = useRef(0);
-  const stickRef = useRef(true);
-  const pinList = useCallback(() => {
-    cancelAnimationFrame(pinRafRef.current);
-    pinRafRef.current = requestAnimationFrame(() => {
-      const el = listRef.current;
-      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
-    });
-  }, []);
-  useEffect(() => () => cancelAnimationFrame(pinRafRef.current), []);
-  // 键盘弹收 / 横竖旋转：重新吸底（没聚焦输入框时也会响，那时吸底同样正确）
-  useViewportResize(pinList);
   // 思考深度能不能调取决于模型自己声明了什么，而元数据是启动后异步拉回来的
   useModelMetaRevision();
 
@@ -602,6 +586,8 @@ export default function ChatPanel({
 
   /** 题卡作答：更新消息状态；已落库的同步回写 IndexedDB */
   const handleAnswer = (key: string, qi: number, oi: number) => {
+    // Revealing an explanation is a reading interaction, not new model output.
+    pauseFollowing();
     setMsgs((prev) =>
       prev.map((m) => {
         if (m.key !== key || !m.quiz || m.quiz.picks[qi] >= 0) return m;
@@ -809,7 +795,6 @@ export default function ChatPanel({
       return;
     }
     let cancelled = false;
-    stickRef.current = true;
     setMsgs([]);
     setHasOlder(false);
     setLoadingOlder(false);
@@ -899,20 +884,6 @@ export default function ChatPanel({
       }
     }
   }, [activeId, hasOlder, msgs]);
-
-  useEffect(() => {
-    const el = listRef.current;
-    if (!el) return;
-    let lastTop = el.scrollTop;
-    const onScroll = () => {
-      if (el.scrollHeight - el.clientHeight - el.scrollTop < 80) stickRef.current = true;
-      else if (el.scrollTop < lastTop - 1) stickRef.current = false;
-      lastTop = el.scrollTop;
-      if (el.scrollTop < 40 && !stickRef.current && !historyError) void loadOlder();
-    };
-    el.addEventListener('scroll', onScroll, { passive: true });
-    return () => el.removeEventListener('scroll', onScroll);
-  }, [loadOlder, historyError]);
 
   const activeTitle = sessions.find((s) => s.id === activeId)?.title ?? '新会话';
 
@@ -1681,24 +1652,15 @@ export default function ChatPanel({
     const n = Number(key);
     if (Number.isFinite(n)) setActiveId(n);
   };
-  // 新消息滚动到底部。
-  // 必须延后一帧：markdown 流式渲染的 DOM 高度在本帧还没算完，首帧滚动会停在半路。
-  // 历史注：原来 Bubble.List 的滚动容器是「回调 ref → useState」注册的，首帧调 scrollTo
-  // 时它内部还是 undefined（`const { scrollHeight } = undefined` 直接抛 TypeError），那次
-  // 异常发生在挂载期、React 会把整棵页面树卸掉重挂 —— 现在自己持有真实元素，`?.` 已足够，
-  // 但延后一帧仍然是必要的（否则滚不到底）。
-  //
-  // 依赖**不能**是 msgs 本身：作答题卡、落库回写 rowId 这类「原地交互」也会换 msgs 的引用，
-  // 于是点一下选项就重新吸一次底 —— 而此刻解析块刚插进来、内容正好长高 Δ，列表又被贴到
-  // 新底部，整屏（含刚点的那个选项）就往上跳 Δ。这里只认「消息变多 / 末尾正文增长」。
-  // 题卡是否挂上也算一条：它是在气泡末尾追加的新内容，该跟到底部；
-  // 而 picks 的变化不影响这个信号，所以作答不会触发滚动。
+  // Token updates are coalesced; actual content resizing (including final action
+  // rows and async previews) is also reported by VirtualMessages.
   const lastMsg = msgs[msgs.length - 1];
   const scrollSignal = [
     msgs.length,
     lastMsg?.key ?? '',
     lastMsg?.content.length ?? 0,
     lastMsg?.reasoning?.length ?? 0,
+    lastMsg?.streaming ? 1 : 0,
     lastMsg?.hint ?? '',
     // 工具链每多一次调用也要跟到底：那一行是**新长出来的高度**，
     // 不跟的话它会顶到可视区外，用户只看到「字数没变但内容跳了一下」
@@ -1707,9 +1669,9 @@ export default function ChatPanel({
     lastMsg?.widget ? 1 : 0,
     lastMsg?.widgetPreview?.html.length ?? 0,
   ].join('|');
-  useEffect(() => {
-    pinList();
-  }, [scrollSignal, pinList]);
+  const { pinIfSticking: pinList, pauseFollowing } = useChatScroll(listRef, activeId, scrollSignal, () => {
+    if (!historyError) void loadOlder();
+  });
 
   /** 删除当前会话前确认（危险操作：确认按钮上错误色，文案写清动作） */
   const confirmDeleteSession = async () => {
@@ -1797,7 +1759,7 @@ export default function ChatPanel({
             {loadingOlder ? '正在加载历史消息…' : historyError ? '加载失败，点击重试' : '加载更早消息'}
           </button>}
         </div>}
-        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef}>{(m, index) => {
+        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} onResize={pinList}>{(m, index) => {
           const isUser = m.role === 'user';
           const htmlPreview = !isUser ? htmlPreviewSource(m.content) : undefined;
           /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */

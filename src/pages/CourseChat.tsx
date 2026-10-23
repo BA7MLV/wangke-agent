@@ -29,6 +29,7 @@ import ResponseProcess from '../components/ResponseProcess';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
 import { useMessageDeletion } from '../components/useMessageDeletion';
+import { useChatScroll } from '../components/useChatScroll';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
 import { db } from '../store/db';
 import AskCard from '../components/AskCard';
@@ -49,8 +50,7 @@ import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../utils/chatExport';
 import { copyText } from '../utils/clipboard';
 import { extractChatSources, type ChatSource } from '../utils/chatSources';
-import { prefersReducedMotion } from '../utils/motion';
-import { useMediaQuery, useViewportResize } from '../utils/useMobile';
+import { useMediaQuery } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
 import { chatGreeting } from '../utils/chatGreeting';
 import { htmlPreviewSource } from '../utils/streamingHtml';
@@ -544,15 +544,6 @@ function QueueBar({
   );
 }
 
-/**
- * 距底部多少像素以内算「贴底」。
- *
- * 不能写成 `=== 0`：字号、滚动条舍入、以及流式追加的那一帧都会留下零点几像素的
- * 残差，严格等于 0 会让「贴底」永远判 false —— 按钮于是常驻，还跟着新内容一直冒。
- * 24px 与 `ReasoningChain` 判「用户滚没滚」用的是同一把尺，两处的「贴底」别各算各的。
- */
-const NEAR_BOTTOM_PX = 24;
-
 export default function CourseChat() {
   const isNarrow = useMediaQuery('(max-width: 900px)');
   const [welcomeGreeting] = useState(() => chatGreeting());
@@ -580,39 +571,8 @@ export default function CourseChat() {
    * 是业界处理 IME 回车的双保险写法（ChatPanel 与 CourseChat 同款）。
    */
   const composingRef = useRef(false);
-  /**
-   * 消息流是否**粘**在底部：粘着时新内容自动跟到底，用户一旦自己往上滚就松开。
-   *
-   * 必须是 ref 而不是 state —— 它每次滚动都在变，挂 state 等于每滚一下重渲整棵消息树。
-   * 同 `ReasoningChain` 的 `stickRef`。
-   */
-  const stickRef = useRef(true);
-  /** 「回到底部」按钮。显隐直接写它的 `data-show`，理由同上：这只是 paint 提示，不 setState */
+  /** 显隐只写 data-show，避免每次滚动都重渲整棵消息树。 */
   const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
-  /** 上一次见到的 scrollTop：用来判断这次到底是**用户往上滚**，还是我们自己在吸底 */
-  const lastTopRef = useRef(0);
-  /**
-   * 粘底时才吸底。聚焦输入框 / 键盘弹收（面板被顶矮一截，停在原 scrollTop 的
-   * 最新消息会掉出可视区）都走它。
-   */
-  const pinIfSticking = useCallback(() => {
-    const element = listRef.current;
-    if (element && stickRef.current) element.scrollTop = element.scrollHeight;
-  }, []);
-  useViewportResize(pinIfSticking);
-  useLayoutEffect(() => {
-    const composer = composerWrapRef.current;
-    const main = composer?.parentElement;
-    if (!composer || !main) return;
-    const measure = () => {
-      main.style.setProperty('--chat-composer-height', `${composer.getBoundingClientRect().height}px`);
-      pinIfSticking();
-    };
-    measure();
-    const observer = new ResizeObserver(measure);
-    observer.observe(composer);
-    return () => observer.disconnect();
-  }, [pinIfSticking]);
   const ready = useCourseChat((s) => s.ready);
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
@@ -770,85 +730,36 @@ export default function CourseChat() {
 
   const lastMessage = messages[messages.length - 1];
   const virtualMessagesRef = useRef<VirtualMessagesHandle>(null);
-  const navigateToQuestion = useCallback(() => { stickRef.current = false; }, []);
   const scrollSignal = [
     messages.length,
     lastMessage?.key ?? '',
     lastMessage?.content.length ?? 0,
     lastMessage?.reasoning?.length ?? 0,
+    lastMessage?.streaming ? 1 : 0,
+    lastMessage?.tools?.length ?? 0,
     lastMessage?.hint ?? '',
     lastMessage?.ask ? `${lastMessage.ask.question}${lastMessage.ask.picked ?? ''}` : '',
     lastMessage?.folderPlan?.applied ?? '',
   ].join('|');
-  /**
-   * 切会话（含首帧落位）回到粘底。
-   *
-   * 新会话必须从**最新一条**看起，不能继承上一个会话「用户滚上去读过」的状态 ——
-   * 否则切过去会停在半空，而那颗回到底部的按钮还得自己冒出来提醒。
-   * 声明在下面的滚动效果**之前**：同一 commit 里先复位、再吸附。
-   */
-  useEffect(() => {
-    stickRef.current = true;
-    lastTopRef.current = 0;
-    if (jumpBtnRef.current) jumpBtnRef.current.dataset.show = 'false';
-  }, [activeId]);
-
-  /**
-   * 用户滚到哪，就更新「还粘不粘底」和按钮显隐。
-   *
-   * `scroll` 不冒泡，只能挂在滚动容器自己身上（同 `ReasoningChain`）。
-   *
-   * ⚠️ 判「粘不粘底」**不能只看 `scrollTop` 离底部多远**：流式追加时内容一帧能长几十像素，
-   * 我们自己那次吸底滚动的事件要等到事件循环稍后才派发，那时 `scrollHeight` 已经又长了一截，
-   * 「离底部 > 24px」照样成立 —— 于是每来一个 token 都误判成「用户滚上去了」，粘底随即松手，
-   * 流到一半就停在半空。真正说明用户**主动往上滚**的只有一件事：`scrollTop` 变小了
-   * （我们自己的吸底只会把它推到最大，内容增长则压根不动它）。所以这里按**方向**判。
-   *
-   * 显隐写 `data-show`（不在 JSX 里声明这个属性）而不是挂 state：它每滚一下都在变，
-   * 挂 state 会让整棵消息树跟着重渲。
-   */
-  useEffect(() => {
-    const element = listRef.current;
-    if (!element) return;
-    const onScroll = () => {
-      const top = element.scrollTop;
-      const distance = element.scrollHeight - element.clientHeight - top;
-      if (distance <= NEAR_BOTTOM_PX) stickRef.current = true;
-      else if (top < lastTopRef.current - 1) stickRef.current = false;
-      lastTopRef.current = top;
+  const { pinIfSticking, pauseFollowing: navigateToQuestion, jumpToLatest } = useChatScroll(
+    listRef, activeId, scrollSignal, () => {
       const state = useCourseChat.getState();
-      if (top < 40 && !stickRef.current && !state.historyError) void state.loadOlder();
-      if (jumpBtnRef.current) jumpBtnRef.current.dataset.show = stickRef.current ? 'false' : 'true';
+      if (!state.historyError) void state.loadOlder();
+    }, jumpBtnRef,
+  );
+  useLayoutEffect(() => {
+    const composer = composerWrapRef.current;
+    const main = composer?.parentElement;
+    if (!composer || !main) return;
+    const measure = () => {
+      main.style.setProperty('--chat-composer-height', `${composer.getBoundingClientRect().height}px`);
+      pinIfSticking();
     };
-    element.addEventListener('scroll', onScroll, { passive: true });
-    return () => element.removeEventListener('scroll', onScroll);
-  }, []);
-
-  /**
-   * 新消息 / 流式追加时滚到底部。
-   *
-   * 只在**还粘着底**时才跟：用户已经自己滚上去读历史了，每来一个 token 都把他拽回来
-   * 是纯打扰（这条原来写死了总是吸附，正是「回到底部」按钮需要存在的原因本身）。
-   * 松手之后由那颗按钮把人送回去。
-   */
-  useEffect(() => {
-    const id = requestAnimationFrame(() => {
-      const element = listRef.current;
-      if (element && stickRef.current) element.scrollTop = element.scrollHeight;
-    });
-    return () => cancelAnimationFrame(id);
-  }, [scrollSignal]);
-
-  /** 回到底部：重新粘底并滚到最新。尊重系统「减少动态效果」偏好 —— 那时直接跳过去 */
-  const jumpToLatest = () => {
-    const element = listRef.current;
-    if (!element) return;
-    stickRef.current = true;
-    element.scrollTo({
-      top: element.scrollHeight,
-      behavior: prefersReducedMotion() ? 'auto' : 'smooth',
-    });
-  };
+    measure();
+    const observer = new ResizeObserver(measure);
+    observer.observe(composer);
+    return () => observer.disconnect();
+  }, [pinIfSticking]);
 
   const iconButton = (
     label: string,
@@ -1116,7 +1027,7 @@ export default function CourseChat() {
               )}
             </div>}
             {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}
-              ref={virtualMessagesRef} scrollPaddingStart={88}>{(message, index) => {
+              ref={virtualMessagesRef} onResize={pinIfSticking} scrollPaddingStart={88}>{(message, index) => {
               const user = message.role === 'user';
               const htmlPreview = !user ? htmlPreviewSource(message.content) : undefined;
               /**
