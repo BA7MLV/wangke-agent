@@ -741,12 +741,13 @@ export default function CourseChat() {
     lastMessage?.ask ? `${lastMessage.ask.question}${lastMessage.ask.picked ?? ''}` : '',
     lastMessage?.folderPlan?.applied ?? '',
   ].join('|');
-  const { pinIfSticking, pauseFollowing: navigateToQuestion, jumpToLatest } = useChatScroll(
-    listRef, activeId, scrollSignal, () => {
+  const { pinIfSticking, pauseFollowing: navigateToQuestion, jumpToLatest } = useChatScroll(listRef, {
+    sessionKey: activeId, revision: scrollSignal, messages, virtualRef: virtualMessagesRef, jumpButtonRef: jumpBtnRef,
+    onReachStart: () => {
       const state = useCourseChat.getState();
       if (!state.historyError) void state.loadOlder();
-    }, jumpBtnRef,
-  );
+    },
+  });
   useLayoutEffect(() => {
     const composer = composerWrapRef.current;
     const main = composer?.parentElement;
@@ -1068,6 +1069,7 @@ export default function CourseChat() {
                           streaming={!!message.streaming} phase={message.processPhase} hint={message.hint}
                           since={message.processStartedAt ?? message.reasoningStartedAt} elapsedMs={message.reasoningMs}
                           waiting={!!message.ask && !message.ask.picked || !!message.folderPlan && message.folderPlan.applied === 0} />
+                        <div aria-hidden="true" data-chat-answer-start={message.content || message.ask || message.folderPlan || message.widget || message.widgetPreview ? '' : undefined} />
                         {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
                             正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
                             「先给结论、下面才是问题」。 */}

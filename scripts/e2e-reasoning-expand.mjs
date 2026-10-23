@@ -36,13 +36,20 @@ try {
   const chain = page.getByTestId('response-process');
   const toggle = page.getByTestId('response-process-toggle');
   const body = page.locator('.reasoning-chain__body');
+  const indicator = toggle.locator('.reasoning-chain__indicator');
+  const assertArrow = async (expanded) => {
+    assert.equal(await indicator.locator('path').count() > 0, true);
+    assert.equal(await indicator.evaluate((el) => el.classList.contains('tabler-icon-chevron-right')), true);
+    assert.equal(await indicator.evaluate((el) => getComputedStyle(el).transform),
+      expanded ? 'matrix(0, 1, -1, 0, 0, 0)' : 'matrix(1, 0, 0, 1, 0, 0)');
+  };
   const mode = (value) => page.waitForFunction(
     (expected) => document.querySelector('[data-testid="response-process"]')?.dataset.mode === expected, value);
   for (const width of [320, 1440]) {
     await page.setViewportSize({ width, height: 900 });
     await mode('live');
     assert.equal(await body.evaluate((el) => el.scrollHeight > el.clientHeight), true);
-    assert.equal(await toggle.locator('.tabler-icon-selector').count(), 1);
+    await assertArrow(false);
     const mask = await body.evaluate((el) => getComputedStyle(el).maskImage);
     assert.notEqual(mask, 'none');
     for (const edge of ['top', 'bottom']) {
@@ -53,7 +60,7 @@ try {
     await toggle.click();
     await mode('expanded');
     assert.equal(await toggle.getAttribute('aria-expanded'), 'true');
-    assert.equal(await toggle.locator('.tabler-icon-selector').count(), 0);
+    await assertArrow(true);
     assert.equal(await body.evaluate((el) => getComputedStyle(el).maskImage), 'none');
     assert.equal(await page.getByRole('button').count(), 1);
     assert.equal(await body.evaluate((el) => el.scrollHeight <= el.clientHeight + 1), true);
@@ -63,20 +70,25 @@ try {
     await mode('expanded');
     await toggle.click();
     await mode('closed');
+    await assertArrow(false);
     await toggle.click();
     await mode('expanded');
+    await assertArrow(true);
     await page.evaluate(() => window.renderReasoning({ active: false }));
     await page.waitForFunction(() => !document.querySelector('[data-streaming]'));
     await mode('expanded');
+    await assertArrow(true);
     await toggle.click();
     await mode('closed');
+    await assertArrow(false);
     await page.evaluate(() => window.renderReasoning({ active: true }));
     await mode('live');
     await page.evaluate(() => window.renderReasoning({ active: false }));
     await mode('closed');
+    await assertArrow(false);
     await page.evaluate(() => window.renderReasoning({ active: true }));
     await mode('live');
-    console.log(`PASS dual-arrow preview, persistent edge fades, full expansion, collapse and completion at ${width}px`);
+    console.log(`PASS right-arrow preview, down-arrow full expansion, persistent edge fades, collapse and completion at ${width}px`);
   }
   assert.deepEqual(errors, []);
 } finally {

@@ -55,7 +55,7 @@ function LiveElapsed({ from }: { from: number }) {
  * 中间态被硬塞进「已完成」的样式里 —— 于是限制高度的滚动框在**正文一个字都还没出**时就占住了位置，
  * 气泡迟迟不长高，用户盯着一个不动的框也不知道模型是在想还是在卡住。
  *
- * 展开交互统一交给 HeroUI Disclosure；加载状态与展开指示器分别表达生成进度和折叠状态。
+ * 展开交互统一交给 HeroUI Disclosure；箭头仅在全文展开时向下，实时预览和收起时向右。
  *
  * 实时用时（`LiveElapsed`）只在**思考中且展开**时出现，两个条件缺一不可：
  *
@@ -201,9 +201,7 @@ export default function ReasoningChain({
         {summary}
         {/* 思考中展开时保留计时，包括用户选择的全文视图。 */}
         {active && open && !waiting && <LiveElapsed from={since ?? mountedAt.current} />}
-        {live
-          ? <Sym name="unfold_more" className="reasoning-chain__indicator" aria-hidden="true" />
-          : <Disclosure.Indicator className="reasoning-chain__indicator" />}
+        <Sym name="chevron_right" className="reasoning-chain__indicator" aria-hidden="true" />
       </Disclosure.Trigger>
       </Disclosure.Heading>
       <Disclosure.Content className="reasoning-chain__content">

@@ -3,6 +3,7 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 
 export interface VirtualMessagesHandle {
   scrollToIndex: (index: number) => void;
+  cancelScroll: () => void;
 }
 
 /** Shared dynamic-height window. Stable keys preserve the reading anchor on prepend. */
@@ -15,7 +16,6 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
   scrollPaddingStart?: number;
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
-  const positioned = useRef(false);
   const [margin, setMargin] = useState(0);
   const getItemKey = useCallback((index: number) => items[index].key, [items]);
   const virtualizer = useVirtualizer({
@@ -36,6 +36,7 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
   });
   useImperativeHandle(ref, () => ({
     scrollToIndex: (index) => virtualizer.scrollToIndex(index, { align: 'start', behavior: 'auto' }),
+    cancelScroll: () => virtualizer.cancelScroll(),
   }), [virtualizer]);
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -43,11 +44,6 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     if (!host || !scroll) return;
     const measure = () => {
       setMargin(host.getBoundingClientRect().top - scroll.getBoundingClientRect().top + scroll.scrollTop);
-      // Force-mounted tabs initially measure as zero; position only once they become visible.
-      if (!positioned.current && scroll.clientHeight > 0) {
-        positioned.current = true;
-        virtualizer.scrollToEnd();
-      }
       onResize();
     };
     measure();
@@ -58,10 +54,6 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     observer.observe(host);
     return () => observer.disconnect();
   }, [scrollRef, onResize]);
-  useLayoutEffect(() => {
-    if (items.length) virtualizer.scrollToEnd();
-    // Each mounted session starts at its latest message.
-  }, []);
   return (
     <div ref={hostRef} style={{ height: virtualizer.getTotalSize(), position: 'relative', overflowAnchor: 'none' }}>
       {virtualizer.getVirtualItems().map((item) => (

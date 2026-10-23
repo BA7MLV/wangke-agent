@@ -1,4 +1,4 @@
-/* HeroUI Disclosure owns expansion, focus and the indicator. Keep the heading
+/* HeroUI Disclosure owns expansion and focus. Keep the heading
    outside the clipping content so sticky remains relative to the message list. */
 .reasoning-chain {
   margin-bottom: 6px;
@@ -108,8 +108,14 @@
 
 .reasoning-chain .reasoning-chain__indicator {
   margin-inline-start: 0;
+  transform: rotate(0deg);
+  transition-property: transform;
   transition-duration: var(--reasoning-expand-duration);
   transition-timing-function: var(--reasoning-expand-ease);
+}
+
+.reasoning-chain[data-mode='expanded'] .reasoning-chain__indicator {
+  transform: rotate(90deg);
 }
 
 .reasoning-chain__icon {

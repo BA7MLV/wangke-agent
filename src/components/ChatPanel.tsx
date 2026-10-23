@@ -45,7 +45,7 @@ import {
 import { StreamParagraph, useMessageEnter } from './motion';
 import ResponseProcess from './ResponseProcess';
 import type { ProcessPhase } from '../utils/responseProcess';
-import VirtualMessages from './VirtualMessages';
+import VirtualMessages, { type VirtualMessagesHandle } from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
 import { useChatScroll } from './useChatScroll';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
@@ -1669,8 +1669,10 @@ export default function ChatPanel({
     lastMsg?.widget ? 1 : 0,
     lastMsg?.widgetPreview?.html.length ?? 0,
   ].join('|');
-  const { pinIfSticking: pinList, pauseFollowing } = useChatScroll(listRef, activeId, scrollSignal, () => {
-    if (!historyError) void loadOlder();
+  const virtualMessagesRef = useRef<VirtualMessagesHandle>(null);
+  const { pinIfSticking: pinList, pauseFollowing } = useChatScroll(listRef, {
+    sessionKey: activeId, revision: scrollSignal, messages: msgs, virtualRef: virtualMessagesRef,
+    onReachStart: () => { if (!historyError) void loadOlder(); },
   });
 
   /** 删除当前会话前确认（危险操作：确认按钮上错误色，文案写清动作） */
@@ -1759,7 +1761,7 @@ export default function ChatPanel({
             {loadingOlder ? '正在加载历史消息…' : historyError ? '加载失败，点击重试' : '加载更早消息'}
           </button>}
         </div>}
-        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} onResize={pinList}>{(m, index) => {
+        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} ref={virtualMessagesRef} onResize={pinList}>{(m, index) => {
           const isUser = m.role === 'user';
           const htmlPreview = !isUser ? htmlPreviewSource(m.content) : undefined;
           /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */
@@ -1831,6 +1833,7 @@ export default function ChatPanel({
                     <ResponseProcess key={m.key} reasoning={m.reasoning} calls={m.tools} streaming={!!m.streaming}
                       phase={m.processPhase} hint={m.hint} since={m.processStartedAt ?? m.reasoningStartedAt}
                       elapsedMs={m.reasoningMs} />
+                    <div aria-hidden="true" data-chat-answer-start={m.content || m.quiz || m.widget || m.widgetPreview ? '' : undefined} />
                         <WidgetMessage message={m} content={m.content} dark={widgetDark} rowId={m.rowId}
                           disabled={loading || !!m.streaming || !!m.error} onPrompt={(text) => void send(text)}>
                         {(markdown) => !markdown ? null : htmlPreview !== undefined ? (
