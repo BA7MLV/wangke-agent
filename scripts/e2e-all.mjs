@@ -102,6 +102,7 @@ const META = {
   // 生成中切会话被挡下。页面层由 e2e-chat-followup 覆盖，两者不重叠。
   'test-chat-followup': { service: 'none', antd: false, timeout: 180 },
   'test-error-text': { service: 'none', antd: false, timeout: 120 },
+  'test-i18n': { service: 'none', antd: false, timeout: 120, tsx: true },
   'test-handout-ir': { service: 'none', antd: false, timeout: 120 },
   'test-handout-prompts': { service: 'none', antd: false, timeout: 120 },
   // 后台任务文案（转写 / 解析）—— 库页状态标签的纯函数部分
@@ -329,6 +330,7 @@ const META = {
   //    它会断言页面显示的 commit 与 git HEAD 一致，dist 陈旧时会红并写明原因。
   // 不需要 key，也不需要测试视频（空库就能验）。
   'e2e-build-info': { service: 'preview', antd: false, base: true, timeout: 180 },
+  'e2e-i18n': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-settings-skills': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-danmaku': { service: 'preview', antd: true, key: 'optional', testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-handout-edit': { service: 'preview', antd: true, base: true, timeout: 300 },

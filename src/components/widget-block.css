@@ -18,7 +18,6 @@
 .widget-block__frame {
   display: block;
   width: 100%;
-  max-height: min(800px, 75dvh);
   border: 0;
 }
 

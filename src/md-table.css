@@ -166,7 +166,8 @@
 .md-table-scroll--expanded {
   max-height: min(62vh, 560px);
   overflow-y: auto;
-  overscroll-behavior: contain;
+  /* 表格内先滚动，抵达上下边缘后继续滚页面；横向仍由基础规则限制在表内。 */
+  overscroll-behavior-y: auto;
 }
 
 /* ── 流式尾巴：不是按钮，用户点不到半成品 ─────────────────────────────── */

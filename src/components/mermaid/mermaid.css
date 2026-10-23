@@ -76,15 +76,15 @@
 /* —— 渲染成功 —— */
 .xmd-mermaid-canvas {
   padding: 12px;
-  max-height: min(640px, 65dvh);
-  overflow: auto;
-  overscroll-behavior: contain;
+  overflow-x: auto;
   text-align: center;
 }
 
 /* mermaid 的图自带 inline max-width；统一交给容器宽度控制，窄屏可横向滚动 */
 .xmd-mermaid-canvas svg {
   max-width: 100% !important;
+  max-height: min(640px, 65dvh) !important;
+  width: auto !important;
   height: auto !important;
   display: inline-block;
   vertical-align: top;

@@ -187,13 +187,47 @@ try {
   assert.equal(await wideRoot.locator('.md-table-expand').count(), 0);
   assert.equal(await wideRoot.locator('.md-table-copy').count(), 2);
 
-  // ── 手机：Bottom Sheet ───────────────────────────────────────────────────
-  await page.setViewportSize({ width: 390, height: 844 });
-  await page.waitForTimeout(150);
-  const mobileContent = wide.split('\n').slice(0, 2).join('\n') + '\n' +
+  // ── 桌面：表格内滚动，滚到边缘后继续滚页面，横滚也保持可用 ───────────
+  const scrollContent = wide.split('\n').slice(0, 2).join('\n') + '\n' +
     Array.from({ length: 40 }, (_, i) =>
       `| row_${i} | value_b | value_c | value_d | value_e | value_f | value_g | value_h |`,
     ).join('\n');
+  await page.evaluate((content) => window.renderTable(content, false), scrollContent);
+  await wideRoot.locator('.md-table-expand').click();
+  await page.evaluate(() => {
+    const style = document.createElement('style');
+    style.id = 'table-scroll-test-space';
+    style.textContent = '#markdown-table-test::after { content: ""; display: block; height: 1200px; }';
+    document.head.append(style);
+  });
+  const desktopScroll = wideRoot.locator('.md-table-scroll');
+  await desktopScroll.hover();
+  await page.mouse.wheel(0, 220);
+  await page.waitForFunction(() =>
+    document.querySelector('#markdown-table-test .md-table-scroll').scrollTop > 40,
+  );
+  assert.equal(await page.locator('#markdown-table-test').evaluate((el) => el.scrollTop), 0);
+  await page.mouse.wheel(240, 0);
+  await page.waitForFunction(() =>
+    document.querySelector('#markdown-table-test .md-table-scroll').scrollLeft > 40,
+  );
+  await desktopScroll.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  // 等上一轮滚动手势结束，避免浏览器的 scroll latching 影响下一次滚轮。
+  await page.waitForTimeout(300);
+  await page.mouse.wheel(0, 220);
+  await page.waitForFunction(() =>
+    document.querySelector('#markdown-table-test').scrollTop > 40,
+    null, { timeout: 3000 },
+  );
+  await page.evaluate(() => {
+    document.getElementById('table-scroll-test-space').remove();
+    document.getElementById('markdown-table-test').scrollTop = 0;
+  });
+
+  // ── 手机：Bottom Sheet ───────────────────────────────────────────────────
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(150);
+  const mobileContent = scrollContent;
   await page.evaluate((content) => window.renderTable(content, false), mobileContent);
   await page.waitForTimeout(150);
 
@@ -269,7 +303,7 @@ try {
 
   assert.deepEqual(errors, []);
   console.log(
-    'PASS streaming rows stay complete, 6-row preview, expand/collapse, Markdown copy, short table, mobile sheet touch scroll in both axes at both snaps/close',
+    'PASS streaming rows stay complete, 6-row preview, expand/collapse, Markdown copy, short table, desktop wheel scroll/chaining, mobile sheet touch scroll in both axes at both snaps/close',
   );
 } finally {
   await browser.close();

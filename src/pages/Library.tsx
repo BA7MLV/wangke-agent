@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ChangeEvent } from 'react';
+import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import {
@@ -275,10 +275,21 @@ const FOLDER_COLORS = [
   { id: 'gray', label: '灰色', hue: 198, swatch: '#9ca3af' },
 ] as const;
 
+/** Finder 专属的拟物文件夹，保留自绘外观，不随通用操作图标库替换。 */
 function FolderIcon({ color = 'blue' }: { color?: FolderRow['color'] }) {
+  const id = useId();
   const palette = FOLDER_COLORS.find((entry) => entry.id === color) ?? FOLDER_COLORS[0];
   return (
-    <Sym name="folder" filled className="finder-folder-icon" data-folder-color={palette.id} style={{ color: palette.swatch }} />
+    <svg className="finder-folder-icon" data-folder-color={palette.id} style={{ filter: `hue-rotate(${palette.hue - 198}deg) saturate(${palette.id === 'gray' ? 0 : 1}) drop-shadow(0 2px 1px rgb(0 0 0 / 20%))` }} viewBox="0 0 120 96" fill="none" aria-hidden="true">
+      <defs>
+        <linearGradient id={`${id}-back`} x1="60" y1="10" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#48b8e8" /><stop offset=".3" stopColor="#168dc3" /><stop offset="1" stopColor="#56bce4" /></linearGradient>
+        <linearGradient id={`${id}-front`} x1="60" y1="29" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#87ddfa" /><stop offset="1" stopColor="#50bfe8" /></linearGradient>
+      </defs>
+      <path d="M8 18a8 8 0 0 1 8-8h23c4 0 6 2 10 5l7 5h48a8 8 0 0 1 8 8v53a7 7 0 0 1-7 7H15a7 7 0 0 1-7-7Z" fill={`url(#${id}-back)`} />
+      <rect x="12" y="25" width="96" height="55" rx="5" fill="#c5eeff" />
+      <rect x="8" y="25" width="104" height="63" rx="7" fill={`url(#${id}-front)`} stroke="#39afe0" />
+      <path d="M15 32h90M12 82h96" stroke="#a2e2fa" strokeLinecap="round" />
+    </svg>
   );
 }
 

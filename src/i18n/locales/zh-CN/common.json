@@ -1,0 +1,14 @@
+{
+  "appTitle": "网课学习助手",
+  "settings": "设置",
+  "closeSettings": "关闭设置",
+  "settingsModules": "设置模块",
+  "serverUnavailable": "服务器暂时不可用，请刷新重试",
+  "language": {
+    "label": "界面语言 / Language",
+    "auto": "跟随系统",
+    "zh-CN": "简体中文",
+    "en-US": "English",
+    "hint": "仅切换界面语言，不改变 AI 回答、课程内容或语音识别语种。其他界面文案将分阶段适配。"
+  }
+}

@@ -261,6 +261,7 @@ export const SYNC_SETTINGS_KEYS = [
   'danmakuEnabled',
   'customRates',
   'theme',
+  'uiLanguage',
   'accentColor',
   'fontScale',
   'dynamicColor',

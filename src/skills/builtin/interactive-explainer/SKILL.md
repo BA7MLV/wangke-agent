@@ -35,6 +35,8 @@ description: 在问答中用可调参数、算法单步和小型模拟器帮助�
 - 用 --wbw-foreground、--wbw-muted、--wbw-border、--wbw-surface、--wbw-accent、--wbw-series-1/2/3；SVG 可用 currentColor。canvas/Chart.js 先解析 CSS 变量为颜色。
 - 颜色、字体、字号和圆角由真实宿主令牌同步，不能硬编码两套调色板或自定义细小字号。正文与控件使用默认字号，次要标注用 .wbw-small（随宿主缩放且不低于 11px），只用 400/500 字重。单个量只用 series-1，多系列才使用其余系列色并结合线型或直接标签。
 - 透明外层，支持 320px 宽；控件换行，图形按实际容器重绘。保留清楚的坐标量与单位、可读标签，不缩小整张固定画布来塞进手机。
+- 以本轮提供的回答内容区宽高比组织画面，不按整个桌面分辨率设计。多列可用 .wbw-grid（窄栏自动单列）。主图高度参考 --wbw-available-height；不要用固定大宽度、内层滚动或裁切代替响应式排版。SVG 提供 viewBox 并保持比例，复杂图在窄屏拆分或重排，避免缩成小字。
+- window.__wbw.display 提供当前 {width,height}，height 是宿主给主图的可用高度，不是 iframe 内容高度。监听 wbw:displaychange 或 ResizeObserver，在侧栏变化、旋屏和窗口缩放时重新安排图元/刻度/标签；Canvas 同时适配 devicePixelRatio。不使用 100vh 撑高自动测高的 iframe，避免高度反馈循环。
 - 图、控件与整个讲解保持透明无框，不包带底色/阴影的卡片。只给绘图区必要的细中性边界；刻度、单位和重要数值必须可见，y 轴至少留 64px。窄屏减少刻度，不缩字；定量图的取值范围来自数据和参考值，留出余量。
 - 只提供题意需要的控件，当前值放在控件标签旁；不要自动增加重置、筛选、总结卡或设计调参面板。界面原型的设计变体与教学模拟器不是同一种需求。
 - 控件使用可见 label，按钮写清动作，图形给 aria-label/title/desc。动态结果用 aria-live="polite"，错误用 role="alert"；重要操作不依赖 hover。

@@ -126,7 +126,8 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       busy.current = true;
       setPhase('permission');
       onStart?.();
-      live.lang = document.documentElement.lang || 'zh-CN';
+      // 界面语言不是输入语种：保留既有中文识别，不随 <html lang> 的 i18n 切换改变。
+      live.lang = 'zh-CN';
       live.continuous = true;
       live.interimResults = true;
       live.onstart = () => {

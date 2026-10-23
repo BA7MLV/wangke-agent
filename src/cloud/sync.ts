@@ -173,7 +173,9 @@ export async function startCloud(owner: string, worker = false) {
   useCloudDatabase(owner);
   await db.open();
   useSettings.persist.setOptions({ name: `wangke-cloud-settings-${owner}` });
-  useSettings.setState(useSettings.getInitialState());
+  // 登录前的语言不随模型配置重置；有账号语言偏好时，后续 loadPreferences 再覆盖。
+  const uiLanguage = useSettings.getState().uiLanguage;
+  useSettings.setState({ ...useSettings.getInitialState(), uiLanguage });
   const config = await cloudRequest<CloudConfig>('/config');
   applyCloudConfig(config);
   try { await flushCloud(); }

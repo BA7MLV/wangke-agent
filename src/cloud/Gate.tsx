@@ -5,6 +5,7 @@ import { serverClient } from '../api/serverClient';
 import { startCloud } from './sync';
 import CloudSettings from './Settings';
 import { FeedbackHost } from '../ui';
+import LanguageSelect from '../components/LanguageSelect';
 
 const App = lazy(() => import('../App'));
 export default function CloudGate({ initialized, authenticated, error: initialError = '' }: { initialized: boolean; authenticated: boolean; error?: string }) {
@@ -32,6 +33,7 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
   return <main className="min-h-dvh overflow-auto bg-background p-6 text-foreground">
     <FeedbackHost />
     <section className="mx-auto flex max-w-2xl flex-col gap-5 rounded-2xl bg-surface p-6 shadow-surface">
+      <div className="flex justify-end"><LanguageSelect /></div>
       <h1 className="text-2xl font-semibold">{ready ? '配置个人云端' : created ? '登录网课云端' : '初始化个人云端'}</h1>
       {ready ? <><CloudSettings /><Button onPress={() => { location.hash = '/'; setSetup(false); }}>进入课程</Button></> :
         <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); void authenticate(); }}>

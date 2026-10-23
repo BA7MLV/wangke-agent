@@ -18,13 +18,13 @@ import type { AccentColor, AppTheme, FontScale } from '../store/settings';
 
 /** HeroUI 的语义色预设：覆盖 accent 令牌后，soft / hover 等令牌会自动跟随。 */
 export const ACCENT_COLOR_OPTIONS = [
-  { id: 'blue', label: '蓝色', value: '#2563eb' },
-  { id: 'violet', label: '紫色', value: '#7c3aed' },
-  { id: 'rose', label: '玫红色', value: '#e11d48' },
-  { id: 'orange', label: '橙色', value: '#c2410c' },
-  { id: 'green', label: '绿色', value: '#15803d' },
-  { id: 'amber', label: '琥珀色', value: '#a16207' },
-] as const satisfies readonly { id: AccentColor; label: string; value: string }[];
+  { id: 'blue', value: '#2563eb' },
+  { id: 'violet', value: '#7c3aed' },
+  { id: 'rose', value: '#e11d48' },
+  { id: 'orange', value: '#c2410c' },
+  { id: 'green', value: '#15803d' },
+  { id: 'amber', value: '#a16207' },
+] as const satisfies readonly { id: AccentColor; value: string }[];
 
 /**
  * 界面字号档位 → 根字号倍率。
@@ -35,11 +35,11 @@ export const ACCENT_COLOR_OPTIONS = [
  * 再往上（>1.25）在窄屏上会把固定列宽撑破，宁可不提供。
  */
 export const FONT_SCALE_OPTIONS = [
-  { id: 'small', label: '小', value: 0.875 },
-  { id: 'standard', label: '标准', value: 1 },
-  { id: 'large', label: '大', value: 1.125 },
-  { id: 'xlarge', label: '特大', value: 1.25 },
-] as const satisfies readonly { id: FontScale; label: string; value: number }[];
+  { id: 'small', value: 0.875 },
+  { id: 'standard', value: 1 },
+  { id: 'large', value: 1.125 },
+  { id: 'xlarge', value: 1.25 },
+] as const satisfies readonly { id: FontScale; value: number }[];
 
 /** 浏览器默认根字号。缩放倍率乘在它上面。 */
 const BASE_ROOT_FONT_SIZE = 16;

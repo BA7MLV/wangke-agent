@@ -52,6 +52,7 @@ import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { prefersReducedMotion } from '../utils/motion';
 import { useMediaQuery, useViewportResize } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
+import { chatGreeting } from '../utils/chatGreeting';
 import { htmlPreviewSource } from '../utils/streamingHtml';
 import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
@@ -86,14 +87,6 @@ const LIBRARY_STARTERS = [
     label: '整理资料目录',
     prompt: '帮我把资料目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
   },
-] as const;
-
-const LIBRARY_HEADLINES = [
-  '问你的全部资料',
-  '从你的资料里找答案',
-  '一起探索你的课程库',
-  '你的学习资料，随时可问',
-  '想从哪份资料开始？',
 ] as const;
 
 /**
@@ -562,9 +555,7 @@ const NEAR_BOTTOM_PX = 24;
 
 export default function CourseChat() {
   const isNarrow = useMediaQuery('(max-width: 900px)');
-  const [libraryHeadline] = useState(
-    () => LIBRARY_HEADLINES[Math.floor(Math.random() * LIBRARY_HEADLINES.length)],
-  );
+  const [welcomeGreeting] = useState(() => chatGreeting());
   const navigate = useNavigate();
   const nav = useAppNav('chat');
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -1074,7 +1065,7 @@ export default function CourseChat() {
                   <CourseCountSkeleton />
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
-                    <h2 className="t-stagger-line">{hasCourses ? libraryHeadline : '有什么想聊的？'}</h2>
+                    <h2 className="t-stagger-line">{welcomeGreeting}</h2>
                     <div className="course-chat__starters t-stagger-line t-stagger-line--2" aria-label="快捷提问">
                       <div className="course-chat__starters-heading">试试这样问</div>
                       <div className="course-chat__starter-list">

@@ -124,6 +124,33 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
   const post = useCallback((type: string, value: unknown) => {
     frameRef.current?.contentWindow?.postMessage({ __wbw: type, payload: value }, '*');
   }, []);
+  const syncDisplay = useCallback(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const surface = host.closest('.course-chat__timeline, .chat-list-wrap');
+    const viewportHeight = window.visualViewport?.height ?? window.innerHeight;
+    const surfaceHeight = surface?.getBoundingClientRect().height || viewportHeight;
+    post(WIDGET_MSG.display, {
+      width: Math.round(host.clientWidth),
+      height: Math.max(80, Math.round(Math.min(surfaceHeight, viewportHeight) * 0.65)),
+    });
+  }, [post]);
+
+  useEffect(() => {
+    const host = hostRef.current;
+    if (!host) return;
+    const observer = new ResizeObserver(syncDisplay);
+    observer.observe(host);
+    const surface = host.closest('.course-chat__timeline, .chat-list-wrap');
+    if (surface) observer.observe(surface);
+    window.addEventListener('resize', syncDisplay);
+    window.visualViewport?.addEventListener('resize', syncDisplay);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener('resize', syncDisplay);
+      window.visualViewport?.removeEventListener('resize', syncDisplay);
+    };
+  }, [syncDisplay, doc]);
   const reply = useCallback((requestId: number | undefined, error?: string) => {
     if (requestId != null && activeRef.current) post(WIDGET_MSG.result, { requestId, ok: !error, error });
   }, [post]);
@@ -305,12 +332,13 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
           }
         })();
       } else if (d.__wbw === WIDGET_MSG.ready) {
+        syncDisplay();
         post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
         post(WIDGET_MSG.sync, stateRef.current);
       }
       // ready / theme 之外的一律忽略：widget 不能借消息通道做别的事
     },
-    [session, post, reply, requestFollowUp],
+    [session, post, reply, requestFollowUp, syncDisplay],
   );
 
   useEffect(() => {

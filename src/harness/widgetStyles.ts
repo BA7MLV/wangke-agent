@@ -15,6 +15,7 @@ export const WIDGET_STYLES = `
     color-scheme: dark;
   }
   *, *::before, *::after { box-sizing: border-box; }
+  html { --wbw-available-height: 560px; }
   body {
     margin: 0; padding: 4px 2px; min-width: 0;
     font-family: var(--wbw-font-family);
@@ -48,7 +49,13 @@ export const WIDGET_STYLES = `
   .wbw-small { font-size: var(--wbw-font-size-small); }
   .wbw-primary, button[aria-pressed="true"] { background: var(--wbw-foreground); color: var(--wbw-surface); }
   .wbw-stage { width: 100%; min-width: 0; }
-  .wbw-stage svg, .wbw-stage canvas { display: block; max-width: 100%; }
+  svg, img, canvas { max-width: 100%; height: auto; }
+  .wbw-stage svg, .wbw-stage canvas {
+    display: block; max-width: 100%; max-height: var(--wbw-available-height);
+    width: auto; height: auto; margin-inline: auto; object-fit: contain;
+  }
+  .wbw-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr)); gap: 16px; }
+  .wbw-grid > *, .wbw-controls > * { min-width: 0; }
   .wbw-stage text { fill: var(--wbw-foreground); font: inherit; font-size: var(--wbw-font-size-small); }
   .wbw-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
   table { border-collapse: collapse; border-top: 2px solid currentColor; border-bottom: 2px solid currentColor; }

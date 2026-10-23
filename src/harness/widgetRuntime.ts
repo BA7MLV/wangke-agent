@@ -72,6 +72,7 @@ export const WIDGET_MSG = {
   prompt: 'wbw:prompt',
   /** 宿主 → iframe：主题变了 */
   theme: 'wbw:theme',
+  display: 'wbw:display',
   /** iframe → 宿主：文档就绪 */
   ready: 'wbw:ready',
   state: 'wbw:state',
@@ -89,6 +90,7 @@ const BRIDGE = `
 (function () {
   var initial = __WBW_INITIAL__;
   var state = initial.state;
+  var display = { width: 0, height: 560 };
   var pending = new Map(), sequence = 0, saves = Promise.resolve();
   function copy(value) { return JSON.parse(JSON.stringify(value)); }
   var post = function (type, payload) {
@@ -118,6 +120,15 @@ const BRIDGE = `
     if (event.source !== parent || !event.data) return;
     var data = event.data, value = data.payload;
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.theme)}) setTheme(value);
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.display)} && value &&
+        Number.isFinite(value.width) && value.width > 0 && Number.isFinite(value.height) && value.height > 0) {
+      if (display.width !== value.width || display.height !== value.height) {
+        display = { width: value.width, height: value.height };
+        document.documentElement.style.setProperty('--wbw-available-height', value.height + 'px');
+        window.dispatchEvent(new CustomEvent('wbw:displaychange', { detail: copy(display) }));
+        schedule();
+      }
+    }
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.sync)}) {
       if (JSON.stringify(state) === JSON.stringify(value)) return;
       state = copy(value);
@@ -139,6 +150,7 @@ const BRIDGE = `
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(report); }
   var api = {
+    get display() { return copy(display); },
     get widgetState() { return copy(state); },
     get persistent() { return initial.persistent; },
     reportHeight: report,

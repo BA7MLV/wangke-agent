@@ -6,6 +6,7 @@ import { getModelMeta, matchModelMeta, type ModelOverrides } from '../api/modelM
 import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettings } from '../utils/shortcutSettings';
 import { modelsForSlot, savedModelsOf } from './modelLibrary';
 import { providerCatalogId } from './providerPresets';
+import { normalizeUiLanguage, type UiLanguage } from '../i18n/locale';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr' | 'decision';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
@@ -174,6 +175,8 @@ export interface Settings {
   shortcuts: ShortcutSettings;
   /** 界面主题：跟随系统 / 强制浅色 / 强制深色（MD3 令牌体系下深浅两套色板都已就位） */
   theme: AppTheme;
+  /** 界面语言；auto 在各设备按浏览器偏好解析，不改变 AI / ASR 语种。 */
+  uiLanguage: UiLanguage;
   /** HeroUI 强调色预设 */
   accentColor: AccentColor;
   /**
@@ -281,6 +284,7 @@ function initialSettings(): Settings {
     customRates: [],
     shortcuts: defaultShortcutSettings(),
     theme: 'auto',
+    uiLanguage: 'auto',
     accentColor: 'blue',
     fontScale: 'standard',
     dynamicColor: true,
@@ -353,6 +357,7 @@ export const useSettings = create<SettingsStore>()(
        * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
        */
       update: (patch) => {
+        if (Object.hasOwn(patch, 'uiLanguage')) patch = { ...patch, uiLanguage: normalizeUiLanguage(patch.uiLanguage) };
         if (patch.favorites) patch = { ...patch, favorites: { ...patch.favorites, decision: patch.favorites.decision ?? get().favorites.decision } };
         if (patch.jev) patch = { ...patch, jev: normalizeJevSettings(patch.jev) };
         // 换目标后重新确认授权，不把旧模型的概率阈值默认为已验证。
@@ -386,6 +391,7 @@ export const useSettings = create<SettingsStore>()(
         ...current,
         ...migrateDecisionSettings({ ...current, ...(persisted as Partial<Settings>) }, persisted as Record<string, unknown> | undefined),
         shortcuts: normalizeShortcutSettings((persisted as Partial<Settings> | undefined)?.shortcuts),
+        uiLanguage: normalizeUiLanguage((persisted as Partial<Settings> | undefined)?.uiLanguage, persisted ? 'zh-CN' : 'auto'),
       }),
       /**
        * v2 → v3：思考档位从 3 档（low / high / max）扩成 6 档
@@ -395,7 +401,8 @@ export const useSettings = create<SettingsStore>()(
        * 老用户 localStorage 里那个 `'max'` 会原样读进来 —— 而这正是 `update` 拦不到的那条路
        * （hydrate 不经过 `update`）。
        */
-      version: 4,
+      // v5 新增界面语言；迁移旧设置时保留中文，新安装才默认跟随系统。
+      version: 5,
       migrate: (persisted, version) => migrateSettings(persisted as Record<string, unknown>, version),
     },
   ),
@@ -441,6 +448,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
     current.accentColor = isAccentColor(current.accentColor) ? current.accentColor : initialSettings().accentColor;
     current.fontScale = isFontScale(current.fontScale) ? current.fontScale : initialSettings().fontScale;
+    current.uiLanguage = normalizeUiLanguage(persisted.uiLanguage);
     return migrateDecisionSettings(current, persisted);
   }
   const s = persisted as unknown as LegacySettings;
@@ -484,6 +492,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     customRates: Array.isArray(s.customRates) ? s.customRates : base.customRates,
     shortcuts: normalizeShortcutSettings(s.shortcuts),
     theme: s.theme ?? base.theme,
+    uiLanguage: normalizeUiLanguage(s.uiLanguage),
     accentColor: isAccentColor(s.accentColor) ? s.accentColor : base.accentColor,
     fontScale: isFontScale(s.fontScale) ? s.fontScale : base.fontScale,
     dynamicColor: s.dynamicColor ?? base.dynamicColor,
@@ -542,6 +551,7 @@ export function getSettings(): Settings {
     customRates: [...s.customRates],
     shortcuts: { ...s.shortcuts, bindings: { ...s.shortcuts.bindings } },
     theme: s.theme,
+    uiLanguage: s.uiLanguage,
     accentColor: s.accentColor,
     fontScale: s.fontScale,
     dynamicColor: s.dynamicColor,

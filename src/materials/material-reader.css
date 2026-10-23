@@ -391,6 +391,21 @@
    文案变长时不该把分段按钮挤到下一行。
    min-width: 0 + ellipsis 是窄屏（手机 360px）下的保险：这条工具条刻意不换行
    （见上面 .mr-edit-bar 的注释），所以空间不够时必须牺牲文案而不是让控件溢出。 */
+.mr-format-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  overflow-x: auto;
+  background: var(--background-tertiary);
+  border-bottom: 1px solid rgba(var(--border-secondary), 0.5);
+}
+
+.mr-format-bar > button {
+  flex: none;
+}
+
 .mr-edit-state {
   font-size: 12px;
   color: var(--muted);

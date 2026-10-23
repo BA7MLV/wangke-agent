@@ -16,6 +16,7 @@ import DataModule from './settings/DataModule';
 import SkillsModule from './settings/SkillsModule';
 import CloudSettings from '../cloud/Settings';
 import { cloud } from '../cloud/state';
+import { useTranslation } from 'react-i18next';
 
 /**
  * 设置模块登记表：桌面左侧导航，移动端顶部横向模块栏，只渲染当前模块。
@@ -26,16 +27,16 @@ import { cloud } from '../cloud/state';
  *   - 三个槽位的下拉、收藏夹的搜索框都持有受控 state，卸载即丢弃，
  *     正好符合「关掉设置就当没来过」的预期。
  */
-const MODULES: { key: SettingsModule; label: string; icon: string; Component: ComponentType }[] = [
-  { key: 'models', label: '模型', icon: 'neurology', Component: ModelsModule },
-  { key: 'appearance', label: '外观', icon: 'style', Component: AppearanceModule },
-  { key: 'sources', label: '内容源', icon: 'cloud_upload', Component: SourcesModule },
-  { key: 'live', label: '实时', icon: 'link', Component: LiveModule },
-  { key: 'playback', label: '播放', icon: 'play_circle', Component: PlaybackModule },
-  { key: 'shortcuts', label: '快捷键', icon: 'keyboard', Component: ShortcutsModule },
-  { key: 'study', label: '学习', icon: 'calendar_month', Component: StudyModule },
-  { key: 'skills', label: '技能', icon: 'extension', Component: SkillsModule },
-  { key: 'data', label: '数据', icon: 'folder', Component: DataModule },
+const MODULES: { key: SettingsModule; icon: string; Component: ComponentType }[] = [
+  { key: 'models', icon: 'neurology', Component: ModelsModule },
+  { key: 'appearance', icon: 'style', Component: AppearanceModule },
+  { key: 'sources', icon: 'cloud_upload', Component: SourcesModule },
+  { key: 'live', icon: 'link', Component: LiveModule },
+  { key: 'playback', icon: 'play_circle', Component: PlaybackModule },
+  { key: 'shortcuts', icon: 'keyboard', Component: ShortcutsModule },
+  { key: 'study', icon: 'calendar_month', Component: StudyModule },
+  { key: 'skills', icon: 'extension', Component: SkillsModule },
+  { key: 'data', icon: 'folder', Component: DataModule },
 ];
 
 /** 模块 key 集合，给 `#/settings/<模块>` 深链做校验（非法值回落到入口模块） */
@@ -71,6 +72,8 @@ export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
  * 改成嵌套，那个补丁连同它的成因一起作废，详见 `ui/modalContainer.ts`。）
  */
 export default function SettingsModal() {
+  const { t } = useTranslation('settings');
+  const { t: common } = useTranslation('common');
   const { open, module } = useSettingsDialog();
   const mobile = useMediaQuery('(max-width: 760px)');
   /** 本地副本：模块切换不应该走全局 store（那会让别的订阅者无谓地重渲染） */
@@ -92,11 +95,11 @@ export default function SettingsModal() {
             <Drawer.Dialog className="settings-sheet__dialog" data-testid="settings-modal">
               <Drawer.Handle />
               <Drawer.Header className="px-5 pt-1 pb-3">
-                <Drawer.Heading>设置</Drawer.Heading>
-                <Drawer.CloseTrigger aria-label="关闭设置"><Sym name="close" /></Drawer.CloseTrigger>
+                <Drawer.Heading>{common('settings')}</Drawer.Heading>
+                <Drawer.CloseTrigger aria-label={common('closeSettings')}><Sym name="close" /></Drawer.CloseTrigger>
               </Drawer.Header>
               <ListBox
-                aria-label="设置模块"
+                aria-label={common('settingsModules')}
                 orientation="horizontal"
                 selectionMode="single"
                 disallowEmptySelection
@@ -108,14 +111,14 @@ export default function SettingsModal() {
                 className="settings-module-nav"
               >
                 {MODULES.map((m) => (
-                  <ListBox.Item key={m.key} id={m.key} textValue={m.label}
+                  <ListBox.Item key={m.key} id={m.key} textValue={t(`modules.${m.key}`)}
                     className="settings-module-nav__item"
                     data-testid={`settings-nav-${m.key}`}>
-                    <Sym name={m.icon} /><span>{m.label}</span>
+                    <Sym name={m.icon} /><span>{t(`modules.${m.key}`)}</span>
                   </ListBox.Item>
                 ))}
               </ListBox>
-              <Drawer.Body className="min-h-0 flex-1 overflow-y-auto overscroll-contain px-4" data-testid={`settings-module-${localModule}`}>
+              <Drawer.Body className="mx-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4" data-testid={`settings-module-${localModule}`}>
                 <ActiveContent />
               </Drawer.Body>
             </Drawer.Dialog>
@@ -149,17 +152,17 @@ export default function SettingsModal() {
             className="flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-[14px] bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full"
             data-testid="settings-modal"
           >
-            <Modal.CloseTrigger aria-label="关闭设置">
+            <Modal.CloseTrigger aria-label={common('closeSettings')}>
               <Sym name="close" />
             </Modal.CloseTrigger>
 
             <div className="flex min-h-0 min-w-0 flex-1">
               <aside className="flex w-48 shrink-0 flex-col border-r border-border bg-background-secondary p-3">
-                <h2 className="px-3 py-4 text-lg font-semibold text-balance">设置</h2>
+                <h2 className="px-3 py-4 text-lg font-semibold text-balance">{common('settings')}</h2>
               {/* 纵向分类；选中态、方向键与焦点滚动交给 React Aria。 */}
               <ListBox
                 className="settings-module-nav settings-module-nav--desktop"
-                aria-label="设置模块"
+                aria-label={common('settingsModules')}
                 orientation="vertical"
                 selectionMode="single"
                 disallowEmptySelection
@@ -173,7 +176,7 @@ export default function SettingsModal() {
                   <ListBox.Item
                     key={m.key}
                     id={m.key}
-                    textValue={m.label}
+                    textValue={t(`modules.${m.key}`)}
                     className="settings-module-nav__item"
                     data-testid={`settings-nav-${m.key}`}
                   >
@@ -183,7 +186,7 @@ export default function SettingsModal() {
                     >
                       <Sym name={m.icon} />
                     </span>
-                    <span className="min-w-0 truncate">{m.label}</span>
+                    <span className="min-w-0 truncate">{t(`modules.${m.key}`)}</span>
                   </ListBox.Item>
                 ))}
               </ListBox>
@@ -217,6 +220,7 @@ export interface SettingsButtonProps {
 }
 
 export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: SettingsButtonProps) {
+  const { t } = useTranslation('common');
   const open = () => openSettings();
 
   if (variant === 'rail') {
@@ -234,13 +238,13 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
         variant="ghost"
         className="min-h-9 w-full justify-start gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background"
         data-testid={testId}
-        aria-label="设置"
+        aria-label={t('settings')}
         onPress={open}
       >
         <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
           <Sym name="settings" />
         </span>
-        <span className="min-w-0 truncate">设置</span>
+        <span className="min-w-0 truncate">{t('settings')}</span>
       </Button>
     );
   }
@@ -251,7 +255,7 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
       variant="ghost"
       className="size-[34px] shrink-0"
       data-testid={testId}
-      aria-label="设置"
+      aria-label={t('settings')}
       onPress={open}
     >
       <Sym name="settings" />

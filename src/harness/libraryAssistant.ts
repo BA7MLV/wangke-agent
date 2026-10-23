@@ -9,6 +9,7 @@ import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { grepDocs, type GrepDoc } from './grep';
 import { MATERIAL_IMAGE_RULE, RUNTIME_CAPABILITY_RULE } from './prompts';
+import { displayEnvironmentPrompt } from './displayEnvironment';
 import { handoutFileOf } from '../materials/handoutFile';
 
 /**
@@ -333,7 +334,7 @@ export function libraryAssistantSystemPrompt(
   contextCourses: CourseContextItem[] = [],
   hasCourses = true,
 ): string {
-  if (!hasCourses) return generalAssistantSystemPrompt(skillMetaList);
+  if (!hasCourses) return `${generalAssistantSystemPrompt(skillMetaList)}\n\n${displayEnvironmentPrompt('course')}`;
 
   const skillSection = skillMetaList
     ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及技能用途时，先 read /skills/{URI 编码后的名称} 加载规范，再按规范回答；参考文档使用返回的完整路径 read。可 read /skills 获取准确路径。不要凭名称猜测正文。`
@@ -359,7 +360,8 @@ export function libraryAssistantSystemPrompt(
 11. 整理资料库目录时：先 read /courses 了解全库（有下一页时用 offset 继续）、read /library/folders 看现有分类，再调用 propose_folder_plan 等待用户确认。courseIds 必须来自工具结果的真实 id，不得编造；一门课程只放进一个分类。工具返回“用户没有执行方案”时，不要声称整理已完成。不要逐门读取 info：课程名与类型在列表里已经够用，只在少数课程名看不出内容时抽查一两门。
 12. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
 13. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。
-14. ${MATERIAL_IMAGE_RULE}`;
+14. ${MATERIAL_IMAGE_RULE}
+15. ${displayEnvironmentPrompt('course')}`;
 }
 
 export function createLibraryAssistantExecutor(options: LibraryAssistantExecutorOptions = {}) {

@@ -3,9 +3,7 @@
   position: relative;
   margin: 8px 0;
   padding: 12px;
-  max-height: min(640px, 65dvh);
-  overflow: auto;
-  overscroll-behavior: contain;
+  max-width: 100%;
   overflow-wrap: anywhere;
   border: 1px solid var(--border-secondary);
   border-radius: var(--radius, 10px);
@@ -42,6 +40,8 @@
 }
 
 .widget-stream-preview :where(table) {
+  width: 100%;
+  table-layout: fixed;
   max-width: 100%;
   border-collapse: collapse;
 }

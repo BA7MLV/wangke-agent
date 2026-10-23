@@ -5,6 +5,9 @@ import { serverClient } from './api/serverClient';
 import { startCloud, stopCloud } from './cloud/sync';
 import { useSettings } from './store/settings';
 import { applyAccentColor, applyFontScale, applyTheme } from './ui/theme';
+import AppLocaleProvider from './i18n/AppLocaleProvider';
+import { startLocaleSync } from './i18n/settings';
+import i18n from './i18n';
 // MD3 的参考字体是 Roboto。只自托管**拉丁/数字子集**（latin，约 15KB/字重，离线可用）：
 // 中文交给系统字体（PingFang SC / 微软雅黑），因为思源黑体全量要好几 MB，中文应用引 Web 字体不划算，
 // 且平台自带的中文字形更符合各系统习惯。字重只用 400（正文）+ 500（标题）。
@@ -33,6 +36,8 @@ navigator.storage?.persist?.().catch(() => {});
 applyTheme(useSettings.getState().theme);
 applyAccentColor(useSettings.getState().accentColor);
 applyFontScale(useSettings.getState().fontScale);
+const stopLocaleSync = startLocaleSync();
+import.meta.hot?.dispose(stopLocaleSync);
 
 /**
  * 关闭浏览器自己的滚动恢复。
@@ -63,7 +68,7 @@ function Root() {
   React.useEffect(() => {
     applyFontScale(fontScale);
   }, [fontScale]);
-  return bootView;
+  return <AppLocaleProvider>{bootView}</AppLocaleProvider>;
 }
 
 function render() {
@@ -80,7 +85,7 @@ async function boot() {
     const response = await fetch('/api/v1/cloud/status', { cache: 'no-store' });
     const status = await response.json().catch(() => null);
     if (!status?.cloud) {
-      if (response.status >= 500) throw new Error('服务器暂时不可用，请刷新重试');
+      if (response.status >= 500) throw new Error(i18n.t('serverUnavailable'));
       const { default: App } = await import('./App'); bootView = <App />;
     } else {
       const [bootstrap, session] = await Promise.all([serverClient.bootstrapStatus(), serverClient.session()]);

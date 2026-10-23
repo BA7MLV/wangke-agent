@@ -33,18 +33,20 @@ try {
     await flush();
     assert(await page.evaluate(() => window.firstPreviewNode === document.querySelector('.widget-stream-preview__frozen p')), 'completed HTML nodes stay mounted');
     const grown = await html.boundingBox();
-    assert(grown.height > initial.height && grown.height <= 553, 'HTML grows only to viewport cap');
-    assert(await html.evaluate(el => el.scrollHeight > el.clientHeight), 'long HTML remains scrollable');
+    assert(grown.height > initial.height, 'HTML grows in normal document flow');
+    assert(await html.evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'HTML is not trapped in a nested scroll box');
     const svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 2000"><rect width="300" height="2000" fill="gray"/>';
     await page.evaluate(source => window.renderPreview('svg', source), svg);
     await page.getByTestId('live-svg').waitFor();
     const canvas = page.locator('#preview-viewport-test .xmd-mermaid-canvas');
-    assert((await canvas.boundingBox()).height <= 553, 'streaming SVG respects viewport cap');
+    assert((await canvas.locator('svg').boundingBox()).height <= 553, 'streaming SVG itself fits the viewport');
     await page.evaluate(source => window.renderPreview('svg', source + '</svg>', true), svg);
     await page.getByTestId('live-svg').waitFor({ state: 'detached' });
-    assert((await canvas.boundingBox()).height <= 553, 'completed SVG retains the same cap');
-    assert(await canvas.evaluate(el => el.scrollHeight > el.clientHeight), 'full diagram is reachable by scrolling');
-    console.log(`Preview ${width}px: incremental HTML, bounded HTML/SVG heights and full-content scrolling passed.`);
+    const fitted = await canvas.locator('svg').boundingBox();
+    assert(fitted.height <= 553, 'completed SVG itself fits the viewport');
+    assert(Math.abs(fitted.width / fitted.height - 300 / 2000) < 0.01, 'SVG preserves its original aspect ratio');
+    assert(await canvas.evaluate(el => el.scrollHeight <= el.clientHeight + 1), 'whole diagram visible without internal scrolling');
+    console.log(`Preview ${width}px: incremental HTML flow, fitted SVG and preserved aspect ratio passed.`);
     await page.close();
   }
 } finally {

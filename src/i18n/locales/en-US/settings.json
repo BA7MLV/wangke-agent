@@ -1,0 +1,34 @@
+{
+  "modules": {
+    "models": "Models",
+    "appearance": "Appearance",
+    "sources": "Sources",
+    "live": "Live sharing",
+    "playback": "Playback",
+    "shortcuts": "Shortcuts",
+    "study": "Study",
+    "skills": "Skills",
+    "data": "Data"
+  },
+  "appearance": {
+    "title": "Appearance",
+    "subtitle": "Follow your system theme or choose a light or dark theme and an accent color",
+    "theme": "Theme",
+    "themes": { "auto": "System", "light": "Light", "dark": "Dark" },
+    "fontScale": "Text size",
+    "fontScaleLabel": "Interface text size",
+    "fontScaleHint": "Scales interface text and controls together. Standard uses the browser default (16px). Choose another size if it feels too small or too large.",
+    "fontScales": { "small": "Small", "standard": "Standard", "large": "Large", "xlarge": "Extra large" },
+    "accentColor": "Accent color",
+    "accentColorHint": "Changes the accent for buttons, selections, and focus indicators",
+    "accentColors": { "blue": "Blue", "violet": "Violet", "rose": "Rose", "orange": "Orange", "green": "Green", "amber": "Amber" },
+    "dynamicColor": "Use cover colors",
+    "dynamicColorHint": "Uses the course cover color to personalize the player. Falls back to the default palette when no cover color is available."
+  },
+  "reading": {
+    "title": "Reading materials",
+    "subtitle": "Applies only to HTML. PDF, Word, and Markdown materials are self-contained and do not need network access.",
+    "remoteAssets": "Load external HTML resources",
+    "remoteAssetsHint": "Loads remote images, stylesheets, and fonts referenced by HTML materials. Turn off for offline reading using embedded resources only; skipped resources are noted in the reader. Scripts never run in either mode."
+  }
+}

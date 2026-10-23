@@ -20,7 +20,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { basicSetup } from 'codemirror';
-import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap, redo, undo } from '@codemirror/commands';
 import { markdown } from '@codemirror/lang-markdown';
 import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
@@ -31,6 +31,7 @@ import { createMdEditorController, registerMdEditor, type MdEditorController } f
 import { livePreview } from './livePreview';
 import { createMdSaver, mdSaveLabel, type MdSaveState } from './save';
 import { mdEditorTheme } from './theme';
+import { formatMarkdown, MD_FORMAT_ACTIONS, type MdFormatAction } from './format';
 
 /**
  * 落盘器交给上层的唯一能力。
@@ -393,6 +394,13 @@ export default function MdEditor({
     setUndoError(r.ok ? null : r.error);
   }, []);
 
+  const applyFormat = useCallback((action: MdFormatAction) => {
+    const view = viewRef.current;
+    if (!view) return;
+    view.dispatch(formatMarkdown(view.state, action));
+    view.focus();
+  }, []);
+
   return (
     <>
       <div className="mr-edit-bar">
@@ -444,6 +452,24 @@ export default function MdEditor({
           <ToggleButton id="preview">预览</ToggleButton>
           <ToggleButton id="source">源码</ToggleButton>
         </ToggleButtonGroup>
+      </div>
+      <div className="mr-format-bar" role="group" aria-label="Markdown 格式" data-testid="md-format-bar">
+        {MD_FORMAT_ACTIONS.map((action) => (
+          <Button key={action.id} variant="tertiary" size="sm"
+            aria-label={action.label}
+            data-testid={`md-format-${action.id}`}
+            onPress={() => applyFormat(action.id)}>
+            {action.label}
+          </Button>
+        ))}
+        <Button variant="tertiary" size="sm" aria-label="撤销"
+          onPress={() => { const view = viewRef.current; if (view) { undo(view); view.focus(); } }}>
+          <Sym name="undo" />
+        </Button>
+        <Button variant="tertiary" size="sm" aria-label="重做"
+          onPress={() => { const view = viewRef.current; if (view) { redo(view); view.focus(); } }}>
+          <Sym name="redo" />
+        </Button>
       </div>
       {/* 两条提示都不做「短文案 + 悬停看全文」：这两种失败都不会自己好起来，
           用户必须一眼读到「到哪一步没成、接下来该做什么」——

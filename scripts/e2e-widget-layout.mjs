@@ -56,6 +56,7 @@ try {
   assert.equal(row.widget.id, row.widgets[1].id, 'legacy alias remains compatible');
   assert.notEqual(row.widgets[0].id, row.widgets[1].id);
   assert.equal(requests.length, 2, 'one tool round and one final explanation');
+  assert.match(requests[0].messages[0].content, /当前回答内容区约 \d+px 宽/, 'generation receives the actual answer-column dimensions');
   const blocks = page.getByTestId('widget-block');
   await blocks.nth(1).getByTestId('widget-frame').contentFrame().getByRole('slider').waitFor();
   assert.equal(await blocks.count(), 2, 'inline references do not duplicate end-of-answer visuals');
@@ -110,6 +111,23 @@ try {
   for (const width of [320, 360, 768]) {
     await page.setViewportSize({ width, height: 900 });
     await blocks.first().scrollIntoViewIfNeeded();
+    await first().locator('body').evaluate(() => new Promise(resolve => {
+      const ready = () => Math.abs(window.__wbw.display.width - innerWidth) <= 1;
+      if (ready()) return resolve();
+      const onChange = () => {
+        if (!ready()) return;
+        window.removeEventListener('wbw:displaychange', onChange);
+        resolve();
+      };
+      window.addEventListener('wbw:displaychange', onChange);
+    }));
+    const display = await first().locator('html').evaluate(el => ({
+      ...window.__wbw.display,
+      cssHeight: parseFloat(getComputedStyle(el).getPropertyValue('--wbw-available-height')),
+    }));
+    assert(display.height > 0 && display.height <= 900 * 0.65, 'drawing height comes from host viewport');
+    assert.equal(display.height, display.cssHeight, 'CSS and JS receive the same layout budget');
+    assert.equal(await first().locator('section').getAttribute('data-run-token'), token, 'responsive updates preserve widget execution and state');
     const geometry = await first().locator('svg').evaluate((svg) => {
       const frame = svg.getBoundingClientRect();
       const labels = [...svg.querySelectorAll('text')].map((text) => ({ box: text.getBoundingClientRect(), size: parseFloat(getComputedStyle(text).fontSize) }));
