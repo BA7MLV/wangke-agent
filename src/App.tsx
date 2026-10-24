@@ -1,9 +1,6 @@
-import { useEffect } from 'react';
+import { Suspense, lazy, useEffect } from 'react';
 import { HashRouter, Route, Routes } from 'react-router-dom';
-import Library from './pages/Library';
 import CourseChat from './pages/CourseChat';
-import Player from './pages/Player';
-import Study from './pages/Study';
 import { useMobileGlobals } from './utils/useMobile';
 import { isModelMetaStale, refreshModelMeta } from './api/modelMeta';
 import { useSettings } from './store/settings';
@@ -11,14 +8,33 @@ import { resumePendingTranscriptions } from './pipelines/transcribeQueue';
 import { backfillCovers } from './pipelines/coverQueue';
 import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
-import LiveGuest from './pages/LiveGuest';
-import BotWorkspace from './pages/BotWorkspace';
-import WidgetPreview from './pages/WidgetPreview';
 import SettingsModal from './components/SettingsModal';
+import { preloadOnIdle } from './utils/preload';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
 import CloudActivity from './cloud/Activity';
 
+/*
+ * 按路由拆包：首页（对话）同步加载，其余页面点进去才下载。
+ * 以前七个页面和设置弹窗全部打进同一个 App chunk（约 1.4 MB / gzip 440 KB），
+ * 打开首页也要等资源库、播放器、PDF 阅读器的代码一起下完。
+ */
+// 设置弹窗不在这里拆：各页面的「设置」按钮和它同一个文件，拆了也会被首页带回主包。
+// 它最重的部分（十个设置模块）在设置 PR 里已经改成按模块懒加载。
+const pages = {
+  library: () => import('./pages/Library'),
+  player: () => import('./pages/Player'),
+  study: () => import('./pages/Study'),
+  bot: () => import('./pages/BotWorkspace'),
+  live: () => import('./pages/LiveGuest'),
+  widget: () => import('./pages/WidgetPreview'),
+};
+const Library = lazy(pages.library);
+const Player = lazy(pages.player);
+const Study = lazy(pages.study);
+const BotWorkspace = lazy(pages.bot);
+const LiveGuest = lazy(pages.live);
+const WidgetPreview = lazy(pages.widget);
 
 export default function App() {
   useMobileGlobals();
@@ -26,6 +42,9 @@ export default function App() {
   // 学习时长追踪：全局一份，随应用生命周期跑（可见 + 未空闲才计时，见 store/studyTime.ts）。
   // 放在 App 而不是学习页里，是因为「在线时长」本来就不该只在那个页面被统计。
   useEffect(() => startStudyTracking(), []);
+
+  // 首屏画完后，利用空闲时间把最常去的页面预取进缓存，点击时不用等网络。
+  useEffect(() => preloadOnIdle([pages.library, pages.player, pages.study]), []);
 
   // 启动时把上次没转完的视频接着转（刷新/关页会中断任务，但已完成段落了库，续跑不重复计费）
   useEffect(() => {
@@ -77,6 +96,7 @@ export default function App() {
         {/* 设置是全局弹窗而不是路由：挂在 App 根部一次，任何页面都能唤起，
             且唤起时不会把用户当前位置顶掉（见 components/SettingsModal.tsx）。 */}
         <SettingsModal />
+        <Suspense fallback={<div className="route-fallback" aria-busy="true" />}>
         <Routes>
           {/* 对话页是默认首页：打开应用直接进入课程助手 */}
           <Route path="/" element={<CourseChat />} />
@@ -94,6 +114,7 @@ export default function App() {
           {/* show_widget HTML 的独立预览页；源码通过 BroadcastChannel 传递，不进 URL。 */}
           <Route path="/widget-preview" element={<WidgetPreview />} />
         </Routes>
+        </Suspense>
       </div>
     </HashRouter>
   );
