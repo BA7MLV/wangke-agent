@@ -1,100 +1,32 @@
+/* Bot 页：iMessage 式对话。气泡尺寸、间距、圆角参照 iOS Messages：
+   17px 圆角、组内 2px、组间 10px、气泡最宽 70%，只有一组的最后一条带尾巴。
+   动效全部取自 transitions.css 的共享 token。 */
 .bot-page {
-  --bot-border: color-mix(in srgb, currentColor 12%, transparent);
+  --bot-border: color-mix(in srgb, currentColor 10%, transparent);
+  --imsg-mine: var(--accent);
+  --imsg-mine-fg: var(--accent-foreground);
+  --imsg-theirs: color-mix(in srgb, currentColor 9%, var(--background));
+  --imsg-theirs-fg: var(--foreground);
+  --imsg-radius: 17px;
 }
 
-.bot-loading {
-  min-height: 280px;
-  gap: 12px;
+.bot-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 
-.bot-access {
-  position: relative;
+.bot-center {
   display: grid;
-  grid-template-columns: minmax(280px, 0.95fr) minmax(340px, 0.85fr);
-  width: min(100%, 980px);
-  min-height: min(640px, calc(100dvh - 132px));
-  margin: clamp(24px, 6vh, 72px) auto;
-  overflow: hidden;
-  border: 1px solid color-mix(in srgb, currentColor 12%, transparent);
-  border-radius: 8px;
-}
-
-.bot-access-card {
-  position: relative;
-  z-index: 1;
-  align-self: center;
-  min-width: 0;
-  width: auto;
-  margin: 32px;
-  overflow: hidden;
-  border: 0;
-  border-radius: 0;
-  background: transparent;
-  box-shadow: none;
-}
-
-.bot-access-visual {
-  display: grid;
-  grid-template-rows: auto 1fr auto;
-  gap: 32px;
-  min-width: 0;
-  padding: 32px;
-  border-right: 1px dashed color-mix(in srgb, currentColor 16%, transparent);
-  background: color-mix(in srgb, currentColor 2%, transparent);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-}
-
-.bot-terminal-path,
-.bot-terminal-prompt {
+  place-items: center;
+  min-height: 240px;
+  height: 100%;
   color: var(--muted);
-  font-size: 12px;
 }
 
-.bot-ascii {
-  align-self: center;
-  justify-self: center;
+.bot-center__error {
   margin: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font-family: inherit;
-  font-size: clamp(11px, 1.3vw, 15px);
-  line-height: 1.45;
-  white-space: pre;
-  user-select: none;
-}
-
-.bot-terminal-cursor { margin-left: 8px; }
-
-.bot-access-card__header {
-  gap: 10px;
-}
-
-.bot-access-card__eyebrow {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  color: var(--muted);
-  font-size: 12px;
-}
-
-.bot-access-card__title {
-  margin-top: 2px;
-  font-size: 1.45rem;
-}
-
-.bot-access-form {
-  display: grid;
-  gap: 18px;
-}
-
-.bot-file-field {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: -4px;
+  font-size: 0.9375rem;
 }
 
 .bot-hidden-file {
@@ -102,345 +34,321 @@
   width: 1px;
   height: 1px;
   overflow: hidden;
-  clip: rect(0 0 0 0);
   clip-path: inset(50%);
   white-space: nowrap;
 }
 
-.bot-access-actions {
-  display: grid;
-  gap: 10px;
-  margin-top: 2px;
-}
-
-
-.bot-layout {
-  display: flex;
-  min-height: 0;
-  flex: 1;
-}
-
-.bot-capabilities {
-  width: 280px;
-  flex: none;
-  overflow-y: auto;
-  padding: 24px;
-  border-right: 1px solid var(--bot-border);
-}
-
-.bot-sidebar-card {
-  height: fit-content;
-}
-
-.bot-sidebar-card__header {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  align-items: center;
-  gap: 10px;
-}
-
-.bot-agent-icon,
-.bot-event-card__icon {
+/* ── 登录：一列居中，没有说明文字 ── */
+.bot-access {
   display: grid;
   place-items: center;
-  flex: none;
-  width: 32px;
-  height: 32px;
-  border-radius: 10px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  color: var(--accent);
+  min-height: min(640px, calc(var(--vvh, 100dvh) - 132px));
+  padding: 24px 16px;
 }
 
-.bot-sidebar-card__content {
-  gap: 0;
-}
-
-.bot-capability {
+.bot-access__form {
   display: grid;
-  gap: 7px;
-  padding: 14px 0;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 340px);
+  animation: bot-rise var(--duration-slow) var(--ease-smooth-out) both;
+}
+
+.bot-access__form[data-shake] .bot-access__group {
+  animation: bot-shake calc(var(--shake-dur-a) * 4) var(--shake-ease);
+}
+
+.bot-access__icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 32px;
+}
+
+.bot-access__title {
+  margin: 0 0 6px;
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* iOS 分组表单：多个输入框合成一张圆角卡片，中间用细线分隔。 */
+.bot-access__group {
+  display: grid;
+  width: 100%;
+  overflow: hidden;
+  border: 1px solid var(--bot-border);
+  border-radius: 12px;
+  background: var(--imsg-theirs);
+}
+
+.bot-access__group > * + * {
   border-top: 1px solid var(--bot-border);
 }
 
-.bot-capability:first-child {
-  border-top: 0;
-  padding-top: 2px;
+.bot-access__group input {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1rem;
 }
 
-.bot-capability p {
+.bot-access__secret {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.bot-access__error {
   margin: 0;
-  color: var(--muted);
+  color: var(--danger);
+  font-size: 0.875rem;
 }
 
-.bot-sidebar-actions {
-  display: grid;
-  gap: 10px;
-  margin-top: 14px;
-}
-
-.bot-status {
-  margin: 12px 0 0;
-  color: var(--muted);
-  font-size: 0.8rem;
-  line-height: 1.5;
-}
-
+/* ── 对话 ── */
 .bot-conversation {
   display: flex;
-  min-width: 0;
-  flex: 1;
   flex-direction: column;
-}
-
-.bot-conversation__alert {
-  flex: none;
-  margin: 16px 24px 0;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
 }
 
 .bot-messages {
   min-height: 0;
   flex: 1;
   overflow-y: auto;
-  padding: 32px clamp(18px, 5vw, 80px);
   overscroll-behavior: contain;
+  padding: 12px clamp(12px, 4vw, 48px) 16px;
 }
 
-.bot-message {
-  width: min(780px, 92%);
-  margin: 0 0 24px;
-}
-
-.bot-message--user {
-  margin-left: auto;
-}
-
-.bot-message__meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 7px;
+.imsg-stamp {
+  padding: 14px 0 6px;
   color: var(--muted);
-  font-size: 0.75rem;
+  font-size: 0.6875rem;
+  font-weight: 500;
+  text-align: center;
 }
 
-.bot-message--user .bot-message__meta {
+.imsg-row {
+  display: flex;
+  max-width: 760px;
+  margin: 0 auto;
+  padding-top: 2px;
+}
+
+.imsg-row[data-first] {
+  padding-top: 10px;
+}
+
+.imsg-row--mine {
   justify-content: flex-end;
 }
 
-.bot-text {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  width: fit-content;
-  max-width: 100%;
-  padding: 12px 14px;
-  border-radius: 4px 16px 16px 16px;
-  background: color-mix(in srgb, currentColor 7%, transparent);
+.imsg-bubble {
+  position: relative;
+  max-width: min(70%, 560px);
+  padding: 7px 12px;
+  border-radius: var(--imsg-radius);
+  background: var(--imsg-theirs);
+  color: var(--imsg-theirs-fg);
+  font-size: 1rem;
+  line-height: 1.35;
+  text-align: left;
+}
+
+.imsg-row[data-fresh] .imsg-bubble {
+  animation: bot-bubble-in var(--duration-fast) var(--ease-smooth-out) both;
+}
+
+.imsg-row--mine .imsg-bubble {
+  background: var(--imsg-mine);
+  color: var(--imsg-mine-fg);
+}
+
+/* 组内相邻的一侧收小圆角，读起来像一串。 */
+.imsg-row--theirs:not([data-first]) .imsg-bubble { border-top-left-radius: 6px; }
+.imsg-row--theirs:not([data-last]) .imsg-bubble { border-bottom-left-radius: 6px; }
+.imsg-row--mine:not([data-first]) .imsg-bubble { border-top-right-radius: 6px; }
+.imsg-row--mine:not([data-last]) .imsg-bubble { border-bottom-right-radius: 6px; }
+
+/* 尾巴：两个伪元素拼出 iOS 的弯尾，外侧那块用页面底色挖掉。 */
+.imsg-row[data-last] .imsg-bubble::before,
+.imsg-row[data-last] .imsg-bubble::after {
+  content: '';
+  position: absolute;
+  bottom: 0;
+  height: 17px;
+}
+
+.imsg-row--theirs[data-last] .imsg-bubble::before {
+  left: -7px;
+  width: 20px;
+  background: var(--imsg-theirs);
+  border-bottom-right-radius: 16px 14px;
+}
+
+.imsg-row--theirs[data-last] .imsg-bubble::after {
+  left: -26px;
+  width: 26px;
+  background: var(--background);
+  border-bottom-right-radius: 10px;
+}
+
+.imsg-row--mine[data-last] .imsg-bubble::before {
+  right: -7px;
+  width: 20px;
+  background: var(--imsg-mine);
+  border-bottom-left-radius: 16px 14px;
+}
+
+.imsg-row--mine[data-last] .imsg-bubble::after {
+  right: -26px;
+  width: 26px;
+  background: var(--background);
+  border-bottom-left-radius: 10px;
+}
+
+.imsg-row[data-pending] .imsg-bubble {
+  opacity: 0.7;
+}
+
+.imsg-text {
+  margin: 0;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
-  text-align: left;
 }
 
-.bot-message--user .bot-text {
-  margin-left: auto;
-  border-radius: 16px 4px 16px 16px;
-  background: var(--accent);
-  color: var(--accent-foreground);
-}
-
-.bot-reaction {
-  flex: none;
-  min-width: 28px;
-  height: 28px;
-  padding: 0;
-  opacity: 0.75;
-}
-
-.bot-event-card {
-  margin-top: 2px;
-  text-align: left;
-}
-
-.bot-event-card__header {
+/* 进度：正在输入的三个点 */
+.imsg-bubble--typing {
   display: flex;
   align-items: center;
-  justify-content: space-between;
-  gap: 12px;
+  gap: 8px;
+  color: var(--muted);
 }
 
-.bot-event-card__title {
-  display: flex;
-  min-width: 0;
+.imsg-typing {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.imsg-typing i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.4;
+  animation: bot-typing 1.2s var(--ease-in-out) infinite;
+}
+
+.imsg-typing i:nth-child(2) { animation-delay: 0.15s; }
+.imsg-typing i:nth-child(3) { animation-delay: 0.3s; }
+
+.imsg-typing__text {
+  font-size: 0.875rem;
+}
+
+.imsg-bubble--file {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  grid-template-rows: auto auto;
+  column-gap: 10px;
   align-items: center;
-  gap: 10px;
 }
 
-.bot-event-card__title [data-slot='title'] {
-  min-width: 0;
+.imsg-file__icon {
+  grid-row: 1 / span 2;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in srgb, currentColor 14%, transparent);
+}
+
+.imsg-file__name {
   overflow: hidden;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.bot-event-card__body {
-  margin: 0;
-  white-space: pre-wrap;
-  overflow-wrap: anywhere;
+.imsg-file__size {
+  font-size: 0.75rem;
+  opacity: 0.7;
 }
 
-.bot-card-actions {
+.imsg-bubble--action {
+  display: grid;
+  gap: 10px;
+}
+
+.imsg-actions {
   display: flex;
-  flex-wrap: wrap;
+  justify-content: flex-end;
   gap: 8px;
-  margin-top: 16px;
 }
 
-.bot-code-block {
+.imsg-resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.imsg-bubble--code pre {
   max-height: 200px;
   margin: 0;
   overflow: auto;
-  border-radius: 8px;
-  background: color-mix(in srgb, currentColor 6%, transparent);
-  padding: 10px 12px;
-  font-size: 0.78rem;
-  line-height: 1.5;
+  font-size: 0.8125rem;
+  line-height: 1.45;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
 
-.bot-progress {
-  margin-top: 2px;
-}
-
-.bot-empty {
-  min-height: 300px;
-  gap: 12px;
-}
-
-.bot-empty__icon {
-  display: grid;
-  place-items: center;
-  width: 52px;
-  height: 52px;
-  border-radius: 16px;
-  background: color-mix(in srgb, var(--accent) 12%, transparent);
-  color: var(--accent);
-  font-size: 26px;
-}
-
 .bot-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
   flex: none;
-  padding: 14px clamp(18px, 5vw, 80px) max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--bot-border);
-  background: color-mix(in srgb, var(--background) 92%, transparent);
 }
 
-.bot-composer__input {
-  min-width: 0;
+@keyframes bot-bubble-in {
+  from { opacity: 0; transform: translateY(var(--distance-base)) scale(var(--scale-medium)); }
+  to { opacity: 1; transform: none; }
 }
 
-.bot-composer__actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
+@keyframes bot-rise {
+  from { opacity: 0; filter: blur(var(--blur-medium)); transform: translateY(var(--distance-medium)); }
+  to { opacity: 1; filter: none; transform: none; }
 }
 
-@media (max-width: 760px) {
-  .bot-layout {
-    display: block;
-    overflow-y: auto;
-  }
-
-  .bot-capabilities {
-    width: auto;
-    padding: 16px;
-    border-right: 0;
-    border-bottom: 1px solid var(--bot-border);
-  }
-
-  .bot-sidebar-card__content {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 12px;
-  }
-
-  .bot-capability,
-  .bot-capability:first-child {
-    padding: 0;
-    border-top: 0;
-  }
-
-  .bot-sidebar-actions {
-    grid-column: 1 / -1;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    margin-top: 4px;
-  }
-
-  .bot-status {
-    grid-column: 1 / -1;
-    margin-top: 0;
-  }
-
-  .bot-messages {
-    min-height: 45vh;
-    padding: 24px 16px;
-  }
-
-  .bot-message {
-    width: 96%;
-  }
-
-  .bot-conversation__alert {
-    margin: 12px 16px 0;
-  }
-
-  .bot-composer {
-    grid-template-columns: 1fr;
-    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
-  }
-
-  .bot-composer__actions {
-    justify-content: flex-end;
-  }
-
-  .bot-composer__actions > * {
-    flex: 1;
-  }
-
-  .bot-access {
-    display: block;
-    min-height: 0;
-    margin: 18px auto 32px;
-    border-radius: 8px;
-  }
-
-  .bot-access-visual {
-    padding: 24px;
-    gap: 16px;
-    border-right: 0;
-    border-bottom: 1px dashed color-mix(in srgb, currentColor 16%, transparent);
-  }
-
-  .bot-access-card {
-    width: auto;
-    margin: 16px;
-  }
+@keyframes bot-typing {
+  0%, 60%, 100% { opacity: 0.35; transform: none; }
+  30% { opacity: 0.9; transform: translateY(-3px); }
 }
 
-@media (max-width: 440px) {
-  .bot-sidebar-card__content,
-  .bot-sidebar-actions {
-    grid-template-columns: 1fr;
-  }
+@keyframes bot-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(calc(var(--shake-distance) * -1)); }
+  40% { transform: translateX(var(--shake-distance)); }
+  60% { transform: translateX(calc(var(--shake-overshoot) * -1)); }
+  80% { transform: translateX(var(--shake-overshoot)); }
+}
 
-  .bot-sidebar-actions {
-    grid-column: auto;
-  }
+@media (max-width: 640px) {
+  .imsg-bubble { max-width: 78%; }
+}
 
-  .bot-status {
-    grid-column: auto;
+@media (prefers-reduced-motion: reduce) {
+  .imsg-row[data-fresh] .imsg-bubble,
+  .bot-access__form,
+  .bot-access__form[data-shake] .bot-access__group,
+  .imsg-typing i {
+    animation: none;
   }
 }

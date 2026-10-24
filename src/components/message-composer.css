@@ -1,0 +1,110 @@
+/* iMessage 式输入栏。动效参数全部来自 transitions.css 的共享 token。 */
+.imsg-composer {
+  --composer-line: 1.4;
+  --composer-min-height: 36px;
+  --composer-max-height: min(220px, 32dvh);
+  display: grid;
+  gap: 8px;
+  padding: 8px 12px max(8px, env(safe-area-inset-bottom));
+  background: color-mix(in srgb, var(--background) 82%, transparent);
+  backdrop-filter: saturate(180%) blur(20px);
+  -webkit-backdrop-filter: saturate(180%) blur(20px);
+}
+
+/* 键盘弹出时输入栏贴着键盘上沿，手势条的安全区留白会变成一条缝。 */
+:root[data-keyboard='open'] .imsg-composer {
+  padding-bottom: 8px;
+}
+
+.imsg-composer__row {
+  display: flex;
+  align-items: flex-end;
+  gap: 8px;
+}
+
+.imsg-composer__attach {
+  flex: none;
+  width: var(--composer-min-height);
+  min-width: var(--composer-min-height);
+  height: var(--composer-min-height);
+  border-radius: 999px;
+}
+
+.imsg-composer__field {
+  position: relative;
+  display: flex;
+  align-items: flex-end;
+  min-width: 0;
+  flex: 1;
+  min-height: var(--composer-min-height);
+  border: 1px solid color-mix(in srgb, currentColor 16%, transparent);
+  border-radius: 18px;
+  background: var(--background);
+  transition: border-color var(--duration-quick) var(--ease-out);
+}
+
+.imsg-composer__field:focus-within {
+  border-color: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.imsg-composer__input,
+.imsg-composer__input:focus,
+.imsg-composer__input:focus-visible {
+  flex: 1;
+  min-width: 0;
+  min-height: calc(var(--composer-min-height) - 2px);
+  max-height: var(--composer-max-height);
+  padding: 7px 40px 7px 14px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  resize: none;
+  border: 0;
+  border-radius: 18px;
+  background: transparent;
+  box-shadow: none;
+  outline: none;
+  font: inherit;
+  font-size: 1rem; /* 16px：低于它 iOS Safari 聚焦时会自动放大页面 */
+  line-height: var(--composer-line);
+  overflow-wrap: anywhere;
+}
+
+.imsg-composer__send {
+  position: absolute;
+  right: 3px;
+  bottom: 3px;
+  width: 28px;
+  min-width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  opacity: 0;
+  filter: blur(var(--blur-small));
+  transform: scale(0.6);
+  pointer-events: none;
+  transition:
+    opacity var(--duration-fast) var(--ease-in-out),
+    filter var(--duration-fast) var(--ease-in-out),
+    transform var(--duration-fast) var(--ease-bounce);
+}
+
+.imsg-composer__send[data-shown] {
+  opacity: 1;
+  filter: none;
+  transform: none;
+  pointer-events: auto;
+}
+
+.imsg-composer__accessory {
+  min-width: 0;
+}
+
+.imsg-composer[data-disabled] .imsg-composer__field {
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .imsg-composer__send,
+  .imsg-composer__field {
+    transition: none;
+  }
+}
