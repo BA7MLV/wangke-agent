@@ -1,0 +1,74 @@
+# 前后端分离部署：api 只提供 API 与鉴权，web 只提供浏览器前端。
+#
+#   docker compose --env-file .env -f compose.split.yaml up -d --build
+#
+# 默认同源：浏览器访问 web（:8080），web 把 /api/* 反代给 api，Cookie 登录开箱即用。
+# iOS / macOS 壳层直接连 api（或经 web 的 /api），用 POST /api/v1/auth/token 换 Bearer token。
+# 如果要让浏览器直接跨域访问另一个 API 域名：给 web 设 API_BASE_URL，给 api 设 CORS_ORIGINS。
+services:
+  api:
+    user: "${WANGKE_UID:-1000}:${WANGKE_GID:-1000}"
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: "${WANGKE_IMAGE:-wangke-agent:0.1.0}"
+    restart: unless-stopped
+    init: true
+    shm_size: 1gb
+    environment:
+      APP_VERSION: "${APP_VERSION:-0.1.0}"
+      PORT: "3000"
+      HOST: "0.0.0.0"
+      SERVE_WEB: "false"
+      DATA_DIR: /data
+      DB_PATH: /data/db/wangke.sqlite
+      FILES_DIR: /data/files
+      BOOTSTRAP_SECRET_FILE: /data/config/bootstrap-secret
+      BOOTSTRAP_TTL_MS: "${BOOTSTRAP_TTL_MS:-900000}"
+      PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:${WEB_PORT:-8080}}"
+      WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
+      WEBAUTHN_RP_NAME: "${WEBAUTHN_RP_NAME:-Wangke Agent}"
+      CORS_ORIGINS: "${CORS_ORIGINS:-}"
+      COOKIE_SAMESITE: "${COOKIE_SAMESITE:-lax}"
+      TOKEN_TTL_MS: "${TOKEN_TTL_MS:-7776000000}"
+      MODEL_BASE_URL: "${MODEL_BASE_URL:-https://api.openai.com/v1}"
+      MODEL_API_KEY: "${MODEL_API_KEY:-}"
+      MODEL_NAME: "${MODEL_NAME:-gpt-4o-mini}"
+      MODEL_TIMEOUT_MS: "${MODEL_TIMEOUT_MS:-30000}"
+      MAX_FILE_BYTES: "${MAX_FILE_BYTES:-536870912}"
+      CLOUD_CONCURRENCY: "${CLOUD_CONCURRENCY:-2}"
+      CLOUD_BROWSER_DISABLED: "${CLOUD_BROWSER_DISABLED:-0}"
+    # 原生壳层要直连 API 时才需要对外暴露；只用浏览器的话可以删掉这段，只经 web 访问。
+    ports:
+      - "${API_BIND_HOST:-127.0.0.1}:${API_PORT:-3000}:3000"
+    volumes:
+      - "${WANGKE_HOST_DATA_DIR:-./data}:/data"
+    read_only: true
+    tmpfs:
+      - /tmp:size=2g
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile
+    image: "${WANGKE_WEB_IMAGE:-wangke-agent-web:0.1.0}"
+    restart: unless-stopped
+    depends_on:
+      api:
+        condition: service_healthy
+    environment:
+      # 设为空字符串即关闭反代（跨域模式，配合 API_BASE_URL）。
+      API_UPSTREAM: "${API_UPSTREAM-api:3000}"
+      API_BASE_URL: "${API_BASE_URL:-}"
+    ports:
+      - "${WANGKE_BIND_HOST:-0.0.0.0}:${WEB_PORT:-8080}:8080"
+    security_opt:
+      - no-new-privileges:true

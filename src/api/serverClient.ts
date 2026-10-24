@@ -11,8 +11,9 @@ import type {
   PublicKeyCredentialRequestOptionsJSON,
   RegistrationResponseJSON,
 } from '@simplewebauthn/browser';
+import { apiUrl } from './base';
 
-const API_ROOT = '/api/v1';
+const API_ROOT = apiUrl('/api/v1');
 
 export class ServerApiError extends Error {
   status: number;

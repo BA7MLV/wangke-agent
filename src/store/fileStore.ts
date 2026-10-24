@@ -1,6 +1,7 @@
 import { db } from './db';
 import { cloud } from '../cloud/state';
 import { flushCloud } from '../cloud/sync';
+import { apiUrl } from '../api/base';
 
 /**
  * 课程文件存储层（视频 + 阅读材料共用）。
@@ -91,7 +92,7 @@ async function saveFile(
   dirName: string = DIR_VIDEOS,
 ): Promise<void> {
   if (cloud.enabled) {
-    const response = await fetch('/api/v1/files', { method: 'POST', credentials: 'include', headers: {
+    const response = await fetch(apiUrl('/api/v1/files'), { method: 'POST', credentials: 'include', headers: {
       'content-type': 'application/octet-stream', 'x-file-name': encodeURIComponent(id.slice(0, 255)),
       'x-file-mime': blob.type || 'application/octet-stream',
     }, body: blob });
@@ -193,7 +194,7 @@ export async function getCourseFile(id: string, dirName: string = DIR_VIDEOS): P
     if (edited) return edited.blob;
     const file = await db.table('courseFiles').get(id);
     if (!file) return null;
-    const response = await fetch(`/api/v1/files/${encodeURIComponent(file.fileId)}`, { credentials: 'include' });
+    const response = await fetch(apiUrl(`/api/v1/files/${encodeURIComponent(file.fileId)}`), { credentials: 'include' });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`读取服务器文件失败（${response.status}）`);
     return new Blob([await response.blob()], { type: file.mimeType });
