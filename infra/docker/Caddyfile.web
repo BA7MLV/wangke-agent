@@ -1,0 +1,26 @@
+{
+	admin off
+}
+
+:8080 {
+	root * /srv
+
+	# __API_BLOCK__ 由 web-entrypoint.sh 按 API_UPSTREAM 填入（同源模式下把 /api/* 反代给后端）。
+
+	handle {
+		# 和一体化镜像一致的隔离头：VAD / 转写用到 SharedArrayBuffer。
+		header {
+			Cross-Origin-Opener-Policy same-origin
+			Cross-Origin-Embedder-Policy require-corp
+			X-Content-Type-Options nosniff
+			Referrer-Policy no-referrer
+		}
+		@config path /config.js /sw.js /index.html /
+		header @config Cache-Control "no-cache"
+		@assets path /assets/*
+		header @assets Cache-Control "public, max-age=31536000, immutable"
+		encode zstd gzip
+		try_files {path} /index.html
+		file_server
+	}
+}

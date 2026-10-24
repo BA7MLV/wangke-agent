@@ -27,6 +27,7 @@ import './handout-doc.css';
 // Markdown 内容表格的三线表口径（与讲义 .hd-table 一致）。必须排在 x-markdown
 // 自带样式之后：它给 .x-markdown 定的 --td-th-padding 是同等权重，靠顺序取胜。
 import './md-table.css';
+import { apiUrl } from './api/base';
 
 // 申请持久化存储，防止浏览器在空间紧张时清除 IndexedDB 中的视频/字幕数据
 navigator.storage?.persist?.().catch(() => {});
@@ -82,7 +83,7 @@ function render() {
 // HeroUI 的组件是纯 React 实现（无 Web Components 注册等待），直接渲染首帧。
 async function boot() {
   try {
-    const response = await fetch('/api/v1/cloud/status', { cache: 'no-store' });
+    const response = await fetch(apiUrl('/api/v1/cloud/status'), { cache: 'no-store' });
     const status = await response.json().catch(() => null);
     if (!status?.cloud) {
       if (response.status >= 500) throw new Error(i18n.t('serverUnavailable'));

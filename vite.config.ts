@@ -192,6 +192,8 @@ export default defineConfig({
         // 而 worker 的文件名带内容哈希、由 Vite 在打包期才定，配置期没法确定它一定存在。
         // 改成下面的**运行时 CacheFirst**：正则匹配不到只是不缓存，绝不会让构建挂掉。
         globPatterns: ['**/*.{js,css,svg,wasm}'],
+        // config.js 是运行时配置（web 容器启动时按 API_BASE_URL 重写），不能被 SW 缓存成旧值。
+        globIgnores: ['config.js'],
         navigateFallback: undefined,
         cleanupOutdatedCaches: true,
         runtimeCaching: [

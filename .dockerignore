@@ -13,3 +13,6 @@ data
 .worktrees
 scripts/.cache
 scripts/out
+apps/ios
+apps/apple
+*.xcodeproj

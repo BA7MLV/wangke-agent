@@ -5,6 +5,7 @@ import { cloud, cloudRequest } from './state';
 import { CLOUD_TABLES, type CloudRecord, type CloudConfig } from '../../packages/contracts/src/cloud';
 import { useSettings } from '../store/settings';
 import { flushPreferences, loadPreferences, startPreferences } from './preferences';
+import { apiUrl } from '../api/base';
 
 export const useCloudSync = create<{ pending: number; error: string; syncedAt: number }>()(() => ({ pending: 0, error: '', syncedAt: 0 }));
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -18,7 +19,7 @@ export function applyCloudConfig(config: CloudConfig) {
   configCheckedAt = Date.now();
   cloud.maxSteps = config.policy.maxSteps;
   useSettings.setState({
-    providers: config.providers.map(p => ({ ...p, baseUrl: `/api/v1/cloud/models/${encodeURIComponent(p.id)}`, apiKey: p.configured ? 'server-managed' : 'server-local' })),
+    providers: config.providers.map(p => ({ ...p, baseUrl: apiUrl(`/api/v1/cloud/models/${encodeURIComponent(p.id)}`), apiKey: p.configured ? 'server-managed' : 'server-local' })),
     llmModel: config.llmModel, visionModel: config.visionModel, asrModel: config.asrModel,
     // Optional decision-model credentials from a former local installation must not bypass the server.
     jev: { skillRouting: false, contextCompression: false },
@@ -31,7 +32,7 @@ async function uploadBlob(blob: Blob): Promise<{ $file: string; type: string }> 
   const hash = await blobHash(blob);
   const cached = await db.table('_cloudBlobs').get(hash);
   if (cached) return { $file: cached.id, type: blob.type };
-  const response = await fetch('/api/v1/files', { method: 'POST', credentials: 'include', headers: {
+  const response = await fetch(apiUrl('/api/v1/files'), { method: 'POST', credentials: 'include', headers: {
     'content-type': 'application/octet-stream', 'x-file-name': 'cache-blob', 'x-file-mime': blob.type || 'application/octet-stream',
   }, body: blob });
   if (!response.ok) throw new Error(`文件同步失败（${response.status}）`);
@@ -52,7 +53,7 @@ async function decode(value: any): Promise<any> {
   if (value && typeof value.$file === 'string') {
     const cached = fileCache.get(value.$file);
     if (cached) return cached;
-    const response = await fetch(`/api/v1/files/${encodeURIComponent(value.$file)}`, { credentials: 'include' });
+    const response = await fetch(apiUrl(`/api/v1/files/${encodeURIComponent(value.$file)}`), { credentials: 'include' });
     if (!response.ok) throw new Error(`无法同步文件（${response.status}）`);
     const blob = new Blob([await response.blob()], { type: value.type });
     await db.table('_cloudBlobs').put({ hash: await blobHash(blob), id: value.$file });

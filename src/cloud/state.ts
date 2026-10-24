@@ -1,4 +1,5 @@
 /** No React/store imports: storage and API entrypoints can consult this without cycles. */
+import { apiUrl } from '../api/base';
 export const cloud = {
   enabled: false,
   userId: '',
@@ -10,7 +11,7 @@ export const cloud = {
 export const remoteTasks = () => cloud.enabled && !cloud.worker;
 
 export async function cloudRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api/v1/cloud${path}`, {
+  const response = await fetch(apiUrl(`/api/v1/cloud${path}`), {
     credentials: 'include', ...init,
     headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers },
   });

@@ -85,10 +85,48 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const expectedOrigin = process.env.PUBLIC_ORIGIN;
   const rpID = process.env.WEBAUTHN_RP_ID;
   const rpName = process.env.WEBAUTHN_RP_NAME;
+  /**
+   * 前后端分离：浏览器前端在别的域名时，在 CORS_ORIGINS 里列出它（逗号分隔，完整 origin）。
+   * 原生壳层（iOS / macOS）不发 Origin，也不需要 CORS，它们用 Bearer token。
+   */
+  const corsOrigins = new Set((process.env.CORS_ORIGINS ?? '').split(',').map((value) => value.trim().replace(/\/+$/, '')).filter(Boolean));
+  /** 跨站点（不同注册域）部署时 Cookie 需要 SameSite=None（必须同时 HTTPS）；同站子域名用默认的 Lax 即可。 */
+  const sameSite = (() => {
+    const value = (process.env.COOKIE_SAMESITE ?? 'lax').toLowerCase();
+    if (value === 'none' && secureCookie) return 'None';
+    if (value === 'strict') return 'Strict';
+    return 'Lax';
+  })();
+  /** SERVE_WEB=false 时只提供 API，不托管前端静态文件（前端由独立的 web 容器或 CDN 提供）。 */
+  const serveWeb = !['false', '0', 'no'].includes((process.env.SERVE_WEB ?? 'true').toLowerCase());
+  const tokenTtlMs = Number(process.env.TOKEN_TTL_MS ?? 90 * 24 * 60 * 60 * 1000);
 
-  app.register(helmet, { contentSecurityPolicy: false, crossOriginEmbedderPolicy: { policy: 'require-corp' } });
+  app.register(helmet, {
+    contentSecurityPolicy: false,
+    crossOriginEmbedderPolicy: { policy: 'require-corp' },
+    // 放行了跨域前端时，文件下载等响应要允许被别的 origin 读取。
+    crossOriginResourcePolicy: { policy: corsOrigins.size ? 'cross-origin' : 'same-origin' },
+  });
   const staticDir = options.staticDir ?? path.resolve(process.cwd(), 'dist');
-  if (fs.existsSync(staticDir)) app.register(fastifyStatic, { root: staticDir, wildcard: false });
+  const hasWeb = serveWeb && fs.existsSync(staticDir);
+  if (hasWeb) app.register(fastifyStatic, { root: staticDir, wildcard: false });
+
+  // CORS：只对 CORS_ORIGINS 里列出的 origin 回写允许头；预检请求在这里直接结束。
+  app.addHook('onRequest', async (request, reply) => {
+    const origin = request.headers.origin;
+    if (!origin || !corsOrigins.has(origin) || !request.url.startsWith('/api/')) return;
+    reply.header('access-control-allow-origin', origin);
+    reply.header('access-control-allow-credentials', 'true');
+    reply.header('vary', 'Origin');
+    if (request.method === 'OPTIONS') {
+      reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
+      reply.header('access-control-allow-headers', 'Authorization,Content-Type,Accept,Last-Event-ID,X-File-Name,X-File-Mime,X-Bootstrap-Secret,Range');
+      reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length');
+      reply.header('access-control-max-age', '600');
+      return reply.code(204).send();
+    }
+    reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length');
+  });
 
   function session(request: FastifyRequest) {
     const worker = workerIdentity(request);
@@ -113,6 +151,9 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (workerIdentity(request)) return true;
     const origin = request.headers.origin;
     if (!origin) return true;
+    // Bearer token 不会被浏览器自动附带，没有 CSRF 风险；原生壳层和脚本走这条。
+    if (request.headers.authorization?.startsWith('Bearer ') && !request.headers.cookie?.includes('wangke_session=')) return true;
+    if (corsOrigins.has(origin)) return true;
     const allowed = expectedOrigin ?? `${request.protocol}://${request.headers.host}`;
     if (origin !== allowed && process.env.ALLOW_INSECURE_CSRF !== 'true') { reply.code(403).send({ error: 'origin_not_allowed' }); return false; }
     return true;
@@ -121,13 +162,13 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const token = crypto.randomBytes(32).toString('base64url');
     const created = Date.now();
     store.db.prepare('INSERT INTO sessions(id,user_id,token_hash,created_at,expires_at) VALUES(?,?,?,?,?)').run(crypto.randomUUID(), userId, hashToken(token), new Date(created).toISOString(), new Date(created + sessionTtlMs).toISOString());
-    reply.header('set-cookie', `wangke_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=Lax${secureCookie ? '; Secure' : ''}; Max-Age=${Math.floor(sessionTtlMs / 1000)}`);
+    reply.header('set-cookie', `wangke_session=${encodeURIComponent(token)}; Path=/; HttpOnly; SameSite=${sameSite}${secureCookie ? '; Secure' : ''}; Max-Age=${Math.floor(sessionTtlMs / 1000)}`);
   }
   const bad = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
    const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
-  app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true }));
+  app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
   app.addHook('onRequest', async (request, reply) => {
     const worker = workerIdentity(request);
     if (worker && request.url.startsWith('/api/')) {
@@ -159,18 +200,40 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     return reply.code(201).send({ initialized: true });
   });
 
-  app.post<{ Body: { name?: string; username?: string; password?: string } }>('/api/v1/auth/password/login', async (request, reply) => {
-    if (!checkOrigin(request, reply)) return;
+  /** 密码校验 + 按 IP 退避。浏览器登录（发 Cookie）和原生壳层登录（发 token）共用。 */
+  async function verifyPassword(request: FastifyRequest<{ Body: { name?: string; username?: string; password?: string } }>) {
     pruneAttempts(); const key = request.ip; const attempt = attempts.get(key); const wait = attempt && attempt.until > Date.now() ? attempt.until - Date.now() : 0;
     if (wait) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 1500)));
     const identifier = String(request.body?.username ?? request.body?.name ?? '');
     const record = store.db.prepare('SELECT u.id,u.name,p.password_hash FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE u.name=?').get(identifier) as any;
     const valid = typeof request.body?.password === 'string' && await argon2.verify(record?.password_hash ?? await dummyHash, request.body.password);
-    if (!valid) { const seen = Date.now(); attempts.set(key, { count: (attempt?.count ?? 0) + 1, until: seen + Math.min(1000 * 2 ** Math.min(attempt?.count ?? 0, 4), 10000), seen }); return bad(reply, 401, 'invalid_credentials'); }
-    attempts.delete(key); issueSession(record.id, reply); return { user: publicUser(record) };
+    if (!valid) { const seen = Date.now(); attempts.set(key, { count: (attempt?.count ?? 0) + 1, until: seen + Math.min(1000 * 2 ** Math.min(attempt?.count ?? 0, 4), 10000), seen }); return null; }
+    attempts.delete(key); return record as { id: string; name: string };
+  }
+  app.post<{ Body: { name?: string; username?: string; password?: string } }>('/api/v1/auth/password/login', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const record = await verifyPassword(request);
+    if (!record) return bad(reply, 401, 'invalid_credentials');
+    issueSession(record.id, reply); return { user: publicUser(record) };
+  });
+  /**
+   * 原生壳层（iOS / macOS）和脚本的登录：用户名 + 密码换一个 Bearer token。
+   * token 只在这次响应里出现一次，库里只存哈希；`POST /auth/logout` 带上它即可吊销。
+   */
+  app.post<{ Body: { name?: string; username?: string; password?: string; deviceName?: string } }>('/api/v1/auth/token', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const record = await verifyPassword(request);
+    if (!record) return bad(reply, 401, 'invalid_credentials');
+    const token = crypto.randomBytes(32).toString('base64url');
+    const createdAt = Date.now();
+    const expiresAt = new Date(createdAt + tokenTtlMs).toISOString();
+    const deviceName = typeof request.body?.deviceName === 'string' ? request.body.deviceName.trim().slice(0, 100) : '';
+    const tokenId = crypto.randomUUID();
+    store.db.prepare('INSERT INTO api_tokens(id,user_id,token_hash,name,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(tokenId, record.id, hashToken(token), deviceName || 'Native client', new Date(createdAt).toISOString(), expiresAt);
+    return reply.code(201).send({ token, tokenId, tokenType: 'Bearer', expiresAt, user: publicUser(record) });
   });
   app.get('/api/v1/auth/session', async (request) => { const user = session(request); return { authenticated: Boolean(user), user: user ? publicUser(user) : null }; });
-  app.post('/api/v1/auth/logout', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = session(request); const authorization = request.headers.authorization; if (authorization?.startsWith('Bearer ')) { const bearer = authorization.slice(7).trim(); if (bearer) store.db.prepare('UPDATE api_tokens SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL').run(now(), hashToken(bearer)); } else if (user?.session_id) store.db.prepare('UPDATE sessions SET revoked_at=? WHERE id=?').run(now(), user.session_id); reply.header('set-cookie', 'wangke_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0'); return { ok: true }; });
+  app.post('/api/v1/auth/logout', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = session(request); const authorization = request.headers.authorization; if (authorization?.startsWith('Bearer ')) { const bearer = authorization.slice(7).trim(); if (bearer) store.db.prepare('UPDATE api_tokens SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL').run(now(), hashToken(bearer)); } else if (user?.session_id) store.db.prepare('UPDATE sessions SET revoked_at=? WHERE id=?').run(now(), user.session_id); reply.header('set-cookie', `wangke_session=; Path=/; HttpOnly; SameSite=${sameSite}${secureCookie ? '; Secure' : ''}; Max-Age=0`); return { ok: true }; });
 
   app.post<{ Body: { deviceName?: string } }>('/api/v1/pairing/create', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -537,7 +600,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.get<{ Params: { id: string } }>('/api/v1/runs/:id', async (request, reply) => { const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); return { id: run.id, threadId: run.thread_id, mode: run.mode, status: run.status, createdAt: run.created_at, startedAt: run.started_at ?? null, completedAt: run.completed_at ?? null, errorCode: run.error_code ?? null }; });
   app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); if (!['completed', 'failed', 'cancelled'].includes(run.status)) store.transaction(() => { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), run.id); }); runner.cancel(run.id); const updated = store.db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as any; return { id: updated.id, threadId: updated.thread_id, mode: updated.mode, status: updated.status, createdAt: updated.created_at, startedAt: updated.started_at ?? null, completedAt: updated.completed_at ?? null, errorCode: updated.error_code ?? null }; });
 
-  if (fs.existsSync(staticDir)) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
+  if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
   app.addHook('onClose', async () => { await cloudRunner.close(); await runner.close(); store.close(); });
   return app;
 }

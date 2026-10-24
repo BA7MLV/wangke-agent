@@ -1,6 +1,7 @@
 import { serverClient, ServerApiError } from '../api/serverClient';
 import { db } from '../store/db';
 import { MAX_ATTACHMENT_TEXT, type ChatAttachment } from './attachments';
+import { apiUrl } from '../api/base';
 
 const LOCAL_MAX_BYTES = 512 * 1024 * 1024;
 
@@ -50,10 +51,10 @@ export async function prepareAttachment(id: string, file: File, onPhase: (phase:
   if (!file.size) throw new Error('文件为空，请选择有内容的文件');
   if (file.size > LOCAL_MAX_BYTES) throw new Error('单个聊天附件不能超过 512 MiB');
   // A static-only deployment explicitly returns 404/HTML. Network/server failures never silently downgrade storage.
-  const response = await fetch('/api/v1/files/config', { credentials: 'include' });
+  const response = await fetch(apiUrl('/api/v1/files/config'), { credentials: 'include' });
   const localOnly = response.status === 404 || (response.ok && !response.headers.get('content-type')?.includes('application/json'));
   if (localOnly) {
-    const health = await fetch('/api/v1/health');
+    const health = await fetch(apiUrl('/api/v1/health'));
     if (health.ok && health.headers.get('content-type')?.includes('application/json')) throw new Error('文件服务版本较旧，请更新 Docker 服务后重试');
     if (health.status >= 500) throw new Error('文件服务暂不可用，请稍后重试');
   }
@@ -90,7 +91,7 @@ export async function removeAttachmentFile(file: ChatAttachment): Promise<void> 
 export async function readAttachmentBlob(file: ChatAttachment): Promise<Blob> {
   let blob: Blob;
   if (file.serverId) {
-    const response = await fetch(`/api/v1/files/${encodeURIComponent(file.serverId)}`, { credentials: 'include' });
+    const response = await fetch(apiUrl(`/api/v1/files/${encodeURIComponent(file.serverId)}`), { credentials: 'include' });
     if (!response.ok) throw new Error(response.status === 401 ? '请先登录服务再下载附件' : '附件已删除或暂时无法下载');
     blob = await response.blob();
   } else {
