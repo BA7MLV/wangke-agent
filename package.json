@@ -25,6 +25,7 @@
     "test:cloud:backup": "tsx scripts/test-cloud-backup.mjs",
     "test:wrongbook": "tsx --test scripts/test-wrongbook.mjs",
     "test:ime": "tsx --test scripts/test-ime-enter.mjs",
+    "test:bot-ui": "tsx --test scripts/test-bot-messages.mjs",
     "check:i18n": "node scripts/check-i18n.mjs",
     "test:i18n": "npm run check:i18n && tsx --test scripts/test-i18n.mjs",
     "test:i18n:e2e": "node scripts/e2e-i18n.mjs",

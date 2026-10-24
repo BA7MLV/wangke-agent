@@ -1,159 +1,146 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import {
-  Alert,
   Button,
-  Card,
-  Chip,
-  cn,
-  EmptyState as HeroEmptyState,
+  Dropdown,
   Input,
   Label,
   Spinner,
   TextField,
-  Typography,
+  cn,
 } from '@heroui/react';
-import { PageShell, Sym, type RecentItem } from '../ui';
+import { PageShell, Sym, toast, type RecentItem } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
-import type { MessageDto, SseEvent } from '@wangke/contracts';
+import type { MessageDto, SseEvent, ThreadDto } from '@wangke/contracts';
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import MessageComposer from '../components/MessageComposer';
+import VirtualMessages from '../components/VirtualMessages';
+import { groupMessages, timeOf, type Row } from './botMessages';
 import './bot-workspace.css';
 
-function approvalLabel(status: ApprovalDto['status']): string {
-  if (status === 'approved') return '已批准';
-  if (status === 'rejected') return '已拒绝';
-  return '等待批准';
+function parseAttachment(content: string): { name: string; size?: number; uploading?: boolean } {
+  try {
+    const value = JSON.parse(content) as { originalName?: unknown; sizeBytes?: unknown; uploading?: unknown };
+    return {
+      name: typeof value.originalName === 'string' ? value.originalName : '附件',
+      size: typeof value.sizeBytes === 'number' ? value.sizeBytes : undefined,
+      uploading: value.uploading === true,
+    };
+  } catch {
+    return { name: content.slice(0, 80) || '附件' };
+  }
 }
 
-function MessageBody({
-  message,
+function formatBytes(size?: number) {
+  if (size === undefined) return '';
+  if (size < 1024) return `${size} B`;
+  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
+  return `${(size / 1024 / 1024).toFixed(1)} MB`;
+}
+
+/* ─────────────────────────── 单条气泡 ─────────────────────────── */
+
+const Bubble = memo(function Bubble({
+  row,
   approval,
   onReact,
   onResolve,
 }: {
-  message: MessageDto;
+  row: Row;
   approval?: ApprovalDto;
   onReact: (messageId: string) => void;
   onResolve: (approvalId: string, approved: boolean) => void;
 }) {
-  if (message.kind === 'attachment') {
-    let value: unknown = message.content;
-    try {
-      value = JSON.parse(message.content);
-    } catch {
-      // Plain metadata is still safe to render as text.
-    }
+  const { message, first, last, stamp } = row;
+  const mine = message.role === 'user';
+  // 只有刚到的消息播入场动效；虚拟列表滚回来重新挂载的旧消息不再动一遍。
+  const [fresh] = useState(() => Date.now() - timeOf(message) < 4000);
+  const pending = message.id.startsWith('pending-');
 
-    return (
-      <Card.Root variant="secondary" className="bot-event-card">
-        <Card.Header className="bot-event-card__header">
-          <div className="bot-event-card__title">
-            <span className="bot-event-card__icon" aria-hidden="true"><Sym name="upload" /></span>
-            <Card.Title>附件</Card.Title>
-          </div>
-          <Chip size="sm" variant="soft">文件</Chip>
-        </Card.Header>
-        <Card.Content>
-          <pre className="bot-code-block">{JSON.stringify(value, null, 2).slice(0, 2000)}</pre>
-        </Card.Content>
-      </Card.Root>
-    );
-  }
-
+  let body;
   if (message.kind === 'progress') {
-    return (
-      <Alert status="accent" className="bot-progress" role="status">
-        <Alert.Indicator><Spinner size="sm" color="current" /></Alert.Indicator>
-        <Alert.Content>
-          <Alert.Title>处理中</Alert.Title>
-          <Alert.Description>{message.content}</Alert.Description>
-        </Alert.Content>
-      </Alert>
+    // 进度用「正在输入」的三点气泡，正文是 Bot 当前在做的事。
+    body = (
+      <div className="imsg-bubble imsg-bubble--typing" role="status">
+        <span className="imsg-typing" aria-hidden="true"><i /><i /><i /></span>
+        {message.content && <span className="imsg-typing__text">{message.content}</span>}
+      </div>
     );
-  }
-
-  if (message.kind === 'question' || message.kind === 'approval') {
-    const isPending = message.kind === 'approval' && approval?.status === 'pending';
-    return (
-      <Card.Root variant="secondary" className="bot-event-card">
-        <Card.Header className="bot-event-card__header">
-          <div className="bot-event-card__title">
-            <span className="bot-event-card__icon" aria-hidden="true">
-              <Sym name={message.kind === 'question' ? 'help' : 'verified'} />
-            </span>
-            <Card.Title>{message.kind === 'question' ? '需要你的回答' : '需要批准'}</Card.Title>
-          </div>
-          {message.kind === 'approval' && approval && (
-            <Chip
-              size="sm"
-              variant="soft"
-              color={approval.status === 'rejected' ? 'danger' : approval.status === 'approved' ? 'success' : 'accent'}
-            >
-              {approvalLabel(approval.status)}
-            </Chip>
-          )}
-        </Card.Header>
-        <Card.Content>
-          <Typography.Paragraph className="bot-event-card__body">{message.content}</Typography.Paragraph>
-          {isPending && approval && (
-            <div className="bot-card-actions">
-              <Button size="sm" variant="primary" onPress={() => onResolve(approval.id, true)}>
-                <Sym name="check" />
-                批准
-              </Button>
-              <Button size="sm" variant="danger" onPress={() => onResolve(approval.id, false)}>
-                <Sym name="close" />
-                拒绝
-              </Button>
-            </div>
-          )}
-        </Card.Content>
-      </Card.Root>
+  } else if (message.kind === 'attachment') {
+    const file = parseAttachment(message.content);
+    body = (
+      <div className="imsg-bubble imsg-bubble--file">
+        <span className="imsg-file__icon" aria-hidden="true">
+          {file.uploading ? <Spinner size="sm" color="current" /> : <Sym name="description" />}
+        </span>
+        <span className="imsg-file__name">{file.name}</span>
+        {file.size !== undefined && <span className="imsg-file__size">{formatBytes(file.size)}</span>}
+      </div>
     );
-  }
-
-  if (message.kind === 'widget') {
-    return (
-      <Card.Root variant="secondary" className="bot-event-card">
-        <Card.Header className="bot-event-card__header">
-          <div className="bot-event-card__title">
-            <span className="bot-event-card__icon" aria-hidden="true"><Sym name="extension" /></span>
-            <Card.Title>结构化卡片</Card.Title>
+  } else if (message.kind === 'approval' || message.kind === 'question') {
+    const waiting = message.kind === 'approval' && approval?.status === 'pending';
+    body = (
+      <div className="imsg-bubble imsg-bubble--action">
+        <p className="imsg-text">{message.content}</p>
+        {waiting && approval && (
+          <div className="imsg-actions">
+            <Button size="sm" variant="secondary" onPress={() => onResolve(approval.id, false)}>拒绝</Button>
+            <Button size="sm" variant="primary" onPress={() => onResolve(approval.id, true)}>批准</Button>
           </div>
-          <Chip size="sm" variant="soft">安全预览</Chip>
-        </Card.Header>
-        <Card.Content>
-          <Typography.Paragraph className="bot-event-card__body">此 Bot 版本不会执行任意 widget 内容。</Typography.Paragraph>
-          <pre className="bot-code-block">{message.content.slice(0, 1000)}</pre>
-        </Card.Content>
-      </Card.Root>
+        )}
+        {approval && approval.status !== 'pending' && (
+          <span className="imsg-resolved" data-status={approval.status}>
+            <Sym name={approval.status === 'approved' ? 'check' : 'close'} />
+            {approval.status === 'approved' ? '已批准' : '已拒绝'}
+          </span>
+        )}
+      </div>
+    );
+  } else if (message.kind === 'widget') {
+    // Bot 线程不执行任意 widget，只把源码当作代码块安全地展示。
+    body = (
+      <div className="imsg-bubble imsg-bubble--code">
+        <pre>{message.content.slice(0, 1000)}</pre>
+      </div>
+    );
+  } else {
+    body = (
+      <div className="imsg-bubble" onDoubleClick={mine || pending ? undefined : () => onReact(message.id)}>
+        <p className="imsg-text">{message.content}</p>
+      </div>
     );
   }
 
   return (
-    <div className="bot-text">
-      <span>{message.content}</span>
-      <Button
-        isIconOnly
-        size="sm"
-        variant="tertiary"
-        className="bot-reaction"
-        onPress={() => onReact(message.id)}
-        aria-label="给这条消息添加赞"
+    <>
+      {stamp && <div className="imsg-stamp">{stamp}</div>}
+      <div
+        className={cn('imsg-row', mine ? 'imsg-row--mine' : 'imsg-row--theirs')}
+        data-first={first || undefined}
+        data-last={last || undefined}
+        data-pending={pending || undefined}
+        data-fresh={fresh || undefined}
       >
-        <span aria-hidden="true">👍</span>
-      </Button>
-    </div>
+        {body}
+      </div>
+    </>
   );
-}
+});
+
+/* ─────────────────────────── 登录 / 初始化 ─────────────────────────── */
 
 function passkeyError(error: unknown, action: '登录' | '注册') {
   if (error instanceof ServerApiError && error.code === 'webauthn_not_configured') return 'Passkey 当前不可用';
-  if (error instanceof DOMException && error.name === 'NotAllowedError') return `Passkey ${action}已取消`;
-  if (error instanceof Error && error.name === 'NotAllowedError') return `Passkey ${action}已取消`;
+  if ((error instanceof DOMException || error instanceof Error) && error.name === 'NotAllowedError') return `Passkey ${action}已取消`;
   return `Passkey ${action}失败，请稍后重试`;
 }
+
+const errorText: Record<string, string> = {
+  invalid_credentials: '用户名或密码不对',
+  invalid_or_expired_bootstrap_secret: '安装 secret 无效或已过期',
+  admin_password_must_be_12_to_256_characters: '密码至少 12 位',
+  bootstrap_closed: '已经初始化过了，请直接登录',
+};
 
 function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () => void }) {
   const [username, setUsername] = useState('Administrator');
@@ -174,7 +161,7 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
       else await serverClient.login(username, password);
       onDone();
     } catch (e) {
-      setError(e instanceof ServerApiError ? e.code : '网络请求失败');
+      setError(e instanceof ServerApiError ? errorText[e.code] ?? e.code : '连不上服务');
     } finally {
       setBusy(false);
     }
@@ -182,7 +169,7 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
 
   const passkeyLogin = async () => {
     if (!browserSupportsWebAuthn()) {
-      setError('当前浏览器不支持 Passkey');
+      setError('这个浏览器不支持 Passkey');
       return;
     }
     setPasskeyBusy(true);
@@ -206,139 +193,103 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
   };
 
   return (
-    <div className="bot-access" data-mode={initialized ? 'login' : 'initialize'}>
-      <div className="bot-access-visual" aria-hidden="true">
-        <span className="bot-terminal-path">~/bot</span>
-        <pre className="bot-ascii">{String.raw`           .
-           |
-      .----+----.
-      |         |
-   .--|  o   o  |--.
-   |  |    _    |  |
-   '  '---------'  '
-        /     \
-   .---'-------'---.
-   |               |
-   |   [ : : : ]   |
-   |               |
-   '---.-------.---'
-       |       |
-     __|       |__
-    '---'     '---'
+    <div className="bot-access">
+      <form className="bot-access__form" onSubmit={submit} data-shake={error ? 'true' : undefined} key={error}>
+        <div className="bot-access__icon" aria-hidden="true"><Sym name="smart_toy" /></div>
+        <h2 className="bot-access__title">{initialized ? '登录' : '创建管理员'}</h2>
 
-     b b b   o o o   t t t
-     b   b   o   o     t
-     b b b   o o o     t`}</pre>
-        <span className="bot-terminal-prompt">{initialized ? '> login' : '> setup'}<span className="bot-terminal-cursor">_</span></span>
-      </div>
-      <Card.Root className="bot-access-card">
-        <Card.Header className="bot-access-card__header">
-          <div className="bot-access-card__eyebrow">
-            <Chip size="sm" variant="soft" color="accent">本机服务</Chip>
-            <span>安全入口</span>
-          </div>
-          <Card.Title render={(props) => <h2 {...props} />} className="bot-access-card__title">
-            {initialized ? '欢迎回来' : '建立安全入口'}
-          </Card.Title>
-          <Card.Description>
-            {initialized
-              ? '使用本机服务管理员账号登录，继续管理你的 Bot 线程。'
-              : '设置管理员账号后即可开始使用。安全密码至少 12 个字符；安装 secret 仅用于本次初始化。'}
-          </Card.Description>
-        </Card.Header>
-        <Card.Content>
-          <form className="bot-access-form" onSubmit={submit}>
-            {!initialized && (
-              <>
-                <TextField fullWidth>
-                  <Label>管理员名称</Label>
-                  <Input value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
-                </TextField>
-                <TextField fullWidth>
-                  <Label>安装 secret</Label>
-                  <Input type="password" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" required />
-                </TextField>
-                <div className="bot-file-field">
-                  <Button type="button" variant="secondary" onPress={() => secretFileRef.current?.click()}>
-                    <Sym name="upload" />
-                    从安装文件读取 secret
-                  </Button>
-                  <input ref={secretFileRef} className="bot-hidden-file" type="file" accept=".txt,.env" aria-label="从安装文件读取 secret" onChange={readSecret} />
-                  {secret && <Chip size="sm" variant="soft" color="success">secret 已读取</Chip>}
-                </div>
-              </>
-            )}
-
-            {initialized && (
+        <div className="bot-access__group">
+          {!initialized ? (
+            <>
               <TextField fullWidth>
-                <Label>用户名</Label>
-                <Input value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
+                <Label className="sr-only">管理员名称</Label>
+                <Input placeholder="管理员名称" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
               </TextField>
-            )}
-
+              <TextField fullWidth>
+                <Label className="sr-only">安装 secret</Label>
+                <div className="bot-access__secret">
+                  <Input type="password" placeholder="安装 secret" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" required />
+                  <Button type="button" isIconOnly size="sm" variant="tertiary" aria-label="从文件读取 secret" onPress={() => secretFileRef.current?.click()}>
+                    <Sym name={secret ? 'check' : 'upload'} />
+                  </Button>
+                </div>
+              </TextField>
+              <input ref={secretFileRef} className="bot-hidden-file" type="file" accept=".txt,.env" aria-label="从文件读取 secret" onChange={readSecret} />
+            </>
+          ) : (
             <TextField fullWidth>
-              <Label>安全密码</Label>
-              <Input
-                type="password"
-                value={password}
-                onChange={(event) => setPassword(event.target.value)}
-                autoComplete={initialized ? 'current-password' : 'new-password'}
-                required
-              />
+              <Label className="sr-only">用户名</Label>
+              <Input placeholder="用户名" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
             </TextField>
+          )}
+          <TextField fullWidth>
+            <Label className="sr-only">密码</Label>
+            <Input
+              type="password"
+              placeholder={initialized ? '密码' : '密码（至少 12 位）'}
+              value={password}
+              onChange={(event) => setPassword(event.target.value)}
+              autoComplete={initialized ? 'current-password' : 'new-password'}
+              required
+            />
+          </TextField>
+        </div>
 
-            {error && (
-              <Alert status="danger" role="alert">
-                <Alert.Indicator><Sym name="error" /></Alert.Indicator>
-                <Alert.Content>
-                  <Alert.Title>操作失败</Alert.Title>
-                  <Alert.Description>{error}</Alert.Description>
-                </Alert.Content>
-              </Alert>
-            )}
+        {error && <p className="bot-access__error" role="alert">{error}</p>}
 
-            <div className="bot-access-actions">
-              <Button type="submit" variant="primary" fullWidth isDisabled={busy || passkeyBusy}>
-                {busy ? <Spinner size="sm" color="current" /> : <Sym name="key" />}
-                {busy ? '处理中…' : initialized ? '登录' : '初始化并继续'}
-              </Button>
-              {initialized && (
-                <Button type="button" variant="secondary" fullWidth onPress={() => void passkeyLogin()} isDisabled={busy || passkeyBusy}>
-                  {passkeyBusy ? <Spinner size="sm" color="current" /> : <Sym name="verified" />}
-                  {passkeyBusy ? '验证中…' : '使用 Passkey 登录'}
-                </Button>
-              )}
-            </div>
-          </form>
-        </Card.Content>
-      </Card.Root>
+        <Button type="submit" variant="primary" fullWidth isDisabled={busy || passkeyBusy}>
+          {busy ? <Spinner size="sm" color="current" /> : initialized ? '登录' : '继续'}
+        </Button>
+        {initialized && (
+          <Button type="button" variant="tertiary" fullWidth onPress={() => void passkeyLogin()} isDisabled={busy || passkeyBusy}>
+            {passkeyBusy ? <Spinner size="sm" color="current" /> : <Sym name="key" />}
+            使用 Passkey
+          </Button>
+        )}
+      </form>
     </div>
   );
 }
+
+/* ─────────────────────────── 页面 ─────────────────────────── */
+
+const EMPTY: MessageDto[] = [];
 
 export default function BotWorkspace() {
   const nav = useAppNav('bot');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
-  const [threads, setThreads] = useState<ThreadDetail[]>([]);
+  const [connectError, setConnectError] = useState('');
+  /** 线程列表只拿摘要；详情（消息）只为当前打开的线程拉 —— 原来每次刷新都把所有线程的全部消息拉一遍。 */
+  const [threads, setThreads] = useState<ThreadDto[]>([]);
+  const [details, setDetails] = useState<Record<string, ThreadDetail>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
-  const [error, setError] = useState('');
   const [uploadBusy, setUploadBusy] = useState(false);
-  const [createBusy, setCreateBusy] = useState(false);
-  const [passkeyState, setPasskeyState] = useState('');
-  const [passkeyBusy, setPasskeyBusy] = useState(false);
-  const [logoutBusy, setLogoutBusy] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const stickRef = useRef(true);
   const cursorRef = useRef(0);
 
-  const active = threads.find((thread) => thread.id === activeId) ?? null;
+  const active = activeId ? details[activeId] ?? null : null;
+  const activeSummary = threads.find((thread) => thread.id === activeId) ?? null;
+  const messages = active?.messages ?? EMPTY;
+  const rows = useMemo(() => groupMessages(messages), [messages]);
+  const approvalByMessage = useMemo(() => {
+    const map = new Map<string, ApprovalDto>();
+    for (const approval of active?.approvals ?? []) map.set(approval.messageId, approval);
+    return map;
+  }, [active?.approvals]);
+
+  const patchActive = useCallback((threadId: string, update: (thread: ThreadDetail) => ThreadDetail) => {
+    setDetails((old) => old[threadId] ? { ...old, [threadId]: update(old[threadId]) } : old);
+  }, []);
 
   const refresh = useCallback(async () => {
     const result = await serverClient.threads();
-    const details = await Promise.all(result.threads.filter((thread) => thread.mode === 'bot').map((thread) => serverClient.thread(thread.id)));
-    setThreads(details);
-    setActiveId((id) => id && details.some((thread) => thread.id === id) ? id : details[0]?.id ?? null);
+    const bots = result.threads.filter((thread) => thread.mode === 'bot');
+    setThreads(bots);
+    setActiveId((id) => id && bots.some((thread) => thread.id === id) ? id : bots[0]?.id ?? null);
   }, []);
 
   useEffect(() => {
@@ -348,20 +299,33 @@ export default function BotWorkspace() {
         setSession(nextSession);
         if (nextSession.authenticated) void refresh();
       })
-      .catch((e) => setError(e instanceof ServerApiError ? e.code : '无法连接服务'));
+      .catch((e) => setConnectError(e instanceof ServerApiError ? e.code : '连不上 Bot 服务'));
   }, [refresh]);
 
+  // 打开线程时才拉它的消息。
   useEffect(() => {
-    if (!activeId || !session?.authenticated) return;
+    if (!activeId || details[activeId]) return;
+    let cancelled = false;
+    void serverClient.thread(activeId).then((detail) => {
+      if (!cancelled) setDetails((old) => ({ ...old, [activeId]: detail }));
+    }).catch(() => toast.error('线程加载失败'));
+    return () => { cancelled = true; };
+  }, [activeId, details]);
+
+  // 事件流：每个线程独立游标，切换时从 0 回放（服务端按 message.id 去重）。
+  const activeLoaded = Boolean(active);
+  useEffect(() => {
+    // 等详情到手再开事件流，否则详情请求在路上时到达的事件会被丢掉。
+    if (!activeId || !activeLoaded || !session?.authenticated) return;
     const controller = new AbortController();
     let stopped = false;
+    cursorRef.current = 0;
     const receive = (event: SseEvent, id: number) => {
       cursorRef.current = Math.max(cursorRef.current, id);
-      if ('message' in event) {
-        setThreads((old) => old.map((thread) => thread.id === activeId && !thread.messages.some((message) => message.id === event.message.id)
-          ? { ...thread, messages: [...thread.messages, event.message].sort((a, b) => a.seq - b.seq) }
-          : thread));
-      }
+      if (!('message' in event)) return;
+      patchActive(activeId, (thread) => thread.messages.some((message) => message.id === event.message.id)
+        ? { ...thread, messages: thread.messages.map((message) => message.id === event.message.id ? event.message : message) }
+        : { ...thread, messages: [...thread.messages, event.message].sort((a, b) => a.seq - b.seq) });
     };
     const run = async () => {
       while (!stopped) {
@@ -370,7 +334,7 @@ export default function BotWorkspace() {
         } catch {
           if (controller.signal.aborted) break;
         }
-        await new Promise((resolve) => window.setTimeout(resolve, 500));
+        await new Promise((resolve) => window.setTimeout(resolve, 800));
       }
     };
     void run();
@@ -378,51 +342,59 @@ export default function BotWorkspace() {
       stopped = true;
       controller.abort();
     };
-  }, [activeId, session?.authenticated]);
+  }, [activeId, activeLoaded, session?.authenticated, patchActive]);
+
+  // 吸底：用户停在底部时，新消息和高度变化都把视图留在最新一条；往上翻了就不打扰。
+  const followEnd = useCallback(() => {
+    const scroll = scrollRef.current;
+    if (scroll && stickRef.current) scroll.scrollTop = scroll.scrollHeight;
+  }, []);
+  useEffect(() => {
+    stickRef.current = true;
+  }, [activeId]);
+  useEffect(followEnd, [rows.length, followEnd]);
 
   const create = async () => {
-    setCreateBusy(true);
-    setError('');
     try {
       const thread = await serverClient.createThread('新的 Bot 任务');
-      cursorRef.current = 0;
-      setThreads((old) => [{ ...thread, messages: [] }, ...old]);
+      setThreads((old) => [thread, ...old]);
+      setDetails((old) => ({ ...old, [thread.id]: { ...thread, messages: [] } }));
       setActiveId(thread.id);
     } catch {
-      setError('新建 Bot 线程失败');
-    } finally {
-      setCreateBusy(false);
+      toast.error('新建线程失败');
     }
+  };
+
+  const appendPending = (threadId: string, kind: MessageDto['kind'], content: string, nonce: string): MessageDto => {
+    const pending: MessageDto = {
+      id: `pending-${nonce}`, threadId, clientNonce: nonce, seq: Number.MAX_SAFE_INTEGER,
+      role: 'user', kind, content, createdAt: new Date().toISOString(), replyTo: null,
+    };
+    patchActive(threadId, (thread) => ({ ...thread, messages: [...thread.messages, pending] }));
+    stickRef.current = true;
+    return pending;
+  };
+  const settlePending = (threadId: string, pendingId: string, accepted: MessageDto | null) => {
+    patchActive(threadId, (thread) => ({
+      ...thread,
+      messages: accepted
+        ? thread.messages.map((message) => message.id === pendingId ? accepted : message).filter((message, index, list) => list.findIndex((other) => other.id === message.id) === index).sort((a, b) => a.seq - b.seq)
+        : thread.messages.filter((message) => message.id !== pendingId),
+    }));
   };
 
   const send = async () => {
     if (!active || !draft.trim()) return;
     const content = draft.trim();
     const nonce = crypto.randomUUID();
-    const pending: MessageDto = {
-      id: `pending-${nonce}`,
-      threadId: active.id,
-      clientNonce: nonce,
-      seq: Number.MAX_SAFE_INTEGER,
-      role: 'user',
-      kind: 'text',
-      content,
-      createdAt: new Date().toISOString(),
-      replyTo: null,
-    };
+    const pending = appendPending(active.id, 'text', content, nonce);
     setDraft('');
-    setError('');
-    setThreads((old) => old.map((thread) => thread.id === active.id ? { ...thread, messages: [...thread.messages, pending] } : thread));
     try {
-      const accepted = await serverClient.sendMessage(active.id, content, nonce);
-      setThreads((old) => old.map((thread) => thread.id === active.id
-        ? { ...thread, messages: thread.messages.map((message) => message.id === pending.id ? accepted : message).sort((a, b) => a.seq - b.seq) }
-        : thread));
+      settlePending(active.id, pending.id, await serverClient.sendMessage(active.id, content, nonce));
     } catch {
-      setThreads((old) => old.map((thread) => thread.id === active.id
-        ? { ...thread, messages: thread.messages.filter((message) => message.id !== pending.id) }
-        : thread));
-      setError('消息发送失败');
+      settlePending(active.id, pending.id, null);
+      setDraft(content);
+      toast.error('没发出去，内容已放回输入框');
     }
   };
 
@@ -431,236 +403,187 @@ export default function BotWorkspace() {
     event.target.value = '';
     if (!active || !file) return;
     setUploadBusy(true);
-    setError('');
     const nonce = crypto.randomUUID();
-    const pending: MessageDto = {
-      id: `pending-${nonce}`,
-      threadId: active.id,
-      clientNonce: nonce,
-      seq: Number.MAX_SAFE_INTEGER,
-      role: 'user',
-      kind: 'attachment',
-      content: JSON.stringify({ originalName: file.name, mimeType: file.type || 'application/octet-stream', sizeBytes: file.size, uploading: true }),
-      createdAt: new Date().toISOString(),
-      replyTo: null,
-    };
-    setThreads((old) => old.map((thread) => thread.id === active.id ? { ...thread, messages: [...thread.messages, pending] } : thread));
+    const pending = appendPending(active.id, 'attachment', JSON.stringify({ originalName: file.name, sizeBytes: file.size, uploading: true }), nonce);
     try {
       const uploaded = await serverClient.uploadFile(file);
       const content = JSON.stringify({ fileId: uploaded.id, originalName: uploaded.originalName, mimeType: uploaded.mimeType, sizeBytes: uploaded.sizeBytes, sha256: uploaded.sha256 });
-      const accepted = await serverClient.sendAttachment(active.id, content, nonce);
-      setThreads((old) => old.map((thread) => thread.id === active.id
-        ? { ...thread, messages: thread.messages.map((message) => message.id === pending.id ? accepted : message).sort((a, b) => a.seq - b.seq) }
-        : thread));
+      settlePending(active.id, pending.id, await serverClient.sendAttachment(active.id, content, nonce));
     } catch {
-      setThreads((old) => old.map((thread) => thread.id === active.id
-        ? { ...thread, messages: thread.messages.filter((message) => message.id !== pending.id) }
-        : thread));
-      setError('附件上传失败');
+      settlePending(active.id, pending.id, null);
+      toast.error('附件上传失败');
     } finally {
       setUploadBusy(false);
     }
   };
 
-  const react = async (messageId: string) => {
+  const react = useCallback(async (messageId: string) => {
     try {
       await serverClient.react(messageId, '👍');
+      toast.success('👍');
     } catch {
-      setError('反应发送失败');
+      toast.error('没能点赞');
     }
-  };
+  }, []);
 
-  const resolveApproval = async (approvalId: string, approved: boolean) => {
+  const resolveApproval = useCallback(async (approvalId: string, approved: boolean) => {
+    if (!activeId) return;
     try {
       const resolved = await serverClient.resolveApproval(approvalId, approved);
-      setThreads((old) => old.map((thread) => ({ ...thread, approvals: thread.approvals?.map((approval) => approval.id === approvalId ? resolved : approval) })));
+      patchActive(activeId, (thread) => ({ ...thread, approvals: thread.approvals?.map((approval) => approval.id === approvalId ? resolved : approval) }));
     } catch {
-      setError('审批处理失败');
+      toast.error('审批没有提交成功');
+    }
+  }, [activeId, patchActive]);
+
+  const stop = async () => {
+    if (!active) return;
+    try {
+      const result = await serverClient.stopThread(active.id);
+      toast.info(result.stopped ? '已停止' : '没有正在运行的任务');
+    } catch {
+      toast.error('停止失败');
     }
   };
 
   const addPasskey = async () => {
-    if (!browserSupportsWebAuthn()) {
-      setPasskeyState('当前浏览器不支持 Passkey');
-      return;
-    }
-    setPasskeyBusy(true);
-    setPasskeyState('');
+    if (!browserSupportsWebAuthn()) { toast.error('这个浏览器不支持 Passkey'); return; }
     try {
       const optionsJSON = await serverClient.passkeyRegisterOptions();
       const response = await startRegistration({ optionsJSON });
       await serverClient.passkeyRegisterVerify(response);
-      setPasskeyState('Passkey 已添加');
+      toast.success('Passkey 已添加');
     } catch (e) {
-      setPasskeyState(passkeyError(e, '注册'));
-    } finally {
-      setPasskeyBusy(false);
+      toast.error(passkeyError(e, '注册'));
     }
   };
 
   const logout = async () => {
-    setLogoutBusy(true);
-    setError('');
     try {
       await serverClient.logout();
       setSession({ authenticated: false, user: null });
+      setThreads([]);
+      setDetails({});
     } catch {
-      setError('退出登录失败');
-    } finally {
-      setLogoutBusy(false);
+      toast.error('退出失败');
     }
   };
 
   const recent: RecentItem[] = useMemo(() => threads.map((thread) => ({
     id: thread.id,
-    label: thread.title || '未命名 Bot 任务',
+    label: thread.title || '未命名任务',
     active: thread.id === activeId,
-    onClick: () => {
-      cursorRef.current = 0;
-      setActiveId(thread.id);
-    },
+    onClick: () => setActiveId(thread.id),
   })), [threads, activeId]);
+
+  const reload = () => {
+    void Promise.all([serverClient.bootstrapStatus(), serverClient.session()]).then(([nextStatus, nextSession]) => {
+      setStatus(nextStatus);
+      setSession(nextSession);
+      if (nextSession.authenticated) return refresh();
+      return undefined;
+    });
+  };
 
   if (!status) {
     return (
-      <PageShell title="bot" rail={nav}>
-        <HeroEmptyState className="bot-loading">
-          <Spinner size="lg" color="accent" />
-          <Typography.Heading level={2}>连接本机 Bot 服务</Typography.Heading>
-          <Typography.Paragraph size="sm">正在检查服务状态…</Typography.Paragraph>
-        </HeroEmptyState>
+      <PageShell title="Bot" rail={nav}>
+        <div className="bot-center">
+          {connectError ? <p className="bot-center__error">{connectError}</p> : <Spinner size="lg" color="current" />}
+        </div>
       </PageShell>
     );
   }
 
   if (!session?.authenticated) {
     return (
-      <PageShell title="bot" rail={nav}>
-        <AccessForm
-          initialized={status.initialized}
-          onDone={() => {
-            void Promise.all([serverClient.bootstrapStatus(), serverClient.session()]).then(([nextStatus, nextSession]) => {
-              setStatus(nextStatus);
-              setSession(nextSession);
-              if (nextSession.authenticated) return refresh();
-              return undefined;
-            });
-          }}
-        />
+      <PageShell title="Bot" rail={nav}>
+        <AccessForm initialized={status.initialized} onDone={reload} />
       </PageShell>
     );
   }
 
   return (
     <PageShell
-      title={active?.title || 'bot'}
-      subtitle="后端持续执行 · 独立沙盒工作区"
+      title={activeSummary?.title || 'Bot'}
       rail={nav}
       recent={{ label: 'Bot 线程', items: recent }}
       actions={(
-        <Button variant="tertiary" size="sm" onPress={() => void logout()} isDisabled={logoutBusy}>
-          {logoutBusy ? <Spinner size="sm" color="current" /> : <Sym name="key_off" />}
-          {logoutBusy ? '退出中…' : '退出登录'}
-        </Button>
+        <div className="bot-toolbar">
+          <Button isIconOnly variant="tertiary" size="sm" aria-label="新建线程" onPress={() => void create()}>
+            <Sym name="edit" />
+          </Button>
+          <Dropdown>
+            <Button isIconOnly variant="tertiary" size="sm" aria-label="更多">
+              <Sym name="more_horiz" />
+            </Button>
+            <Dropdown.Popover placement="bottom end">
+              <Dropdown.Menu
+                aria-label="Bot 操作"
+                disabledKeys={active ? [] : ['stop']}
+                onAction={(key) => {
+                  if (key === 'stop') void stop();
+                  else if (key === 'passkey') void addPasskey();
+                  else if (key === 'logout') void logout();
+                }}
+              >
+                <Dropdown.Item id="stop" textValue="停止当前任务"><Sym name="stop" />停止当前任务</Dropdown.Item>
+                <Dropdown.Item id="passkey" textValue="添加 Passkey"><Sym name="key" />添加 Passkey</Dropdown.Item>
+                <Dropdown.Item id="logout" textValue="退出登录" variant="danger"><Sym name="key_off" />退出登录</Dropdown.Item>
+              </Dropdown.Menu>
+            </Dropdown.Popover>
+          </Dropdown>
+        </div>
       )}
       fill
       rootClassName="bot-page"
     >
-      <div className="bot-layout">
-        <aside className="bot-capabilities" aria-label="Bot 能力与设置">
-          <Card.Root variant="secondary" className="bot-sidebar-card">
-            <Card.Header className="bot-sidebar-card__header">
-              <div className="bot-agent-icon" aria-hidden="true"><Sym name="neurology" /></div>
-              <div className="min-w-0">
-                <Card.Title>本机 Bot</Card.Title>
-                <Card.Description>安全的独立任务空间</Card.Description>
-              </div>
-              <Chip size="sm" variant="soft" color="success">在线</Chip>
-            </Card.Header>
-            <Card.Content className="bot-sidebar-card__content">
-              <div className="bot-capability">
-                <Chip size="sm" variant="soft" color="accent">文本任务</Chip>
-                <Typography.Paragraph size="sm">多步执行、定时唤醒，关闭页面后任务继续</Typography.Paragraph>
-              </div>
-              <div className="bot-capability">
-                <Chip size="sm" variant="soft">安全渲染</Chip>
-                <Typography.Paragraph size="sm">不会执行 HTML / widget</Typography.Paragraph>
-              </div>
-              <div className="bot-sidebar-actions">
-                {active && <Button variant="secondary" fullWidth onPress={() => {
-                  void serverClient.stopThread(active.id).then(() => setPasskeyState('当前线程任务已停止')).catch(() => setError('停止任务失败'));
-                }}><Sym name="stop" />停止当前线程任务</Button>}
-                <Button variant="primary" fullWidth onPress={() => void create()} isDisabled={createBusy}>
-                  {createBusy ? <Spinner size="sm" color="current" /> : <Sym name="add" />}
-                  {createBusy ? '创建中…' : '新建 Bot 线程'}
-                </Button>
-                <Button variant="secondary" fullWidth onPress={() => void addPasskey()} isDisabled={passkeyBusy}>
-                  {passkeyBusy ? <Spinner size="sm" color="current" /> : <Sym name="verified" />}
-                  {passkeyBusy ? '处理中…' : '添加 Passkey'}
-                </Button>
-              </div>
-              {passkeyState && <p className="bot-status" role="status">{passkeyState}</p>}
-            </Card.Content>
-          </Card.Root>
-        </aside>
-
-        <section className="bot-conversation" aria-label="Bot 对话">
-          {error && (
-            <Alert status="danger" className="bot-conversation__alert" role="alert">
-              <Alert.Indicator><Sym name="error" /></Alert.Indicator>
-              <Alert.Content>
-                <Alert.Title>操作失败</Alert.Title>
-                <Alert.Description>{error}</Alert.Description>
-              </Alert.Content>
-              <Button variant="tertiary" size="sm" onPress={() => setError('')} aria-label="关闭错误提示">
-                <Sym name="close" />
+      <section className="bot-conversation" aria-label="Bot 对话">
+        <div
+          ref={scrollRef}
+          className="bot-messages"
+          aria-live="polite"
+          onScroll={(event) => {
+            const el = event.currentTarget;
+            stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
+          }}
+        >
+          {!threads.length ? (
+            <div className="bot-center">
+              <Button variant="primary" onPress={() => void create()}>
+                <Sym name="edit" />
+                新建线程
               </Button>
-            </Alert>
-          )}
-
-          <div className="bot-messages" aria-live="polite">
-            {active ? active.messages.map((message) => (
-              <article key={message.id} className={cn('bot-message', message.role === 'user' && 'bot-message--user')}>
-                <div className="bot-message__meta">
-                  <Chip size="sm" variant="soft" color={message.role === 'user' ? 'accent' : 'default'}>
-                    {message.role === 'user' ? '你' : 'Bot'}
-                  </Chip>
-                  <span>{message.kind}</span>
-                </div>
-                <MessageBody
-                  message={message}
-                  approval={active.approvals?.find((approval) => approval.messageId === message.id)}
+            </div>
+          ) : !active ? (
+            <div className="bot-center"><Spinner color="current" /></div>
+          ) : (
+            <VirtualMessages items={rows} scrollRef={scrollRef} onResize={followEnd} key={active.id}>
+              {(row) => (
+                <Bubble
+                  row={row}
+                  approval={approvalByMessage.get(row.message.id)}
                   onReact={react}
                   onResolve={resolveApproval}
                 />
-              </article>
-            )) : (
-              <HeroEmptyState className="bot-empty">
-                <div className="bot-empty__icon" aria-hidden="true"><Sym name="chat" /></div>
-                <Typography.Heading level={2}>开始一个 Bot 任务</Typography.Heading>
-                <Typography.Paragraph size="sm">创建一个线程，描述目标、背景或需要 Bot 处理的文件。</Typography.Paragraph>
-                <Button variant="primary" onPress={() => void create()} isDisabled={createBusy}>
-                  {createBusy ? <Spinner size="sm" color="current" /> : <Sym name="add" />}
-                  新建 Bot 线程
-                </Button>
-              </HeroEmptyState>
-            )}
-          </div>
+              )}
+            </VirtualMessages>
+          )}
+        </div>
 
-          <MessageComposer
-            className="bot-composer"
-            ariaLabel="Bot 任务内容"
-            placeholder="向 Bot 描述任务"
-            value={draft}
-            onChange={setDraft}
-            onSubmit={() => void send()}
-            disabled={!active}
-            onAttach={() => uploadInputRef.current?.click()}
-            attachBusy={uploadBusy}
-          />
-          <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || uploadBusy} />
-        </section>
-      </div>
+        <MessageComposer
+          className="bot-composer"
+          ariaLabel="Bot 任务内容"
+          placeholder="消息"
+          value={draft}
+          onChange={setDraft}
+          onSubmit={() => void send()}
+          disabled={!active}
+          onAttach={() => uploadInputRef.current?.click()}
+          attachBusy={uploadBusy}
+        />
+        <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || uploadBusy} />
+      </section>
     </PageShell>
   );
 }
