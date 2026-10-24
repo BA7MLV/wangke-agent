@@ -280,7 +280,8 @@ await test('工具往返：落库仍只有两行，工具结果进了下一轮�
   const toolMsg = second.find((m) => m.role === 'tool');
   assert.ok(toolMsg, '工具结果必须进了第二轮请求，否则模型看不到自己查到了什么');
   assert.equal(toolMsg.tool_call_id, 'c1');
-  assert.match(toolMsg.content, /\[0:00\] 今天讲贝叶斯定理/, `检索结果真的来自库里的字幕：${toolMsg.content}`);
+  assert.match(toolMsg.content, /来源：\[0:00\]/);
+  assert.match(toolMsg.content, /原文：今天讲贝叶斯定理/, `检索结果真的来自库里的字幕：${toolMsg.content}`);
   assert.ok(seen[0].tools.includes('grep'));
 });
 
@@ -368,6 +369,33 @@ await test('present_quiz：sink.onCard({kind:"quiz"}) 被调，quiz 落进助手
 });
 
 // ── 6. 技能范围：提示词与工具两侧同时收窄（本次修的那条）──────────────────────
+
+await test('题库 path：宿主读取原文件，批次与来源随题卡落库，下一轮历史含续题位置', async () => {
+  const videoId = 'bank-pdf', fileId = '__course_questions__bank-pdf';
+  await db.videos.add({ id: videoId, name: '试卷.pdf', kind: 'material', materialFormat: 'pdf', duration: 0, createdAt: 1 });
+  await db.videos.add({ id: fileId, name: '试卷 · 题库.md', kind: 'material', materialFormat: 'md', duration: 0, createdAt: 1 });
+  const questions = Array.from({ length: 7 }, (_, i) => ({ stem: `${i + 1}. 原题`, options: ['甲', '乙', '丙', '丁'], answer: 1,
+    answerSource: 'original', explanation: '原文答案 B，原文未附解析。', source: { courseId: videoId, page: 1 }, images: [`#source-image/${videoId}/page-1`] }));
+  await db.files.add({ id: fileId, blob: new Blob(['```quiz\n' + JSON.stringify({ questions }) + '\n```']) });
+  const sessionId = await newSession(videoId);
+  const seen = serve([
+    { toolCalls: [call('bank-path', 'present_quiz', { path: '/courses/current/questions.md', limit: 5 })], finish: 'tool_calls' },
+    { content: '请作答。' },
+  ]);
+  const { r, sink } = recorder();
+  const res = await runQa({ videoId, sessionId, text: '开始做原题', materialKind: 'page', materialFormat: 'pdf' }, sink);
+  assertRequestsLegal(seen, '题库');
+  assert.equal(r.cards.length, 1);
+  assert.equal(res.quiz.data.questions.length, 5);
+  assert.deepEqual(res.quiz.data.questions[0].source, questions[0].source);
+  assert.deepEqual(res.quiz.data.questions[0].images, questions[0].images);
+  assert.deepEqual(res.quiz.data.bank, { path: '/courses/current/questions.md', offset: 0, total: 7 });
+  assert.deepEqual((await db.chats.get(res.rowId)).quiz, res.quiz);
+  const nextSeen = serve([{ content: '接着做下一批。' }]);
+  await runQa({ videoId, sessionId, text: '继续', materialKind: 'page', materialFormat: 'pdf' });
+  assert.match(nextSeen[0].messages.find(message => message.role === 'assistant').content, /题库练习快照[\s\S]*offset=5/);
+  assert.equal(nextSeen[0].messages.some(message => message.role === 'tool'), false);
+});
 
 await test('show_widget：多图各有正文引用，回调、结果与落库保留全部载荷', async () => {
   const sessionId = await newSession();

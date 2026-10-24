@@ -2,6 +2,8 @@ import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
 import { readHighlightCatalog } from '../materials/highlightContext';
 import { handoutFileOf } from '../materials/handoutFile';
+import { questionBankFileOf } from '../materials/questionBankFile';
+import { parseQuestionBank } from './quiz';
 import type { UnitKind } from '../materials/units';
 import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, SHOW_WIDGET_TOOL, type ToolExecutorOptions } from './tools';
 import { createLibraryAssistantExecutor, libraryAssistantTools, type LibraryAssistantExecutorOptions } from './libraryAssistant';
@@ -18,8 +20,13 @@ export const READ_TOOL: ToolDef = {
     parameters: {
       type: 'object',
       properties: {
-        path: { type: 'string', description: '复制检索或目录返回的资源路径。' },
+        path: { type: 'string', description: '复制检索或目录返回的资源路径。/courses/{id}/questions.md 是原题题库 Markdown，单课程可用 current，支持 read/grep/edit。/system 列系统目录，全局 Agent 指令为 /system/AGENTS.md。' },
         raw: { type: 'boolean', description: 'Markdown 原文（含注释），按行读取；offset 从 0 起。根目录 /wrongbook.md 等文件默认读原文。' },
+        crop: { type: 'string', enum: ['questions'], description: '仅 PDF images：自动按题号/文字坐标裁题，start/end 一次 1~3 页；返回可直接写入题库 images 的稳定区域引用。不支持可靠定位时回退页面图。' },
+        regions: { type: 'array', maxItems: 10, description: '仅 crop=questions：按实际画面修正区域；不是像素。原点是旋转后页面左上角，坐标/宽高为 0~1000 千分比整数。', items: { type: 'object', properties: {
+          page: { type: 'integer', minimum: 1 }, x: { type: 'integer', minimum: 0, maximum: 999 }, y: { type: 'integer', minimum: 0, maximum: 999 },
+          width: { type: 'integer', minimum: 1, maximum: 1000 }, height: { type: 'integer', minimum: 1, maximum: 1000 },
+        }, required: ['page', 'x', 'y', 'width', 'height'] } },
         start: { type: 'number', description: '起始秒数、页码或段号；与 end 一起传。' },
         end: { type: 'number', description: '结束秒数、页码或段号（含）；与 start 一起传。' },
         offset: { type: 'integer', minimum: 0 },
@@ -56,8 +63,8 @@ export const EDIT_TOOL: ToolDef = {
       ...EDIT_MARKDOWN_TOOL.function.parameters,
       properties: {
         ...(EDIT_MARKDOWN_TOOL.function.parameters.properties as Record<string, unknown>),
-        path: { type: 'string' },
-        create: { type: 'boolean' }, content: { type: 'string' },
+        path: { type: 'string', description: 'Markdown 路径；/courses/{id}/questions.md（单课程可用 current）创建为与来源资料同目录的普通题库文件。/system/AGENTS.md 是全局默认提示词，仅在用户明确要求修改长期偏好时编辑。' },
+        create: { type: 'boolean', description: '创建文件；/system/AGENTS.md 始终存在，此选项仅允许用 content 初始化空指令，不覆盖已有内容。' }, content: { type: 'string' },
         edits: { type: 'array', items: { type: 'object', properties: {
           old_string: { type: 'string' }, new_string: { type: 'string' },
           regex: { type: 'boolean' }, flags: { type: 'string' }, replace_all: { type: 'boolean' },
@@ -81,6 +88,7 @@ type RootResource = 'courses' | 'skills' | 'overview' | 'folders' | 'context';
 type Resource = { [K in RootResource]: { type: K } }[RootResource]
   | { type: 'course'; id: string; leaf?: string }
   | { type: 'markdown'; id: string }
+  | { type: 'system'; leaf?: 'AGENTS.md' }
   | { type: 'skill'; name: string; reference?: string };
 
 export function parseResource(path: unknown): Resource | undefined {
@@ -89,13 +97,15 @@ export function parseResource(path: unknown): Resource | undefined {
   try {
     const p = parts.map(decodeURIComponent);
     if (p.some((s) => !s || s === '.' || s === '..')) return;
+    if (p.length === 1 && p[0] === 'system') return { type: 'system' };
+    if (p.length === 2 && p[0] === 'system' && p[1] === 'AGENTS.md') return { type: 'system', leaf: 'AGENTS.md' };
     if (p.length === 1 && /^[^/\\]+\.md$/.test(p[0])) return { type: 'markdown', id: p[0] };
     if (p.length === 1 && p[0] === 'courses') return { type: 'courses' };
     if (p.length === 1 && p[0] === 'skills') return { type: 'skills' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'overview') return { type: 'overview' };
     if (p.length === 2 && p[0] === 'library' && p[1] === 'folders') return { type: 'folders' };
     if (p.length === 2 && p[0] === 'courses' && p[1] === 'context') return { type: 'context' };
-    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images', 'highlights', 'handout.md'].includes(p[2]))) {
+    if (p[0] === 'courses' && p.length >= 2 && p.length <= 3 && (!p[2] || ['info', 'transcript', 'material', 'frames', 'images', 'highlights', 'handout.md', 'questions.md'].includes(p[2]))) {
       return { type: 'course', id: p[1], leaf: p[2] };
     }
     if (p[0] === 'skills' && p.length === 2) return { type: 'skill', name: p[1] };
@@ -137,9 +147,48 @@ interface ResourceExecutorOptions extends ToolExecutorOptions {
 
 export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
   const local = options.courseId !== undefined;
-  const executeLocal = createToolExecutor(options.courseId ?? '', options);
+  let quizPresented = false;
+  const presentQuiz: ToolExecutorOptions['onQuiz'] = options.onQuiz ? (quiz) => {
+    options.onQuiz!(quiz);
+    quizPresented = true;
+  } : undefined;
+  const executeLocal = createToolExecutor(options.courseId ?? '', { ...options, onQuiz: presentQuiz });
   const executeLibrary = createLibraryAssistantExecutor(options.library);
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
+    if (name === 'present_quiz' && quizPresented) return '本轮已展示题卡。请等待学生作答；下一批由学生在新一轮要求继续，不要覆盖当前题卡。';
+    if (local && name === 'present_quiz' && args.path !== undefined) {
+      if (args.questions !== undefined) return 'path 与 questions 二选一；已有题库请只传 path，由宿主读取最新版。';
+      const resource = parseResource(args.path);
+      let fileId: string | undefined;
+      if (resource?.type === 'course') {
+        const id = resource.id === 'current' ? options.courseId! : resource.id;
+        if (id !== options.courseId) return '单课程问答只能访问当前课程。';
+        const course = await db.videos.get(id);
+        if (!course) return '来源课程不存在。';
+        if (resource.leaf === 'questions.md') fileId = questionBankFileOf(course).id;
+        else if (resource.leaf === 'material' && course.materialFormat === 'md') fileId = id;
+      } else if (resource?.type === 'markdown') {
+        fileId = resource.id;
+      }
+      if (!fileId) return '请提供题库的 Markdown material 路径或 /courses/current/questions.md。';
+      const offset = args.offset ?? 0, limit = args.limit ?? 5;
+      if (!Number.isSafeInteger(offset) || Number(offset) < 0 || !Number.isSafeInteger(limit) || Number(limit) < 1 || Number(limit) > 5)
+        return 'offset 必须是非负整数，limit 必须是 1~5 的整数。';
+      try {
+        const { getMaterialFile } = await import('../store/fileStore');
+        const row = await db.videos.get(fileId);
+        if (!row || row.kind !== 'material' || row.materialFormat !== 'md') return '题库文件不存在，请先提取原题并保存为 Markdown。';
+        const file = await getMaterialFile(fileId);
+        if (!file) return '题库原文件不存在，请重新导入。';
+        const bank = parseQuestionBank(await file.text());
+        const questions = bank.questions.slice(Number(offset), Number(offset) + Number(limit));
+        if (!questions.length) return `题库共 ${bank.questions.length} 题，此 offset 已到末尾；重做请用 offset=0。`;
+        if (!options.onQuiz) return '当前入口未接入答题卡，未展示题目。';
+        presentQuiz!({ questions, bank: { path: String(args.path), offset: Number(offset), total: bank.questions.length } });
+        const next = Number(offset) + questions.length;
+        return `已从题库最新版展示第 ${Number(offset) + 1}~${next} 题（共 ${bank.questions.length} 题）。不要重复题目或提前透露答案。${next < bank.questions.length ? `学生要求继续时使用相同 path、offset=${next}；不要立即调用覆盖当前题卡。` : '已是最后一批。'}`;
+      } catch (error) { return error instanceof Error ? error.message : '读取题库失败，未展示题卡。'; }
+    }
     if (!['read', 'grep', 'edit'].includes(name)) {
       // show_widget is independent of a course. It still uses the shared
       // executor so validation, rendering probes and the onWidget callback
@@ -157,8 +206,22 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const path = args.path ?? (name === 'grep' ? (local ? '/courses/current' : '/courses/context') : undefined);
     const resource = parseResource(path);
     if (!resource) return '无效资源路径。请使用工具描述中的路径，或复制上次 read/grep 返回的路径。';
+    if (resource.type === 'system') {
+      if (!resource.leaf) {
+        if (name !== 'read') return '系统目录只支持 read 列出文件；请对 /system/AGENTS.md 使用 read、grep、edit。';
+        return `path=/system\n${Number(args.offset ?? 0) === 0 ? '/system/AGENTS.md — 全局 Agent 指令，与「设置 → Agent」共用原文。' : '目录已到末尾。'}`;
+      }
+      try {
+        const { executeAgentInstructionsResource } = await import('./agentInstructionsResource');
+        return executeAgentInstructionsResource(name, args);
+      } catch (error) { return error instanceof Error ? error.message : '系统文件操作失败。'; }
+    }
     if (resource.type === 'markdown') {
       try {
+        if (resource.id === 'AGENTS.md') {
+          const { executeAgentInstructionsResource } = await import('./agentInstructionsResource');
+          return executeAgentInstructionsResource(name, args);
+        }
         const { executeMarkdownResource } = await import('./markdownResource');
         return await executeMarkdownResource(name, resource.id, String(path), args);
       } catch (error) { return error instanceof Error ? error.message : 'Markdown 操作失败。'; }
@@ -187,15 +250,17 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     const kind = options.kind ?? (course.kind === 'material' ? ((course.materialFormat ?? 'pdf') === 'pdf' ? 'page' : 'para') : undefined);
     const leaf = resource.leaf ?? (name === 'grep' ? (kind ? 'material' : 'transcript') : 'info');
     const canonical = `${coursePath(id)}/${leaf}`;
-    if (leaf === 'handout.md') {
-      const handout = handoutFileOf(course);
+    if (leaf === 'handout.md' || leaf === 'questions.md') {
+      const isBank = leaf === 'questions.md';
+      const handout = isBank ? questionBankFileOf(course) : handoutFileOf(course);
+      const label = isBank ? '题库' : '讲义';
       const { executeMarkdownResource } = await import('./markdownResource');
       try {
         const result = await executeMarkdownResource(name, handout.id, canonical, args, handout);
         const row = await db.videos.get(handout.id);
-        const link = row && `讲义文件：[${row.name.replace(/([\\[\]])/g, '\\$1')}](#/player/${encodeURIComponent(row.id)})`;
-        return `${result}${link ? `\n${link}\n此 Markdown 是讲义唯一真相源；聊天正文是历史快照，续写或修改前重新 read 此路径。` : ''}`;
-      } catch (error) { return error instanceof Error ? error.message : '讲义文件操作失败。'; }
+        const link = row && `${label}文件：[${row.name.replace(/([\\[\]])/g, '\\$1')}](#/player/${encodeURIComponent(row.id)})`;
+        return `${result}${link ? `\n${link}\n此 Markdown 是${label}唯一真相源；聊天正文是历史快照，续写或修改前重新 read 此路径。${isBank ? '\n做题：在题库资料的问答中 present_quiz(path="/courses/current/material")；在来源资料中 present_quiz(path="/courses/current/questions.md")。' : ''}` : ''}`;
+      } catch (error) { return error instanceof Error ? error.message : `${label}文件操作失败。`; }
     }
     const execute = local ? executeLocal : createToolExecutor(id, { kind });
     if ((leaf === 'material' && !kind) || (leaf === 'transcript' && kind)) return `此课程没有该类型的正文资源。请 read ${coursePath(id)}/${kind ? 'material' : 'transcript'}。`;
@@ -224,6 +289,13 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
       if (course.kind !== 'material') return '此课程不是阅读材料。视频画面请 read 对应的 frames 资源。';
       const range = args.range === undefined && args.start === undefined && args.end === undefined ? undefined : readRange(args, kind);
       if (typeof range === 'string') return range;
+      if (args.crop !== undefined || args.regions !== undefined) {
+        if (args.crop !== 'questions') return '裁题请使用 crop="questions"。';
+        try {
+          const { readPdfQuestionCrops } = await import('../materials/images');
+          return await readPdfQuestionCrops(course, range, args.regions);
+        } catch (error) { return error instanceof Error ? error.message : 'PDF 裁题失败，请使用页面图或重试。'; }
+      }
       const { readMaterialImageCatalog } = await import('../materials/images');
       const result = await readMaterialImageCatalog(course, args.offset as number | undefined, args.limit as number | undefined, range);
       return `${result}${range?.clipped ? `\n（本次范围已截断至 ${range.end}，可继续分段 read。）` : ''}`;

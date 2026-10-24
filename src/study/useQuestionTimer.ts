@@ -1,7 +1,8 @@
 import { useEffect, useRef } from 'react';
+import { isQuizAnswered, type QuizPick } from '../harness/quiz';
 
 /** Count only visible question time, excluding hidden tabs and completed questions. */
-export function useQuestionTimer(picks: number[]) {
+export function useQuestionTimer(picks: QuizPick[]) {
   const root = useRef<HTMLDivElement>(null);
   const timers = useRef(new Map<number, { elapsed: number; since: number | null; visible: boolean }>());
   const picksRef = useRef(picks);
@@ -11,7 +12,7 @@ export function useQuestionTimer(picks: number[]) {
       const now = performance.now();
       for (const [index, timer] of timers.current) {
         if (timer.since !== null) timer.elapsed += now - timer.since;
-        timer.since = !document.hidden && timer.visible && (picksRef.current[index] ?? -1) < 0 ? now : null;
+        timer.since = !document.hidden && timer.visible && !isQuizAnswered(picksRef.current[index]) ? now : null;
       }
     };
     const observer = new IntersectionObserver((entries) => {

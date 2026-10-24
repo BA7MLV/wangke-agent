@@ -35,7 +35,8 @@ import { db } from '../store/db';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
 import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
-import ArtifactEditor, { ArtifactEditProvider } from '../components/ArtifactEditor';
+import { ArtifactEditProvider } from '../components/ArtifactEditor';
+import AssistantContent from '../components/AssistantContent';
 import WidgetMessage from '../components/WidgetMessage';
 import ContextUsageButton from '../components/ContextUsageButton';
 import { useContextCompression } from '../components/useContextCompression';
@@ -53,7 +54,6 @@ import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { useMediaQuery } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
 import { chatGreeting } from '../utils/chatGreeting';
-import { htmlPreviewSource } from '../utils/streamingHtml';
 import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
 import './course-chat.css';
@@ -1030,7 +1030,6 @@ export default function CourseChat() {
             {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}
               ref={virtualMessagesRef} onResize={pinIfSticking} scrollPaddingStart={88}>{(message, index) => {
               const user = message.role === 'user';
-              const htmlPreview = !user ? htmlPreviewSource(message.content) : undefined;
               /**
                * 「重新生成」只对**最后一条**完整回答成立：改历史中间的一步要用「分支」
                * （删掉它后面所有消息是一次不可见的批量删除，用户会看到一条会话凭空少一段）。
@@ -1097,39 +1096,33 @@ export default function CourseChat() {
                           disabled={loading || !!message.streaming || !!message.error || !!message.interrupted || !!message.ask && !message.ask.picked}
                           onPrompt={(text) => void send(text)}>
                         {(markdown) => message.content && !message.error ? (
-                          htmlPreview !== undefined ? (
-                            <ArtifactEditor kind="html" location="html" source={htmlPreview}>
-                            <StreamingHtmlPreview
-                              html={htmlPreview}
-                              isStreaming={!!message.streaming}
-                              statusText="正在解析 HTML"
-                            />
-                            </ArtifactEditor>
-                          ) : (
-                            <XMarkdown
-                              content={markdown}
-                              components={{
-                                a: CourseLink,
-                                p: StreamParagraph,
-                                code: MarkdownCode,
-                                pre: MarkdownPre,
-                                table: MarkdownTable,
-                              }}
-                              streaming={{
-                                hasNextChunk: !!message.streaming,
-                                /**
-                                 * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
-                                 * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
-                                 * 文字一起长，正好落在下一个字符将出现的位置。
-                                 *
-                                 * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
-                                 * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
-                                 * 这里传 `false` 就是显式关掉。
-                                 */
-                                tail: message.streaming ? { component: StreamTailCircle } : false,
-                              }}
-                            />
-                          )
+                          <AssistantContent content={markdown} streaming={!!message.streaming}>
+                            {(part, streaming) => (
+                              <XMarkdown
+                                content={part}
+                                components={{
+                                  a: CourseLink,
+                                  p: StreamParagraph,
+                                  code: MarkdownCode,
+                                  pre: MarkdownPre,
+                                  table: MarkdownTable,
+                                }}
+                                streaming={{
+                                  hasNextChunk: streaming,
+                                  /**
+                                   * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
+                                   * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
+                                   * 文字一起长，正好落在下一个字符将出现的位置。
+                                   *
+                                   * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
+                                   * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
+                                   * 这里传 `false` 就是显式关掉。
+                                   */
+                                  tail: streaming ? { component: StreamTailCircle } : false,
+                                }}
+                              />
+                            )}
+                          </AssistantContent>
                         ) : null}
                         </WidgetMessage>
                         {message.widgetPreview && (

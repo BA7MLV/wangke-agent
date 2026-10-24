@@ -11,11 +11,13 @@
 // 返回的是普通 File（mp4），后续完全复用本地文件导入路径（probeDuration/saveVideoFile/db）。
 
 import { fetchPlayStreams, fetchVideoView, resolveShortUrl, type BiliApiOptions, type BiliPageInfo } from './api';
-import { fetchBiliSubtitleList, fetchSubtitleCues, type BiliSubtitleItem } from './dmview';
+import { fetchBiliSubtitleList, type BiliSubtitleItem } from './dmview';
 import { parseBiliInput, sanitizeFileName } from './parse';
 import { pageLabel, pageVideoTitle, defaultPagesFor, resolveSelectedPages } from './pages';
 import { remuxBiliToStream } from './remux';
-import { buildBundle, pickPrimary, type SubtitleBundle } from './subtitle';
+import type { SubtitleBundle } from './subtitle';
+import { biliVideoSource, type BiliVideoSource } from './source';
+import { loadBiliSubtitles } from './loadSubtitles';
 import type { StreamTargetChunk } from 'mediabunny';
 
 /** 解析结果：一次解析后，勾分 P / 勾语言 / 真正下载都基于它 */
@@ -91,6 +93,7 @@ export interface BiliImportItem {
   page: number;
   info: BiliPageInfo;
   file: File;
+  source: BiliVideoSource;
   /** 主语言 + 全部已选语言；该 P 没有字幕时为 { primary: null, tracks: [] } */
   subtitles: SubtitleBundle;
 }
@@ -150,24 +153,12 @@ async function loadPageSubtitles(
   onProgress?: (ratio: number) => void,
 ): Promise<SubtitleBundle> {
   if (langs.length === 0) return { primary: null, tracks: [] };
-  let available: BiliSubtitleItem[] = [];
   try {
-    available = await fetchBiliSubtitleList(opts, page.aid ?? target.aid, page.cid);
+    return await loadBiliSubtitles(opts, biliVideoSource(target, page), langs, onProgress);
   } catch {
+    // 字幕失败不阻塞视频入库；来源仍会保存，之后可在播放页重试。
     return { primary: null, tracks: [] };
   }
-  const picked = available.filter((s) => langs.includes(s.lan));
-  const fetched: { item: BiliSubtitleItem; cues: Awaited<ReturnType<typeof fetchSubtitleCues>> }[] = [];
-  for (let i = 0; i < picked.length; i++) {
-    try {
-      // 直链的 auth_key 有效期很短，拿到就立刻拉
-      fetched.push({ item: picked[i], cues: await fetchSubtitleCues(opts, picked[i].url) });
-    } catch {
-      // 单路字幕失败（链接过期等）不影响其它路与视频本体
-    }
-    onProgress?.((i + 1) / Math.max(1, picked.length));
-  }
-  return buildBundle(fetched, pickPrimary(fetched.map((f) => f.item)));
 }
 
 /**
@@ -199,7 +190,7 @@ export async function importBiliPages(
       onProgress?.((i + 0.9 + r * 0.1) / selected.length, label),
     );
 
-    onItem({ page: info.page, info, file, subtitles });
+    onItem({ page: info.page, info, file, subtitles, source: biliVideoSource(target, info) });
     onProgress?.((i + 1) / selected.length, label);
   }
 }

@@ -10,6 +10,18 @@ export function markdownRegex(pattern: unknown, flags: unknown = 'm'): RegExp {
   return new RegExp(pattern, flags);
 }
 
+export function readMarkdownText(text: string, path: string, args: Record<string, unknown>): string {
+  const lines = text.split('\n');
+  const start = Number(args.offset ?? 0);
+  const count = Math.min(Number(args.limit ?? 50), 200);
+  return `path=${path}\n总行数：${lines.length}\n` + lines.slice(start, start + count).map((s, i) => `${start + i + 1}: ${s}`).join('\n');
+}
+
+export function grepMarkdownText(text: string, path: string, args: Record<string, unknown>): string {
+  const result = grepDocs(text.split('\n').map((text, i) => ({ text, path, start: i + 1, end: i + 1, unit: 'lines' as const })), args);
+  return `${result.header}\n${result.hits.map((hit) => hit.evidence).join('\n\n') || '没有匹配。'}`;
+}
+
 /** read/grep/edit share the original Markdown, including comments and line breaks. */
 export async function executeMarkdownResource(name: string, id: string, path: string, args: Record<string, unknown>,
   creation?: { name: string; folderId?: number }) {
@@ -24,16 +36,8 @@ export async function executeMarkdownResource(name: string, id: string, path: st
   const file = await getMaterialFile(id);
   const text = file ? await file.text() : '';
   if (!file && name !== 'edit') return `文件不存在：${path}。可用 edit 的 create=true、content 创建普通 Markdown 文件。`;
-  const lines = text.split('\n');
-  if (name === 'read') {
-    const start = Number(args.offset ?? 0);
-    const count = Math.min(Number(args.limit ?? 50), 200);
-    return `path=${path}\n总行数：${lines.length}\n` + lines.slice(start, start + count).map((s, i) => `${start + i + 1}: ${s}`).join('\n');
-  }
-  if (name === 'grep') {
-    const result = grepDocs(lines.map((text, i) => ({ text, path, start: i + 1, end: i + 1, unit: 'lines' as const })), args);
-    return `${result.header}\n${result.hits.map((hit) => hit.evidence).join('\n\n') || '没有匹配。'}`;
-  }
+  if (name === 'read') return readMarkdownText(text, path, args);
+  if (name === 'grep') return grepMarkdownText(text, path, args);
   if (args.create === true) {
     if (file || course) return '文件已存在，请先 read，再用 edits 修改。';
     if (typeof args.content !== 'string') return '创建文件需提供 content。';
@@ -41,6 +45,14 @@ export async function executeMarkdownResource(name: string, id: string, path: st
     return `已创建 ${path}`;
   }
   if (!file) return '文件不存在，请先用 create=true、content 创建。';
+  const result = editMarkdownText(text, args);
+  if (typeof result === 'string') return result;
+  await saveMarkdownMaterial(id, result.text, text);
+  return `已修改 ${path}（${result.count} 处），已按普通 Markdown 重新解析。`;
+}
+
+/** 普通资料与设置映射文件共用相同的精确/正则编辑校验。 */
+export function editMarkdownText(text: string, args: Record<string, unknown>): { text: string; count: number } | string {
   if (!Array.isArray(args.edits) || !args.edits.length) return '请提供非空 edits。';
   const changes: EditChange[] = [];
   for (const value of args.edits) {
@@ -63,6 +75,5 @@ export async function executeMarkdownResource(name: string, id: string, path: st
   if (changes.some((c, i) => i > 0 && c.from < changes[i - 1].to)) return '修改范围重叠，请拆分或缩小匹配范围。';
   let updated = text;
   for (const change of [...changes].reverse()) updated = updated.slice(0, change.from) + change.insert + updated.slice(change.to);
-  await saveMarkdownMaterial(id, updated, text);
-  return `已修改 ${path}（${changes.length} 处），已按普通 Markdown 重新解析。`;
+  return { text: updated, count: changes.length };
 }

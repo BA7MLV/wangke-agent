@@ -13,6 +13,8 @@ import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage, ContentPart } from '../api/siliconflow';
 import type { WidgetPayload } from './widgetRuntime';
 import type { UnitKind } from '../materials/units.ts';
+import { nextVisualRound } from '../utils/streamingHtml';
+import { quizHistoryContent } from './quiz';
 
 /**
  * 单课程问答的**唯一执行体**：从「用户文本」到「助手行落库」，中间那整段（提示词拼装、
@@ -36,8 +38,8 @@ import type { UnitKind } from '../materials/units.ts';
  * 1. **用户消息先落库**，再进循环 —— 搬自「用户消息立即落库：tier 2 描述可能耗时数秒…」。
  * 2. **历史末条即刚落库的当前问题**，所以历史要 `slice(0, -1)`；工具往返消息**不落库**
  *    （既有设计，这次不动它）。
- * 3. **`onRoundStart` 清正文**：新一轮开始时上一轮流出的只是检索旁白，清空等最终回答，
- *    同时留一份 `lastNarration` 给兜底文案（轮次用尽而模型不吭声时，它是用户唯一能看到的线索）。
+ * 3. **`onRoundStart` 只清检索旁白**：已交付的 HTML / 图卡及后续讲解保留，
+ *    同时留一份 `lastNarration` 给兜底文案。
  * 4. **abort 不走 `onStop`**：`runAgentLoop` 让 `AbortError` 抛给调用方，这里 catch 住 ——
  *    保留已流出内容 + 追加 `_（已停止生成）_` + **照常落库**（否则刷新就没了）。
  * 5. **空回答兜底只 patch 不落库**：出 `noAnswerNotice` 兜底文案，`rowId` 为空 ——
@@ -177,8 +179,8 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   // ⚠️ 工具与提示词必须用**同一个** canEditMd：只注册工具不给提示词，模型多半想不到去用它；
   // 只给提示词不给工具，它会写一段「我已修改」而其实什么都没发生 —— 比不给更糟。
   const systemPrompt = isMaterial
-    ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, shotCount, refsCount, canEditMd)
-    : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, shotCount, refsCount);
+    ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, shotCount, refsCount, canEditMd, settings.agentInstructions)
+    : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, shotCount, refsCount, settings.agentInstructions);
 
   // ── 历史按 token 预算截取（工具往返消息不进库，所以库里只有一问一答）────────
   const budget =
@@ -188,7 +190,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
     (input.images ? shotCount * 1200 : 0) - // 多模态图片每张约 1.2k tokens
     4096; // 输出预留
   // 末条即刚落库的当前问题（历史保持纯文本，截图不重复发送）
-  const recent = fitHistoryToBudget(history.slice(0, -1), Math.max(2000, budget));
+  const recent = fitHistoryToBudget(history.slice(0, -1).map((row) => ({ ...row, content: quizHistoryContent(row) })), Math.max(2000, budget));
   const messages: ChatMessage[] = [
     { role: 'system', content: systemPrompt },
     ...recent.map((r) => ({ role: r.role, content: r.content }) as ChatMessage),
@@ -245,7 +247,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   /**
    * 最后一轮旁白 + 最后一次工具提示。
    *
-   * `onRoundStart` 会把当轮正文清空（旁白不是答案），而轮次用尽时模型可能一个字都不说
+   * `onRoundStart` 会清空检索旁白（保留已交付的可视内容），轮次用尽时模型可能一个字都不说
    * （不给 tools 时它仍会返回「空正文 + tool_calls」）。存一份是为了让兜底文案能说清
    * 「它干了什么、你想做什么」，而不是只留一句「（未获得回答）」。见 harness/agent.ts。
    */
@@ -295,11 +297,14 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
           sink.onDelta?.(text);
         },
         onRoundStart: (round) => {
-          // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
+          // 已输出的可视内容不能因后续工具调用而消失。
           if (answer.trim()) lastNarration = answer.trim();
-          answer = '';
+          const previous = answer;
+          answer = nextVisualRound(answer, widgets.length > 0);
           roundsRan++;
           sink.onRoundStart?.(round);
+          // Round-aware sinks reset their buffer; append-only sinks need only the separator.
+          if (answer) sink.onDelta?.(sink.onRoundStart ? answer : answer.slice(previous.length));
         },
         onToolStart: (name, argsJson) => {
           lastHint = qaToolHint(name, argsJson, isMaterial);

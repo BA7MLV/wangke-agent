@@ -9,6 +9,11 @@ import { formatCaughtError } from '../utils/errorText';
 import { fmtTime, toSRT, toVTT, type Cue } from '../utils/vtt';
 import { splitIntoCues, cueKey } from '../utils/cues';
 import { mergeBilingual, splitCueLines } from '../utils/bilingual';
+import type { BiliVideoSource } from '../bilibili/source';
+import { loadBiliSubtitles } from '../bilibili/loadSubtitles';
+import { resolveBiliVideoSource } from '../bilibili/resolveSource';
+import { saveImportedSubtitles } from '../store/subtitles';
+import { getSettings } from '../store/settings';
 import { TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
@@ -24,11 +29,15 @@ import {
   SkeletonReveal,
   useSkeletonGate,
   Sym,
+  confirmDialog,
+  promptDialog,
+  toast,
 } from '../ui';
 import './subtitle-danmaku.css';
 
 interface Props {
   videoId: string;
+  biliSource?: BiliVideoSource;
   playerRef: React.RefObject<MediaPlayerInstance | null>;
   currentTime: number;
   onSegmentsChange: (cues: Cue[]) => void;
@@ -61,7 +70,7 @@ function download(filename: string, content: string, type: string) {
  */
 const NO_COMPARE_LANG = '__none__';
 
-export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegmentsChange, onRunningChange, onLoadedChange }: Props) {
+export default function SubtitlePanel({ videoId, biliSource, playerRef, currentTime, onSegmentsChange, onRunningChange, onLoadedChange }: Props) {
   const [segments, setSegments] = useState<SegmentRow[]>([]);
   const [loadError, setLoadError] = useState<string | null>(null);
   /**
@@ -75,6 +84,10 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   const [tracks, setTracks] = useState<SubtitleTrackRow[]>([]);
   /** 选中的「对照语言」lan；空串 = 不显示对照 */
   const [compareLang, setCompareLang] = useState('');
+  const [biliLoading, setBiliLoading] = useState(false);
+  const [biliError, setBiliError] = useState<string | null>(null);
+  const biliBusy = useRef(false);
+  const [originalSource, setOriginalSource] = useState(biliSource);
 
   // 转写任务在全局队列里跑（可能是在别的视频上启动的、也可能是刷新后续跑的），
   // 这里只订阅自己这个视频的那一份：切走再回来进度还在，重复点也不会起第二份。
@@ -163,10 +176,57 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
   }, [cues, onSegmentsChange]);
 
   useEffect(() => {
-    onRunningChange?.(running);
-  }, [running, onRunningChange]);
+    onRunningChange?.(running || biliLoading);
+  }, [running, biliLoading, onRunningChange]);
 
-  const start = () => startTranscription(videoId);
+  const fetchOriginalSubtitles = async () => {
+    if (biliBusy.current || running) return;
+    biliBusy.current = true;
+    setBiliLoading(true);
+    try {
+      const { bilibiliProxy, bilibiliCookie } = getSettings();
+      const opts = { proxy: bilibiliProxy, cookie: bilibiliCookie };
+      let source = originalSource;
+      if (!source) {
+        const raw = await promptDialog({
+          headline: '从 B 站链接拉取字幕',
+          description: '当前视频未保存来源，请粘贴对应的 B 站链接或 BV 号。多 P 视频请带上 ?p= 序号，确保字幕与当前视频一致；不会重新下载视频。',
+          placeholder: 'https://www.bilibili.com/video/BV…?p=2',
+          confirmText: '读取字幕',
+          validate: value => value.trim() ? null : '请填写 B 站视频链接或 BV 号',
+        });
+        if (raw == null) return;
+        source = await resolveBiliVideoSource(opts, raw.trim());
+      }
+      if (segments.length > 0 && !await confirmDialog({
+        headline: '使用 B 站自带字幕？',
+        description: '拉取成功后将替换当前字幕与对照语言。已有讲义和卡片不会重新生成。',
+        confirmText: '拉取并替换',
+      })) return;
+      setBiliError(null);
+      const bundle = await loadBiliSubtitles(opts, source);
+      // 只保存稳定来源；即使暂时没有字幕，下次仍可直接重试。
+      await db.videos.update(videoId, { biliSource: source });
+      setOriginalSource(source);
+      if (!bundle.primary) {
+        toast.info('该视频当前没有可用的自带字幕，可使用「生成字幕」进行转写');
+        return;
+      }
+      // 不用空负载覆盖旧字幕；只有成功拉到正文后才替换。
+      await saveImportedSubtitles(videoId, bundle);
+      setCompareLang('');
+      toast.success(`已拉取 B 站自带字幕 · ${bundle.primary.cues.length} 条`);
+    } catch (error) {
+      setBiliError(formatCaughtError(error));
+    } finally {
+      biliBusy.current = false;
+      setBiliLoading(false);
+    }
+  };
+
+  const start = () => {
+    if (!biliBusy.current) startTranscription(videoId);
+  };
 
   const activeIdx = cues.findIndex((c) => currentTime >= c.start && currentTime < c.end);
 
@@ -192,7 +252,18 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
     <Panel testId="panel-subs">
       <PanelBar>
         <LoadingButton
+          loading={biliLoading}
+          isDisabled={running || !loaded}
+          variant="outline"
+          onPress={() => void fetchOriginalSubtitles()}
+          data-testid="subs-fetch-bili"
+        >
+          <Sym name="download" />
+          {biliLoading ? '正在拉取 B 站字幕…' : originalSource ? '拉取 B 站字幕' : '从 B 站链接拉取字幕'}
+        </LoadingButton>
+        <LoadingButton
           loading={running}
+          isDisabled={biliLoading}
           variant="primary"
           onPress={start}
           data-testid="subs-generate"
@@ -274,6 +345,12 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
       )}
 
       <PersistentError
+        title="B 站字幕拉取失败"
+        text={biliError}
+        onClose={() => setBiliError(null)}
+      />
+
+      <PersistentError
         title="转写失败"
         text={errorText}
         onClose={() => {
@@ -286,7 +363,9 @@ export default function SubtitlePanel({ videoId, playerRef, currentTime, onSegme
       <PanelBody bodyRef={listRef} testId="subs-list">
         <SkeletonReveal show={showSkeleton} skeleton={<CueSkeleton rows={9} />}>
           {loaded && segments.length === 0 && !running && (
-            <PanelPlaceholder testId="subs-empty">还没有字幕，点击「生成字幕」开始转写</PanelPlaceholder>
+            <PanelPlaceholder testId="subs-empty">
+              {originalSource ? '可优先点击「拉取 B 站字幕」使用视频自带字幕；没有自带字幕时再生成字幕' : '还没有字幕，可生成字幕；如果视频来自 B 站，也可填写原链接拉取自带字幕'}
+            </PanelPlaceholder>
           )}
           {cues.map((c, i) => (
             <CueRow

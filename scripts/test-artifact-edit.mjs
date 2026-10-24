@@ -51,6 +51,10 @@ const html = await save({ kind: 'html', location: 'html', source: '<p>old</p>', 
 assert.equal(html.content, '```html\n<p>new</p>\n```');
 await db.chats.update(rowId, { content: '<p>old</p>' });
 assert.equal((await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>' })).content, '<p>new</p>');
+const mixed = '<p>old</p>\n\n讲解不变\n\n<div>第二题</div>\n\n```html\n<section>第三题</section>\n```\n\n结束语';
+await db.chats.update(rowId, { content: mixed });
+assert.equal((await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>' })).content, mixed.replace('<p>old</p>', '<p>new</p>'), 'raw HTML edits preserve later prose and questions');
+assert.equal((await save({ kind: 'html', location: 'fence', source: '<section>第三题</section>', next: '<section>第三题修改</section>' })).content, mixed.replace('<p>old</p>', '<p>new</p>').replace('第三题', '第三题修改'), 'fenced edits remain isolated in mixed answers');
 await db.chats.update(rowId, { interrupted: true });
 await assert.rejects(save(), /先完成/);
 await db.chats.delete(rowId);

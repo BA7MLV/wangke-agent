@@ -2,10 +2,11 @@
  * Small, dependency-free helpers for HTML that is still being generated.
  *
  * This module deliberately does not try to "fix" HTML by regex-replacing the
- * whole document.  It only answers two bounded questions:
+ * whole document.  It answers three bounded questions:
  *
  * 1. Which prefix ends at a complete top-level element and can be frozen?
  * 2. Which JSON string value has arrived so far in a streamed tool call?
+ * 3. Where do HTML blocks end so later Markdown and questions stay separate?
  *
  * The returned HTML is still untrusted.  It must go through the DOMPurify
  * pipeline in `StreamingHtmlPreview` before it is put in the DOM.
@@ -49,18 +50,119 @@ export function looksLikeStreamingHtml(source: string): boolean {
 }
 
 /**
- * Return only the HTML payload for a raw or fenced HTML answer.
+ * Return the payload only when the answer contains a single HTML block.
  *
  * Fenced HTML is common when a model was not instructed to use the widget
  * tool.  It is still an HTML answer, not something the user should have to
- * copy-paste into a browser.  Other fenced languages deliberately return
- * `undefined` and remain code blocks.
+ * copy-paste into a browser. Mixed answers return `undefined`; render those
+ * with splitAssistantContent rather than treating the entire answer as HTML.
  */
 export function htmlPreviewSource(source: string): string | undefined {
-  const text = source.trimStart();
-  if (!text) return undefined;
-  const fenced = readFencedHtml(text);
-  return fenced ?? (looksLikeRawHtml(text) ? source : undefined);
+  const blocks = splitAssistantContent(source).filter((block) => block.source.trim());
+  return blocks.length === 1 && blocks[0].kind === 'html' ? blocks[0].source : undefined;
+}
+
+export interface AssistantContentBlock {
+  kind: 'markdown' | 'html';
+  source: string;
+  /** Offsets in the original answer, including fence markers when fenced. */
+  start: number;
+  end: number;
+  location?: 'html' | 'fence';
+  closed: boolean;
+}
+
+/** Split visual blocks without letting one HTML answer consume later prose or questions. */
+export function splitAssistantContent(source: string): AssistantContentBlock[] {
+  const blocks: AssistantContentBlock[] = [];
+  let markdownStart = 0;
+  let cursor = 0;
+  const markdown = (end: number) => {
+    if (end > markdownStart) blocks.push({ kind: 'markdown', source: source.slice(markdownStart, end), start: markdownStart, end, closed: true });
+  };
+  while (cursor < source.length) {
+    const newline = source.indexOf('\n', cursor);
+    const lineEnd = newline < 0 ? source.length : newline + 1;
+    const line = source.slice(cursor, lineEnd).replace(/\r?\n$/, '');
+    const fence = /^ {0,3}(`{3,}|~{3,})[ \t]*([^\s`~]*)[^\r\n]*$/.exec(line);
+    if (fence) {
+      const closing = new RegExp(`^ {0,3}${fence[1][0]}{${fence[1].length},}[ \\t]*(?:\\r?\\n|$)`, 'gm');
+      closing.lastIndex = lineEnd;
+      const match = closing.exec(source);
+      const end = match ? match.index + match[0].length : source.length;
+      if (/^html?$/i.test(fence[2])) {
+        markdown(cursor);
+        blocks.push({ kind: 'html', source: source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, ''),
+          start: cursor, end, location: 'fence', closed: !!match });
+        markdownStart = end;
+      }
+      // Never interpret HTML examples inside another language's code fence.
+      cursor = end;
+    } else if (/^ {0,3}</.test(line) && looksLikeRawHtml(line.trimStart())) {
+      markdown(cursor);
+      const end = rawHtmlEnd(source, cursor);
+      blocks.push({ kind: 'html', source: source.slice(cursor, end ?? source.length), start: cursor,
+        end: end ?? source.length, location: 'html', closed: end !== undefined });
+      cursor = end ?? source.length;
+      markdownStart = cursor;
+    } else {
+      cursor = lineEnd;
+    }
+  }
+  markdown(source.length);
+  return blocks;
+}
+
+/** Retrieval narration can reset; delivered visuals and their surrounding explanation cannot. */
+export function nextVisualRound(source: string, hasWidgets = false): string {
+  const visual = hasWidgets || splitAssistantContent(source).some((block) => block.kind === 'html')
+    || /^ {0,3}(?:`{3,}|~{3,})wbw-widget[ \t]*$/m.test(source);
+  return visual && source.trim() ? `${source.trimEnd()}\n\n` : '';
+}
+
+/** Read exactly one root, respecting quoted attributes, comments and raw-text elements. */
+function rawHtmlEnd(source: string, start: number): number | undefined {
+  const stack: string[] = [];
+  let cursor = start;
+  while (cursor < source.length) {
+    const raw = stack[stack.length - 1];
+    if (raw && /^(?:script|style|textarea|title)$/i.test(raw)) {
+      const closing = new RegExp(`</${raw}\\s*>`, 'gi');
+      closing.lastIndex = cursor;
+      const match = closing.exec(source);
+      if (!match) return undefined;
+      cursor = match.index;
+    }
+    const open = source.indexOf('<', cursor);
+    if (open < 0) return undefined;
+    if (!/[A-Za-z!/?]/.test(source[open + 1] ?? '')) {
+      cursor = open + 1;
+      continue;
+    }
+    if (source.startsWith('<!--', open)) {
+      const end = source.indexOf('-->', open + 4);
+      if (end < 0) return undefined;
+      cursor = end + 3;
+      if (!stack.length) return cursor;
+      continue;
+    }
+    const end = findTagEnd(source, open + 1);
+    if (end < 0) return undefined;
+    const token = source.slice(open, end + 1);
+    const closing = /^<\/\s*([A-Za-z][\w:-]*)/.exec(token);
+    const opening = /^<([A-Za-z][\w:-]*)(?:\s|\/?>)/.exec(token);
+    if (closing) {
+      const index = stack.lastIndexOf(closing[1].toLowerCase());
+      if (index >= 0) stack.length = index;
+      if (!stack.length) return end + 1;
+    } else if (opening) {
+      const name = opening[1].toLowerCase();
+      if (!VOID_TAGS.has(name) && !/\/\s*>$/.test(token)) stack.push(name);
+      if (!stack.length) return end + 1;
+    }
+    cursor = end + 1;
+  }
+  return undefined;
 }
 
 function looksLikeRawHtml(text: string): boolean {

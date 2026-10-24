@@ -6,6 +6,7 @@ import { Sym } from '../ui/icons';
 import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { closeSettingsAndClearHash, openSettings, useSettingsDialog, type SettingsModule } from './settingsDialogStore';
 import ModelsModule from './settings/ModelsModule';
+import AgentModule from './settings/AgentModule';
 import AppearanceModule from './settings/AppearanceModule';
 import SourcesModule from './settings/SourcesModule';
 import LiveModule from './settings/LiveModule';
@@ -29,6 +30,7 @@ import { useTranslation } from 'react-i18next';
  */
 const MODULES: { key: SettingsModule; icon: string; Component: ComponentType }[] = [
   { key: 'models', icon: 'neurology', Component: ModelsModule },
+  { key: 'agent', icon: 'smart_toy', Component: AgentModule },
   { key: 'appearance', icon: 'style', Component: AppearanceModule },
   { key: 'sources', icon: 'cloud_upload', Component: SourcesModule },
   { key: 'live', icon: 'link', Component: LiveModule },

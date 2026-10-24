@@ -33,7 +33,7 @@
  *    Chart.js 由宿主把源码**内联**进去。第三方 CDN 既是供应链面，也是绕过 CSP 的洞。
  *
  * 与宿主的唯一通道是 `postMessage`，且宿主侧会校验 iframe window 与 opaque origin，
- * 仅交换高度、主题、受限 JSON 状态和待用户确认的追问，不暴露检索或执行工具。
+ * 仅交换高度、主题、受限 JSON 状态、题目草稿和待用户确认的追问，不暴露检索或执行工具。
  */
 
 import { WIDGET_STYLES } from './widgetStyles.ts';
@@ -78,6 +78,8 @@ export const WIDGET_MSG = {
   state: 'wbw:state',
   sync: 'wbw:sync',
   result: 'wbw:result',
+  answerDraft: 'wbw:answer-draft',
+  answerSync: 'wbw:answer-sync',
 } as const;
 
 /**
@@ -90,6 +92,7 @@ const BRIDGE = `
 (function () {
   var initial = __WBW_INITIAL__;
   var state = initial.state;
+  var answerInput = initial.answerInput || null;
   var display = { width: 0, height: 560 };
   var pending = new Map(), sequence = 0, saves = Promise.resolve();
   function copy(value) { return JSON.parse(JSON.stringify(value)); }
@@ -134,6 +137,10 @@ const BRIDGE = `
       state = copy(value);
       window.dispatchEvent(new CustomEvent('wbw:statechange', { detail: { state: copy(state) } }));
     }
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.answerSync)}) {
+      answerInput = copy(value);
+      window.dispatchEvent(new CustomEvent('wbw:answerchange', { detail: copy(answerInput) }));
+    }
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.result)} && value) {
       var task = pending.get(value.requestId);
       if (!task) return;
@@ -153,6 +160,13 @@ const BRIDGE = `
     get display() { return copy(display); },
     get widgetState() { return copy(state); },
     get persistent() { return initial.persistent; },
+    get answerInput() { return copy(answerInput); },
+    setAnswerDraft: function (answer) {
+      if (!answerInput || answerInput.submitted) return Promise.reject(new Error('此处不能修改题目作答'));
+      if (!navigator.userActivation || !navigator.userActivation.isActive)
+        return Promise.reject(new Error('请通过点击或键盘操作提交草稿'));
+      return request(${JSON.stringify(WIDGET_MSG.answerDraft)}, answer);
+    },
     reportHeight: report,
     setWidgetState: function (next) {
       var snapshot;
@@ -230,6 +244,8 @@ const CSP = [
  */
 export async function buildWidgetDocument(payload: WidgetPayload, options: {
   dark?: boolean; theme?: WidgetTheme; state?: WidgetState | null; persistent?: boolean;
+  /** Only a draft, not a grading/persistence capability. Never include answer keys. */
+  answerInput?: { answer: unknown; submitted: boolean };
 } = {}): Promise<string> {
   const libs = payload.libs ?? [];
   const sources = await Promise.all(
@@ -242,6 +258,7 @@ export async function buildWidgetDocument(payload: WidgetPayload, options: {
 
   // Escape '<' as well as line separators: saved strings must never terminate the bootstrap script.
   const initial = JSON.stringify({ dark: options.dark === true, theme: options.theme, persistent: options.persistent === true,
+    answerInput: options.answerInput,
     state: options.state == null ? null : normalizeWidgetState(options.state) })
     .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
   return `<!doctype html>

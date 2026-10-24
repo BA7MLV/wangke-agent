@@ -57,12 +57,14 @@ import { MarkdownStreamingProvider } from './markdown/streaming';
 import ModelPicker from './ModelPicker';
 import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
+import { canUpdateQuizPick, quizHistoryContent, type QuizPick } from '../harness/quiz';
 import WidgetMessage from './WidgetMessage';
 import StreamingHtmlPreview from './StreamingHtmlPreview';
-import ArtifactEditor, { ArtifactEditProvider } from './ArtifactEditor';
+import { ArtifactEditProvider } from './ArtifactEditor';
+import AssistantContent from './AssistantContent';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
-import { htmlPreviewSource, readPartialWidgetArguments } from '../utils/streamingHtml';
+import { nextVisualRound, readPartialWidgetArguments } from '../utils/streamingHtml';
 import './chat-panel.css';
 
 interface Props {
@@ -528,6 +530,7 @@ export default function ChatPanel({
   const thinking = useSettings((s) => s.thinkingEnabled);
   const effort = useSettings((s) => s.thinkingEffort);
   const ctxWin = useSettings((s) => s.contextWindow);
+  const agentInstructions = useSettings((s) => s.agentInstructions);
   const compressionEnabled = useSettings((s) => s.jev.contextCompression && !!decisionConfigOf(s).apiKey.trim());
   const contextPlan = useContextCompressionStore((s) => activeId == null ? EMPTY_COMPRESSION : s.sessions[activeId] ?? EMPTY_COMPRESSION);
   /**
@@ -585,12 +588,12 @@ export default function ChatPanel({
   );
 
   /** 题卡作答：更新消息状态；已落库的同步回写 IndexedDB */
-  const handleAnswer = (key: string, qi: number, oi: number) => {
+  const handleAnswer = (key: string, qi: number, oi: QuizPick) => {
     // Revealing an explanation is a reading interaction, not new model output.
     pauseFollowing();
     setMsgs((prev) =>
       prev.map((m) => {
-        if (m.key !== key || !m.quiz || m.quiz.picks[qi] >= 0) return m;
+        if (m.key !== key || !m.quiz || !canUpdateQuizPick(m.quiz.data.questions[qi], m.quiz.picks[qi], oi)) return m;
         const picks = [...m.quiz.picks];
         picks[qi] = oi;
         const quiz = { ...m.quiz, picks };
@@ -650,8 +653,8 @@ export default function ChatPanel({
     // 注册表是模块级的，点「编辑」不会触发本组件重渲染，按状态算就得把它塞进 useMemo 依赖。
     // 于是按「最坏情况 = 多带一条可编辑规则」估：估高只是用量条早一点变色，估低会让用户以为还有余量。
     const sysText = isMaterial
-      ? PROMPTS.qaSystemMaterial(videoName, materialKind!, undefined, shots.length, refs.length, materialFormat === 'md')
-      : PROMPTS.qaSystem(videoName, undefined, undefined, shots.length, refs.length);
+      ? PROMPTS.qaSystemMaterial(videoName, materialKind!, undefined, shots.length, refs.length, materialFormat === 'md', agentInstructions)
+      : PROMPTS.qaSystem(videoName, undefined, undefined, shots.length, refs.length, agentInstructions);
     const sys = estimateTokens(sysText);
     // 历史只发送 content，reasoning 不计入
     const historyRows = compressionEnabled ? retainedContext(msgs, contextPlan) : msgs;
@@ -660,7 +663,7 @@ export default function ChatPanel({
     const refTokens = refs.reduce((n, c) => n + estimateTokens(c.text) + 12, 0);
     const cur = estimateTokens(input) + shots.length * 1200 + refTokens; // 每张图约 1.2k tokens
     return { system: sys, history: hist, current: cur };
-  }, [msgs, input, shots, refs, videoName, isMaterial, materialKind, contextPlan, compressionEnabled]);
+  }, [msgs, input, shots, refs, videoName, isMaterial, materialKind, materialFormat, contextPlan, compressionEnabled, agentInstructions]);
   const ctxEst = ctxBreakdown.system + ctxBreakdown.history + ctxBreakdown.current;
   const contextCompression = useContextCompression({
     sessionId: activeId, tokens: ctxEst, windowTokens: ctxWin, query: input,
@@ -1054,7 +1057,7 @@ export default function ChatPanel({
     /**
      * 最后一轮旁白 + 最后一次工具提示。
      *
-     * `onRoundStart` 会把当轮正文清空（旁白不是答案），而轮次用尽时模型可能一个字都不说
+      * `onRoundStart` 会清空检索旁白（保留已交付的可视内容），轮次用尽时模型可能一个字都不说
      * （不给 tools 时它仍会返回「空正文 + tool_calls」）。存一份是为了让兜底文案能说清
      * 「它干了什么、你想做什么」，而不是只留一句「（未获得回答）」。见 harness/agent.ts。
      */
@@ -1274,8 +1277,8 @@ export default function ChatPanel({
       // ⚠️ 工具与提示词必须用**同一个** canEditMd：只注册工具不给提示词，模型多半想不到去用它；
       // 只给提示词不给工具，它会写一段「我已修改」而其实什么都没发生 —— 比不给更糟。
       const systemPrompt = isMaterial
-        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length, canEditMd)
-        : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length);
+        ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length, canEditMd, settings.agentInstructions)
+        : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length, settings.agentInstructions);
       const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
       // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
       // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀
@@ -1293,7 +1296,7 @@ export default function ChatPanel({
         estimateTokens(currentText) -
         (imageParts ? curShots.length * 1200 : 0) - // 多模态图片每张约 1.2k tokens
         4096; // 输出预留
-      const recent = await prepareSessionHistory(sessionId, history.slice(0, -1), Math.max(2000, budget), currentText, decisionConfigOf(settings), {
+      const recent = await prepareSessionHistory(sessionId, history.slice(0, -1).map((row) => ({ ...row, content: quizHistoryContent(row) })), Math.max(2000, budget), currentText, decisionConfigOf(settings), {
         signal: abort.signal,
         onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
         onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),
@@ -1376,12 +1379,12 @@ export default function ChatPanel({
             updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
-            // 新一轮开始 = 上一轮流出的内容只是检索旁白，清空等待最终回答（但留一份做兜底）
+            // 只清检索旁白；已交付的 HTML / 图卡及后续讲解继续保留。
             if (answer.trim()) lastNarration = answer.trim();
-            answer = '';
+            answer = nextVisualRound(answer, widgets.length > 0);
             roundsRan++;
             widgetPreview = undefined;
-            patchAi({ content: '', hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
+            patchAi({ content: answer, hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
           onToolStart: (name, argsJson) => {
             /**
@@ -1763,7 +1766,6 @@ export default function ChatPanel({
         </div>}
         {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} ref={virtualMessagesRef} onResize={pinList}>{(m, index) => {
           const isUser = m.role === 'user';
-          const htmlPreview = !isUser ? htmlPreviewSource(m.content) : undefined;
           /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */
           const canRetry = !isUser && index === msgs.length - 1;
           const canRetryAsk = isUser && msgs[index + 1]?.role === 'ai' && index === msgs.length - 2;
@@ -1836,29 +1838,25 @@ export default function ChatPanel({
                     <div aria-hidden="true" data-chat-answer-start={m.content || m.quiz || m.widget || m.widgetPreview ? '' : undefined} />
                         <WidgetMessage message={m} content={m.content} dark={widgetDark} rowId={m.rowId}
                           disabled={loading || !!m.streaming || !!m.error} onPrompt={(text) => void send(text)}>
-                        {(markdown) => !markdown ? null : htmlPreview !== undefined ? (
-                          <ArtifactEditor kind="html" location="html" source={htmlPreview}>
-                          <StreamingHtmlPreview
-                            html={htmlPreview}
-                            isStreaming={!!m.streaming}
-                            statusText="正在解析 HTML"
-                          />
-                          </ArtifactEditor>
-                        ) : (
-                          <MarkdownStreamingProvider value={!!m.streaming}>
-                            <XMarkdown
-                              // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
-                              // 材料没有播放器，留着会生成点了没反应的死链；
-                              // #frame- 画面引用同理（材料没有抽帧）。
-                              content={
-                                isMaterial && materialKind
-                                  ? linkifyUnits(markdown, materialKind)
-                                  : linkifyTimestamps(linkifyFrames(markdown))
-                              }
-                              components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
-                              streaming={{ hasNextChunk: !!m.streaming, tail: !!m.streaming }}
-                            />
-                          </MarkdownStreamingProvider>
+                        {(markdown) => !markdown ? null : (
+                          <AssistantContent content={markdown} streaming={!!m.streaming}>
+                            {(part, streaming) => (
+                              <MarkdownStreamingProvider value={streaming}>
+                                <XMarkdown
+                                  // 材料只跑 linkifyUnits：#seek- 需要一个存在的播放器，
+                                  // 材料没有播放器，留着会生成点了没反应的死链；
+                                  // #frame- 画面引用同理（材料没有抽帧）。
+                                  content={
+                                    isMaterial && materialKind
+                                      ? linkifyUnits(part, materialKind)
+                                      : linkifyTimestamps(linkifyFrames(part))
+                                  }
+                                  components={{ a: SeekLink, p: StreamParagraph, img: FrameImage, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable }}
+                                  streaming={{ hasNextChunk: streaming, tail: streaming }}
+                                />
+                              </MarkdownStreamingProvider>
+                            )}
+                          </AssistantContent>
                         )}
                         </WidgetMessage>
                         {m.quiz && (
@@ -1867,6 +1865,7 @@ export default function ChatPanel({
                             quiz={m.quiz.data}
                             picks={m.quiz.picks}
                             onAnswer={(qi, oi) => handleAnswer(m.key, qi, oi)}
+                            onReview={loading || m.streaming ? undefined : (text) => void send(text)}
                             onSeek={seekTo}
                             // 材料没有播放器：解析里的时间戳不 linkify，免得出现点了没反应的死链
                             seekable={!isMaterial}
@@ -2022,18 +2021,22 @@ export default function ChatPanel({
             <Dropdown.Popover placement="top start">
               <Dropdown.Menu aria-label="添加到学习问答"
                 disabledKeys={[
-                  ...(!indexReady || loading ? ['shot', 'quiz'] : []),
+                  ...(!indexReady || loading ? ['shot', 'quiz', 'question-bank', 'bank-practice'] : []),
                   ...(!indexReady || loading || handoutPreparing ? ['handout'] : []),
                   ...(shots.length >= 4 ? ['shot'] : []),
                 ]}
                 onAction={(key) => {
                   if (key === 'shot') addShot();
                   else if (key === 'quiz') void send('根据课程内容出 3 道单选题考考我，选项要有干扰性');
+                  else if (key === 'question-bank') void send('请按「原题题库」技能，逐页提取这份资料的原题，保留题号、题干、选项和原图引用，核对原文答案及解析，并用 edit 保存到 /courses/current/questions.md。已有题库就读最新版后继续，不覆盖用户修改。缺答案和无法辨读的题明确标注；预算不足先保存已完成部分并说明尚未覆盖范围，不要重新编题。保存后给我题库链接，并展示第一批原题供我直接作答和批改。');
+                  else if (key === 'bank-practice') void send(`请从题库最新版开始做原题。${materialFormat === 'md' ? '先 read 当前 Markdown 原文：若它本身含原题 quiz 数据块，使用 /courses/current/material，否则使用 /courses/current/questions.md。' : '题库路径为 /courses/current/questions.md。'}调用 present_quiz 的 path 参数，每批最多 5 题，不要改写或提前透露答案。若题库尚不存在，请说明并引导先提取原题。`);
                   else if (key === 'handout') void addHandout();
                   else if (key === 'skills') setSkillsOpen(true);
                 }}>
                 {!isMaterial && <Dropdown.Item id="shot" textValue="截取当前画面" data-testid="shot-btn"><Sym name="photo_camera" />截取当前画面</Dropdown.Item>}
                 <Dropdown.Item id="quiz" textValue="出题考我" data-testid="quiz-btn"><Sym name="quiz" />出题考我</Dropdown.Item>
+                {isMaterial && <Dropdown.Item id="question-bank" textValue="提取原题为题库" data-testid="question-bank-extract"><Sym name="description" />提取原题为题库</Dropdown.Item>}
+                {isMaterial && <Dropdown.Item id="bank-practice" textValue="开始做原题" data-testid="question-bank-practice"><Sym name="quiz" />开始做原题</Dropdown.Item>}
                 <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
                 <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
               </Dropdown.Menu>

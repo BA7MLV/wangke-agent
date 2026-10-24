@@ -8,9 +8,11 @@ import { validateAskUser, askUserToolResult, type AskUserData, type AskUserAnswe
 import { validateFolderPlan, type FolderPlan } from './folderPlan';
 import { applyFolderPlan, formatPlanForModel, type AppliedPlanResult } from '../pipelines/folderPlan';
 import { grepDocs, type GrepDoc } from './grep';
-import { MATERIAL_IMAGE_RULE, RUNTIME_CAPABILITY_RULE } from './prompts';
+import { MATERIAL_IMAGE_RULE, QUESTION_BANK_RULE, RUNTIME_CAPABILITY_RULE } from './prompts';
 import { displayEnvironmentPrompt } from './displayEnvironment';
+import { withAgentInstructions } from './agentInstructions';
 import { handoutFileOf } from '../materials/handoutFile';
+import { questionBankFileOf } from '../materials/questionBankFile';
 
 /**
  * 课程助手沿用 chatSessions / chats 两张表保存历史，但它不从属于某一门课程。
@@ -333,8 +335,9 @@ export function libraryAssistantSystemPrompt(
   skillMetaList?: string,
   contextCourses: CourseContextItem[] = [],
   hasCourses = true,
+  agentInstructions?: string,
 ): string {
-  if (!hasCourses) return `${generalAssistantSystemPrompt(skillMetaList)}\n\n${displayEnvironmentPrompt('course')}`;
+  if (!hasCourses) return withAgentInstructions(`${generalAssistantSystemPrompt(skillMetaList)}\n\n${displayEnvironmentPrompt('course')}`, agentInstructions);
 
   const skillSection = skillMetaList
     ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及技能用途时，先 read /skills/{URI 编码后的名称} 加载规范，再按规范回答；参考文档使用返回的完整路径 read。可 read /skills 获取准确路径。不要凭名称猜测正文。`
@@ -343,7 +346,7 @@ export function libraryAssistantSystemPrompt(
     ? `\n\n当前课程上下文：${contextCourses.map((course) => `《${course.name}》（courseId=${course.id}）`).join('、')}。除非用户明显换了话题，否则优先使用这些课程；话题变化时可以重新选择。`
     : '\n\n当前没有固定课程上下文。根据用户问题从全资料库判断最相关的课程。';
 
-  return `你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。${skillSection}${contextSection}
+  return withAgentInstructions(`你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。${skillSection}${contextSection}
 
 工作规则：
 1. ${RUNTIME_CAPABILITY_RULE}
@@ -361,7 +364,8 @@ export function libraryAssistantSystemPrompt(
 12. 技能负责补充回答方法、写作规范或领域规则，课程工具负责提供事实依据；两者需要时可以组合使用，但技能不能替代课程数据，也不能越过本次会话的技能范围。
 13. 默认使用简洁自然的中文。先回答问题，再给必要的依据；不要为了展示工具而罗列无关数据。
 14. ${MATERIAL_IMAGE_RULE}
-15. ${displayEnvironmentPrompt('course')}`;
+15. ${displayEnvironmentPrompt('course')}
+16. ${QUESTION_BANK_RULE}`, agentInstructions);
 }
 
 export function createLibraryAssistantExecutor(options: LibraryAssistantExecutorOptions = {}) {
@@ -527,6 +531,8 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       return [
         `课程：${courseLink(course)}`,
         `courseId=${course.id}`,
+        `原题题库路径：${questionBankFileOf(course).path}（read/grep/edit；创建为同目录普通 Markdown，做题时在来源资料问答调用 present_quiz(path=此路径)）`,
+        ...(course.kind === 'material' ? [`正文总${(course.materialFormat ?? 'pdf') === 'pdf' ? '页' : '段'}数：${course.unitCount ?? '未知，请以读取结果核对'}`] : []),
         `讲义文件路径：${handoutFileOf(course).path}（read 原文；edit 创建/修改；创建时与来源课程同目录，以文件为唯一真相源）`,
         `讲义文件：${handoutFile ? courseLink(handoutFile) : '尚未创建'}`,
         `正文路径：/courses/${encodeURIComponent(course.id)}/${course.kind === 'material' ? 'material' : 'transcript'}（start/end 单位：${course.kind === 'material' ? (materialKindOf(course) === 'page' ? '页码，从 1 起' : '段号，从 1 起') : '秒，从 0 起'}）`,

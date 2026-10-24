@@ -12,6 +12,7 @@ import { useSyncExternalStore } from 'react';
 
 export type SettingsModule =
   | 'models'
+  | 'agent'
   | 'appearance'
   | 'sources'
   | 'live'
@@ -47,7 +48,7 @@ export function closeSettings(): void {
   emit();
 }
 
-const VALID_MODULES: readonly SettingsModule[] = ['models', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data'];
+const VALID_MODULES: readonly SettingsModule[] = ['models', 'agent', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data'];
 
 /** 根据当前 URL hash 打开设置弹窗（#/settings 或 #/settings/<module>） */
 export function openSettingsFromHash(): void {

@@ -1,5 +1,6 @@
 import { createEmptyCard, fsrs, Rating, type Card, type Grade } from 'ts-fsrs';
-import type { QuizQuestion } from '../harness/quiz';
+import type { QuizAnswer, QuizQuestion } from '../harness/quiz';
+import { canGradeQuizQuestion, formatQuizAnswer, gradeQuizAnswer, hasVerifiedQuizAnswer, optionLetter, questionType, validQuizAnswer, validateQuiz } from '../harness/quiz';
 
 export { Rating };
 export type ReviewRating = Grade;
@@ -7,7 +8,9 @@ export interface QuestionSource { courseId: string; name?: string; page?: number
 export interface Attempt {
   id: string;
   at: string;
-  answer: number;
+  answer: QuizAnswer;
+  /** 主观题只有学生明确核对后才可记为错题；与自动判分严格区分。 */
+  grading?: 'self';
   correct: boolean;
   durationSeconds: number;
   rating: ReviewRating;
@@ -37,11 +40,9 @@ function validateEntry(raw: unknown): asserts raw is WrongQuestion {
       !['reviewing', 'mastered'].includes(String(raw.status)) || !object(raw.card) || !Array.isArray(raw.attempts))
     throw new Error('错题档案结构无效，请检查数据块，原文件未被修改。');
   const q = raw.question;
-  if (typeof q.stem !== 'string' || !q.stem.trim() || !Array.isArray(q.options) || q.options.length !== 4 ||
-      q.options.some((o) => typeof o !== 'string' || !o.trim()) || new Set(q.options).size !== 4 ||
-      !Number.isInteger(q.answer) || Number(q.answer) < 0 || Number(q.answer) > 3 ||
-      typeof q.explanation !== 'string' || !q.explanation.trim() ||
-      (q.time !== undefined && typeof q.time !== 'string') ||
+  if (!validateQuiz({ questions: [q] }).ok || !hasVerifiedQuizAnswer(q as unknown as QuizQuestion))
+    throw new Error('未核验的参考答案不能写入错题记录。');
+  if ((q.time !== undefined && typeof q.time !== 'string') ||
       (raw.source.name !== undefined && typeof raw.source.name !== 'string') ||
       (raw.source.page !== undefined && (!Number.isInteger(raw.source.page) || Number(raw.source.page) < 1)))
     throw new Error('错题的题干、选项、答案或来源无效。');
@@ -56,8 +57,9 @@ function validateEntry(raw: unknown): asserts raw is WrongQuestion {
   let previous = -Infinity;
   for (const a of raw.attempts) {
     if (!object(a) || typeof a.id !== 'string' || !a.id || ids.has(a.id) || !dateValid(a.at) ||
-        Date.parse(a.at) < previous || !Number.isInteger(a.answer) || Number(a.answer) < 0 || Number(a.answer) > 3 ||
-        typeof a.correct !== 'boolean' || a.correct !== (a.answer === q.answer) || !nonnegative(a.durationSeconds) ||
+        Date.parse(a.at) < previous || !validQuizAnswer(q as unknown as QuizQuestion, a.answer) ||
+        typeof a.correct !== 'boolean' ||
+        (canGradeQuizQuestion(q as unknown as QuizQuestion) ? a.grading !== undefined || a.correct !== gradeQuizAnswer(q as unknown as QuizQuestion, a.answer as QuizAnswer) : a.grading !== 'self') || !nonnegative(a.durationSeconds) ||
         ![Rating.Again, Rating.Hard, Rating.Good, Rating.Easy].includes(a.rating as Grade) ||
         (a.correct ? a.rating === Rating.Again : a.rating !== Rating.Again))
       throw new Error('作答记录无效或重复。');
@@ -86,7 +88,13 @@ function parseLegacyWrongbook(markdown: string): WrongQuestion[] {
 
 const markdownBlocks = () => /^<!-- wrongbook:question (.+) -->\r?\n([\s\S]*?)^<!-- \/wrongbook:question -->[ \t]*(?=\r?$)/gm;
 const labels = ['重来', '困难', '良好', '简单'];
-const letters = ['A', 'B', 'C', 'D'];
+const letters = Array.from({ length: 26 }, (_, i) => optionLetter(i));
+const jsonBlock = (value: unknown) => '```json\n' + JSON.stringify(value, null, 2) + '\n```';
+function parseJsonBlock(content: string): unknown {
+  const match = /^```json\r?\n([\s\S]*)\r?\n```$/.exec(content.trim());
+  if (!match) throw new Error('此题型的数据需保留完整 json 围栏。');
+  try { return JSON.parse(match[1]); } catch { throw new Error('题型或作答记录不是有效 JSON。'); }
+}
 const sectionPattern = (key: string) => new RegExp(`^<!-- wrongbook:${key} -->\\r?\\n([\\s\\S]*?)\\r?\\n<!-- /wrongbook:${key} -->[ \\t]*(?=\\r?$)`, 'gm');
 function section(body: string, key: string): string {
   const matches = [...body.matchAll(sectionPattern(key))];
@@ -99,25 +107,28 @@ function section(body: string, key: string): string {
 const wrapSection = (key: string, content: string) => `<!-- wrongbook:${key} -->\n${content}\n<!-- /wrongbook:${key} -->`;
 
 function contentOf(entry: WrongQuestion) {
+  const rich = questionType(entry.question) !== 'single';
   return {
     stem: entry.question.stem,
-    options: entry.question.options.map((o, i) => `- ${letters[i]}. ${o.replace(/\n/g, '\n  ')}`).join('\n'),
-    answer: letters[entry.question.answer],
+    options: rich ? jsonBlock({ options: entry.question.options, matches: entry.question.matches, parts: entry.question.parts, acceptedAnswers: entry.question.acceptedAnswers, blanks: entry.question.blanks }) : entry.question.options.map((o, i) => `- ${letters[i]}. ${o.replace(/\n/g, '\n  ')}`).join('\n'),
+    answer: rich ? jsonBlock(entry.question.answer) : formatQuizAnswer(entry.question, entry.question.answer),
     explanation: entry.question.explanation,
     plan: `状态：${entry.status === 'mastered' ? '已掌握' : '复习中'}\n下次复习：${entry.card.due}`,
-    attempts: ['| 时间 | 答案 | 结果 | 用时（秒） | 反馈 |', '| --- | --- | --- | --- | --- |',
-      ...entry.attempts.map((a) => `| ${a.at} | ${letters[a.answer]} | ${a.correct ? '正确' : '错误'} | ${a.durationSeconds} | ${labels[a.rating - 1]} |`)].join('\n'),
+    attempts: rich ? jsonBlock(entry.attempts) : ['| 时间 | 答案 | 结果 | 用时（秒） | 反馈 |', '| --- | --- | --- | --- | --- |',
+      ...entry.attempts.map((a) => `| ${a.at} | ${formatQuizAnswer(entry.question, a.answer)} | ${a.correct ? '正确' : '错误'} | ${a.durationSeconds} | ${labels[a.rating - 1]} |`)].join('\n'),
   };
 }
 function metadata(entry: WrongQuestion): string {
   const { due: _due, ...card } = entry.card;
   // Escape '<' so names containing '-->' cannot terminate the HTML comment.
   return JSON.stringify({ version: 2, id: entry.id, source: entry.source, card,
-    time: entry.question.time, attemptIds: entry.attempts.map((a) => a.id) }).replace(/</g, '\\u003c').replace(/-->/g, '--\\u003e');
+    time: entry.question.time, images: entry.question.images, answerSource: entry.question.answerSource, questionSource: entry.question.source,
+    type: entry.question.type, typeLabel: entry.question.typeLabel, presentation: entry.question.presentation,
+    attemptIds: entry.attempts.map((a) => a.id) }).replace(/</g, '\\u003c').replace(/-->/g, '--\\u003e');
 }
 function renderQuestion(entry: WrongQuestion): string {
   const c = contentOf(entry);
-  for (const text of [c.stem, c.options, c.explanation]) {
+  for (const text of [c.stem, c.options, c.answer, c.attempts, c.explanation]) {
     if (/<!--\s*\/?wrongbook:/.test(text)) throw new Error('题目正文包含错题本保留的注释标记，请先修改该标记。');
   }
   const source = (entry.source.name ?? entry.source.courseId).replace(/[\r\n]/g, ' ');
@@ -131,26 +142,35 @@ function parseMarkdownQuestion(json: string, body: string): WrongQuestion {
   if (!object(meta) || meta.version !== 2 || !object(meta.card) || !Array.isArray(meta.attemptIds))
     throw new Error('FSRS 注释结构无效。');
   const optionsText = section(body, 'options');
-  const starts = [...optionsText.matchAll(/^- ([A-D])\. /gm)];
-  if (starts.length !== 4 || starts.some((m, i) => m[1] !== letters[i])) throw new Error('选项需按 - A. 至 - D. 排列。');
-  const options = starts.map((m, i) => optionsText.slice(m.index! + m[0].length, starts[i + 1]?.index ?? optionsText.length).trimEnd().replace(/\n  /g, '\n'));
+  const rich = meta.type !== undefined && meta.type !== 'single';
+  const specs = rich ? parseJsonBlock(optionsText) : undefined;
+  if (rich && !object(specs)) throw new Error('题型数据需要 JSON 对象。');
+  const starts = rich ? [] : [...optionsText.matchAll(/^- ([A-Z])\. /gm)];
+  if (!rich && (starts.length < 2 || starts.length > 26 || starts.some((m, i) => m[1] !== letters[i]))) throw new Error('选项需按 - A.、- B. 顺序排列（2~26 项）。');
+  const options = rich ? (specs as Record<string, unknown>).options : starts.map((m, i) => optionsText.slice(m.index! + m[0].length, starts[i + 1]?.index ?? optionsText.length).trimEnd().replace(/\n  /g, '\n'));
   const plan = section(body, 'plan').replace(/\r\n/g, '\n');
   const status = /^状态：(复习中|已掌握)$/m.exec(plan)?.[1];
   const due = /^下次复习：(.+)$/m.exec(plan)?.[1];
   if (!status || !due) throw new Error('复习计划缺少状态或下次复习时间。');
-  const rows = section(body, 'attempts').split(/\r?\n/).filter((line) => line.trim());
-  if (rows.length < 2 || !/^\|\s*时间\s*\|/.test(rows[0]) || !/^\|[\s:|\-]+\|$/.test(rows[1]) || rows.length - 2 !== meta.attemptIds.length)
+  const rows = rich ? [] : section(body, 'attempts').split(/\r?\n/).filter((line) => line.trim());
+  if (!rich && (rows.length < 2 || !/^\|\s*时间\s*\|/.test(rows[0]) || !/^\|[\s:|\-]+\|$/.test(rows[1]) || rows.length - 2 !== meta.attemptIds.length))
     throw new Error('作答记录表格与作答 ID 不一致，请勿删除表头或 FSRS 注释中的 ID。');
-  const attempts = rows.slice(2).map((line, i) => {
+  const attempts = rich ? parseJsonBlock(section(body, 'attempts')) : rows.slice(2).map((line, i) => {
     const cells = line.split('|').map((v) => v.trim());
     if (cells.length !== 7 || cells[0] || cells[6] || !['正确', '错误'].includes(cells[3]) || !cells[4])
       throw new Error('作答记录表格格式无效。');
     return { id: (meta.attemptIds as string[])[i], at: cells[1], answer: letters.indexOf(cells[2]), correct: cells[3] === '正确',
       durationSeconds: Number(cells[4]), rating: (labels.indexOf(cells[5]) + 1) as ReviewRating };
   });
+  if (rich && (!Array.isArray(attempts) || JSON.stringify(attempts.map((a) => a?.id)) !== JSON.stringify(meta.attemptIds))) throw new Error('作答 ID 与元数据不一致。');
   const entry = { version: 1, id: meta.id, source: meta.source, status: status === '已掌握' ? 'mastered' : 'reviewing',
-    question: { stem: section(body, 'stem'), options, answer: letters.indexOf(section(body, 'answer').trim()),
-      explanation: section(body, 'explanation'), ...(meta.time !== undefined ? { time: meta.time } : {}) },
+    question: { ...(object(specs) ? specs : {}), stem: section(body, 'stem'), options,
+      answer: rich ? parseJsonBlock(section(body, 'answer')) : letters.indexOf(section(body, 'answer').trim()),
+      explanation: section(body, 'explanation'), ...(meta.time !== undefined ? { time: meta.time } : {}),
+       ...(meta.images !== undefined ? { images: meta.images } : {}), ...(meta.answerSource !== undefined ? { answerSource: meta.answerSource } : {}),
+       ...(meta.questionSource !== undefined ? { source: meta.questionSource } : {}),
+       ...(meta.type !== undefined ? { type: meta.type } : {}), ...(meta.typeLabel !== undefined ? { typeLabel: meta.typeLabel } : {}),
+       ...(meta.presentation !== undefined ? { presentation: meta.presentation } : {}) },
     card: { ...meta.card, due }, attempts };
   validateEntry(entry);
   return entry;
@@ -196,7 +216,10 @@ export function writeQuestion(markdown: string, entry: WrongQuestion): string {
 
 export async function questionId(question: QuizQuestion, source: QuestionSource): Promise<string> {
   // Explanation changes do not create another copy of the same source question.
-  const key = JSON.stringify([source.courseId, source.page ?? null, question.stem.trim(), question.options.map((o) => o.trim()), question.answer]);
+  const identity: unknown[] = [source.courseId, source.page ?? null, question.stem.trim(), question.options.map((o) => o.trim()), question.answer];
+  const partIdentity = (q: QuizQuestion): unknown => [q.stem.trim(), q.options, q.answer, questionType(q), q.matches ?? null, q.parts?.map(partIdentity) ?? null];
+  if (questionType(question) !== 'single') identity.push(questionType(question), question.matches ?? null, question.parts?.map(partIdentity) ?? null);
+  const key = JSON.stringify(identity);
   const digest = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
   return 'q-' + Array.from(new Uint8Array(digest), (b) => b.toString(16).padStart(2, '0')).join('');
 }

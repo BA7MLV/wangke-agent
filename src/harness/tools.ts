@@ -150,23 +150,36 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
   function: {
     name: 'present_quiz',
     description:
-      '当用户要求出题、测验或"考考我"时调用，把单选题展示为可作答的交互题卡。调用前必须先用检索工具取到相关内容，题目必须基于材料/字幕实际讲到的内容。',
+      '展示各种题型的可作答题卡：单选、多选、判断、填空、排序、配对、主观题和组合题。客观题按已核验答案由宿主批改；主观题提交后参考核对、自评收错，不冒充自动评分。已有题库时传 path（普通 Markdown material 或 /courses/current/questions.md）、offset、limit，读取最新版，不要重写题目或答案。AI 参考答案或缺答案不计分、不收为错题。',
     parameters: {
       type: 'object',
       properties: {
+        path: { type: 'string', description: '题库 Markdown 路径；与 questions 二选一。' },
+        offset: { type: 'integer', minimum: 0, description: '从第几题开始（0 起）' },
+        limit: { type: 'integer', minimum: 1, maximum: 5, description: '每批 1~5 题，默认 5' },
         questions: {
           type: 'array',
-          description: '1~5 道单选题',
+          description: '1~5 道原题或基于材料的题目；不能把其他题型改成单选',
           items: {
             type: 'object',
             properties: {
               stem: { type: 'string', description: '题干，一句话' },
+              type: { type: 'string', enum: ['single', 'multiple', 'boolean', 'fill', 'ordering', 'matching', 'freeform', 'composite'], description: '默认 single；解答/证明/计算/作文/作图/其他特殊题用 freeform；包含独立小题用 composite。' },
+              typeLabel: { type: 'string', description: '原文题型名称；保留计算题、证明题等原始类型。' },
               options: {
                 type: 'array',
                 items: { type: 'string' },
-                description: '恰好 4 个选项，不含 ABCD 前缀；干扰项用常见误解或相近概念',
+                description: 'single/multiple/ordering/matching 的 2~26 个原文选项，不含字母前缀；其他题型省略或 []，不得凑项',
               },
-              answer: { type: 'number', description: '正确选项下标，0~3' },
+              answer: { anyOf: [{ type: 'number' }, { type: 'boolean' }, { type: 'string' }, { type: 'array', items: {} }], description: 'single 下标；multiple 无重复下标数组（全选对才对）；boolean 布尔值；fill 每空字符串数组；ordering 排序后的下标数组；matching 每个左项对应的右列下标数组；freeform 参考答案文字；composite 与 parts 每题答案一致的数组；missing 统一 -1。' },
+              acceptedAnswers: { type: 'array', items: { type: 'array', items: { type: 'string' } }, description: '仅 fill：每空可接受答案数组，只精确核对，不判断公式等价；没有核验过的别名不要添加。缺答案时用 blanks 标明空数。' },
+              blanks: { type: 'integer', minimum: 1, maximum: 50, description: '仅 fill：空数，尤其在 missing、answer=-1 时记录作答空数。' },
+              matches: { type: 'array', items: { type: 'string' }, description: '仅 matching 的右列标签。' },
+              parts: { type: 'array', maxItems: 50, items: { type: 'object', additionalProperties: true }, description: '仅 composite：每个小题使用相同题目字段（stem/type/options/answer/answerSource/source/explanation 等），最多嵌套 3 层；保留共用题干。' },
+              presentation: { type: 'object', properties: { html: { type: 'string', description: '可选：复用 show_widget 的 HTML 片段规范，实现拖拽/连线/作图等输入。用户点击时调用 window.__wbw.setAnswerDraft(答案)，只更新草稿；学生还需在宿主题卡点“提交答案”。window.__wbw.answerInput 提供已存作答和 submitted；监听 wbw:answerchange 恢复。不得内嵌答案/解析/判分/错题写入，不可读取材料，原图由题卡 images 显示；始终提供标准作答降级。' } }, required: ['html'] },
+              answerSource: { type: 'string', enum: ['original', 'verified', 'ai', 'missing'], description: '原文答案、用户核验答案、AI 参考答案或缺失；missing 时 answer=-1。抽取原题必须提供。' },
+              source: { type: 'object', properties: { courseId: { type: 'string' }, name: { type: 'string' }, page: { type: 'integer', minimum: 1 } }, required: ['courseId'] },
+              images: { type: 'array', items: { type: 'string' }, description: '材料 images 目录返回的 #source-image/... 稳定引用；不要重画原图，不要传 base64。' },
               explanation: {
                 type: 'string',
                 description:
@@ -177,11 +190,11 @@ const PRESENT_QUIZ_TOOL: ToolDef = {
                 description: '考点对应的字幕时间戳，mm:ss 或 h:mm:ss（只有视频课程需要）',
               },
             },
-            required: ['stem', 'options', 'answer', 'explanation'],
+            required: ['stem', 'answer', 'explanation'],
           },
         },
       },
-      required: ['questions'],
+      required: [],
     },
   },
 };
@@ -487,6 +500,8 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       return ref.body;
     }
     if (name === 'present_quiz') {
+      if (!onQuiz) return '当前入口未接入答题卡，未展示题目。';
+      if (args.path !== undefined) return '题库 path 需通过资料资源执行器读取，不能作为内联 questions 展示。';
       const v = validateQuiz(args);
       if (!v.ok) return `题卡结构校验失败：${v.error}。请修正后重新调用 present_quiz。`;
       onQuiz?.(v.quiz);

@@ -43,6 +43,8 @@ interface Props {
   editActions?: ArtifactActions | null;
   /** Popouts inherit the originating surface's locally scoped palette and typography. */
   appearance?: WidgetTheme;
+  /** Question-scoped draft only. The student confirms submission in the trusted host UI. */
+  answerInput?: { answer: unknown; submitted: boolean; onDraft: (raw: unknown) => void };
 }
 
 /**
@@ -90,7 +92,7 @@ export default function WidgetBlock(props: Props) {
   return <WidgetSessionBlock key={key} {...props} />;
 }
 
-function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, allowPopout = true, editActions, appearance }: Props) {
+function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, allowPopout = true, editActions, appearance, answerInput }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const themeRef = useRef<WidgetTheme | undefined>(appearance);
@@ -107,6 +109,8 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
   darkRef.current = dark;
   onPromptRef.current = onPrompt;
   disabledRef.current = disabled;
+  const answerInputRef = useRef(answerInput);
+  answerInputRef.current = answerInput;
   const [height, setHeight] = useState(MIN_H);
   const [doc, setDoc] = useState('');
   const [failed, setFailed] = useState('');
@@ -188,13 +192,18 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
     setDoc('');
     setFailed('');
     if (!appearance && hostRef.current) themeRef.current = readWidgetTheme(hostRef.current, darkRef.current);
-    buildWidgetDocument(payload, { dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null })
+    buildWidgetDocument(payload, { dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null,
+      answerInput: answerInputRef.current ? { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted } : undefined })
       .then((d) => !cancelled && setDoc(d))
       .catch((e) => !cancelled && setFailed(e instanceof Error ? e.message : String(e)));
     return () => {
       cancelled = true;
     };
   }, [session, payload.html]);
+
+  useEffect(() => {
+    if (answerInput) post(WIDGET_MSG.answerSync, { answer: answerInput.answer, submitted: answerInput.submitted });
+  }, [answerInput, post]);
 
   // Observe actual computed host tokens, including local course palettes and root font scale.
   // Messages never replace srcdoc: parameter values and local execution survive.
@@ -335,6 +344,21 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
         syncDisplay();
         post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
         post(WIDGET_MSG.sync, stateRef.current);
+        if (answerInputRef.current) post(WIDGET_MSG.answerSync, { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted });
+      } else if (d.__wbw === WIDGET_MSG.answerDraft) {
+        const request = d.payload as { requestId?: number; value?: unknown } | null;
+        if (!Number.isSafeInteger(request?.requestId)) return;
+        try {
+          const input = answerInputRef.current;
+          if (!input || input.submitted || disabledRef.current || document.visibilityState !== 'visible') throw new Error('此处不能修改题目作答');
+          input.onDraft(request?.value);
+          setActionError('');
+          reply(request!.requestId);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '作答草稿无效';
+          setActionError(message);
+          reply(request!.requestId, message);
+        }
       }
       // ready / theme 之外的一律忽略：widget 不能借消息通道做别的事
     },

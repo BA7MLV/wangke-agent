@@ -194,7 +194,7 @@ export function widgetAcceptedText(args: WidgetArgs, ref?: string): string {
   // The reference contains no executable source. Only this message's registered payload can render it.
   if (args.format === 'html') {
     if (!ref) throw new Error('HTML 预检缺少宿主引用');
-    return `图形预检通过。把下面的引用原样放在正文中需要看图的位置，单独成块，不要贴 HTML 源码。只补充必要的观察或结论，不重复图中的内容。\n\n${widgetReference(ref)}`;
+    return `图形预检通过。把下面的引用原样放在正文中需要看图的位置，单独成块，不要贴 HTML 源码。只补充必要的观察或结论，不重复图中的内容。展示 HTML 不代表回答结束：仍有讲解或题目时继续输出；多道 HTML 题各保留自己的引用，按顺序穿插正文，不覆盖前题。\n\n${widgetReference(ref)}`;
   }
   return [
     `预检通过（${args.format}）。**图还没有上屏** —— 请把下面这段围栏原样放进你的回答正文，`,

@@ -46,7 +46,7 @@ import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from './markdown/Markdown';
 import type { GuestTurn, LiveGuest } from '../livelink/guest';
 import type { UnitKind } from '../materials/units.ts';
-import { validateQuiz, type QuizData } from '../harness/quiz';
+import { validateQuiz, type QuizData, type QuizPick } from '../harness/quiz';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
 import { useSettings } from '../store/settings';
@@ -63,7 +63,7 @@ import './live-chat-panel.css';
  * （不变量 9），连类型都从那儿长出来都让人误会 —— 这个文件里没有任何 db import。 */
 interface QuizState {
   data: QuizData;
-  picks: number[];
+  picks: QuizPick[];
 }
 
 export interface LiveChatPanelProps {
@@ -163,7 +163,7 @@ export default function LiveChatPanel({
    * 刷新后这些选择消失、主机那边也不会记下这次作答。要改的话是给 `GuestTurn.quiz`
    * 补一条 op，而不是在这里偷偷写库 —— 写库是 guest 侧的结构性禁令。
    */
-  const [picks, setPicks] = useState<Record<string, number[]>>({});
+  const [picks, setPicks] = useState<Record<string, QuizPick[]>>({});
 
   // widget 的明暗是 JS 算的（mdui 的 auto 模式要问系统偏好），与 ChatPanel 同一取法
   const widgetDark = useResolvedDark(useSettings((s) => s.theme));

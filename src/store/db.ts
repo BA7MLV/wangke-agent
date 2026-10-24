@@ -9,6 +9,7 @@ import type { CommentRole } from '../harness/comments';
 import type { HtmlView } from '../materials/types';
 import type { ChatMessage } from '../api/siliconflow';
 import type { InkStroke } from '../materials/ink';
+import type { BiliVideoSource } from '../bilibili/source';
 
 /**
  * 课程资源行。表名仍叫 `videos`（历史原因），但语义已经是「一条课程资源」——
@@ -23,6 +24,8 @@ export interface VideoRow {
   duration: number; // 秒（材料恒为 0）
   createdAt: number;
   status: 'new' | 'transcribing' | 'transcribed' | 'error';
+  /** B 站导入来源，用于下载后补拉自带字幕。非索引字段，旧数据无需迁移。 */
+  biliSource?: BiliVideoSource;
   /**
    * 上次播放位置（秒），**永远是真实播放位置**（播完也停在结尾，不归零）。
    *
@@ -249,8 +252,8 @@ export interface ChatImage {
 /** 答题卡状态（非索引字段）：题目 JSON + 用户作答 */
 export interface QuizState {
   data: QuizData;
-  /** 每题已选下标；-1 = 未作答 */
-  picks: number[];
+  /** Legacy numeric picks or typed answer/self-check snapshots; -1 = 未作答. */
+  picks: import('../harness/quiz').QuizPick[];
 }
 
 /**

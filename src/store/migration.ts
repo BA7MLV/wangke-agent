@@ -166,6 +166,7 @@ export async function exportMigrationZip(onStep?: (text: string) => void): Promi
     thinkingEffort: s.thinkingEffort,
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
+    agentInstructions: s.agentInstructions,
     danmakuEnabled: s.danmakuEnabled,
     customRates: s.customRates,
   };

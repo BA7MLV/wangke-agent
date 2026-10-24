@@ -26,7 +26,7 @@ import type { ChatMessage } from '../api/siliconflow';
 import { askUserToolResult, askAnswerText, validateAskAnswer, type AskUserData, type AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
-import { readPartialWidgetArguments } from '../utils/streamingHtml';
+import { nextVisualRound, readPartialWidgetArguments } from '../utils/streamingHtml';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { attachmentText, type ChatAttachment } from '../chat/attachments';
 import { attachmentsForModel, messageForModel } from '../chat/attachmentModel';
@@ -1541,7 +1541,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         loadSessionSkillMeta(view.skillIds),
       ]);
       const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
-      const systemPrompt = libraryAssistantSystemPrompt(skillBlock, contextCourses, hasCourses);
+      const systemPrompt = libraryAssistantSystemPrompt(skillBlock, contextCourses, hasCourses, settings.agentInstructions);
       /**
        * 续跑要用的是「这一轮开始前」的历史：
        * - 普通一轮：刚写的 user 行之前（`slice(0, -1)`）；
@@ -1631,13 +1631,13 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
-            // 上一轮流出的只是检索旁白，答案要等后面的轮次 —— 但**存一份**：
-            // 轮次用尽而模型不吭声时，它是用户唯一能看到「它干了什么」的线索
+            // 检索旁白可以清空，已输出的 HTML / 图卡和讲解不能随下一轮消失。
             if (answer.trim()) lastNarration = answer.trim();
-            answer = '';
+            const current = readView(turnKey).messages.find((message) => message.key === currentKey);
+            answer = nextVisualRound(answer, !!current?.widget || !!current?.widgets?.length);
             roundsRan++;
             widgetPreview = undefined;
-            patchAi({ content: '', hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
+            patchAi({ content: answer, hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
           onToolStart: (name, argsJson) => {
             lastHint = toolHint(name, argsJson, '正在读取资料…');
@@ -2464,7 +2464,7 @@ async function continueInterrupted(
 
     const skillMetas = await loadSessionSkillMeta(view.skillIds);
     const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
-    const systemPrompt = libraryAssistantSystemPrompt(skillBlock, view.contextCourses, hasCourses);
+    const systemPrompt = libraryAssistantSystemPrompt(skillBlock, view.contextCourses, hasCourses, settings.agentInstructions);
     const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(CONTINUE_INSTRUCTION) - 4096;
     const recent = fitHistoryToBudget(history.map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) })), Math.max(2000, budget));
     const chatMessages: ChatMessage[] = [

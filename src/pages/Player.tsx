@@ -495,6 +495,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
         subs: (
           <SubtitlePanel
             videoId={id}
+            biliSource={video.biliSource}
             playerRef={playerRef}
             currentTime={currentTime}
             onSegmentsChange={onSegmentsChange}

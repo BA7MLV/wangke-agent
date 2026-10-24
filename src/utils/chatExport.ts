@@ -1,5 +1,6 @@
 // 注：本文件被 node 测试脚本直接 import（type stripping），相对导入必须带 .ts 扩展名
-import type { QuizData } from '../harness/quiz.ts';
+import { canGradeQuizQuestion, formatQuizAnswer, hasVerifiedQuizAnswer, isQuizAnswered, optionLetter, quizExplanation, quizPickAnswer, quizPickResult, type QuizData, type QuizPick, type QuizQuestion } from '../harness/quiz.ts';
+import { materialSourceHref } from '../materials/imageRefs.ts';
 
 /** 导出所需的最小消息形状（ChatPanel 的 ChatMsg / db 的 ChatRow 均可映射而来） */
 export interface ExportMessage {
@@ -8,7 +9,7 @@ export interface ExportMessage {
   /** 思考过程（推理模型），折叠进 <details> */
   reasoning?: string;
   /** 答题卡（含用户作答） */
-  quiz?: { data: QuizData; picks: number[] };
+  quiz?: { data: QuizData; picks: QuizPick[] };
 }
 
 export interface SessionExportInput {
@@ -19,7 +20,6 @@ export interface SessionExportInput {
   now?: number;
 }
 
-const LETTERS = ['A', 'B', 'C', 'D'];
 
 /** 本地时间 yyyy-MM-dd HH:mm（不引 dayjs，便于 node 直测） */
 export function fmtDateTime(ts: number): string {
@@ -29,18 +29,31 @@ export function fmtDateTime(ts: number): string {
 }
 
 /** 答题卡 → Markdown：题干/选项/答案与解析；答案与解析折叠，已作答的标出对错 */
-function quizToMarkdown(quiz: { data: QuizData; picks: number[] }): string {
+function questionPrompt(q: QuizQuestion): string {
+  return [q.stem, ...(q.images ?? []).map((href) => `![原题画面](${href})`),
+    q.options.map((o, i) => `- ${optionLetter(i)}. ${o}`).join('\n'),
+    q.matches?.map((m) => `- ${m}`).join('\n') ?? '',
+    ...(q.parts ?? []).map((part, i) => `#### 小题 ${i + 1}\n\n${questionPrompt(part)}`)].filter(Boolean).join('\n\n');
+}
+function quizToMarkdown(quiz: { data: QuizData; picks: QuizPick[] }): string {
   return quiz.data.questions
     .map((q, qi) => {
       const blocks: string[] = [];
       blocks.push(`### 第 ${qi + 1} 题`);
       blocks.push(q.stem + (q.time ? ` [${q.time}]` : ''));
-      blocks.push(q.options.map((o, oi) => `- ${LETTERS[oi]}. ${o}`).join('\n'));
+      if (q.source) blocks.push(`[${(q.source.name ?? '原题来源').replace(/[\[\]\\\r\n]/g, ' ')}${q.source.page ? ` · 第 ${q.source.page} 页` : ''}](${materialSourceHref(q.source.courseId, q.source.page)})`);
+      if (q.images?.length) blocks.push(q.images.map((image) => `![原题画面](${image})`).join('\n\n'));
+      if (q.options.length) blocks.push(q.options.map((o, oi) => `- ${optionLetter(oi)}. ${o}`).join('\n'));
+      if (q.matches) blocks.push('配对右列：\n' + q.matches.map((m) => `- ${m}`).join('\n'));
+      if (q.parts) blocks.push(q.parts.map((part, i) => `#### 小题 ${i + 1}\n\n${questionPrompt(part)}`).join('\n\n'));
 
-      const answer: string[] = [`**正确答案：${LETTERS[q.answer]}**`];
+      const gradable = canGradeQuizQuestion(q);
+      const answer: string[] = [gradable ? `**正确答案：${formatQuizAnswer(q, q.answer)}**` : hasVerifiedQuizAnswer(q) ? `**参考答案：${formatQuizAnswer(q, q.answer)}（自行核对）**` :
+        q.answerSource === 'ai' ? `**AI 参考答案：${formatQuizAnswer(q, q.answer)}（待核验，未计分）**` : '**答案待补充，未计分**'];
       const pick = quiz.picks[qi] ?? -1;
-      if (pick >= 0) answer.push(`我的作答：${LETTERS[pick]}（${pick === q.answer ? '正确' : '错误'}）`);
-      answer.push(`解析：${q.explanation}`);
+      const result = quizPickResult(q, pick);
+      if (isQuizAnswered(pick)) answer.push(`我的作答：${formatQuizAnswer(q, quizPickAnswer(pick))}（${result === undefined ? '待批改' : `${!gradable ? '自评：' : ''}${result ? '正确' : '错误'}`}）`);
+      answer.push(`解析：${quizExplanation(q)}`);
       blocks.push(`<details>\n<summary>查看答案与解析</summary>\n\n${answer.join('\n\n')}\n\n</details>`);
       return blocks.join('\n\n');
     })

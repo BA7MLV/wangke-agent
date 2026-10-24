@@ -1,5 +1,5 @@
 import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { ALL_FORMATS, BlobSource, Input as MediaInput } from 'mediabunny';
 import {
   Button,
@@ -41,6 +41,7 @@ import { useCourseChat } from '../store/courseChat';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { useRecentChats } from '../components/useRecentChats';
 import { SettingsButton } from '../components/SettingsModal';
+import AgentModule from '../components/settings/AgentModule';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
@@ -54,6 +55,7 @@ import { fetchPageSubtitles, importBiliPages, resolveBiliTarget, type BiliTarget
 import type { BiliSubtitleItem } from '../bilibili/dmview';
 import { formatTotalDuration, pageLabel, resolveSelectedPages, selectedDuration } from '../bilibili/pages';
 import { defaultSelectedLangs, type SubtitleBundle } from '../bilibili/subtitle';
+import type { BiliVideoSource } from '../bilibili/source';
 import { saveImportedSubtitles } from '../store/subtitles';
 import { getSettings } from '../store/settings';
 import { describeTransport, isBiliBridgeAvailable, isBridgePostCapable } from '../bilibili/transport';
@@ -308,6 +310,9 @@ function LibrarySkeleton({ count }: { count: number }) {
 
 export default function Library() {
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  // 兼容旧链接；新入口统一位于 /system。
+  const agentFileOpen = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const nav = useAppNav('home');
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
   const recent = useRecentChats();
@@ -339,6 +344,18 @@ export default function Library() {
   const folderHistory = useLibraryNavigation((s) => s.folderHistory);
   const setFolderHistory = useLibraryNavigation((s) => s.setFolderHistory);
   const folderKey = folderHistory.entries[folderHistory.index];
+  const inSystemFolder = agentFileOpen || folderKey === 'system';
+  const setAgentFileOpen = (open: boolean) => {
+    // 从设置或聊天深链接打开时，关闭文件后留在它所属的目录。
+    setFolderHistory((history) => history.entries[history.index] === 'system' ? history :
+      { entries: [...history.entries.slice(0, history.index + 1), 'system'], index: history.index + 1 });
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      if (open) next.set('file', '/system/AGENTS.md');
+      else next.delete('file');
+      return next;
+    });
+  };
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const marquee = useMarqueeSelection(selection, setSelection);
   const [view, setView] = useState<'icons' | 'list'>('icons');
@@ -551,15 +568,21 @@ export default function Library() {
     })).filter((group) => group.videos.length > 0 || (!hasFilters && group.folder != null)),
     [groups, searchQuery, filter, hasFilters],
   );
-  const currentFolder = groups.find((group) => group.key === folderKey && group.folder != null);
+  const currentFolder = inSystemFolder ? undefined : groups.find((group) => group.key === folderKey && group.folder != null);
+  const folderTitle = inSystemFolder ? 'system' : currentFolder?.name ?? '全部资料';
   const scopedGroups = currentFolder ? visibleGroups.filter((group) => group.key === currentFolder.key) : visibleGroups;
-  const folderTiles = groups.filter((group) => group.folder &&
+  const folderTiles = groups.filter((group) => !inSystemFolder && group.folder &&
     (group.folder.parentId ?? null) === (currentFolder?.folder?.id ?? null) &&
     (!hasFilters || scopedGroups.some((visible) => visible.key === group.key) || (filter === 'all' && group.name.toLocaleLowerCase().includes(searchQuery))))
     .sort((a, b) => sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : (b.folder?.createdAt ?? 0) - (a.folder?.createdAt ?? 0));
-  const displayedVideos = scopedGroups.flatMap((group) => currentFolder || hasFilters || group.folder == null ? group.videos : [])
+  const displayedVideos = scopedGroups.flatMap((group) => !inSystemFolder && (currentFolder || hasFilters || group.folder == null) ? group.videos : [])
     .sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0) || (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.createdAt - a.createdAt));
-  const visibleCount = displayedVideos.length + folderTiles.length;
+  // 系统文件映射设置原文，不入课程表，不参与课程统计、移动、重命名或删除。
+  const showSystemFolder = !inSystemFolder && !currentFolder && (filter === 'all' || filter === 'material') &&
+    (!searchQuery || 'system agents.md agent 默认提示词 全局指令'.includes(searchQuery));
+  const showAgentFile = inSystemFolder && (filter === 'all' || filter === 'material') &&
+    (!searchQuery || 'agents.md agent 默认提示词 全局指令'.includes(searchQuery));
+  const visibleCount = displayedVideos.length + folderTiles.length + (showAgentFile ? 1 : 0) + (showSystemFolder ? 1 : 0);
   const folderPath = folderAncestors(folders, currentFolder?.folder?.id ?? null);
   // Keep the native drag source mounted while spring-loading another directory.
   const renderedFolders = finderDragging.length
@@ -615,7 +638,9 @@ export default function Library() {
     setFilter('all');
   };
   const openItem = (key: string) => {
-    if (key.startsWith('folder:')) openFolder(key.slice(7));
+    if (key === 'system:agent-instructions') setAgentFileOpen(true);
+    else if (key === 'system:folder') openFolder('system');
+    else if (key.startsWith('folder:')) openFolder(key.slice(7));
     else if (key.startsWith('file:')) navigate(`/player/${key.slice(5)}`);
   };
 
@@ -671,7 +696,7 @@ export default function Library() {
     });
   };
 
-  const importOne = async (file: File, key: string, subtitles?: SubtitleBundle) => {
+  const importOne = async (file: File, key: string, subtitles?: SubtitleBundle, biliSource?: BiliVideoSource) => {
     // 大视频拷入 OPFS 要数分钟，持 Wake Lock 防熄屏后 tab 被挂起中断导入
     await acquireWakeLock();
     try {
@@ -694,6 +719,7 @@ export default function Library() {
         name: file.name.replace(/\.[^.]+$/, ''),
         size: file.size,
         mimeType: file.type || 'video/mp4',
+        ...(biliSource ? { biliSource } : {}),
         duration,
         createdAt: Date.now(),
         status: 'new',
@@ -721,10 +747,10 @@ export default function Library() {
     }
   };
 
-  const enqueue = (file: File, subtitles?: SubtitleBundle) => {
+  const enqueue = (file: File, subtitles?: SubtitleBundle, biliSource?: BiliVideoSource) => {
     const key = uuid();
     setTasks((prev) => [...prev, { key, name: file.name, status: 'queued', percent: 0 }]);
-    chainRef.current = chainRef.current.then(() => importOne(file, key, subtitles));
+    chainRef.current = chainRef.current.then(() => importOne(file, key, subtitles, biliSource));
   };
 
   /** 清空 B 站导入弹窗的草稿（关弹窗 / 导入成功后都调） */
@@ -859,7 +885,7 @@ export default function Library() {
         biliTarget,
         { proxy: bilibiliProxy, cookie: bilibiliCookie, langs: biliLangs, pages: biliPagesSel },
         // 每下完一个 P 就入队：下一个 P 的下载与上一个 P 的 OPFS 写入并行
-        (item) => void enqueue(item.file, item.subtitles.tracks.length > 0 ? item.subtitles : undefined),
+        (item) => void enqueue(item.file, item.subtitles.tracks.length > 0 ? item.subtitles : undefined, item.source),
         (ratio, label) => {
           setBiliProgress(Math.round(ratio * 100));
           setBiliLabel(label);
@@ -901,6 +927,7 @@ export default function Library() {
   const handleNativePick = (e: ChangeEvent<HTMLInputElement>) => {
     const files = Array.from(e.target.files ?? []);
     e.target.value = '';
+    if (inSystemFolder) { toast.warning('system 仅存放应用系统文件，请返回资料目录导入。'); return; }
     if (files.length === 0) {
       toast.warning('系统没有返回任何文件，请改用 Safari 标签页打开后再试');
       return;
@@ -917,6 +944,10 @@ export default function Library() {
   const handleDrop = (e: React.DragEvent) => {
     e.preventDefault();
     setDropActive(false);
+    if (inSystemFolder || (e.target as Element).closest('[data-system-folder]')) {
+      toast.warning('system 仅存放应用系统文件，请返回资料目录导入。');
+      return;
+    }
     const files = Array.from(e.dataTransfer?.files ?? []);
     if (files.length === 0) return;
     setImportOpen(false);
@@ -1172,7 +1203,8 @@ export default function Library() {
   };
 
   const startFinderDrag = (event: { currentTarget: HTMLElement; dataTransfer?: DataTransfer }, key: string) => {
-    const keys = finderPressSelection.current.includes(key) ? finderPressSelection.current : selection.has(key) ? [...selection] : [key];
+    const keys = (finderPressSelection.current.includes(key) ? finderPressSelection.current : selection.has(key) ? [...selection] : [key])
+      .filter((item) => !item.startsWith('system:'));
     finderDragKeys.current = keys;
     setFinderDragging(keys);
     dragOrigin.current = folderKey;
@@ -1258,6 +1290,12 @@ export default function Library() {
       if (!event.dataTransfer.types.includes('application/x-library-items')) return;
       event.preventDefault();
       event.stopPropagation();
+      if (inSystemFolder || (event.target as Element).closest('[data-system-folder]')) {
+        event.dataTransfer.dropEffect = 'none';
+        clearSpring();
+        setDropFolder(null);
+        return;
+      }
       event.dataTransfer.dropEffect = updateFinderDrop(target, spring) ? 'move' : 'none';
     },
     onDragLeave: (event: React.DragEvent) => {
@@ -1270,6 +1308,7 @@ export default function Library() {
       if (!event.dataTransfer.types.includes('application/x-library-items')) return;
       event.preventDefault();
       event.stopPropagation();
+      if (inSystemFolder || (event.target as Element).closest('[data-system-folder]')) return;
       setDropFolder(null);
       clearSpring();
       commitFinderDrop(target);
@@ -1305,6 +1344,7 @@ export default function Library() {
     finderPressSelection.current = [...selection];
     if (event.button !== 0 || event.pointerType === 'touch') return;
     const item = (event.target as Element).closest<HTMLElement>('.finder-item');
+    if (item?.dataset.systemFile || item?.dataset.systemFolder) return;
     const content = item?.querySelector<HTMLElement>('.finder-item__content');
     if (!item || !content) return;
     const key = item.dataset.groupKey ? `folder:${item.dataset.groupKey}` : `file:${item.dataset.videoId}`;
@@ -1316,6 +1356,7 @@ export default function Library() {
     let active = false;
     const hit = (x: number, y: number) => {
       const element = document.elementFromPoint(x, y);
+      if (element?.closest('[data-system-folder]')) return null;
       const path = element?.closest<HTMLElement>('.finder-path-target');
       if (path) return { target: path.dataset.folderId ? Number(path.dataset.folderId) : null, spring: true };
       const canvas = element?.closest('.finder-canvas');
@@ -1683,6 +1724,12 @@ export default function Library() {
 
       <section className="finder-window" aria-label="资料访达" data-drag-active={finderDragging.length > 0 || undefined}
         onDragOver={(event) => {
+          if (inSystemFolder || (event.target as Element).closest('[data-system-folder]')) {
+            event.preventDefault();
+            event.dataTransfer.dropEffect = 'none';
+            setDropActive(false);
+            return;
+          }
           if (event.dataTransfer.types.includes('Files')) { event.preventDefault(); setDropActive(true); }
           else folderDropProps(currentFolder?.folder?.id ?? null).onDragOver(event);
         }}
@@ -1698,7 +1745,7 @@ export default function Library() {
             <Button isIconOnly variant="ghost" aria-label="后退" isDisabled={folderHistory.index === 0} onPress={() => travelFolder(-1)}><Sym name="chevron_left" /></Button>
             <Button isIconOnly variant="ghost" aria-label="前进" isDisabled={folderHistory.index === folderHistory.entries.length - 1} onPress={() => travelFolder(1)}><Sym name="chevron_right" /></Button>
           </div>
-          <h2 className="finder-title">{currentFolder?.name ?? '全部资料'}</h2>
+          <h2 className="finder-title">{folderTitle}</h2>
           <div className="finder-tools">
             <ToggleButtonGroup className="finder-view-switch" selectionMode="single" disallowEmptySelection selectedKeys={[view]} onSelectionChange={(keys) => { const key = [...keys][0]; if (key === 'icons' || key === 'list') setView(key); }} aria-label="显示方式">
               <ToggleButton id="icons" aria-label="图标视图"><Sym name="grid_view" /></ToggleButton>
@@ -1718,8 +1765,8 @@ export default function Library() {
               </Dropdown.Menu></Dropdown.Popover>
             </Dropdown>
             <span className="finder-tool-divider" />
-            <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" onPress={() => openFolderModal('create')}><Sym name="create_new_folder" /></Button>
-            <Button isIconOnly variant="ghost" aria-label="导入资料" onPress={() => setImportOpen(true)}><Sym name="upload" /></Button>
+            <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" isDisabled={inSystemFolder} onPress={() => openFolderModal('create')}><Sym name="create_new_folder" /></Button>
+            <Button isIconOnly variant="ghost" aria-label="导入资料" isDisabled={inSystemFolder} onPress={() => setImportOpen(true)}><Sym name="upload" /></Button>
             <Dropdown isOpen={actionMenuOpen} onOpenChange={(open) => { setActionMenuOpen(open); if (!open) setContextPoint(null); }}>
               <Dropdown.Trigger className="finder-tool" aria-label="所选项目的操作" isDisabled={!selectedFolder && !selectedVideo}><Sym name="more_horiz" /></Dropdown.Trigger>
               <Dropdown.Popover {...(contextPoint ? { triggerRef: contextAnchor, placement: 'bottom start' as const } : {})}><Dropdown.Menu aria-label="项目操作" onAction={(key) => {
@@ -1766,11 +1813,11 @@ export default function Library() {
               </Dropdown.Menu></Dropdown.Popover>
             </Dropdown>
           </div>
-          <SearchField className="finder-search" aria-label={currentFolder ? '搜索此文件夹' : '搜索全部资料'} value={searchText} onChange={(value) => { setSearchText(value); setSelection(new Set()); }}>
+          <SearchField className="finder-search" aria-label={currentFolder || inSystemFolder ? '搜索此文件夹' : '搜索全部资料'} value={searchText} onChange={(value) => { setSearchText(value); setSelection(new Set()); }}>
             <SearchField.Group><SearchField.SearchIcon /><SearchField.Input ref={searchInputRef} data-testid="library-search" placeholder="搜索" /><SearchField.ClearButton /></SearchField.Group>
           </SearchField>
         </header>
-        {hasFilters && <div className="finder-search-scope"><span>搜索范围：{currentFolder?.name ?? '全部资料'}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
+        {hasFilters && <div className="finder-search-scope"><span>搜索范围：{folderTitle}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
         ref={canvasRef}
         data-folder-id={currentFolder?.folder?.id ?? ''}
@@ -1826,7 +1873,7 @@ export default function Library() {
                 </Button>
               }
             />
-          ) : videos.length === 0 && folders.length === 0 ? (
+          ) : videos.length === 0 && folders.length === 0 && !showAgentFile && !showSystemFolder && !hasFilters ? (
             // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
             // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
             <EmptyState testId="empty-state" icon={<Sym name="folder_open" />} title="还没有资料" action={<Button variant="secondary" onPress={() => setImportOpen(true)}>导入文件</Button>} />
@@ -1841,7 +1888,25 @@ export default function Library() {
           ) : (
             <>
               {view === 'list' && <div className="finder-list-heading" aria-hidden="true"><span>名称</span><span>项目 / 大小</span><span>添加日期</span><span>种类</span></div>}
-              <ListBox aria-label={currentFolder?.name ?? '全部资料'} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="multiple" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
+              <ListBox aria-label={folderTitle} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="multiple" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
+                {showSystemFolder && <ListBox.Item id="system:folder" textValue="system" className="finder-item finder-item--folder" data-testid="system-folder" data-system-folder="true" data-selection-key="system:folder">
+                  <span className="finder-item__content">
+                    <span className="finder-item__icon"><FolderIcon color="gray" /></span>
+                    <span className="finder-item__name" title="/system">system</span>
+                    <span className="finder-item__meta">1 个项目</span>
+                    <span className="finder-item__date">应用系统文件</span>
+                    <span className="finder-item__kind">系统文件夹</span>
+                  </span>
+                </ListBox.Item>}
+                {showAgentFile && <ListBox.Item id="system:agent-instructions" textValue="AGENTS.md" className="finder-item" data-testid="agent-instructions-file" data-system-file="AGENTS.md" data-selection-key="system:agent-instructions">
+                  <span className="finder-item__content">
+                    <span className="finder-item__icon"><Sym name="description" className="text-6xl text-accent" /></span>
+                    <span className="finder-item__name" title="AGENTS.md">AGENTS.md</span>
+                    <span className="finder-item__meta">全局 Agent 指令</span>
+                    <span className="finder-item__date">与设置实时同步</span>
+                    <span className="finder-item__kind">系统 Markdown</span>
+                  </span>
+                </ListBox.Item>}
                 {renderedFolders.map(renderGroupHeader)}
                 {renderedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id} hidden={!displayedVideos.some((row) => row.id === video.id)} data-dragging={finderDragging.includes(`file:${video.id}`) || undefined}>
                   <span className="finder-item__content"
@@ -1867,12 +1932,18 @@ export default function Library() {
       </div>
         <footer className="finder-footer">
           {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
-          <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+           <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{inSystemFolder && <><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current="page" onPress={() => openFolder('system')}>system</Button></>}{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
           {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}
           <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Sym name="info" /></Button>}</div>
         </footer>
         {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
       </section>
+      <Modal.Root isOpen={agentFileOpen} onOpenChange={setAgentFileOpen}>
+        <Modal.Backdrop><Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}><Modal.Dialog data-testid="agent-instructions-file-dialog">
+          <Modal.Header><Modal.Heading>全局 Agent 指令文件</Modal.Heading><Modal.CloseTrigger aria-label="关闭指令文件" data-testid="agent-file-close" /></Modal.Header>
+          <Modal.Body><AgentModule fileView /></Modal.Body>
+        </Modal.Dialog></Modal.Container></Modal.Backdrop>
+      </Modal.Root>
       <Modal.Root isOpen={!!details} onOpenChange={(open) => { if (!open) setDetails(null); }}>
         <Modal.Backdrop><Modal.Container placement="center" size="sm" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
           <Modal.Header><Modal.Heading>资料简介</Modal.Heading><Modal.CloseTrigger /></Modal.Header>

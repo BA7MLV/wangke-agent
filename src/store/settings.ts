@@ -7,6 +7,7 @@ import { defaultShortcutSettings, normalizeShortcutSettings, type ShortcutSettin
 import { modelsForSlot, savedModelsOf } from './modelLibrary';
 import { providerCatalogId } from './providerPresets';
 import { normalizeUiLanguage, type UiLanguage } from '../i18n/locale';
+import { normalizeAgentInstructions } from '../harness/agentInstructions';
 
 export type ModelSlot = 'chat' | 'vision' | 'asr' | 'decision';
 export type ApiProtocol = 'openai-chat' | 'openai-responses' | 'anthropic-messages';
@@ -162,6 +163,8 @@ export interface Settings {
   captionScale: number;
   /** 问答 agent 检索轮次上限（达到上限后强制收尾作答；轮次多=材料全但更慢更费 token） */
   agentRounds: number;
+  /** 类似 AGENTS.md 的全局用户指令，补充所有问答 Agent 的系统提示词。 */
+  agentInstructions: string;
   /** 哔哩哔哩导入代理地址（油猴桥不可用时的回退，Cloudflare Worker 常被拒 IP） */
   bilibiliProxy: string;
   /** 实时链路中继地址（Cloudflare Worker），如 wss://wangke-live-relay.xxx.workers.dev */
@@ -277,6 +280,7 @@ function initialSettings(): Settings {
     thinkingEffort: 'high',
     captionScale: 1,
     agentRounds: 6,
+    agentInstructions: '',
     bilibiliProxy: '',
     liveRelay: '',
     bilibiliCookie: '',
@@ -357,6 +361,7 @@ export const useSettings = create<SettingsStore>()(
        * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
        */
       update: (patch) => {
+        if (Object.hasOwn(patch, 'agentInstructions')) patch = { ...patch, agentInstructions: normalizeAgentInstructions(patch.agentInstructions) };
         if (Object.hasOwn(patch, 'uiLanguage')) patch = { ...patch, uiLanguage: normalizeUiLanguage(patch.uiLanguage) };
         if (patch.favorites) patch = { ...patch, favorites: { ...patch.favorites, decision: patch.favorites.decision ?? get().favorites.decision } };
         if (patch.jev) patch = { ...patch, jev: normalizeJevSettings(patch.jev) };
@@ -392,6 +397,7 @@ export const useSettings = create<SettingsStore>()(
         ...migrateDecisionSettings({ ...current, ...(persisted as Partial<Settings>) }, persisted as Record<string, unknown> | undefined),
         shortcuts: normalizeShortcutSettings((persisted as Partial<Settings> | undefined)?.shortcuts),
         uiLanguage: normalizeUiLanguage((persisted as Partial<Settings> | undefined)?.uiLanguage, persisted ? 'zh-CN' : 'auto'),
+        agentInstructions: normalizeAgentInstructions((persisted as Partial<Settings> | undefined)?.agentInstructions),
       }),
       /**
        * v2 → v3：思考档位从 3 档（low / high / max）扩成 6 档
@@ -443,6 +449,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
   if (Array.isArray(persisted.providers)) {
     const current = { ...initialSettings(), ...(persisted as unknown as Settings) };
     current.shortcuts = normalizeShortcutSettings(persisted.shortcuts);
+    current.agentInstructions = normalizeAgentInstructions(persisted.agentInstructions);
     // v2 → v3：档位从 3 档扩成 6 档，`max` 改名 `xhigh`。hydrate **不经过 store 的
     // `update`**，所以这条路径得自己收敛一次，否则老用户的 `'max'` 会被原样读进内存。
     current.thinkingEffort = normalizeThinkingEffort(current.thinkingEffort) ?? initialSettings().thinkingEffort;
@@ -485,6 +492,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     thinkingEffort: normalizeThinkingEffort(s.thinkingEffort) ?? base.thinkingEffort,
     captionScale: typeof s.captionScale === 'number' ? s.captionScale : base.captionScale,
     agentRounds: typeof s.agentRounds === 'number' ? s.agentRounds : base.agentRounds,
+    agentInstructions: normalizeAgentInstructions(s.agentInstructions),
     bilibiliProxy: s.bilibiliProxy ?? base.bilibiliProxy,
     liveRelay: s.liveRelay ?? base.liveRelay,
     bilibiliCookie: s.bilibiliCookie ?? base.bilibiliCookie,
@@ -544,6 +552,7 @@ export function getSettings(): Settings {
     thinkingEffort: s.thinkingEffort,
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
+    agentInstructions: s.agentInstructions,
     bilibiliProxy: s.bilibiliProxy,
     liveRelay: s.liveRelay,
     bilibiliCookie: s.bilibiliCookie,

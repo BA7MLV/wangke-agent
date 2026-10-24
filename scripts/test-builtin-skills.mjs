@@ -36,8 +36,8 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 10 个内置 skill', () => {
-  assert.equal(skills.length, 10);
+test('恰好 11 个内置 skill', () => {
+  assert.equal(skills.length, 11);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -163,6 +163,16 @@ test('「课程讲义」复用资源工具，直接输出 Markdown，未读范�
   }
   assert.match(s.description, /对话/);
   assert.match(s.body, /不调用旧讲义流水线/);
+});
+
+test('「原题题库」复用现有工具，保留原图并区分可批改答案与参考答案', () => {
+  const s = skills.find((x) => x.name === '原题题库');
+  assert.ok(s);
+  for (const kw of ['read', 'grep', 'edit', 'present_quiz', '唯一真相源', '/courses/current/questions.md',
+    'original', 'verified', 'ai', 'missing', '不判对错', '不计分', '不进错题本', 'crop="questions"', '不能用生成的 SVG/HTML 重画原图',
+    '尚未覆盖', '不创建数据库', '待整理题目', 'HTML']) {
+    assert.ok(s.body.includes(kw), `原题题库缺约定：${kw}`);
+  }
 });
 
 test('references 非空且路径规范（references/ 前缀）', () => {

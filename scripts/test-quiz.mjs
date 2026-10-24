@@ -5,7 +5,9 @@
  * Node ≥22.18 原生运行 TS（类型擦除），无需额外依赖。
  */
 import assert from 'node:assert/strict';
-import { validateQuiz } from '../src/harness/quiz.ts';
+import { canGradeQuizQuestion, canUpdateQuizPick, gradeQuizAnswer, isQuizAnswered, parseQuestionBank, quizPickResult, validateQuiz } from '../src/harness/quiz.ts';
+import { detectQuestionRegions } from '../src/materials/pdfQuestionRegions.ts';
+import { parseMaterialImageHref } from '../src/materials/imageRefs.ts';
 import { linkifyTimestamps } from '../src/utils/linkify.ts';
 
 let passed = 0;
@@ -68,10 +70,75 @@ test('题干为空失败', () => {
   assert.equal(validateQuiz({ questions: [noStem] }).ok, false);
 });
 
-test('选项必须恰好 4 个', () => {
-  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: ['A', 'B', 'C'] }] }).ok, false);
-  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: ['A', 'B', 'C', 'D', 'E'] }] }).ok, false);
+test('保留原题选项数，支持 2~26 项，不凑四个', () => {
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: ['A', 'B', 'C'] }] }).ok, true);
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: ['A', 'B', 'C', 'D', 'E'] }] }).ok, true);
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: ['A'] }] }).ok, false);
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: Array.from({ length: 27 }, (_, i) => String(i)) }] }).ok, false);
   assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, options: 'ABCD' }] }).ok, false);
+});
+
+test('多选、判断、填空、排序、配对共用宿主校验与判分', () => {
+  const base = { stem: '原题', explanation: '原解析', answerSource: 'original' };
+  for (const [q, correct, wrong] of [
+    [{ ...base, type: 'multiple', options: ['甲', '乙', '丙'], answer: [0, 2] }, [2, 0], [0]],
+    [{ ...base, type: 'boolean', answer: false }, false, true],
+    [{ ...base, type: 'fill', answer: ['北京', '2'], acceptedAnswers: [['北京', '北京市'], ['2']] }, [' 北京市 ', '2'], ['北京', '2.0']],
+    [{ ...base, type: 'ordering', options: ['甲', '乙', '丙'], answer: [2, 0, 1] }, [2, 0, 1], [0, 1, 2]],
+    [{ ...base, type: 'matching', options: ['左一', '左二'], matches: ['右一', '右二', '右三'], answer: [1, 2] }, [1, 2], [2, 1]],
+  ]) {
+    const v = validateQuiz({ questions: [q] });
+    assert.equal(v.ok, true, JSON.stringify(v));
+    assert.equal(gradeQuizAnswer(v.quiz.questions[0], correct), true);
+    assert.equal(gradeQuizAnswer(v.quiz.questions[0], wrong), false);
+    assert.equal(gradeQuizAnswer({ ...v.quiz.questions[0], answerSource: 'ai' }, correct), undefined);
+  }
+  assert.equal(validateQuiz({ questions: [{ ...base, type: 'multiple', options: ['甲', '乙'], answer: [0, 0] }] }).ok, false);
+  assert.equal(validateQuiz({ questions: [{ ...base, type: 'fill', answer: ['甲', '乙'], acceptedAnswers: [['甲']] }] }).ok, false);
+  assert.equal(validateQuiz({ questions: [{ ...base, type: 'fill', blanks: 2, answer: -1, answerSource: 'missing' }] }).ok, true);
+});
+
+test('主观题只能明确自评；不冒充自动评分、不覆盖已提交作答', () => {
+  const q = validateQuiz({ questions: [{ type: 'freeform', typeLabel: '证明题', stem: '证明', answer: '参考证明', explanation: '原解析', answerSource: 'verified' }] }).quiz.questions[0];
+  assert.equal(canGradeQuizQuestion(q), false);
+  assert.equal(gradeQuizAnswer(q, '参考证明'), undefined);
+  assert.equal(isQuizAnswered({ answer: '学生证明' }), true);
+  assert.equal(canUpdateQuizPick(q, -1, { answer: '学生证明', selfGrade: false }), false, 'no silent self-grading at submission');
+  assert.equal(canUpdateQuizPick(q, { answer: '学生证明' }, { answer: '另一份答案', selfGrade: false }), false);
+  assert.equal(canUpdateQuizPick(q, { answer: '学生证明' }, { answer: '学生证明', selfGrade: false }), true);
+  assert.equal(quizPickResult(q, { answer: '学生证明', selfGrade: false }), false);
+  assert.equal(quizPickResult({ ...q, answerSource: 'ai' }, { answer: '学生证明', selfGrade: false }), undefined);
+});
+
+test('组合题保留小题与答案来源，不允许两份冲突答案或缺失小题来源', () => {
+  const part = { stem: '小题', type: 'boolean', answer: true, explanation: '说明', source: { courseId: 'exam', page: 1 }, answerSource: 'original' };
+  const q = { ...part, stem: '共用材料', type: 'composite', parts: [part, { ...part, answer: false }], answer: [true, false] };
+  const v = validateQuiz({ questions: [q] });
+  assert.equal(v.ok, true);
+  assert.equal(gradeQuizAnswer(v.quiz.questions[0], [true, false]), true);
+  assert.equal(gradeQuizAnswer(v.quiz.questions[0], [false, false]), false);
+  assert.equal(validateQuiz({ questions: [{ ...q, answer: [true, true] }] }).ok, false);
+  assert.throws(() => parseQuestionBank('```quiz\n' + JSON.stringify({ questions: [{ ...q, parts: [{ ...part, source: undefined }, q.parts[1]] }] }) + '\n```'), /source/);
+});
+
+test('题型 HTML 复用现有沙箱校验；区域图引用持久且不能越界', () => {
+  const q = { ...GOOD_Q, presentation: { html: '<button onclick="__wbw.setAnswerDraft(1)">选乙</button>' } };
+  assert.equal(validateQuiz({ questions: [q] }).ok, true);
+  assert.equal(validateQuiz({ questions: [{ ...q, presentation: { html: '<script src="https://evil.test/a.js"></script>' } }] }).ok, false);
+  assert.deepEqual(parseMaterialImageHref('#source-image/exam/page-2-region-100-200-500-300').region, { x: 100, y: 200, width: 500, height: 300 });
+  for (const key of ['page-2-region-999-0-2-100', 'page-2-region-0-0-0-100', 'page-0-region-0-0-10-10', 'page-2-region-0-900-100-101']) assert.equal(parseMaterialImageHref('#source-image/exam/' + key), undefined);
+});
+
+test('自动裁题按题号坐标分割单/双栏，扫描件与不确定布局回退', () => {
+  const box = (text, x, y, width = 150) => ({ text, x, y, width, height: 12 });
+  const single = detectQuestionRegions([box('1. 第一题', 40, 60), box('A. 图像选项', 40, 140), box('2. 第二题', 40, 400)], 600, 800);
+  assert.equal(single.length, 2);
+  assert.ok(single[0].region.y + single[0].region.height <= single[1].region.y + 1);
+  const double = detectQuestionRegions([box('1. 左题', 40, 60), box('2. 右题', 340, 60)], 600, 800);
+  assert.equal(double.length, 2);
+  assert.ok(double[0].region.x + double[0].region.width <= double[1].region.x);
+  assert.deepEqual(detectQuestionRegions([], 600, 800), []);
+  assert.deepEqual(detectQuestionRegions([box('1.2 小节', 40, 60), box('(1) 子题', 40, 100)], 600, 800), []);
 });
 
 test('选项不能为空或重复', () => {
@@ -105,6 +172,35 @@ test('多余字段被忽略', () => {
   const r = validateQuiz({ questions: [{ ...GOOD_Q, foo: 1 }], bar: 2 });
   assert.equal(r.ok, true);
   assert.equal('foo' in r.quiz.questions[0], false);
+});
+
+test('原题答案来源、原图和定位保留；未知答案与 AI 参考不判分', () => {
+  const source = { courseId: 'pdf-1', name: '试卷.pdf', page: 3 };
+  const images = ['#source-image/pdf-1/page-3'];
+  for (const answerSource of ['original', 'verified', 'ai', 'missing']) {
+    const q = { ...GOOD_Q, source, images, answerSource, answer: answerSource === 'missing' ? -1 : 2 };
+    const result = validateQuiz({ questions: [q] });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.quiz.questions[0].images, images);
+    assert.deepEqual(result.quiz.questions[0].source, source);
+    assert.equal(canGradeQuizQuestion(result.quiz.questions[0]), ['original', 'verified'].includes(answerSource));
+  }
+  for (const images of [['https://example.com/a.png'], ['blob:temporary'], ['data:image/png;base64,YQ=='], ['#source-image/other/page-3']]) {
+    assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, source, images }] }).ok, false);
+  }
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, answerSource: 'missing' }] }).ok, false);
+  assert.equal(validateQuiz({ questions: [{ ...GOOD_Q, answerSource: 'guess' }] }).ok, false);
+});
+
+test('普通 Markdown 多批题库可超过 5 题；损坏或缺失来源时整体拒绝', () => {
+  const q = { ...GOOD_Q, source: { courseId: 'pdf-1', page: 3 }, answerSource: 'original' };
+  const block = (questions) => '```quiz\n' + JSON.stringify({ questions }) + '\n```\n';
+  const bank = '# 原题\n\n我的笔记\n\n' + block(Array(4).fill(q)) + '\n' + block(Array(3).fill(q));
+  assert.equal(parseQuestionBank(bank).questions.length, 7);
+  assert.equal(parseQuestionBank(bank.replaceAll('\n', '\r\n')).questions.length, 7);
+  for (const text of ['# 无题', bank + '\n```quiz\n{', block([{ ...q, source: undefined }]), block([{ ...q, answerSource: undefined }]), bank + '\n```quiz\n{invalid}\n```']) {
+    assert.throws(() => parseQuestionBank(text));
+  }
 });
 
 // ── 解析支持 Markdown / mermaid 围栏（2026-09-17） ───────────────────────────
@@ -248,8 +344,8 @@ export const render = (picks, seekable = true, withSeek = false) => renderToStat
     const html = render([-1, -1]);
     assert.equal(count(html, OPTION_RE), 8, '选项数应为 8');
     assert.equal(count(html, SLOT_RE), 8, '槽位数应与选项数相等');
-    assert.equal(html.includes('mdui-sym-check'), false, '未作答不该出现判定图标');
-    assert.equal(html.includes('mdui-sym-close'), false, '未作答不该出现判定图标');
+    assert.equal(html.includes('quiz-option__mark--ok'), false, '未作答不该出现判定图标');
+    assert.equal(html.includes('quiz-option__mark--bad'), false, '未作答不该出现判定图标');
   });
 
   await testAsync('作答后槽位数不变，只多出图标', () => {
@@ -257,8 +353,8 @@ export const render = (picks, seekable = true, withSeek = false) => renderToStat
     const html = render([3, -1]);
     assert.equal(count(html, OPTION_RE), 8);
     assert.equal(count(html, SLOT_RE), 8, '作答不得改变槽位数');
-    assert.equal(html.includes('mdui-sym-check'), true, '应出现「答对」图标');
-    assert.equal(html.includes('mdui-sym-close'), true, '应出现「错选」图标');
+    assert.equal(html.includes('quiz-option__mark--ok'), true, '应出现「答对」图标');
+    assert.equal(html.includes('quiz-option__mark--bad'), true, '应出现「错选」图标');
     assert.equal(html.includes('正确答案：B'), true, '应提示正确答案');
   });
 

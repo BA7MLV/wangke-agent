@@ -43,7 +43,7 @@ export function useMarqueeSelection(selection: Set<string>, onChange: (keys: Set
         const itemLeft = itemRect.left - rect.left + canvas.scrollLeft;
         const itemTop = itemRect.top - rect.top + canvas.scrollTop;
         if (itemLeft < right && itemLeft + itemRect.width > left && itemTop < bottom && itemTop + itemRect.height > top) {
-          const key = item.dataset.videoId ? `file:${item.dataset.videoId}` : `folder:${item.dataset.groupKey}`;
+          const key = item.dataset.selectionKey ?? (item.dataset.videoId ? `file:${item.dataset.videoId}` : `folder:${item.dataset.groupKey}`);
           next.add(key);
         }
       }

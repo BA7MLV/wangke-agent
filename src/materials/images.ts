@@ -1,6 +1,6 @@
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
-import { imageSourceKind, materialImageHref, materialSourceHref } from './imageRefs';
+import { imageSourceKind, materialImageHref, materialSourceHref, parseMaterialImageHref, pdfRegionKey, validPdfRegion, type PdfRegion } from './imageRefs';
 
 export interface MaterialImage {
   key: string;
@@ -126,6 +126,53 @@ export async function readMaterialImageCatalog(course: VideoRow, offset = 0, lim
 
 export interface LoadedMaterialImage { blob?: Blob; remoteUrl?: string; image: MaterialImage; courseName: string }
 
+/** Return deterministic region references, not new blobs/rows. Reloading crops the original PDF again. */
+export async function readPdfQuestionCrops(course: VideoRow, range: { start: number; end: number } | undefined, rawRegions?: unknown): Promise<string> {
+  if ((course.materialFormat ?? 'pdf') !== 'pdf') return '自动裁题只用于 PDF；其他材料请使用原图目录。';
+  if (!range || range.end - range.start > 2) return '裁题请同时提供 start/end，一次 1~3 页。';
+  let regions: (PdfRegion & { page: number })[] | undefined;
+  if (rawRegions !== undefined) {
+    if (!Array.isArray(rawRegions) || !rawRegions.length || rawRegions.length > 10 || rawRegions.some((r) => !Number.isSafeInteger(r?.page) || r.page < range.start || r.page > range.end || !validPdfRegion(r)))
+      return 'regions 需要 1~10 个 {page,x,y,width,height}：坐标为旋转后页面左上角起的千分比整数，宽高大于 0，不能越界，page 位于 start/end 内。';
+    regions = rawRegions;
+  }
+  const file = await getMaterialFile(course.id);
+  if (!file) return '材料原文件不在此设备上，无法裁题。';
+  const [{ openPdf }, { detectQuestionRegions }] = await Promise.all([import('./pdf'), import('./pdfQuestionRegions')]);
+  const url = URL.createObjectURL(file);
+  try {
+    const doc = await openPdf(url);
+    try {
+      if (range.end > doc.numPages) return '裁题页码超过 PDF 实际页数。';
+      const lines = ['PDF 原页裁图（非 AI 重绘）。自动区域按题号和文字坐标估计，尚未视觉核验；共用材料、跨页题须同时保留相关页面，不能声称裁图完整。目录不代表已看过像素。'];
+      for (let p = range.start; p <= range.end; p++) {
+        const page = await doc.getPage(p);
+        try {
+          let found: { region: PdfRegion; label: string }[];
+          if (regions) found = regions.filter((r) => r.page === p).map((r) => ({ region: r, label: '指定区域' }));
+          else {
+            const viewport = page.getViewport({ scale: 1 });
+            const content = await page.getTextContent();
+            const [a, b, c, d, e, f] = viewport.transform;
+            found = detectQuestionRegions(content.items.flatMap((item) => {
+              if (!('str' in item)) return [];
+              const [ta, tb, , , tx, ty] = item.transform;
+              const h = Math.max(1, Math.hypot(a * ta + c * tb, b * ta + d * tb));
+              const x = a * tx + c * ty + e, y = b * tx + d * ty + f;
+              // Rotated/vertical text needs visual region selection, not a guessed horizontal box.
+              if (Math.abs(b * ta + d * tb) > Math.abs(a * ta + c * tb) * .2) return [];
+              return [{ text: item.str, x, y: y - h, width: item.width, height: h }];
+            }), viewport.width, viewport.height);
+          }
+          if (!found.length) lines.push(`第 ${p} 页未能可靠定位题号（可能是扫描件、复杂分栏或无题号）。使用页面图：![第 ${p} 页原文](${materialImageHref(course.id, `page-${p}`)})；可根据实际画面用 regions 修正，不能猜坐标。`);
+          for (const crop of found) lines.push(`第 ${p} 页 · ${crop.label.replace(/[\[\]\\\r\n]/g, ' ')}\n区域：${JSON.stringify(crop.region)}\n![原题裁图](${materialImageHref(course.id, pdfRegionKey(p, crop.region))})\n[打开原页](${materialSourceHref(course.id, p)})`);
+        } finally { page.cleanup(); }
+      }
+      return lines.join('\n\n');
+    } finally { await doc.destroy(); }
+  } finally { URL.revokeObjectURL(url); }
+}
+
 export async function loadMaterialImage(courseId: string, key: string): Promise<LoadedMaterialImage> {
   const course = await db.videos.get(courseId);
   if (!course || course.kind !== 'material') throw new Error('来源材料已删除或不存在');
@@ -133,8 +180,9 @@ export async function loadMaterialImage(courseId: string, key: string): Promise<
   if (!file) throw new Error('此设备没有材料原文件，请重新导入后重试');
   // PDF loads just the requested page, without listing or rendering the whole document.
   if ((course.materialFormat ?? 'pdf') === 'pdf') {
-    if (!/^page-[1-9]\d*$/.test(key)) throw new Error('无效的 PDF 图片引用');
-    const unit = Number(key.slice(5));
+    const ref = parseMaterialImageHref(materialImageHref(courseId, key));
+    if (!ref || !key.startsWith('page-')) throw new Error('无效的 PDF 图片引用');
+    const unit = Number(key.split('-')[1]);
     const { openPdf } = await import('./pdf');
     const url = URL.createObjectURL(file);
     try {
@@ -151,8 +199,20 @@ export async function loadMaterialImage(courseId: string, key: string): Promise<
           const ctx = canvas.getContext('2d');
           if (!ctx) throw new Error('无法创建图片画布');
           await page.render({ canvasContext: ctx, viewport }).promise;
-          const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob((b) => b ? resolve(b) : reject(new Error('页面图片生成失败')), 'image/png'));
-          return { blob, image: { key, label: `第 ${unit} 页原文画面`, unit }, courseName: course.name };
+          const region = ref.region;
+          const output = region ? document.createElement('canvas') : canvas;
+          try {
+            if (region) {
+              const x = Math.floor(region.x / 1000 * canvas.width), y = Math.floor(region.y / 1000 * canvas.height);
+              output.width = Math.max(1, Math.ceil((region.x + region.width) / 1000 * canvas.width) - x);
+              output.height = Math.max(1, Math.ceil((region.y + region.height) / 1000 * canvas.height) - y);
+              const cropped = output.getContext('2d');
+              if (!cropped) throw new Error('无法创建裁图画布');
+              cropped.drawImage(canvas, x, y, output.width, output.height, 0, 0, output.width, output.height);
+            }
+            const blob = await new Promise<Blob>((resolve, reject) => output.toBlob((b) => b ? resolve(b) : reject(new Error('页面图片生成失败')), 'image/png'));
+            return { blob, image: { key, label: `第 ${unit} 页${region ? '原题裁图' : '原文画面'}`, unit }, courseName: course.name };
+          } finally { if (output !== canvas) output.width = output.height = 0; }
         } finally { canvas.width = canvas.height = 0; }
       } finally { await doc.destroy(); }
     } finally { URL.revokeObjectURL(url); }

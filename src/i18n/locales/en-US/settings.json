@@ -1,6 +1,7 @@
 {
   "modules": {
     "models": "Models",
+    "agent": "Agent",
     "appearance": "Appearance",
     "sources": "Sources",
     "live": "Live sharing",
@@ -9,6 +10,21 @@
     "study": "Study",
     "skills": "Skills",
     "data": "Data"
+  },
+  "agent": {
+    "title": "Agent default instructions",
+    "subtitle": "Set lasting response preferences and learning habits in Markdown. This is the same /system/AGENTS.md shown in the library: edits stay in sync, and the Agent can read it directly.",
+    "label": "Global instructions (Markdown)",
+    "openFile": "Open /system/AGENTS.md in the library",
+    "hint": "Saved automatically and applied to your next message, including in existing conversations. Leave empty for the app defaults.",
+    "placeholder": "# Response preferences\n- Answer in English, starting with the conclusion.\n- Introduce abstract concepts with a concrete example.\n\n# Learning habits\n- Explain the reason for each step in a derivation.\n- State uncertainty instead of guessing.",
+    "saved": "Saved automatically · Applies to your next message",
+    "default": "Using app defaults",
+    "reset": "Restore defaults",
+    "resetTitle": "Restore default Agent instructions?",
+    "resetConfirm": "This clears your global instructions and restores the app defaults. Conversations and skills will not be deleted.",
+    "cancel": "Cancel",
+    "scope": "Applies to the library assistant, course Q&A, and reading-material Q&A. Supplements rather than replaces built-in prompts; does not change transcription, background content generation, or skill text. Tool boundaries, factual grounding, and citation formats are retained. Instructions sync with settings when cloud sync is enabled; do not include passwords or API keys."
   },
   "appearance": {
     "title": "Appearance",
