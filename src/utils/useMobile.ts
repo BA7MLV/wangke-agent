@@ -114,7 +114,8 @@ export function useMobileGlobals(): void {
     let blurTimer = 0;
     const onFocusIn = (event: FocusEvent) => {
       const target = event.target as HTMLElement | null;
-      if (!target || !/^(INPUT|TEXTAREA)$/.test(target.tagName)) return;
+      // contenteditable 也会唤起软键盘（Markdown 编辑器是 CodeMirror），一并算上。
+      if (!target || !(/^(INPUT|TEXTAREA)$/.test(target.tagName) || target.isContentEditable)) return;
       // 焦点在输入框之间转移（或经键盘工具栏）会先 out 后 in，缓一手，
        // 别让 data-keyboard 闪断，把输入卡与键盘之间的缝闪出来。
       window.clearTimeout(blurTimer);

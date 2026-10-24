@@ -56,6 +56,7 @@ import { messageTime } from '../utils/messageTime';
 import { chatGreeting } from '../utils/chatGreeting';
 import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
+import { useImeEnter } from '../utils/imeEnter';
 import './course-chat.css';
 
 // Replay only after a full reload, not when returning from another route.
@@ -562,15 +563,8 @@ export default function CourseChat() {
   const composerWrapRef = useRef<HTMLDivElement>(null);
   const voiceDraftBase = useRef('');
   const [voiceEditVersion, setVoiceEditVersion] = useState(0);
-  /**
-   * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
-   *
-   * `e.nativeEvent.isComposing` 覆盖多数浏览器，但部分 Android 输入法在
-   * compositionend **之前**就派发 keydown 且不带 isComposing —— 那条 Enter
-   * 是「确认候选词」，不是「发送」。用 composition 事件自己记一份状态兜底，
-   * 是业界处理 IME 回车的双保险写法（ChatPanel 与 CourseChat 同款）。
-   */
-  const composingRef = useRef(false);
+  /** 输入法选词中的回车不是发送（含 Safari 先 compositionend 再 keydown 的情况，见 utils/imeEnter）。 */
+  const ime = useImeEnter();
   /** 显隐只写 data-show，避免每次滚动都重渲整棵消息树。 */
   const jumpBtnRef = useRef<HTMLButtonElement | null>(null);
   const ready = useCourseChat((s) => s.ready);
@@ -1314,17 +1308,7 @@ export default function CourseChat() {
                  * 而回车键就在拇指底下。
                  */
                 enterKeyHint="send"
-                /**
-                 * 中文输入法选词期间不要发送：nativeEvent.isComposing 覆盖多数
-                 * 浏览器，部分 Android 输入法则要靠 composition 事件兜底
-                 * （见 composingRef 的注释）。
-                 */
-                onCompositionStart={() => {
-                  composingRef.current = true;
-                }}
-                onCompositionEnd={() => {
-                  composingRef.current = false;
-                }}
+                {...ime.compositionProps}
                 /** 聚焦即吸底：键盘弹出会顶矮面板，先一步把最新消息留在可视区里 */
                 onFocus={pinIfSticking}
                 /**
@@ -1346,8 +1330,7 @@ export default function CourseChat() {
                         : '随便问点什么，或长按说话'
                 }
                 onKeyDown={(event) => {
-                  if (event.key !== 'Enter' || event.shiftKey) return;
-                  if (event.nativeEvent.isComposing || composingRef.current) return;
+                  if (!ime.isSubmitEnter(event)) return;
                   event.preventDefault();
                   setVoiceEditVersion((version) => version + 1);
                   /**

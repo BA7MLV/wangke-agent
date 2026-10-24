@@ -9,7 +9,6 @@ import {
   Input,
   Label,
   Spinner,
-  TextArea,
   TextField,
   Typography,
 } from '@heroui/react';
@@ -18,6 +17,7 @@ import { useAppNav } from '../components/appNav';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { MessageDto, SseEvent } from '@wangke/contracts';
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from '@simplewebauthn/browser';
+import MessageComposer from '../components/MessageComposer';
 import './bot-workspace.css';
 
 function approvalLabel(status: ApprovalDto['status']): string {
@@ -395,8 +395,7 @@ export default function BotWorkspace() {
     }
   };
 
-  const send = async (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault();
+  const send = async () => {
     if (!active || !draft.trim()) return;
     const content = draft.trim();
     const nonce = crypto.randomUUID();
@@ -648,29 +647,18 @@ export default function BotWorkspace() {
             )}
           </div>
 
-          <form className="bot-composer" onSubmit={send}>
-            <TextArea
-              aria-label="Bot 任务内容"
-              className="bot-composer__input"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder="向 Bot 描述任务…"
-              rows={2}
-              fullWidth
-              disabled={!active || uploadBusy}
-            />
-            <div className="bot-composer__actions">
-              <Button type="button" variant="secondary" onPress={() => uploadInputRef.current?.click()} isDisabled={!active || uploadBusy}>
-                {uploadBusy ? <Spinner size="sm" color="current" /> : <Sym name="upload" />}
-                {uploadBusy ? '上传中…' : '添加附件'}
-              </Button>
-              <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || uploadBusy} />
-              <Button type="submit" variant="primary" isDisabled={!active || !draft.trim() || uploadBusy}>
-                <Sym name="send" />
-                发送
-              </Button>
-            </div>
-          </form>
+          <MessageComposer
+            className="bot-composer"
+            ariaLabel="Bot 任务内容"
+            placeholder="向 Bot 描述任务"
+            value={draft}
+            onChange={setDraft}
+            onSubmit={() => void send()}
+            disabled={!active}
+            onAttach={() => uploadInputRef.current?.click()}
+            attachBusy={uploadBusy}
+          />
+          <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || uploadBusy} />
         </section>
       </div>
     </PageShell>

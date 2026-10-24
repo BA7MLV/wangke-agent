@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Button, Dropdown, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
+import { useImeEnter } from '../utils/imeEnter';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { MaterialImage, SourceImage } from './MaterialImage';
 import { parseMaterialImageHref } from '../materials/imageRefs';
@@ -512,15 +513,8 @@ export default function ChatPanel({
   // 常量声明在使用之后会被 TS 判为 use-before-declaration。
   const composerInput = useRef<HTMLTextAreaElement>(null);
   const composerOverflow = useComposerSize(composerInput, input);
-  /**
-   * 中文输入法是否正在选词（compositionstart → compositionend 之间）。
-   *
-   * `e.nativeEvent.isComposing` 覆盖多数浏览器，但部分 Android 输入法在
-   * compositionend **之前**就派发 keydown 且不带 isComposing —— 那条 Enter
-   * 是「确认候选词」，不是「发送」。用 composition 事件自己记一份状态兜底，
-   * 是业界处理 IME 回车的双保险写法（ChatPanel 与 CourseChat 同款）。
-   */
-  const composingRef = useRef(false);
+  /** 输入法选词中的回车不是发送（含 Safari 先 compositionend 再 keydown 的情况，见 utils/imeEnter）。 */
+  const ime = useImeEnter();
   // 讲义抽帧元数据：决定 list_frames 工具/提示词注入，也供 AI 气泡里的画面引用渲染
   const [framesMeta, setFramesMeta] = useState<FrameMeta[]>([]);
   const llmModel = useSettings((s) => s.llmModel);
@@ -1990,22 +1984,11 @@ export default function ChatPanel({
                * 而回车键就在拇指底下。
                */
               enterKeyHint="send"
-              /**
-               * 中文输入法选词期间不要发送：nativeEvent.isComposing 覆盖多数
-               * 浏览器，部分 Android 输入法则要靠 composition 事件兜底
-               * （见 composingRef 的注释）。
-               */
-              onCompositionStart={() => {
-                composingRef.current = true;
-              }}
-              onCompositionEnd={() => {
-                composingRef.current = false;
-              }}
+              {...ime.compositionProps}
               /** 聚焦即吸底：键盘弹出会顶矮面板，先一步把最新消息留在可视区里 */
               onFocus={pinList}
               onKeyDown={(e) => {
-                if (e.key !== 'Enter' || e.shiftKey) return;
-                if (e.nativeEvent.isComposing || composingRef.current) return;
+                if (!ime.isSubmitEnter(e)) return;
                 e.preventDefault();
                 void send(input);
               }}

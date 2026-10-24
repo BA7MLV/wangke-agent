@@ -329,23 +329,8 @@
 }
 
 .bot-composer {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 10px;
   flex: none;
-  padding: 14px clamp(18px, 5vw, 80px) max(14px, env(safe-area-inset-bottom));
   border-top: 1px solid var(--bot-border);
-  background: color-mix(in srgb, var(--background) 92%, transparent);
-}
-
-.bot-composer__input {
-  min-width: 0;
-}
-
-.bot-composer__actions {
-  display: flex;
-  align-items: flex-end;
-  gap: 8px;
 }
 
 @media (max-width: 760px) {
@@ -397,18 +382,6 @@
     margin: 12px 16px 0;
   }
 
-  .bot-composer {
-    grid-template-columns: 1fr;
-    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
-  }
-
-  .bot-composer__actions {
-    justify-content: flex-end;
-  }
-
-  .bot-composer__actions > * {
-    flex: 1;
-  }
 
   .bot-access {
     display: block;
