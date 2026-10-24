@@ -1,21 +1,10 @@
-import { useEffect, useState, type ComponentType } from 'react';
-import { Button, Drawer, ListBox, Modal } from '@heroui/react';
+import { Suspense, lazy, useEffect, useState, type ComponentType, type LazyExoticComponent } from 'react';
+import { Button, Drawer, ListBox, Modal, Spinner } from '@heroui/react';
 import { useMediaQuery } from '../utils/useMobile';
 import './settings-sheet.css';
 import { Sym } from '../ui/icons';
 import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { closeSettingsAndClearHash, openSettings, useSettingsDialog, type SettingsModule } from './settingsDialogStore';
-import ModelsModule from './settings/ModelsModule';
-import AgentModule from './settings/AgentModule';
-import AppearanceModule from './settings/AppearanceModule';
-import SourcesModule from './settings/SourcesModule';
-import LiveModule from './settings/LiveModule';
-import PlaybackModule from './settings/PlaybackModule';
-import ShortcutsModule from './settings/ShortcutsModule';
-import StudyModule from './settings/StudyModule';
-import DataModule from './settings/DataModule';
-import SkillsModule from './settings/SkillsModule';
-import CloudSettings from '../cloud/Settings';
 import { cloud } from '../cloud/state';
 import { useTranslation } from 'react-i18next';
 
@@ -28,18 +17,29 @@ import { useTranslation } from 'react-i18next';
  *   - 三个槽位的下拉、收藏夹的搜索框都持有受控 state，卸载即丢弃，
  *     正好符合「关掉设置就当没来过」的预期。
  */
-const MODULES: { key: SettingsModule; icon: string; Component: ComponentType }[] = [
-  { key: 'models', icon: 'neurology', Component: ModelsModule },
-  { key: 'agent', icon: 'smart_toy', Component: AgentModule },
-  { key: 'appearance', icon: 'style', Component: AppearanceModule },
-  { key: 'sources', icon: 'cloud_upload', Component: SourcesModule },
-  { key: 'live', icon: 'link', Component: LiveModule },
-  { key: 'playback', icon: 'play_circle', Component: PlaybackModule },
-  { key: 'shortcuts', icon: 'keyboard', Component: ShortcutsModule },
-  { key: 'study', icon: 'calendar_month', Component: StudyModule },
-  { key: 'skills', icon: 'extension', Component: SkillsModule },
-  { key: 'data', icon: 'folder', Component: DataModule },
+/*
+ * 每个模块按需加载：「模型」一个模块就一千多行，以前打开任何页面都会把十个模块一起打进首屏包。
+ * 现在只有用户真的点进某个模块时才下载它。
+ * tint 是手机上 iOS 设置式列表里图标底块的颜色。
+ */
+type Module = { key: SettingsModule; icon: string; tint: string; Component: LazyExoticComponent<ComponentType> };
+const MODULES: Module[] = [
+  { key: 'models', icon: 'neurology', tint: '#5e5ce6', Component: lazy(() => import('./settings/ModelsModule')) },
+  { key: 'agent', icon: 'smart_toy', tint: '#0a84ff', Component: lazy(() => import('./settings/AgentModule')) },
+  { key: 'appearance', icon: 'style', tint: '#ff9f0a', Component: lazy(() => import('./settings/AppearanceModule')) },
+  { key: 'sources', icon: 'cloud_upload', tint: '#30b0c7', Component: lazy(() => import('./settings/SourcesModule')) },
+  { key: 'live', icon: 'link', tint: '#34c759', Component: lazy(() => import('./settings/LiveModule')) },
+  { key: 'playback', icon: 'play_circle', tint: '#ff375f', Component: lazy(() => import('./settings/PlaybackModule')) },
+  { key: 'shortcuts', icon: 'keyboard', tint: '#8e8e93', Component: lazy(() => import('./settings/ShortcutsModule')) },
+  { key: 'study', icon: 'calendar_month', tint: '#ff453a', Component: lazy(() => import('./settings/StudyModule')) },
+  { key: 'skills', icon: 'extension', tint: '#bf5af2', Component: lazy(() => import('./settings/SkillsModule')) },
+  { key: 'data', icon: 'folder', tint: '#64d2ff', Component: lazy(() => import('./settings/DataModule')) },
 ];
+const CloudSettings = lazy(() => import('../cloud/Settings'));
+
+function ModuleFallback() {
+  return <div className="settings-module-fallback"><Spinner size="sm" color="current" /></div>;
+}
 
 /** 模块 key 集合，给 `#/settings/<模块>` 深链做校验（非法值回落到入口模块） */
 export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
@@ -76,52 +76,73 @@ export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
 export default function SettingsModal() {
   const { t } = useTranslation('settings');
   const { t: common } = useTranslation('common');
-  const { open, module } = useSettingsDialog();
+  const { open, module, explicit } = useSettingsDialog();
   const mobile = useMediaQuery('(max-width: 760px)');
   /** 本地副本：模块切换不应该走全局 store（那会让别的订阅者无谓地重渲染） */
   const [localModule, setLocalModule] = useState<SettingsModule>(module);
+  /** 手机：是否已经「推入」某个模块（false = 停在模块列表） */
+  const [pushed, setPushed] = useState(explicit);
+  /** 推入 / 返回的方向，决定页面从右滑入还是从左滑回 */
+  const [direction, setDirection] = useState<'forward' | 'back'>('forward');
 
-  // 每次打开都回到入口模块：设置是偶尔进的界面，记住上次停在哪反而难预期
+  // 每次打开都回到入口：设置是偶尔进的界面，记住上次停在哪反而难预期
   useEffect(() => {
-    if (open) setLocalModule(module);
-  }, [open, module]);
+    if (!open) return;
+    setLocalModule(module);
+    setPushed(explicit);
+    setDirection('forward');
+  }, [open, module, explicit]);
 
   const active = MODULES.find((m) => m.key === localModule) ?? MODULES[0];
   const ActiveContent = cloud.enabled && (localModule === 'models' || localModule === 'data') ? CloudSettings : active.Component;
 
   if (mobile) {
+    const title = pushed ? t(`modules.${active.key}`) : common('settings');
     return (
       <Drawer.Root isOpen={open} onOpenChange={(next) => !next && closeSettingsAndClearHash()}>
         <Drawer.Backdrop variant="opaque" className="settings-sheet__backdrop">
           <Drawer.Content placement="bottom" className="settings-sheet__content">
             <Drawer.Dialog className="settings-sheet__dialog" data-testid="settings-modal">
               <Drawer.Handle />
-              <Drawer.Header className="px-5 pt-1 pb-3">
-                <Drawer.Heading>{common('settings')}</Drawer.Heading>
+              <Drawer.Header className="settings-sheet__header">
+                {pushed ? (
+                  <Button variant="ghost" size="sm" className="settings-sheet__back" onPress={() => { setDirection('back'); setPushed(false); }}>
+                    <Sym name="chevron_left" />{common('settings')}
+                  </Button>
+                ) : <span aria-hidden="true" />}
+                <Drawer.Heading className="settings-sheet__title">{title}</Drawer.Heading>
                 <Drawer.CloseTrigger aria-label={common('closeSettings')}><Sym name="close" /></Drawer.CloseTrigger>
               </Drawer.Header>
-              <ListBox
-                aria-label={common('settingsModules')}
-                orientation="horizontal"
-                selectionMode="single"
-                disallowEmptySelection
-                selectedKeys={[localModule]}
-                onSelectionChange={(keys) => {
-                  const next = [...keys][0];
-                  if (next) setLocalModule(next as SettingsModule);
-                }}
-                className="settings-module-nav"
+              <Drawer.Body
+                key={pushed ? localModule : 'root'}
+                className="settings-sheet__page mx-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4"
+                data-direction={direction}
+                data-testid={pushed ? `settings-module-${localModule}` : 'settings-root'}
               >
-                {MODULES.map((m) => (
-                  <ListBox.Item key={m.key} id={m.key} textValue={t(`modules.${m.key}`)}
-                    className="settings-module-nav__item"
-                    data-testid={`settings-nav-${m.key}`}>
-                    <Sym name={m.icon} /><span>{t(`modules.${m.key}`)}</span>
-                  </ListBox.Item>
-                ))}
-              </ListBox>
-              <Drawer.Body className="mx-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4" data-testid={`settings-module-${localModule}`}>
-                <ActiveContent />
+                {pushed ? (
+                  <Suspense fallback={<ModuleFallback />}><ActiveContent /></Suspense>
+                ) : (
+                  <ListBox
+                    aria-label={common('settingsModules')}
+                    selectionMode="none"
+                    className="settings-list"
+                    onAction={(key) => {
+                      setLocalModule(key as SettingsModule);
+                      setDirection('forward');
+                      setPushed(true);
+                    }}
+                  >
+                    {MODULES.map((m) => (
+                      <ListBox.Item key={m.key} id={m.key} textValue={t(`modules.${m.key}`)}
+                        className="settings-list__item"
+                        data-testid={`settings-nav-${m.key}`}>
+                        <span className="settings-list__tile" style={{ background: m.tint }} aria-hidden="true"><Sym name={m.icon} /></span>
+                        <span className="settings-list__label">{t(`modules.${m.key}`)}</span>
+                        <Sym name="chevron_right" className="settings-list__chevron" />
+                      </ListBox.Item>
+                    ))}
+                  </ListBox>
+                )}
               </Drawer.Body>
             </Drawer.Dialog>
           </Drawer.Content>
@@ -182,10 +203,7 @@ export default function SettingsModal() {
                     className="settings-module-nav__item"
                     data-testid={`settings-nav-${m.key}`}
                   >
-                    <span
-                      className="grid size-5 shrink-0 place-items-center"
-                      aria-hidden="true"
-                    >
+                    <span className="settings-list__tile settings-list__tile--sm" style={{ background: m.tint }} aria-hidden="true">
                       <Sym name={m.icon} />
                     </span>
                     <span className="min-w-0 truncate">{t(`modules.${m.key}`)}</span>
@@ -197,10 +215,11 @@ export default function SettingsModal() {
               {/* 最后一张卡的底部留白收掉：卡片之间由 Card 的 mb-4 统一给间距，
                   不收的话内容区末尾会多出一段空白。 */}
               <div
-                className="min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-background px-6 pt-14 pb-6 [&>div:last-of-type]:mb-1"
+                key={localModule}
+                className="settings-desktop-page min-h-0 min-w-0 flex-1 overflow-y-auto overscroll-y-contain bg-background px-6 pt-14 pb-6 [&>div:last-of-type]:mb-1"
                 data-testid={`settings-module-${localModule}`}
               >
-                <ActiveContent />
+                <Suspense fallback={<ModuleFallback />}><ActiveContent /></Suspense>
               </div>
             </div>
           </Modal.Dialog>
