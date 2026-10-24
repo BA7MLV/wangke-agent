@@ -15,6 +15,7 @@
     "dev:api": "tsx apps/api/src/server.ts",
     "start": "node dist-api/apps/api/src/server.js",
     "test:api": "tsx scripts/test-api.mjs",
+    "test:api-split": "tsx scripts/test-api-split.mjs",
     "test:migration": "node scripts/test-migration.mjs",
     "test:bot": "tsx scripts/test-bot-runtime.mjs",
     "test:sandbox": "node scripts/test-sandbox.mjs",

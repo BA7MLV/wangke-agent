@@ -1,4 +1,19 @@
 {$DOMAIN} {
-  encode zstd gzip
-  reverse_proxy app:3000
+	# 只压缩静态资源和 JSON。text/event-stream 一旦进了压缩器就会被攒着不发，
+	# Bot 页的事件流会卡到连接结束才一次性到达。
+	encode {
+		zstd
+		gzip
+		match {
+			header Content-Type text/html*
+			header Content-Type text/css*
+			header Content-Type text/javascript*
+			header Content-Type application/javascript*
+			header Content-Type application/json*
+			header Content-Type image/svg+xml*
+		}
+	}
+	reverse_proxy app:3000 {
+		flush_interval -1
+	}
 }

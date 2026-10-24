@@ -214,7 +214,12 @@ curl http://localhost:3000/api/v1/health
 
 ### 部署
 
-生产部署统一使用 Linux Docker Compose，由 API 同源托管前端静态文件；不要把 `dist/` 单独部署后再让浏览器直连模型服务。
+生产部署使用 Linux Docker Compose，有两种形态，完整说明见 [docs/deployment.md](docs/deployment.md)：
+
+- **一体化**（默认，`compose.yaml`）：一个容器同时提供 API 和前端静态文件。
+- **前后端分离**（`compose.split.yaml`）：`api` 容器只提供 API 与鉴权，`web` 容器只提供浏览器前端；iOS / macOS 原生壳层用 `POST /api/v1/auth/token` 直接登录 API。
+
+无论哪种形态，模型密钥都只在 API 容器里，浏览器不直连模型服务。
 
 > [!IMPORTANT]
 > 应用依赖 `Cross-Origin-Opener-Policy` + `Cross-Origin-Embedder-Policy` 才能拿到 `crossOriginIsolated`（VAD 用 SharedArrayBuffer 多线程跑）。仓库里 `public/_headers` 已写好这两条。
@@ -228,14 +233,20 @@ docker compose up -d --build
 公网 HTTPS 可在 DNS 已指向服务器后使用 Caddy 覆盖配置：
 
 ```bash
-DOMAIN=agent.example.com \\
-PUBLIC_ORIGIN=https://agent.example.com \\
-WEBAUTHN_RP_ID=agent.example.com \\
-WANGKE_BIND_HOST=127.0.0.1 \\
+DOMAIN=agent.example.com \
+PUBLIC_ORIGIN=https://agent.example.com \
+WEBAUTHN_RP_ID=agent.example.com \
+WANGKE_BIND_HOST=127.0.0.1 \
 docker compose -f compose.yaml -f compose.prod.yaml up -d --build
 ```
 
-Caddy 会自动申请和续期证书；公网部署不要把 Passkey 配置成 HTTP Origin。生产 Compose 的 `app` 只绑定本机回环地址，外部流量经 HTTPS 代理进入。
+或者用安装脚本一步完成（会写好上面这些变量，并让之后的 `wangke-agent update/restart` 一直带上 `compose.prod.yaml`）：
+
+```bash
+./install.sh --domain agent.example.com
+```
+
+Caddy 会自动申请和续期证书；公网部署不要把 Passkey 配置成 HTTP Origin。`WANGKE_BIND_HOST=127.0.0.1` 让 `app` 只绑定本机回环地址，外部流量只能经 HTTPS 代理进入（`--domain` 会自动设置）。
 
 iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA，离线外壳才生效。
 
