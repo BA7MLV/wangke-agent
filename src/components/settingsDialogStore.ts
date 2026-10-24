@@ -24,6 +24,8 @@ export type SettingsModule =
 
 let openState = false;
 let moduleState: SettingsModule = 'models';
+/** 调用方是否点名了模块。没点名时手机上先展示模块列表（iOS 设置的根页），点名了直接进模块。 */
+let explicitState = false;
 const listeners = new Set<() => void>();
 
 function emit(): void {
@@ -31,8 +33,9 @@ function emit(): void {
 }
 
 /** 打开设置弹窗；传 module 可直接落到某个模块（默认「模型」） */
-export function openSettings(module: SettingsModule = 'models'): void {
-  moduleState = module;
+export function openSettings(module?: SettingsModule): void {
+  moduleState = module ?? 'models';
+  explicitState = module !== undefined;
   if (openState) {
     // 已经开着时只换模块，不重复触发一次挂载动画
     emit();
@@ -55,8 +58,8 @@ export function openSettingsFromHash(): void {
   const hash = window.location.hash;
   const match = hash.match(/^#\/settings(?:\/(\w+))?/);
   if (!match) return;
-  const requested = (match[1] as SettingsModule) ?? 'models';
-  openSettings(VALID_MODULES.includes(requested) ? requested : 'models');
+  const requested = match[1] as SettingsModule | undefined;
+  openSettings(requested && VALID_MODULES.includes(requested) ? requested : undefined);
 }
 
 /** 关闭设置弹窗，并清理掉 #/settings 这条 hash */
@@ -68,7 +71,7 @@ export function closeSettingsAndClearHash(): void {
 }
 
 /** 当前是否开着 + 落在哪个模块 */
-export function useSettingsDialog(): { open: boolean; module: SettingsModule } {
+export function useSettingsDialog(): { open: boolean; module: SettingsModule; explicit: boolean } {
   const open = useSyncExternalStore(
     (listener) => {
       listeners.add(listener);
@@ -85,5 +88,13 @@ export function useSettingsDialog(): { open: boolean; module: SettingsModule } {
     () => moduleState,
     () => 'models' as SettingsModule,
   );
-  return { open, module };
+  const explicit = useSyncExternalStore(
+    (listener) => {
+      listeners.add(listener);
+      return () => listeners.delete(listener);
+    },
+    () => explicitState,
+    () => false,
+  );
+  return { open, module, explicit };
 }
