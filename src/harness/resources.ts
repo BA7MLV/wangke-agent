@@ -3,6 +3,7 @@ import { db } from '../store/db';
 import { readHighlightCatalog } from '../materials/highlightContext';
 import { handoutFileOf } from '../materials/handoutFile';
 import { questionBankFileOf } from '../materials/questionBankFile';
+import { AGENT_INSTRUCTIONS_FILE_ID } from '../materials/systemFiles';
 import { parseQuestionBank } from './quiz';
 import type { UnitKind } from '../materials/units';
 import { createToolExecutor, EDIT_MARKDOWN_TOOL, QA_TOOLS, SHOW_WIDGET_TOOL, type ToolExecutorOptions } from './tools';
@@ -245,6 +246,11 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     }
     const id = resource.id === 'current' && local ? options.courseId! : resource.id;
     if (local && id !== options.courseId) return '单课程问答只能访问当前课程。';
+    if (id === AGENT_INSTRUCTIONS_FILE_ID) {
+      if (resource.leaf && !['info', 'material'].includes(resource.leaf)) return '系统 Markdown 正文位于 /system/AGENTS.md，请对该路径使用 read、grep、edit。';
+      const { executeAgentInstructionsResource } = await import('./agentInstructionsResource');
+      return executeAgentInstructionsResource(name, args);
+    }
     const course = await db.videos.get(id);
     if (!course) return '课程不存在，请 read /courses 获取真实路径。';
     const kind = options.kind ?? (course.kind === 'material' ? ((course.materialFormat ?? 'pdf') === 'pdf' ? 'page' : 'para') : undefined);

@@ -6,7 +6,7 @@ import { Field, SectionCard, confirmDialog } from '../../ui';
 import { closeSettings } from '../settingsDialogStore';
 
 /** 类似 AGENTS.md 的长期偏好，与应用的工具/引用契约分开维护。 */
-export default function AgentModule({ fileView = false }: { fileView?: boolean }) {
+export default function AgentModule() {
   const { t } = useTranslation('settings');
   const inputId = useId();
   const scopeId = useId();
@@ -23,7 +23,7 @@ export default function AgentModule({ fileView = false }: { fileView?: boolean }
   };
 
   return (
-    <SectionCard title={fileView ? 'AGENTS.md' : t('agent.title')} subtitle={t('agent.subtitle')} testId="card-agent-instructions">
+    <SectionCard title={t('agent.title')} subtitle={t('agent.subtitle')} testId="card-agent-instructions">
       <Field
         label={<label htmlFor={inputId}>{t('agent.label')}</label>}
         hint={t('agent.hint')}
@@ -51,7 +51,7 @@ export default function AgentModule({ fileView = false }: { fileView?: boolean }
       <p id={scopeId} className="mt-4 text-xs leading-normal text-muted text-pretty">
         {t('agent.scope')}
       </p>
-      {!fileView && <a href="#/library?file=/system/AGENTS.md" onClick={() => closeSettings()} className="mt-3 inline-block text-sm text-accent underline" data-testid="agent-instructions-open-file">{t('agent.openFile')}</a>}
+      <a href="#/library?file=/system/AGENTS.md" onClick={() => closeSettings()} className="mt-3 inline-block text-sm text-accent underline" data-testid="agent-instructions-open-file">{t('agent.openFile')}</a>
     </SectionCard>
   );
 }

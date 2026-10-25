@@ -30,17 +30,6 @@
   .chat-image-pending .spinner, .chat-image-pending .spinner * { animation: none !important; }
 }
 .chat-image:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.chat-image-viewer.chat-image-viewer { width: min(1100px, calc(100vw - 48px)); max-width: none; height: min(900px, calc(100dvh - 48px)); max-height: none; display: flex; flex-direction: column; overflow: hidden; }
-.chat-image-viewer__header { display: flex; align-items: center; justify-content: space-between; flex: none; }
-.chat-image-viewer__count { color: var(--muted); font-variant-numeric: tabular-nums; }
-.chat-image-viewer__body.chat-image-viewer__body { flex: 1; min-height: 0; padding: 0; overflow: hidden; }
-.chat-image-viewer__scroll { width: 100%; height: 100%; overflow: auto; overscroll-behavior: contain; touch-action: pan-x pan-y pinch-zoom; }
-.chat-image-viewer__scroll img { display: block; height: 100%; max-width: none; object-fit: contain; }
-.chat-image-viewer__scroll .chat-image-viewer__image--zoomed { height: auto; min-height: 100%; object-fit: contain; }
-.chat-image-viewer__tools.chat-image-viewer__tools { display: flex; flex-wrap: wrap; justify-content: center; align-items: center; gap: 4px; flex: none; }
-.chat-image-viewer__tools button, .chat-image-viewer__header button { min-width: 44px; min-height: 44px; }
 @media (max-width: 640px) {
-  .chat-image-viewer-container.chat-image-viewer-container { padding: 0; animation: none; }
-  .chat-image-viewer.chat-image-viewer { width: 100vw; height: 100dvh; border-radius: 0; padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right)) max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left)); }
   .chat-image img { height: 140px; }
 }

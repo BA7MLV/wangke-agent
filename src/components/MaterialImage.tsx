@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { Button, Modal } from '@heroui/react';
+import { Button } from '@heroui/react';
 import type { ComponentProps } from '@ant-design/x-markdown';
-import { MODAL_CONTAINER_CLASS } from '../ui';
 import { imageSourceKind, materialSourceHref, parseMaterialImageHref } from '../materials/imageRefs';
 import type { LoadedMaterialImage } from '../materials/images';
+import ImagePreview from './ImagePreview';
 import './material-image.css';
 
 /** Deduplicate simultaneous references, but retain neither file blobs nor blob URLs globally. */
@@ -33,7 +33,6 @@ export function MaterialImage({ href, label, linkOnly = false, onSource }: {
   const [open, setOpen] = useState(false);
   const [attempt, setAttempt] = useState(0);
   const [remoteAllowed, setRemoteAllowed] = useState(false);
-  const [zoom, setZoom] = useState(1);
   const [result, setResult] = useState<{ href: string; data?: LoadedMaterialImage; url?: string; error?: string }>();
   const current = result?.href === href ? result : undefined;
   const title = typeof label === 'string' && label ? label : current?.data?.image.label || '材料原图';
@@ -73,34 +72,23 @@ export function MaterialImage({ href, label, linkOnly = false, onSource }: {
     : current?.data?.remoteUrl && !remoteAllowed ? <span className="material-image__status">此图片来自 {new URL(current.data.remoteUrl).hostname}，加载会向该网站发送请求。<Button size="sm" variant="secondary" onPress={() => setRemoteAllowed(true)}>加载外链图片</Button></span>
       : !src ? <span className="material-image__placeholder" role="status" aria-label="正在读取原图">正在读取原图…</span> : null;
   const fail = () => setResult((r) => r?.href === href ? { ...r, error: '图片无法解码或加载失败，请重试或打开原文核对' } : r);
-  const show = () => { setZoom(1); setOpen(true); };
+  const show = () => setOpen(true);
+  const download = current?.url && !current.error ? () => {
+    const a = document.createElement('a');
+    a.href = current.url!;
+    a.download = `${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.${current.data?.blob?.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'}`;
+    a.click();
+  } : undefined;
   return <span ref={root} className={linkOnly ? 'material-image-link' : 'material-image'} data-testid="material-image">
     {linkOnly ? <a href={href} onClick={(e) => { e.preventDefault(); show(); }}>{label || '查看原图'}</a> : <>
       {status}
       {src && !current?.error && <Button variant="tertiary" className="material-image__preview" aria-label={`放大查看：${title}`} onPress={show}><img src={src} alt={title} decoding="async" referrerPolicy="no-referrer" onError={fail} /></Button>}
       <span className="material-image__caption"><span>{title}</span>{source}</span>
     </>}
-    <Modal.Root isOpen={open} onOpenChange={setOpen}>
-      <Modal.Backdrop><Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
-        <Modal.Dialog className="material-image__dialog" data-testid="material-image-dialog">
-          <Modal.Header><Modal.Heading>{title}</Modal.Heading></Modal.Header>
-          <Modal.Body>
-            <span className="material-image__viewer" onKeyDownCapture={(e) => { if (/^(?: |k|j|l|m|f|c|i|arrowleft|arrowright|arrowup|arrowdown|home|end|\d)$/i.test(e.key)) e.stopPropagation(); }}>
-              {status}
-              {src && !current?.error && <>
-                <span className="material-image__tools"><Button size="sm" variant="tertiary" isDisabled={zoom <= 0.5} onPress={() => setZoom((z) => Math.max(0.5, z - 0.5))}>缩小</Button><span>{Math.round(zoom * 100)}%</span><Button size="sm" variant="tertiary" isDisabled={zoom >= 3} onPress={() => setZoom((z) => Math.min(3, z + 0.5))}>放大</Button><Button size="sm" variant="tertiary" onPress={() => setZoom(1)}>适应宽度</Button></span>
-                <span className="material-image__scroll"><img src={src} alt={title} style={{ width: `${zoom * 100}%`, maxWidth: 'none' }} referrerPolicy="no-referrer" onError={fail} /></span>
-              </>}
-            </span>
-          </Modal.Body>
-          <Modal.Footer>
-            <span className="material-image__origin">{current?.data?.courseName}{source}</span>
-            {current?.url && !current.error && <a className="material-image__download" href={current.url} download={`${title.replace(/[\\/:*?"<>|]/g, '_').slice(0, 60)}.${current.data?.blob?.type.split('/')[1]?.replace('jpeg', 'jpg') || 'png'}`}>下载图片</a>}
-            <Button variant="tertiary" onPress={() => setOpen(false)}>关闭</Button>
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container></Modal.Backdrop>
-    </Modal.Root>
+    <ImagePreview isOpen={open} onOpenChange={setOpen} title={title} contentKey={href}
+      content={src && !current?.error ? { kind: 'image', src, onError: fail } : undefined}
+      status={status} onDownload={download} testId="material-image-dialog"
+      footer={<span className="material-image__origin">{current?.data?.courseName}{source}</span>} />
   </span>;
 }
 

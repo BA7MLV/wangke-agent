@@ -62,6 +62,11 @@ function Root() {
   const fontScale = useSettings((s) => s.fontScale);
   React.useEffect(() => {
     applyTheme(theme);
+    if (theme !== 'auto') return;
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = () => applyTheme('auto');
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
   }, [theme]);
   React.useEffect(() => {
     applyAccentColor(accentColor);

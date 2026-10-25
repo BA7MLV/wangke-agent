@@ -18,6 +18,9 @@ try {
   const { pickSyncSettings } = await server.ssrLoadModule('/src/sync/units.ts');
   const { createResourceExecutor, parseResource } = await server.ssrLoadModule('/src/harness/resources.ts');
   const { db } = await server.ssrLoadModule('/src/store/db.ts');
+  const { AGENT_INSTRUCTIONS_FILE_ID, getSystemMaterial } = await server.ssrLoadModule('/src/materials/systemFiles.ts');
+  const { getMaterialFile } = await server.ssrLoadModule('/src/store/fileStore.ts');
+  const { createMdSaver } = await server.ssrLoadModule('/src/md-editor/save.ts');
   const instructions = '# 回答偏好\n- Please answer in English.\n- 先举例，再推导。';
 
   assert.equal(getSettings().agentInstructions, '');
@@ -105,6 +108,37 @@ try {
   useSettings.getState().update({ agentInstructions: '' });
   assert.match(await library('read', { path: '/system/AGENTS.md' }), /当前为空/);
   console.log('OK: /system listing, AGENTS.md read/grep/edit, legacy alias, live settings sync, stale-edit protection, no duplicate material');
+
+  assert.equal(getSystemMaterial(AGENT_INSTRUCTIONS_FILE_ID).materialFormat, 'md');
+  assert.equal(await (await getMaterialFile(AGENT_INSTRUCTIONS_FILE_ID)).text(), '');
+  const saver = createMdSaver(AGENT_INSTRUCTIONS_FILE_ID, { initialText: '' });
+  try {
+    saver.schedule(instructions);
+    await saver.flush();
+    assert.equal(getSettings().agentInstructions, instructions);
+    assert.equal(await (await getMaterialFile(AGENT_INSTRUCTIONS_FILE_ID)).text(), instructions);
+    const systemChat = createResourceExecutor({ courseId: AGENT_INSTRUCTIONS_FILE_ID, kind: 'para' });
+    assert.match(await systemChat('read', { path: '/courses/current/material' }), /path=\/system\/AGENTS\.md/);
+    assert.match(await systemChat('grep', { query: '先举例' }), /先举例/);
+    assert.match(await systemChat('edit', { path: '/courses/current/material', edits: [{ old_string: '先举例', new_string: '先列步骤' }] }), /已保存/);
+    const updated = getSettings().agentInstructions;
+    saver.schedule('过期编辑器里的草稿');
+    await assert.rejects(saver.flush(), /文件已在其他页面更新/);
+    assert.equal(getSettings().agentInstructions, updated);
+    assert.equal(await db.videos.count(), 0);
+    assert.equal(await db.files.count(), 0);
+  } finally {
+    saver.dispose();
+  }
+  const resetSaver = createMdSaver(AGENT_INSTRUCTIONS_FILE_ID, { initialText: getSettings().agentInstructions });
+  try {
+    resetSaver.schedule('');
+    await resetSaver.flush();
+    assert.equal(getSettings().agentInstructions, '');
+  } finally {
+    resetSaver.dispose();
+  }
+  console.log('OK: shared Markdown file loading, editor saves/resets, current-file tools, concurrent-edit protection, no duplicate storage');
 } finally {
   await server.close();
 }

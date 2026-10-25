@@ -1,6 +1,8 @@
 import { lazy, memo, Suspense, useMemo } from 'react';
 import { XMarkdown, type ComponentProps, type XMarkdownProps } from '@ant-design/x-markdown';
 import { protectMath } from './math';
+import { tableExtension } from './table';
+import { MarkdownTable } from '../MdTable';
 import { MarkdownStreamingProvider } from './streaming';
 import { SourceImage, SourceImageLink } from '../MaterialImage';
 import { markdownSanitizeConfig } from './sanitize';
@@ -24,6 +26,7 @@ function IncompleteInline(props: ComponentProps) {
 }
 
 const SHARED_COMPONENTS = {
+  table: MarkdownTable,
   img: SourceImage,
   a: SourceImageLink,
   'math-formula': Formula,
@@ -44,17 +47,22 @@ function Formula(props: ComponentProps) {
 }
 
 /** Shared rendering contract for streamed answers, history, explanations and materials. */
-export const Markdown = memo(function Markdown({ components, streaming, content, children, dompurifyConfig, ...props }: XMarkdownProps) {
+export const Markdown = memo(function Markdown({ components, streaming, content, children, dompurifyConfig, config, ...props }: XMarkdownProps) {
   const source = content ?? children ?? '';
   const hasNextChunk = !!streaming?.hasNextChunk;
   const protectedContent = useMemo(() => protectMath(source, hasNextChunk), [source, hasNextChunk]);
   const mergedComponents = useMemo(() => ({ ...SHARED_COMPONENTS, ...components }), [components]);
   const sanitizeConfig = useMemo(() => markdownSanitizeConfig(dompurifyConfig), [dompurifyConfig]);
+  const markedConfig = useMemo(() => {
+    const table = tableExtension(hasNextChunk);
+    return { ...table, ...config, renderer: { ...table.renderer, ...config?.renderer }, hooks: { ...table.hooks, ...config?.hooks } };
+  }, [config, hasNextChunk]);
   return (
     <MarkdownStreamingProvider value={hasNextChunk}>
       <XMarkdown
         {...props}
         dompurifyConfig={sanitizeConfig}
+        config={markedConfig}
         // Prose defaults must stop at embedded host UI (editor, preview, diagram).
         // markdown.css supplies the same defaults without descendant-style leaks.
         disableDefaultStyles

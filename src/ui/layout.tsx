@@ -17,6 +17,7 @@ import { useRailCollapsed } from './rail';
 import { DotBadge, IconSwap, MatrixDots } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
+import { observeBrowserChrome } from './browserChrome';
 import './layout.css';
 
 /**
@@ -542,6 +543,10 @@ export function PageShell({
   const titleId = `${shellId}-title`;
   const mainId = `${shellId}-main`;
   const navigationId = `${shellId}-navigation`;
+  const edgeRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (edgeRef.current) return observeBrowserChrome(edgeRef.current);
+  }, []);
 
   /**
    * 顶栏浮在滚动内容之上后，内容要自己让出它的高度（见下面 `<header>` 的注释）。
@@ -587,7 +592,7 @@ export function PageShell({
    */
   const contentMax = narrow ? '[--page-content-max:720px]' : wide ? '[--page-content-max:960px]' : '';
   const rootClass = [
-    'flex h-[var(--vvh,100%)] flex-col overflow-hidden bg-background-secondary text-foreground',
+    'page-shell flex h-[var(--vvh,100%)] flex-col overflow-hidden bg-background-secondary text-foreground',
     contentMax,
     rootClassName,
   ]
@@ -618,6 +623,8 @@ export function PageShell({
 
   return (
     <div className={rootClass} ref={rootRef}>
+      {/* 明确的 background-color 供 Safari 贴边取色；安全区与模糊上缘共用同一实色。 */}
+      <div ref={edgeRef} className="page-shell__top-edge" aria-hidden="true" />
       <a
         href={`#${mainId}`}
         data-testid="skip-link"

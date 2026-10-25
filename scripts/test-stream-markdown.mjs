@@ -25,4 +25,12 @@ assert.doesNotMatch(final.parse('$x_i'), /math-formula/, 'stop flushes unfinishe
 assert.match(protectMath('$$x\n\nNext paragraph', true), /Next paragraph/);
 assert.doesNotMatch(protectMath('$<script>alert(1)</script>$', false), /<script>/);
 assert.match(final.parse('| a | b |\n|---|---|\n| $x$ | **bold** |'), /<table>/);
+const pipeTable = '| 公式 | 说明 |\n|---|---|\n| $|x|$ | 绝对值 |\n| $P(A|B)$ | 条件概率 |\n| $\\|v\\|$ | 范数 |';
+for (const streaming of [false, true]) {
+  const html = final.parse(protectMath(pipeTable, streaming));
+  assert.equal(count(html), 3, 'pipes in TeX must not split table cells');
+  assert.equal((html.match(/<td>/g) ?? []).length, 6);
+  assert.match(html, /data-source="&#124;x&#124;"/);
+  assert.match(html, /data-source="P\(A&#124;B\)"/);
+}
 console.log('Streaming Markdown: delimiters, every-character prefixes, code, currency, escaping, GFM and final flush passed.');

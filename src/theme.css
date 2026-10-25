@@ -27,7 +27,8 @@ body,
     'Hiragino Sans GB',
     'Microsoft YaHei',
     sans-serif;
-  background: var(--background);
+  /* Safari 的根背景采样与 Android 的 theme-color 保持一致。 */
+  background: var(--browser-chrome-color, var(--background-secondary));
   color: var(--foreground);
   /* 让原生滚动条 / 表单控件跟随深浅色（HeroUI 在 .dark 里也设了 color-scheme） */
   -webkit-font-smoothing: antialiased;

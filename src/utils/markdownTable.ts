@@ -55,12 +55,14 @@ export function tableToMarkdown(
   headers: string[],
   rows: string[][],
   aligns?: TableAlign[],
+  options?: { serializedCells?: boolean },
 ): string {
   const width = headers.length;
   if (width === 0) return '';
 
+  const cell = options?.serializedCells ? (value: string) => value : escapeMarkdownCell;
   const line = (cells: string[]) =>
-    `| ${normalizeRow(cells, width).map(escapeMarkdownCell).join(' | ')} |`;
+    `| ${normalizeRow(cells, width).map(cell).join(' | ')} |`;
 
   const separator = headers.map((_, i) => {
     const align = aligns?.[i] ?? null;

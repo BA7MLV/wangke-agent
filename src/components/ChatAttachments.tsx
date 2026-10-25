@@ -1,17 +1,17 @@
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
-import { Button, Modal, Spinner } from '@heroui/react';
+import { Button, Spinner } from '@heroui/react';
 import { useChatAttachments } from '../store/chatAttachments';
 import { attachmentSize, type ChatAttachment } from '../chat/attachments';
 import { downloadAttachment, readAttachmentBlob } from '../chat/prepareAttachment';
-import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
+import { Sym, toast } from '../ui';
 import { prefersReducedMotion } from '../utils/motion';
+import ImagePreview from './ImagePreview';
 import './chat-attachments.css';
 
 /** The same accessible viewer serves composer thumbnails and persisted messages. */
 function ChatImage({ file, images, draft = false }: { file: ChatAttachment; images: ChatAttachment[]; draft?: boolean }) {
   const [open, setOpen] = useState(false);
   const [index, setIndex] = useState(0);
-  const [zoom, setZoom] = useState(1);
   const [failed, setFailed] = useState(false);
   const current = images[index] || file;
   const [original, setOriginal] = useState<{ id: string; url: string }>();
@@ -29,43 +29,18 @@ function ChatImage({ file, images, draft = false }: { file: ChatAttachment; imag
     return () => { cancelled = true; if (url) URL.revokeObjectURL(url); };
   }, [open, current]);
   const source = open && original?.id === current.id ? original.url : current.dataUrl;
-  const navigate = (next: number) => { setIndex(next); setZoom(1); setFailed(false); setOriginal(undefined); };
+  const navigate = (next: number) => { setIndex(next); setFailed(false); setOriginal(undefined); };
   return <>
     <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={`预览图片 ${file.name}`}
       onPress={() => { navigate(Math.max(0, images.findIndex((image) => image.id === file.id))); setOpen(true); }}>
       <img src={file.dataUrl} alt={file.name} loading={draft ? 'eager' : 'lazy'} decoding="async" />
     </Button>
-    <Modal.Root isOpen={open} onOpenChange={setOpen}>
-      <Modal.Backdrop><Modal.Container placement="center" size="lg" className={`${MODAL_CONTAINER_CLASS} chat-image-viewer-container`}>
-        <Modal.Dialog className="chat-image-viewer" data-testid="chat-image-viewer">
-          <Modal.Header className="chat-image-viewer__header">
-            <Modal.Heading className="sr-only">图片预览</Modal.Heading>
-            <span className="chat-image-viewer__count">{index + 1} / {images.length}</span>
-            <Button isIconOnly variant="tertiary" aria-label="关闭图片预览" onPress={() => setOpen(false)}><Sym name="close" /></Button>
-          </Modal.Header>
-          <Modal.Body className="chat-image-viewer__body">
-            <div className="chat-image-viewer__scroll" tabIndex={0} role="region" aria-label="图片，可缩放并滚动查看"
-              onKeyDown={(event) => {
-                if (event.key === 'ArrowLeft' && index > 0) { event.preventDefault(); navigate(index - 1); }
-                if (event.key === 'ArrowRight' && index < images.length - 1) { event.preventDefault(); navigate(index + 1); }
-              }}>
-              {failed ? <p role="alert">图片加载失败，请关闭后重试。</p> : <img key={current.id} src={source} alt={current.name}
-                className={zoom > 1 ? 'chat-image-viewer__image--zoomed' : undefined}
-                style={{ width: `${zoom * 100}%` }} onError={() => setFailed(true)}
-                onDoubleClick={() => setZoom((value) => value === 1 ? 2 : 1)} />}
-            </div>
-          </Modal.Body>
-          <Modal.Footer className="chat-image-viewer__tools">
-            {images.length > 1 && <Button isIconOnly variant="tertiary" aria-label="上一张图片" isDisabled={index === 0} onPress={() => navigate(index - 1)}><Sym name="chevron_left" /></Button>}
-            <Button isIconOnly variant="tertiary" aria-label="缩小图片" isDisabled={zoom <= 1} onPress={() => setZoom((value) => Math.max(1, value - 0.5))}><Sym name="zoom_out" /></Button>
-            <Button variant="tertiary" onPress={() => setZoom(1)} aria-label="适应窗口">{Math.round(zoom * 100)}%</Button>
-            <Button isIconOnly variant="tertiary" aria-label="放大图片" isDisabled={zoom >= 3} onPress={() => setZoom((value) => Math.min(3, value + 0.5))}><Sym name="zoom_in" /></Button>
-            <Button isIconOnly variant="tertiary" aria-label="下载图片" onPress={() => void downloadAttachment(current).catch((error: Error) => toast.error(error.message))}><Sym name="download" /></Button>
-            {images.length > 1 && <Button isIconOnly variant="tertiary" aria-label="下一张图片" isDisabled={index === images.length - 1} onPress={() => navigate(index + 1)}><Sym name="chevron_right" /></Button>}
-          </Modal.Footer>
-        </Modal.Dialog>
-      </Modal.Container></Modal.Backdrop>
-    </Modal.Root>
+    <ImagePreview isOpen={open} onOpenChange={setOpen} title={current.name} contentKey={current.id}
+      content={source && !failed ? { kind: 'image', src: source, onError: () => setFailed(true) } : undefined}
+      status={<p role="alert">图片加载失败，请关闭后重试。</p>}
+      navigation={{ index, total: images.length, onChange: navigate }}
+      onDownload={() => void downloadAttachment(current).catch((error: Error) => toast.error(error.message))}
+      testId="chat-image-viewer" />
   </>;
 }
 

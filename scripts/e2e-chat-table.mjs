@@ -301,9 +301,99 @@ try {
     `streaming header columns too narrow: ${JSON.stringify(streamingHeaderWidths)}`,
   );
 
+  const render = async (content, streaming = false) => {
+    await page.evaluate(({ content, streaming }) => window.renderTable(content, streaming), { content, streaming });
+    await page.evaluate(() => new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve))));
+  };
+  const root = page.locator('#markdown-table-test');
+
+  // Count actual newline-terminated rows, not Marked's automatically padded cells.
+  const mathRows = '| A | B |\n|---|---|\n| $x$ | $y$ |\n| | |\n| 最后一行';
+  const dataStart = mathRows.indexOf('| $x$');
+  for (let end = dataStart; end <= mathRows.length; end++) {
+    await render(mathRows.slice(0, end), true);
+    const completed = (mathRows.slice(dataStart, end).match(/\n/g) ?? []).length;
+    assert.equal(await root.locator('tr[data-md-row="body"]').count(), completed, `partial table at ${end}`);
+  }
+  await render(mathRows, false);
+  assert.equal(await root.locator('tr[data-md-row="body"]').count(), 3, 'stop flushes final short row');
+  await root.locator('.katex').first().waitFor();
+  assert.equal(await root.locator('.katex').count(), 2, 'formula-only rows survive streaming');
+  await render(`${content}\n继续生成正文`, true);
+  assert.equal(await root.locator('[data-streaming="true"]').count(), 0);
+  assert.equal(await root.locator('.md-table-expand').count(), 1, 'a finished table is interactive before the answer ends');
+
+  // Copy -> parse -> render must preserve formulas, code, literal Markdown and line breaks.
+  await page.setViewportSize({ width: 1100, height: 900 });
+  const rich = [
+    '| 内容 | 说明 |', '|---|---|',
+    '| $\\frac{a}{b}+P(A|B)$ | 公式 |',
+    '| `C:\\Users\\me` | 路径 |',
+    '| `` `a` `` | 反引号 |',
+    '| `$\\|x\\|$` | 代码 |',
+    '| \\*字面\\* [标签] \\$20 &amp; | 文本 |',
+    '| 第一行<br>第二行 | 换行 |',
+    '| [链接](https://example.com?q=a%7Cb) **加粗** | 格式 |',
+  ].join('\n');
+  await render(rich);
+  await root.locator('.katex').waitFor();
+  await root.locator('.md-table-expand').click();
+  const cellSnapshot = () => root.locator('td').allInnerTexts();
+  const beforeCopy = await cellSnapshot();
+  await root.getByRole('button', { name: '复制为 CSV', exact: true }).click();
+  const csv = await page.evaluate(() => navigator.clipboard.readText());
+  assert.ok(csv.includes('\\frac{a}{b}+P(A|B),公式'), csv);
+  assert.ok(csv.includes('C:\\Users\\me,路径'), csv);
+  assert.ok(csv.includes('"第一行\n第二行",换行'), csv);
+  await root.getByRole('button', { name: '复制为 Markdown', exact: true }).click();
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  await render('');
+  await render(copied);
+  await root.locator('.katex').waitFor();
+  await root.locator('.md-table-expand').click();
+  assert.deepEqual(await cellSnapshot(), beforeCopy);
+  assert.equal(await root.locator('.md-math-error').count(), 0);
+  assert.equal(await root.locator('td strong').count(), 1, 'escaped asterisks stay literal');
+
+  // Complex HTML keeps its caption, multiple headers, spans and irregular rows intact.
+  const html = '<table><caption>原始标题</caption><thead><tr><th colspan="2">组合表头</th></tr><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td rowspan="2">跨行</td><td>第一项</td></tr><tr><td>第二项</td></tr></tbody><tfoot><tr><td colspan="2">表尾</td></tr></tfoot></table>';
+  await render(html);
+  assert.equal(await root.locator('caption').innerText(), '原始标题');
+  assert.equal(await root.locator('thead tr').count(), 2);
+  assert.equal(await root.locator('td[rowspan="2"]').innerText(), '跨行');
+  assert.equal(await root.locator('tbody tr').count(), 2);
+  assert.equal(await root.locator('tfoot').innerText(), '表尾');
+  await render('<table><thead><tr><th>A</th><th>B</th></tr></thead><tbody><tr><td>缺列内容</td></tr><tr><td>一</td><td>二</td><td>额外内容</td></tr></tbody></table>');
+  assert.deepEqual(await root.locator('tbody tr').evaluateAll(rows => rows.map(row => row.cells.length)), [1, 3]);
+  assert.match(await root.innerText(), /缺列内容/);
+  assert.match(await root.innerText(), /额外内容/);
+
+  // Long prose/URLs wrap to readable columns; wide tables and formulas stay locally scrollable.
+  await page.setViewportSize({ width: 320, height: 740 });
+  const longCells = `| 内容 | 地址 |\n|---|---|\n| ${'一段很长的中文说明'.repeat(40)} | https://example.com/${'long-url-'.repeat(80)} |\n`;
+  await render(longCells);
+  const geometry = await root.evaluate(host => ({
+    width: host.clientWidth, scrollWidth: host.scrollWidth,
+    cells: [...host.querySelectorAll('td')].map(cell => ({ width: cell.clientWidth, height: cell.clientHeight })),
+    scrollable: host.querySelector('.md-table-scroll').scrollWidth > host.querySelector('.md-table-scroll').clientWidth,
+  }));
+  assert.ok(geometry.scrollWidth <= geometry.width + 1, JSON.stringify(geometry));
+  assert.ok(geometry.cells.every(cell => cell.width <= 450 && cell.height > 60), JSON.stringify(geometry));
+  assert.equal(geometry.scrollable, true);
+  const longMath = `| 公式 | 说明 |\n|---|---|\n| $\\underbrace{${'a+b+'.repeat(50)}c}_{x}$ | 长公式 |\n`;
+  for (const streaming of [true, false]) {
+    await render(longMath, streaming);
+    await root.locator('.katex').waitFor();
+    const sizes = await root.locator('td').first().evaluate(cell => {
+      const formula = cell.querySelector('.md-math');
+      return { cell: cell.clientWidth, formula: formula.clientWidth, scroll: formula.scrollWidth };
+    });
+    assert.ok(sizes.formula <= sizes.cell && sizes.scroll > sizes.formula, JSON.stringify(sizes));
+  }
+
   assert.deepEqual(errors, []);
   console.log(
-    'PASS streaming rows stay complete, 6-row preview, expand/collapse, Markdown copy, short table, desktop wheel scroll/chaining, mobile sheet touch scroll in both axes at both snaps/close',
+    'PASS streaming row boundaries/stop, formula/empty rows, completed-table interaction, rich Markdown/CSV roundtrip, HTML spans/headers/captions, bounded long cells/formulas, preview/expand, desktop wheel and mobile sheet touch scroll',
   );
 } finally {
   await browser.close();

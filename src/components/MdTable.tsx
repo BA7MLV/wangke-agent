@@ -5,6 +5,7 @@ import {
   isValidElement,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from 'react';
@@ -20,6 +21,7 @@ import {
   type TableAlign,
 } from '../utils/markdownTable';
 import { useMarkdownStreaming } from './markdown/streaming';
+import { tableCellMarkdown as markdownOf, tableCellText as textOf } from '../utils/tableCell';
 
 /**
  * 替换 XMarkdown 的 `table`：三线表 + 数值列右对齐 + 流式渐进 + 长表折叠。
@@ -39,7 +41,7 @@ import { useMarkdownStreaming } from './markdown/streaming';
  *
  * XMarkdown 的 `streamStatus` 对标准 `<table>` 永远是 `done`（它只跟踪自定义标签），
  * 所以「还在生成」从外层 Provider 读。流式期间：
- *   - 只挂**单元格数已经对齐表头**的完整行，末行写一半就裁掉；
+ *   - 由解析器标记未收到换行的末行，暂缓显示；流结束后按 GFM 规则补空格；
  *   - 多列表格最多显示前 `PREVIEW_ROWS` 行（单列更像清单，全部露出），
  *     不出现展开按钮（避免点到半成品）；
  *   - 列宽在表格第一次出现时按表头 + 前几行定死，结束后再交回自动布局。
@@ -70,7 +72,7 @@ interface ParsedTable {
   body: ParsedRow[];
   foot: ParsedRow[];
   columns: number;
-  /** 有表头且列数 > 0 才走新渲染；否则原样吐回去，不猜结构。 */
+  /** 只有简单矩形结构才重建；HTML 复杂表格原样交给浏览器布局。 */
   valid: boolean;
 }
 
@@ -83,87 +85,6 @@ function cellTag(node: React.ReactNode): 'th' | 'td' | null {
   if (!isValidElement(node)) return null;
   const tag = node.type;
   return typeof tag === 'string' && CELL_TAGS.has(tag) ? (tag as 'th' | 'td') : null;
-}
-
-/** 单元格的纯文字（递归取，兼容 <code>/<strong>/链接包一层的情况） */
-function textOf(node: React.ReactNode): string {
-  if (node == null || typeof node === 'boolean') return '';
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(textOf).join('');
-  if (!isValidElement(node)) return '';
-  const props = propsOf(node);
-  if (node.type === 'br') return '\n';
-  if (node.type === 'img') return typeof props.alt === 'string' ? props.alt : '';
-  return textOf(props.children as React.ReactNode);
-}
-
-/**
- * 单元格的 Markdown 近似（复制用）。
- *
- * 屏幕上已经是渲染后的 React 树，原始 markdown 拿不到了；这里只还原最常见的行内结构。
- * 不认识的标签一律退成纯文字 —— 复制出去的内容宁可比原来朴素，也不能多出一堆
- * HTML 标签。真正的管道符 / 换行再由 `tableToMarkdown` 统一转义。
- */
-function markdownOf(node: React.ReactNode): string {
-  if (node == null || typeof node === 'boolean') return '';
-  if (typeof node === 'string' || typeof node === 'number') return String(node);
-  if (Array.isArray(node)) return node.map(markdownOf).join('');
-  if (!isValidElement(node)) return '';
-
-  const props = propsOf(node);
-  const inner = markdownOf(props.children as React.ReactNode);
-
-  /**
-   * XMarkdown 会把 `a` / `img` / `code` 换成自定义组件（SeekLink / SourceImage /
-   * MarkdownCode…），这时标签名不再是字符串。能认出来的结构在这里补回去，
-   * 认不出来的一律退成纯文字。
-   */
-  if (typeof node.type !== 'string') {
-    const source = props['data-source'];
-    if (typeof source === 'string' && source) {
-      return props['data-display'] === 'true' ? `$$${source}$$` : `$${source}$`;
-    }
-
-    const href = props.href;
-    if (typeof href === 'string' && href) return `[${inner}](${href})`;
-
-    const src = props.src;
-    if (typeof src === 'string' && src) {
-      const alt = typeof props.alt === 'string' ? props.alt : '';
-      return `![${alt}](${src})`;
-    }
-
-    // MarkdownCode：block 为 false 是行内代码；围栏代码不应出现在单元格里，
-    // 真出现了也只留文字，不硬塞反引号。
-    if ('block' in props && props.block !== true) {
-      return inner ? `\`${inner}\`` : inner;
-    }
-    return inner;
-  }
-
-  switch (node.type) {
-    case 'strong':
-      return inner ? `**${inner}**` : inner;
-    case 'em':
-      return inner ? `*${inner}*` : inner;
-    case 'del':
-      return inner ? `~~${inner}~~` : inner;
-    case 'code':
-      return inner ? `\`${inner}\`` : inner;
-    case 'br':
-      return '<br>';
-    case 'a': {
-      const href = props.href;
-      return typeof href === 'string' && href ? `[${inner}](${href})` : inner;
-    }
-    case 'img': {
-      const alt = typeof props.alt === 'string' ? props.alt : '';
-      const src = typeof props.src === 'string' ? props.src : '';
-      return src ? `![${alt}](${src})` : alt;
-    }
-    default:
-      return inner;
-  }
 }
 
 function rowOf(node: React.ReactElement): ParsedRow {
@@ -182,25 +103,30 @@ function parseTable(nodes: React.ReactNode): ParsedTable {
   let header: ParsedRow | null = null;
   const body: ParsedRow[] = [];
   const foot: ParsedRow[] = [];
+  let simple = true;
 
-  const rowsIn = (section: React.ReactElement): ParsedRow[] =>
-    Children.toArray(propsOf(section).children as React.ReactNode)
-      .filter((n): n is React.ReactElement => isValidElement(n) && n.type === 'tr')
-      .map(rowOf);
+  const rowsIn = (section: React.ReactElement): ParsedRow[] => {
+    const nodes = Children.toArray(propsOf(section).children as React.ReactNode);
+    if (nodes.some((node) => !(typeof node === 'string' && !node.trim()) && !(isValidElement(node) && node.type === 'tr'))) simple = false;
+    return nodes.filter((n): n is React.ReactElement => isValidElement(n) && n.type === 'tr').map(rowOf);
+  };
 
   Children.forEach(nodes, (node) => {
-    if (!isValidElement(node) || typeof node.type !== 'string') return;
+    if (node == null || typeof node === 'boolean' || (typeof node === 'string' && !node.trim())) return;
+    if (!isValidElement(node) || typeof node.type !== 'string') { simple = false; return; }
 
     if (node.type === 'tr') {
       body.push(rowOf(node));
       return;
     }
-    if (!ROW_GROUP_TAGS.has(node.type)) return;
+    // Captions, colgroups and other HTML structures belong to the original table.
+    if (!ROW_GROUP_TAGS.has(node.type)) { simple = false; return; }
 
     const rows = rowsIn(node);
     if (node.type === 'thead') {
+      if (header || rows.length !== 1) simple = false;
       if (!header && rows.length > 0) header = rows[0];
-      // 多出来的 thead 行极罕见；宁可当数据行保留，也不悄悄丢掉
+      // 多层表头会令 simple=false，最终保留原结构。
       body.push(...rows.slice(1));
     } else if (node.type === 'tbody') {
       body.push(...rows);
@@ -219,7 +145,14 @@ function parseTable(nodes: React.ReactNode): ParsedTable {
   }
 
   const columns = header?.cells.length ?? 0;
-  return { header, body, foot, columns, valid: header !== null && columns > 0 };
+  const rows = [...(header ? [header] : []), ...body, ...foot];
+  // Rebuilding a spanning/irregular grid would silently lose cells or their associations.
+  // Let the browser lay out the original HTML in the same scroll container instead.
+  const rectangular = rows.every(({ cells }) => cells.length === columns && cells.every((cell) => {
+    const props = propsOf(cell);
+    return ['colSpan', 'rowSpan', 'colspan', 'rowspan'].every((key) => props[key] == null || Number(props[key]) === 1);
+  }));
+  return { header, body, foot, columns, valid: simple && rectangular && header !== null && columns > 0 };
 }
 
 /** 判定哪些列是数值列。有疑虑就返回空集合（= 不插手）。 */
@@ -319,7 +252,7 @@ function TableSurface({
   const fixedTotal = fixed ? colWidths.reduce((sum, width) => sum + width, 0) : 0;
 
   return (
-    <div ref={containerRef} className={containerClassName}>
+    <div ref={containerRef} className={containerClassName} tabIndex={0} role="region" aria-label={`${caption}，可滚动查看`}>
       <table
         className={tableClassName}
         style={
@@ -332,7 +265,7 @@ function TableSurface({
             : undefined
         }
       >
-        <caption className="md-table-caption">{caption}</caption>
+        <caption className="md-table-caption">{caption}，{rows.length + foot.length} 行，{header.cells.length} 列</caption>
         {fixed ? (
           <colgroup>
             {colWidths.map((width, i) => (
@@ -357,11 +290,11 @@ function TableSurface({
 function CopyButton({
   label,
   ariaLabel,
-  text,
+  getText,
 }: {
   label: string;
   ariaLabel: string;
-  text: string;
+  getText: () => string;
 }) {
   const [state, setState] = useState<'idle' | 'copied' | 'failed'>('idle');
   const timer = useRef<number | null>(null);
@@ -374,7 +307,7 @@ function CopyButton({
   );
 
   const onPress = async () => {
-    const ok = await copyText(text);
+    const ok = await copyText(getText());
     setState(ok ? 'copied' : 'failed');
     if (timer.current !== null) window.clearTimeout(timer.current);
     timer.current = window.setTimeout(() => setState('idle'), 1600);
@@ -422,8 +355,8 @@ function TableSheet({
   rows: ParsedRow[];
   foot: ParsedRow[];
   cols: Set<number>;
-  copyMarkdown: string;
-  copyCsv: string;
+  copyMarkdown: () => string;
+  copyCsv: () => string;
 }) {
   const [snap, setSnap] = useState<SheetSnap>('half');
   const drag = useRef<{ y: number; moved: boolean } | null>(null);
@@ -546,9 +479,9 @@ function TableSheet({
               <CopyButton
                 label="Markdown"
                 ariaLabel="复制为 Markdown"
-                text={copyMarkdown}
+                getText={copyMarkdown}
               />
-              <CopyButton label="CSV" ariaLabel="复制为 CSV" text={copyCsv} />
+              <CopyButton label="CSV" ariaLabel="复制为 CSV" getText={copyCsv} />
             </Drawer.Footer>
           </Drawer.Dialog>
         </Drawer.Content>
@@ -560,18 +493,16 @@ function TableSheet({
 export function MarkdownTable({
   children,
   streaming,
+  'data-state': tableState,
+  'data-pending': pendingRow,
 }: ComponentProps & { streaming?: boolean }) {
   const inheritedStreaming = useMarkdownStreaming();
-  const isStreaming = streaming ?? inheritedStreaming;
+  const isStreaming = streaming ?? (inheritedStreaming && tableState !== 'done');
   const isMobile = useIsMobile();
 
-  const parsed = parseTable(children as React.ReactNode);
+  const parsed = useMemo(() => parseTable(children as React.ReactNode), [children]);
   const completeBody = parsed.valid
-    ? parsed.body.filter(
-        (row) =>
-          row.cells.length === parsed.columns &&
-          (!isStreaming || row.cells.some((cell) => textOf(cell).trim() !== '')),
-      )
+    ? isStreaming && pendingRow === 'true' ? parsed.body.slice(0, -1) : parsed.body
     : [];
 
   const headerTexts = parsed.header?.cells.map((cell) => textOf(cell)) ?? [];
@@ -580,11 +511,12 @@ export function MarkdownTable({
     return align === 'left' || align === 'center' || align === 'right' ? align : null;
   });
 
-  const markdownHeaders = parsed.header?.cells.map(markdownOf) ?? [];
-  const markdownRows = completeBody.map((row) => row.cells.map(markdownOf));
-  const plainRows = completeBody.map((row) => row.cells.map(textOf));
-  const copyMarkdown = tableToMarkdown(markdownHeaders, markdownRows, aligns);
-  const copyCsv = tableToCsv(headerTexts, plainRows);
+  // Export only on a user gesture: streaming/expanding a large table should not
+  // serialize every hidden row into two unused strings on every render.
+  const exportRows = () => [...completeBody, ...parsed.foot];
+  const copyMarkdown = () => tableToMarkdown(parsed.header?.cells.map(markdownOf) ?? [],
+    exportRows().map((row) => row.cells.map(markdownOf)), aligns, { serializedCells: true });
+  const copyCsv = () => tableToCsv(headerTexts, exportRows().map((row) => row.cells.map(textOf)));
 
   const cols = numericColumns(parsed.header, completeBody);
 
@@ -598,7 +530,7 @@ export function MarkdownTable({
     if (!frozenWidths.current || frozenWidths.current.signature !== widthSignature) {
       frozenWidths.current = {
         signature: widthSignature,
-        widths: columnWidthsPx(markdownHeaders, markdownRows.slice(0, 3)),
+        widths: columnWidthsPx(headerTexts, completeBody.slice(0, 3).map((row) => row.cells.map(textOf))),
       };
     }
   } else if (!isStreaming) {
@@ -664,10 +596,10 @@ export function MarkdownTable({
     };
   }, [parsed.valid, parsed.columns, completeBody.length, isStreaming, expanded]);
 
-  if (!parsed.valid || !parsed.header) {
+  if (!parsed.valid || !parsed.header || tableState === undefined) {
     return (
       <div className="md-table" data-testid="md-table">
-        <div className="md-table-scroll">
+        <div className="md-table-scroll" tabIndex={0} role="region" aria-label="表格，可滚动查看">
           <table>{children as React.ReactNode}</table>
         </div>
       </div>
@@ -750,9 +682,9 @@ export function MarkdownTable({
               <CopyButton
                 label="Markdown"
                 ariaLabel="复制为 Markdown"
-                text={copyMarkdown}
+                getText={copyMarkdown}
               />
-              <CopyButton label="CSV" ariaLabel="复制为 CSV" text={copyCsv} />
+              <CopyButton label="CSV" ariaLabel="复制为 CSV" getText={copyCsv} />
             </>
           ) : null}
           {showExpand ? (

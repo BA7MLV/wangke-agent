@@ -4,6 +4,8 @@ import { liveQuery } from 'dexie';
 import { Button } from '@heroui/react';
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
+import { useSettings } from '../store/settings';
+import { AGENT_INSTRUCTIONS_FILE_ID, getSystemMaterialFile } from '../materials/systemFiles';
 import { formatCaughtError } from '../utils/errorText';
 import { Sym, toast, useSkeletonGate } from '../ui';
 import type { HtmlView, MaterialReaderHandle } from '../materials/types';
@@ -94,6 +96,13 @@ export default function MaterialReader({ material, handleRef }: Props) {
   // original snapshot before saving, rather than overwriting concurrent answers.
   useEffect(() => {
     if (format !== 'md') return;
+    if (materialId === AGENT_INSTRUCTIONS_FILE_ID) {
+      const refresh = () => setBlob(getSystemMaterialFile(materialId)!);
+      refresh();
+      return useSettings.subscribe((state, previous) => {
+        if (state.agentInstructions !== previous.agentInstructions) refresh();
+      });
+    }
     const subscription = liveQuery(() => db.files.get(materialId)).subscribe({
       next: (row) => { if (row) setBlob(row.blob); },
       error: (error) => toast.error(`资料更新失败：${formatCaughtError(error)}`),
@@ -104,6 +113,7 @@ export default function MaterialReader({ material, handleRef }: Props) {
   /** 断点续读：阅读位置写回 videos.lastUnit（与视频的 lastPosition 对称） */
   const onUnitChange = useCallback(
     (unit: number) => {
+      if (materialId === AGENT_INSTRUCTIONS_FILE_ID) return;
       void db.videos.update(materialId, { lastUnit: unit });
     },
     [materialId],

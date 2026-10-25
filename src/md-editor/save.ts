@@ -22,7 +22,7 @@
  * 那 2MB+ 不能为了一篇 md 拖进编辑器链路（见 reindex.ts 开头的理由）。
  */
 
-import type { MaterialParseResult } from '../materials/reindex';
+import { saveSystemMarkdown } from '../materials/systemFiles';
 
 /** 停止输入多久后落盘。见文件开头：CM6 逐键回调 + 全量重建，不能逐键执行 */
 export const MD_SAVE_DEBOUNCE_MS = 1200;
@@ -280,11 +280,12 @@ export function createMdSaver(materialId: string, opts: MdSaverOptions = {}): Md
  * 三步都以文本为准，最后一步失败也不回滚前两步：内容已经对上了，
  * 剩下的只是「阅读位置记的是哪一段」这个派生状态，标成失败提示用户即可。
  */
-async function persistMd(materialId: string, text: string, expectedMarkdown?: string): Promise<MaterialParseResult> {
+async function persistMd(materialId: string, text: string, expectedMarkdown?: string): Promise<void> {
   let stage: MdSaveStage = 'blob';
   try {
+    if (saveSystemMarkdown(materialId, text, expectedMarkdown)) return;
     const { saveMarkdownMaterial } = await import('../materials/markdownFile');
-    return await saveMarkdownMaterial(materialId, text, expectedMarkdown);
+    await saveMarkdownMaterial(materialId, text, expectedMarkdown);
   } catch (e) {
     throw new MdSaveError(stage, e);
   }

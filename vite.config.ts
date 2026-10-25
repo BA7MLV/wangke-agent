@@ -170,8 +170,8 @@ export default defineConfig({
         name: '网课学习助手',
         short_name: '网课助手',
         description: '上传网课视频，自动生成字幕、公文格式讲义，支持 AI 问答',
-        theme_color: '#1677ff',
-        background_color: '#ffffff',
+        theme_color: '#ebebeb',
+        background_color: '#ebebeb',
         display: 'standalone',
         orientation: 'any',
         icons: [

@@ -1,8 +1,9 @@
 import type { MarkedExtension, TokenizerExtension } from 'marked';
 
 const MAX_MATH_LENGTH = 20000;
-const escapeHtml = (text: string) => text.replace(/[&<>"']/g, c => ({
-  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;',
+// GFM splits table cells before parsing HTML attributes, so TeX pipes need an entity too.
+const escapeHtml = (text: string) => text.replace(/[&<>"'|]/g, c => ({
+  '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;', '|': '&#124;',
 })[c]!);
 
 /** Runs inside Marked's lexer: code spans/fences and escaped dollars retain Markdown semantics. */

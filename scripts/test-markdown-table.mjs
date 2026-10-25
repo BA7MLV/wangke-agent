@@ -7,6 +7,11 @@
  * 运行：node scripts/test-markdown-table.mjs
  */
 import assert from 'node:assert/strict';
+import { createElement as h } from 'react';
+import { Marked } from 'marked';
+import { tableCellMarkdown, tableCellText } from '../src/utils/tableCell.ts';
+import { protectMath } from '../src/components/markdown/math.ts';
+import { tableExtension } from '../src/components/markdown/table.ts';
 import {
   columnWidthsPx,
   escapeMarkdownCell,
@@ -101,6 +106,48 @@ test('流式列宽：两字表头也保得住，不依赖数据行', () => {
 
 test('流式列宽：空表头返回空数组', () => {
   assert.deepEqual(columnWidthsPx([], []), []);
+});
+
+test('公式与自定义图片组件的 CSV 保留语义，不丢成空格', () => {
+  const Component = () => null;
+  assert.equal(tableCellText(h(Component, { 'data-source': '\\frac{a}{b}' })), '\\frac{a}{b}');
+  assert.equal(tableCellText(h(Component, { src: '/image.png', alt: '示意图' })), '示意图');
+  assert.equal(tableCellText(h('td', null, '第一行', h('br'), '第二行')), '第一行\n第二行');
+});
+
+test('复制后重新解析：公式命令、代码反斜杠/反引号/竖线与转义文字保真', () => {
+  const formula = '\\frac{a}{b} + P(A|B)';
+  const cells = [
+    h('span', { 'data-source': formula }),
+    h('code', null, 'C:\\Users\\me'),
+    h('code', null, '`a` and ``b``'),
+    h('code', null, '$|x|$ \\(x\\)'),
+    h('span', null, '*literal* [text] $20 &amp; <tag> a|b'),
+  ];
+  const copied = tableToMarkdown(['内容'], cells.map(cell => [tableCellMarkdown(cell)]), [], { serializedCells: true });
+  const parser = new Marked();
+  const protectedCopy = protectMath(copied, false);
+  const token = parser.lexer(protectedCopy)[0];
+  assert.equal(token.type, 'table');
+  assert.equal(token.rows.length, cells.length);
+  assert.ok(token.rows.every(row => row.length === 1));
+  const html = parser.parse(protectedCopy);
+  assert.match(html, /data-source="\\frac\{a\}\{b\} \+ P\(A&#124;B\)"/);
+  assert.match(html, /<code>C:\\Users\\me<\/code>/);
+  assert.match(html, /<code>`a` and ``b``<\/code>/);
+  assert.doesNotMatch(html, /<em>|<strong>|<tag>/);
+  assert.equal((html.match(/<math-formula/g) ?? []).length, 1, 'code and escaped dollars stay literal');
+});
+
+test('流式只隐藏尚未收到换行的最后一行，结束时完整放出', () => {
+  const source = '| a | b |\n|---|---|\n| 1 | 2 |\n| 3';
+  const streaming = new Marked(tableExtension(true));
+  assert.match(streaming.parse(source), /data-state="loading" data-pending="true"/);
+  assert.match(streaming.parse(source + '\n'), /data-state="loading" data-pending="false"/);
+  assert.match(new Marked(tableExtension(false)).parse(source), /data-state="done" data-pending="false"/);
+  assert.match(streaming.parse(source + '\n\n继续输出'), /data-state="done"/);
+  assert.match(streaming.parse(source + '\n\n'), /data-state="done"/);
+  assert.match(streaming.parse(source.split('\n').map(line => `> ${line}`).join('\n')), /data-state="loading" data-pending="true"/);
 });
 
 console.log(`\n${passed} passed, ${failures.length} failed`);

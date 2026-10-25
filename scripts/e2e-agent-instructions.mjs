@@ -36,6 +36,11 @@ try {
     });
     const page = await context.newPage();
     page.on('pageerror', error => errors.push(error.message));
+    const closeSettings = () => page.getByRole('button', { name: '关闭设置', exact: true }).press('Enter');
+    const selectSettingsModule = async key => {
+      if (mobile) await page.getByTestId('settings-modal').getByRole('button', { name: '设置', exact: true }).click();
+      await page.getByTestId(`settings-nav-${key}`).click();
+    };
     await page.goto(`${BASE}/#/settings/agent`);
     const input = page.getByTestId('agent-instructions');
     await input.waitFor();
@@ -43,9 +48,9 @@ try {
     assert.equal(await page.getByTestId('agent-instructions-reset').isDisabled(), true);
     await input.fill(instructions);
     assert.equal(await page.evaluate(() => JSON.parse(localStorage.getItem('wangke-settings')).state.agentInstructions), instructions);
-    await page.getByTestId('settings-nav-appearance').click();
+    await selectSettingsModule('appearance');
     await page.getByTestId('card-appearance').waitFor();
-    await page.getByTestId('settings-nav-agent').click();
+    await selectSettingsModule('agent');
     assert.equal(await input.inputValue(), instructions);
     await page.reload();
     await input.waitFor();
@@ -73,13 +78,13 @@ try {
         await page.waitForFunction(async () => !(await window.__agentTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loading);
       };
       await input.fill(instructions);
-      await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+      await closeSettings();
       await send('请解释一个概念。');
       assert.equal(requests.length, 1);
       assert.ok(requests[0].messages[0].content.endsWith(instructions));
       await page.evaluate(() => { location.hash = '/settings/agent'; });
       await input.fill('新版指令：先给一个例子。');
-      await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+      await closeSettings();
       await send('继续解释。');
       assert.equal(requests.length, 2);
       assert.ok(requests[1].messages[0].content.endsWith('新版指令：先给一个例子。'));
@@ -93,14 +98,14 @@ try {
       for (const request of requests.slice(2)) assert.ok(request.messages[0].content.endsWith('新版指令：先给一个例子。'));
       await page.evaluate(() => { location.hash = '/settings/agent'; });
       await input.fill('');
-      await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+      await closeSettings();
       await send('恢复默认后再解释。');
       assert.equal(requests.length, 5);
       assert.ok(!requests[4].messages[0].content.includes('## 用户设置的 Agent 默认提示词'));
       console.log('OK: actual model requests include current instructions for library/video/PDF; an existing conversation picks up edits and resets');
     }
     if (await page.getByTestId('settings-modal').isVisible()) {
-      await page.getByRole('button', { name: '关闭设置', exact: true }).click();
+      await closeSettings();
       await page.getByTestId('settings-modal').waitFor({ state: 'hidden' });
     }
     await page.goto(`${BASE}/#/library`);
@@ -121,18 +126,26 @@ try {
     await page.getByRole('button', { name: '前进', exact: true }).click();
     await file.waitFor();
     await open(file);
-    await page.getByTestId('agent-instructions-file-dialog').waitFor();
-    await input.fill('资料中修改：先画图再讲解。');
-    await page.getByTestId('agent-file-close').click();
-    await page.getByTestId('agent-instructions-file-dialog').waitFor({ state: 'hidden' });
+    const reader = page.getByTestId('material-reader');
+    const editToggle = page.getByTestId('md-edit-toggle');
+    const editor = page.getByTestId('md-editor').locator('.cm-content');
+    await reader.waitFor();
+    assert.match(page.url(), /#\/player\/system%3Aagent-instructions$/);
+    assert.equal(await page.getByTestId('card-agent-instructions').count(), 0);
+    await editToggle.click();
+    await editor.fill('# 回答偏好\n\n资料中修改：先画图再讲解。');
+    await editToggle.click();
+    await editor.waitFor({ state: 'hidden' });
+    assert.match(await reader.innerText(), /先画图再讲解/);
+    await page.getByTestId('nav-back').click();
+    await file.waitFor();
     await page.evaluate(async () => (await window.__agentTestImport('/src/components/settingsDialogStore.ts')).openSettings('agent'));
     await input.waitFor();
-    assert.equal(await input.inputValue(), '资料中修改：先画图再讲解。');
+    assert.equal(await input.inputValue(), '# 回答偏好\n\n资料中修改：先画图再讲解。');
     await input.fill('设置中修改：先给结论。');
     await page.getByTestId('agent-instructions-open-file').click();
     await page.getByTestId('settings-modal').waitFor({ state: 'hidden' });
-    await page.getByTestId('agent-instructions-file-dialog').waitFor();
-    assert.equal(await input.inputValue(), '设置中修改：先给结论。');
+    await reader.getByText('设置中修改：先给结论。', { exact: true }).waitFor();
     const result = await page.evaluate(async () => {
       const { createResourceExecutor } = await window.__agentTestImport('/src/harness/resources.ts');
       const execute = createResourceExecutor();
@@ -144,12 +157,30 @@ try {
     assert.match(result.before, /先给结论/);
     assert.match(result.edit, /已保存/);
     assert.match(result.after, /先举例/);
-    assert.equal(await input.inputValue(), '设置中修改：先举例。');
+    await reader.getByText('设置中修改：先举例。', { exact: true }).waitFor();
+    // Saving again and then receiving an Agent edit must still refresh the reader.
+    await editToggle.click();
+    await editor.fill('设置中修改：先举例。\n\n公式：$x_i^2$');
+    await editToggle.click();
+    await reader.locator('.katex').waitFor();
+    await page.evaluate(async () => {
+      const { createResourceExecutor } = await window.__agentTestImport('/src/harness/resources.ts');
+      await createResourceExecutor({ courseId: 'system:agent-instructions', kind: 'para' })('edit', {
+        path: '/courses/current/material', edits: [{ old_string: '先举例', new_string: '先列步骤' }],
+      });
+    });
+    await reader.getByText('设置中修改：先列步骤。', { exact: true }).waitFor();
     await page.reload();
-    await input.waitFor();
-    assert.equal(await input.inputValue(), '设置中修改：先举例。');
-    await page.getByTestId('agent-file-close').click();
-    await page.getByTestId('agent-instructions-file-dialog').waitFor({ state: 'hidden' });
+    await reader.getByText('设置中修改：先列步骤。', { exact: true }).waitFor();
+    await reader.locator('.katex').waitFor();
+    // An ordinary Markdown editor's autosave also flushes when navigating away.
+    await editToggle.click();
+    await editor.fill('离开页面也保存。');
+    await page.getByTestId('nav-back').click();
+    await page.waitForFunction(() => JSON.parse(localStorage.getItem('wangke-settings')).state.agentInstructions === '离开页面也保存。');
+    await open(file);
+    await reader.getByText('离开页面也保存。', { exact: true }).waitFor();
+    await page.getByTestId('nav-back').click();
     await page.getByTestId('library-search').fill('AGENTS.md');
     await file.waitFor();
     await page.getByRole('radio', { name: '列表视图', exact: true }).click();
@@ -166,7 +197,7 @@ try {
     await page.reload();
     await file.waitFor();
     assert.equal(await systemFolder.count(), 0, 'refresh keeps the system directory open');
-    console.log(`OK: ${mobile ? 'mobile' : 'desktop'} /system directory, history, persistence, two-way editing, live Agent edits, deep-link reload, search and list view`);
+    console.log(`OK: ${mobile ? 'mobile' : 'desktop'} /system directory, ordinary Markdown reader/editor, autosave, two-way settings sync, live Agent edits, math, deep-link reload, history, search and list view`);
     await context.close();
   }
   assert.deepEqual(errors, [], 'browser runtime errors');

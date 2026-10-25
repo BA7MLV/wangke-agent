@@ -267,7 +267,7 @@ console.log('6. 交互：查看大图 / 源码折叠');
 await page.locator('[data-testid="quiz-explain-md"] [data-testid="svg-zoom"]').first().click();
 await page.waitForTimeout(500);
 const zoom = await page.evaluate(() => {
-  const inner = document.querySelector('[data-testid="svg-zoom-dialog"] .xmd-mermaid-zoom');
+  const inner = document.querySelector('[data-testid="svg-zoom-dialog"] .image-preview__content');
   const label = document.querySelector('[data-testid="svg-zoom-label"]');
   const svg = inner?.querySelector('svg');
   return { visible: !!inner && inner.getBoundingClientRect().height > 0, label: label?.textContent ?? null, hasSvg: !!svg };

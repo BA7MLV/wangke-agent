@@ -41,7 +41,7 @@ import { useCourseChat } from '../store/courseChat';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { useRecentChats } from '../components/useRecentChats';
 import { SettingsButton } from '../components/SettingsModal';
-import AgentModule from '../components/settings/AgentModule';
+import { AGENT_INSTRUCTIONS_ROUTE } from '../materials/systemFiles';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
 import { deleteMaterialFile, deleteVideoFile, saveMaterialFile, saveVideoFile } from '../store/fileStore';
@@ -310,9 +310,9 @@ function LibrarySkeleton({ count }: { count: number }) {
 
 export default function Library() {
   const navigate = useNavigate();
-  const [searchParams, setSearchParams] = useSearchParams();
-  // 兼容旧链接；新入口统一位于 /system。
-  const agentFileOpen = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
+  const [searchParams] = useSearchParams();
+  // 设置与历史聊天中的深链接也进入普通 Markdown 阅读页。
+  const agentFileRequested = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const nav = useAppNav('home');
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
   const recent = useRecentChats();
@@ -344,18 +344,13 @@ export default function Library() {
   const folderHistory = useLibraryNavigation((s) => s.folderHistory);
   const setFolderHistory = useLibraryNavigation((s) => s.setFolderHistory);
   const folderKey = folderHistory.entries[folderHistory.index];
-  const inSystemFolder = agentFileOpen || folderKey === 'system';
-  const setAgentFileOpen = (open: boolean) => {
-    // 从设置或聊天深链接打开时，关闭文件后留在它所属的目录。
+  const inSystemFolder = folderKey === 'system';
+  useEffect(() => {
+    if (!agentFileRequested) return;
     setFolderHistory((history) => history.entries[history.index] === 'system' ? history :
       { entries: [...history.entries.slice(0, history.index + 1), 'system'], index: history.index + 1 });
-    setSearchParams((current) => {
-      const next = new URLSearchParams(current);
-      if (open) next.set('file', '/system/AGENTS.md');
-      else next.delete('file');
-      return next;
-    });
-  };
+    navigate(AGENT_INSTRUCTIONS_ROUTE, { replace: true });
+  }, [agentFileRequested, navigate, setFolderHistory]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const marquee = useMarqueeSelection(selection, setSelection);
   const [view, setView] = useState<'icons' | 'list'>('icons');
@@ -638,7 +633,7 @@ export default function Library() {
     setFilter('all');
   };
   const openItem = (key: string) => {
-    if (key === 'system:agent-instructions') setAgentFileOpen(true);
+    if (key === 'system:agent-instructions') navigate(AGENT_INSTRUCTIONS_ROUTE);
     else if (key === 'system:folder') openFolder('system');
     else if (key.startsWith('folder:')) openFolder(key.slice(7));
     else if (key.startsWith('file:')) navigate(`/player/${key.slice(5)}`);
@@ -1938,12 +1933,6 @@ export default function Library() {
         </footer>
         {dropActive && <div className="finder-drop-overlay">松开以导入资料</div>}
       </section>
-      <Modal.Root isOpen={agentFileOpen} onOpenChange={setAgentFileOpen}>
-        <Modal.Backdrop><Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}><Modal.Dialog data-testid="agent-instructions-file-dialog">
-          <Modal.Header><Modal.Heading>全局 Agent 指令文件</Modal.Heading><Modal.CloseTrigger aria-label="关闭指令文件" data-testid="agent-file-close" /></Modal.Header>
-          <Modal.Body><AgentModule fileView /></Modal.Body>
-        </Modal.Dialog></Modal.Container></Modal.Backdrop>
-      </Modal.Root>
       <Modal.Root isOpen={!!details} onOpenChange={(open) => { if (!open) setDetails(null); }}>
         <Modal.Backdrop><Modal.Container placement="center" size="sm" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
           <Modal.Header><Modal.Heading>资料简介</Modal.Heading><Modal.CloseTrigger /></Modal.Header>

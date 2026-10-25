@@ -2,6 +2,7 @@ import { db } from './db';
 import { cloud } from '../cloud/state';
 import { flushCloud } from '../cloud/sync';
 import { apiUrl } from '../api/base';
+import { getSystemMaterialFile } from '../materials/systemFiles';
 
 /**
  * 课程文件存储层（视频 + 阅读材料共用）。
@@ -252,8 +253,8 @@ export function saveMaterialFile(id: string, blob: Blob, onProgress?: (ratio: nu
   return saveCourseFile(id, blob, onProgress, DIR_MATERIALS);
 }
 
-export function getMaterialFile(id: string) {
-  return getCourseFile(id, DIR_MATERIALS);
+export async function getMaterialFile(id: string) {
+  return getSystemMaterialFile(id) ?? getCourseFile(id, DIR_MATERIALS);
 }
 
 export function deleteMaterialFile(id: string) {

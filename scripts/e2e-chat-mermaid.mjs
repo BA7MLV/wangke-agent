@@ -168,18 +168,18 @@ await page.waitForTimeout(300);
 const clip = await page.evaluate(() => navigator.clipboard.readText().catch(() => ''));
 check(clip.includes('graph TD'), `复制源码写入剪贴板（${JSON.stringify(clip.slice(0, 24))}…）`);
 await page.locator('[data-testid="mermaid-zoom"]').first().click();
-await page.waitForSelector('.xmd-mermaid-zoom', { timeout: 5000 });
+await page.waitForSelector('.image-preview', { timeout: 5000 });
 await page.waitForTimeout(800); // 等 antd Modal 的进场动画结束再断言/截图
-const zoomSvg = await page.locator('.xmd-mermaid-zoom-inner svg').count();
-const zoomBox = await page.locator('[data-testid="mermaid-zoom-dialog"][open]').first().boundingBox();
-const zoomVisible = await page.locator('.xmd-mermaid-zoom-inner svg').first().isVisible();
+const zoomSvg = await page.locator('.image-preview__svg svg').count();
+const zoomBox = await page.getByTestId('mermaid-zoom-dialog').boundingBox();
+const zoomVisible = await page.locator('.image-preview__svg svg').first().isVisible();
 check(zoomSvg === 1 && zoomVisible && !!zoomBox, '大图弹层内渲染出 SVG');
 // 下载 SVG：文件要能独立打开且内容完整（含中文标签）。
 // 注意顺序：下载断言放在缩放操作**之前** —— mdui-dialog 在弹窗内连点数次按钮后会自发关闭
 //（复现与排查记录见设计文档 §13.3），下载必须赶在它面前做。
 const [dl] = await Promise.all([
   page.waitForEvent('download', { timeout: 10000 }),
-  page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-download"]').click(),
+  page.getByTestId('mermaid-zoom-dialog').getByTestId('mermaid-zoom-download').click(),
 ]);
 const svgPath = await dl.path();
 const svgText = svgPath ? readFileSync(svgPath, 'utf8') : '';
@@ -187,15 +187,15 @@ check(/\.svg$/.test(dl.suggestedFilename()), `下载文件名为 .svg（${dl.sug
 check(svgText.startsWith('<?xml') && svgText.includes('<svg'), '导出内容带 xml 头与 svg 根');
 check(/<svg[^>]*width="\d+"/.test(svgText), '导出 svg 有显式宽度（独立打开不会缩成 0）');
 
-const inner = page.locator('.xmd-mermaid-zoom-inner').first();
+const inner = page.locator('.image-preview__content').first();
 const w0 = await inner.evaluate((el) => el.getBoundingClientRect().width);
-await page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-in"]').click();
+await page.getByTestId('mermaid-zoom-in').click();
 await page.waitForTimeout(250);
 const wZoom = await inner.evaluate((el) => el.getBoundingClientRect().width);
-await page.locator('[data-testid="mermaid-zoom-dialog"][open] [data-testid="mermaid-zoom-reset"]').click();
+await page.getByTestId('mermaid-zoom-reset').click();
 await page.waitForTimeout(250);
 const w1 = await inner.evaluate((el) => el.getBoundingClientRect().width);
-check(wZoom > w0 * 1.2, `放大 25% 后宽度增加（${Math.round(w0)} → ${Math.round(wZoom)}px）`);
+check(wZoom > w0 * 1.4, `放大 50% 后宽度增加（${Math.round(w0)} → ${Math.round(wZoom)}px）`);
 check(Math.abs(w1 - w0) < 2, `复位后宽度回到初值（${Math.round(w1)}px）`);
 await page.screenshot({ path: `${SHOTS}/chat-mermaid-zoom.png` });
 

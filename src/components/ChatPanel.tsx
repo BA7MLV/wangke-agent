@@ -5,6 +5,7 @@ import type { ComponentProps } from '@ant-design/x-markdown';
 import { MaterialImage, SourceImage } from './MaterialImage';
 import { parseMaterialImageHref } from '../materials/imageRefs';
 import { Markdown as XMarkdown } from './markdown/Markdown';
+import { AGENT_INSTRUCTIONS_FILE_ID } from '../materials/systemFiles';
 import type { MediaPlayerInstance } from '@vidstack/react';
 import { db, type ChatImage, type ChatSessionRow, type ChatToolCall, type QuizState, type SegmentRow } from '../store/db';
 import { catalogOf, decisionConfigOf, getSettings, modelOverridesOf, targetOrNull, useSettings, visionTargetOrNull } from '../store/settings';
@@ -712,6 +713,11 @@ export default function ChatPanel({
       setSessions(list);
       setActiveId(list[list.length - 1].id!);
 
+      if (videoId === AGENT_INSTRUCTIONS_FILE_ID) {
+        setIndexNote(null);
+        setIndexReady(true);
+        return;
+      }
       // ── 阅读材料：检索的是文本块（materialBlocks）──
       if (isMaterial) {
         const blockCount = await db.materialBlocks.where('materialId').equals(videoId).count();

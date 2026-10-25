@@ -125,7 +125,7 @@ try {
     const dialog = page.getByTestId('material-image-dialog');
     await dialog.waitFor();
     assert.match(await dialog.getByRole('link', { name: /打开原文/ }).getAttribute('href'), /\?unit=1$/);
-    await dialog.getByRole('button', { name: '关闭', exact: true }).click();
+    await dialog.getByRole('button', { name: '关闭图片预览', exact: true }).click();
 
     for (const [index, pick] of [0, 1, 0, 2, 1].entries()) await qNodes.nth(index).locator('button.quiz-option').nth(pick).click();
     await qNodes.first().getByText('正确答案：B', { exact: true }).waitFor();

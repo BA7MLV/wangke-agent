@@ -310,7 +310,7 @@ await page.locator('[data-testid="quiz-explain-md"] [data-testid="diagram-zoom"]
 await page.waitForTimeout(500);
 const zoom = await page.evaluate(() => {
   const dialog = document.querySelector('[data-testid="diagram-zoom-dialog"]');
-  const inner = dialog?.querySelector('.xmd-mermaid-zoom');
+  const inner = dialog?.querySelector('.image-preview__content');
   const label = document.querySelector('[data-testid="diagram-zoom-label"]');
   const svg = inner?.querySelector('svg');
   return {
@@ -322,7 +322,7 @@ const zoom = await page.evaluate(() => {
   };
 });
 check(zoom.visible && zoom.hasSvg, '「查看大图」弹层打开且里面有图');
-check(zoom.heading.includes('抛物线开口方向') && zoom.heading.includes('查看大图'),
+check(zoom.heading.includes('抛物线开口方向'),
   `弹层标题带上图的标题（${JSON.stringify(zoom.heading.slice(0, 30))}）`);
 check(zoom.label === '100%', `缩放档位初始为 100%（实得 ${zoom.label}）`);
 await page.screenshot({ path: `${SHOTS}/diagram-fence-zoom.png` });

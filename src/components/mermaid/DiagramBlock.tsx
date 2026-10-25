@@ -1,16 +1,14 @@
 import { useCallback, useState } from 'react';
-import { Button, Modal, Tooltip, Skeleton, Dropdown, Label } from '@heroui/react';
-import { Sym, toast, MODAL_CONTAINER_CLASS } from '../../ui';
+import { Button, Skeleton, Dropdown, Label } from '@heroui/react';
+import { Sym, toast } from '../../ui';
 import { copyText } from '../../utils/clipboard';
 import { toStandaloneSvg } from './mermaidRender';
 import type { SvgProgress } from './svgRender';
 import type { DiagramShape } from './diagramSchema';
 import LiveSvg from './LiveSvg';
 import DiagramCanvas from './DiagramCanvas';
+import ImagePreview from '../ImagePreview';
 import './mermaid.css';
-
-/** 播放器快捷键（vidstack 的 keyTarget 默认是 document）——弹层里按这些键要拦下来，否则会误触播放/快进 */
-const PLAYER_KEY_RE = /^(?: |Spacebar|k|j|l|m|f|c|i|arrowleft|arrowright|arrowup|arrowdown|home|end|\d)$/i;
 
 /**
  * 图表块的状态机。三条链路（mermaid / diagram / svg）共用同一组状态，语义也一致：
@@ -75,7 +73,7 @@ export interface DiagramBlockProps {
  *
  * 抽出来的理由：mermaid 与原生 svg 的差别只在「源码怎么变成 SVG」这一步，
  * 而外壳里的坑是共通的 —— `<pre>` 外壳剥离、源码折叠与激活态、下载补 xml 头、
- * 大图弹层的缩放档位、以及**弹层里必须拦下播放器快捷键**（vidstack 监听 document）。
+ * 大图弹层（交互交给公共 ImagePreview）、以及下载与源码操作。
  * 两套各写一遍就是把这些坑各踩一遍。各链路的组件只负责产出 `phase` / `svg` / `err`。
  */
 export default function DiagramBlock({
@@ -207,26 +205,10 @@ export default function DiagramBlock({
         </pre>
       )}
 
-      {/* 「查看大图」：面板尺寸写在 .mermaid-zoom-dialog 的 Modal.Dialog 上 */}
-      <Modal.Root isOpen={zoomOpen} onOpenChange={setZoomOpen}>
-        <Modal.Backdrop>
-          <Modal.Container placement="center" size="lg" className={MODAL_CONTAINER_CLASS}>
-            <Modal.Dialog className="mermaid-zoom-dialog" data-testid={`${testId}-zoom-dialog`}>
-              <Modal.Header>
-                <Modal.Heading>{title ? `${title} · 查看大图` : '查看大图'}</Modal.Heading>
-              </Modal.Header>
-              <Modal.Body>
-                <ZoomPane testId={testId} svg={svg ?? ''} onDownload={download} />
-              </Modal.Body>
-              <Modal.Footer>
-                <Button variant="tertiary" onPress={() => setZoomOpen(false)}>
-                  关闭
-                </Button>
-              </Modal.Footer>
-            </Modal.Dialog>
-          </Modal.Container>
-        </Modal.Backdrop>
-      </Modal.Root>
+      <ImagePreview isOpen={zoomOpen} onOpenChange={setZoomOpen} title={title || tag}
+        content={svg ? { kind: 'svg', svg } : undefined} contentKey={source}
+        onDownload={svg ? download : undefined} downloadLabel="下载 SVG"
+        testId={`${testId}-zoom-dialog`} testIdPrefix={testId} />
     </div>
   );
 }
@@ -241,72 +223,4 @@ export default function DiagramBlock({
 function fileStem(title: string | null | undefined, fallback: string): string {
   const s = (title ?? '').replace(/[\\/:*?"<>|]/g, '_').replace(/\s+/g, ' ').trim();
   return s ? [...s].slice(0, 30).join('') : fallback;
-}
-
-/** 大图查看：整宽自适应 + 缩放档位；键盘事件就地拦下，避免冒泡到 vidstack 的 document 监听触发播放器快捷键 */
-function ZoomPane({ testId, svg, onDownload }: { testId: string; svg: string; onDownload: () => void }) {
-  const [zoom, setZoom] = useState(1);
-
-  return (
-    <div
-      className="xmd-mermaid-zoom"
-      onKeyDownCapture={(e) => {
-        if (PLAYER_KEY_RE.test(e.key)) e.stopPropagation();
-      }}
-    >
-      <div className="xmd-mermaid-zoom-bar">
-        <div className="xmd-mermaid-zoom-tools">
-          <Tooltip>
-              <Button
-                isIconOnly
-                variant="tertiary"
-                data-testid={`${testId}-zoom-out`}
-                aria-label="缩小"
-                isDisabled={zoom <= 0.5}
-                onPress={() => setZoom((z) => Math.max(0.5, +(z - 0.25).toFixed(2)))}
-              >
-                <Sym name="zoom-out" />
-              </Button>
-            <Tooltip.Content>缩小</Tooltip.Content>
-          </Tooltip>
-          <span className="xmd-mermaid-zoom-label" data-testid={`${testId}-zoom-label`}>
-            {Math.round(zoom * 100)}%
-          </span>
-          <Tooltip>
-              <Button
-                isIconOnly
-                variant="tertiary"
-                data-testid={`${testId}-zoom-in`}
-                aria-label="放大"
-                isDisabled={zoom >= 4}
-                onPress={() => setZoom((z) => Math.min(4, +(z + 0.25).toFixed(2)))}
-              >
-                <Sym name="zoom-in" />
-              </Button>
-            <Tooltip.Content>放大</Tooltip.Content>
-          </Tooltip>
-          <Button
-            variant="tertiary"
-            data-testid={`${testId}-zoom-reset`}
-            aria-label="复位"
-            onPress={() => setZoom(1)}
-          >
-            复位
-          </Button>
-          <Button
-            variant="tertiary"
-            data-testid={`${testId}-zoom-download`}
-            aria-label="下载 SVG"
-            onPress={onDownload}
-          >
-            <Sym name="download" />
-            下载 SVG
-          </Button>
-        </div>
-      </div>
-      <div className="xmd-mermaid-zoom-scroll">
-        <div className="xmd-mermaid-zoom-inner" style={{ width: `${zoom * 100}%` }} dangerouslySetInnerHTML={{ __html: svg }} />
-      </div>
-    </div>
-  );
 }

@@ -139,8 +139,7 @@
 }
 
 /* foreignObject 内的 HTML 标签继承图内字体，避免落回浏览器默认字体 */
-.xmd-mermaid-canvas foreignObject,
-.xmd-mermaid-zoom-inner foreignObject {
+.xmd-mermaid-canvas foreignObject {
   font-family: inherit;
 }
 
@@ -184,46 +183,6 @@
   white-space: pre;
 }
 
-/* —— 大图查看 —— */
-.xmd-mermaid-zoom {
-  display: flex;
-  flex-direction: column;
-  max-height: 82vh;
-}
-
-.xmd-mermaid-zoom-bar {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-secondary);
-}
-
-.xmd-mermaid-zoom-label {
-  display: inline-block;
-  min-width: 44px;
-  text-align: center;
-  font-size: 12px;
-  color: var(--foreground);
-  font-variant-numeric: tabular-nums;
-}
-
-.xmd-mermaid-zoom-scroll {
-  flex: 1;
-  overflow: auto;
-  padding: 16px;
-  background: var(--background-secondary);
-  /* 触摸设备上允许双指缩放查看 */
-  touch-action: pinch-zoom;
-}
-
-.xmd-mermaid-zoom-inner {
-  margin: 0 auto;
-}
-
-.xmd-mermaid-zoom-inner svg {
-  max-width: 100% !important;
-  height: auto !important;
-  display: block;
-}
-
 /* —— 工具条（原来是 antd 的 Space + 小号 text 按钮） —— */
 .xmd-mermaid-tools {
   display: flex;
@@ -236,19 +195,4 @@
    图标 fill:currentColor 跟随文字色 */
 .xmd-mermaid-tools .is-on {
   color: var(--accent);
-}
-
-/* —— 大图弹窗 ——
-   旧版对话框的可视面板在 shadow DOM 里（.panel{max-width:35rem}），改不到；
-   但它暴露了 part="panel"，用 ::part() 正当改写 —— 保持原 antd Modal 的 92vw / 上限 1400px 观感。 */
-.mermaid-zoom-dialog::part(panel) {
-  width: 92vw;
-  max-width: 1400px;
-  height: 86vh;
-}
-
-/* 弹窗正文不再需要额外的最大宽度约束（HeroUI 的 modal__dialog 已接管整块面板） */
-.mermaid-zoom-dialog .xmd-mermaid-zoom {
-  max-height: none;
-  height: 100%;
 }

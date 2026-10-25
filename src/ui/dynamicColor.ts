@@ -121,9 +121,8 @@ export function setColorScheme(hex: string, options: { target: HTMLElement }): v
   target.style.setProperty('--dyn-border', `oklch(${accentL}% ${Math.min(s * 0.45, 0.09)} ${h})`);
   target.style.setProperty('--dyn-accent', accent);
   target.style.setProperty('--dyn-accent-fg', fg);
-  // 页面边缘（包括 iOS 刘海 / 灵动岛与 Home Indicator 区域）使用同一
-  // 个浅色表面，避免内容区与 viewport-fit=cover 的安全区出现色块断层。
-  target.style.setProperty('--dyn-edge', `oklch(${Math.min(accentL + 22, 96)}% ${Math.min(s * 0.18, 0.05)} ${h})`);
+  // 边缘以当前画布为主，只带少量封面色；深色模式不能继续沿用浅色表面。
+  target.style.setProperty('--dyn-edge', 'color-mix(in oklch, var(--background-secondary) 88%, var(--dyn-accent))');
   target.dataset.dynColor = 'on';
 }
 

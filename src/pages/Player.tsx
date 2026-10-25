@@ -9,6 +9,8 @@ import '../player-enhance.css';
 import { db, type VideoRow } from '../store/db';
 import { getVideoFile } from '../store/fileStore';
 import { useSettings } from '../store/settings';
+import { useLibraryNavigation } from '../store/libraryNavigation';
+import { AGENT_INSTRUCTIONS_FILE_ID, getSystemMaterial } from '../materials/systemFiles';
 import { setStudyMediaPlaying } from '../store/studyTime';
 import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
@@ -239,13 +241,13 @@ function PlayerResource({ id }: { id: string | undefined }) {
     let url = '';
     (async () => {
       if (!id) return;
-      const row = await db.videos.get(id);
+      const row = getSystemMaterial(id) ?? await db.videos.get(id);
       if (!row) {
         toast.error('视频不存在');
         navigate('/library');
         return;
       }
-      const blob = await getVideoFile(id);
+      const blob = row.kind === 'material' ? null : await getVideoFile(id);
       if (blob) {
         url = URL.createObjectURL(blob);
         setVideoUrl(url);
@@ -525,7 +527,13 @@ function PlayerResource({ id }: { id: string | undefined }) {
   return (
     <PageShell
       title={video.name}
-      onBack={() => navigate('/library')}
+      onBack={() => {
+        if (id === AGENT_INSTRUCTIONS_FILE_ID) {
+          useLibraryNavigation.getState().setFolderHistory((history) => history.entries[history.index] === 'system' ? history :
+            { entries: [...history.entries.slice(0, history.index + 1), 'system'], index: history.index + 1 });
+        }
+        navigate('/library');
+      }}
       fill
       rootRef={colorSchemeRef}
       rootClassName="page-player"

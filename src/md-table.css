@@ -79,6 +79,7 @@
 .md-table {
   margin: var(--table-margin, 1em 0);
   min-width: 0;
+  max-width: 100%;
 }
 
 /* x-markdown 对 p / ul / ol / pre / table 都有一条「首尾不留外边距」（见其 :first-child
@@ -97,6 +98,11 @@
   overscroll-behavior-x: contain;
 }
 
+.md-table-scroll:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
 /* Markdown's scoped prose defaults replace the library's unbounded selectors.
    Only our real table component owns the full-width table geometry. */
 .x-markdown .md-table-scroll > table:not(pre) {
@@ -108,6 +114,27 @@
   /* 外边距归容器：这样滚动条贴的是容器的边，而不是表格的边 */
   margin: 0;
 }
+
+/* Bound long prose/URLs without squeezing short headers into a vertical column.
+   Extra columns still scroll inside the table, never widen the Chat page. */
+.x-markdown .md-table-scroll > table > :is(thead, tbody, tfoot) > tr > :is(th, td) {
+  min-width: 4rem;
+  max-width: 28rem;
+  overflow-wrap: anywhere;
+  vertical-align: top;
+}
+
+.md-table-num { font-variant-numeric: tabular-nums; }
+
+/* A long formula must stay inside its cell even while streaming widths are frozen. */
+.md-table-scroll .md-math {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+}
+
+.md-table-scroll .md-math--display { display: block; }
 
 /* 表格的无障碍标题：视觉上不存在，但读屏会先读到「共 N 行 M 列」 */
 .md-table-caption {
