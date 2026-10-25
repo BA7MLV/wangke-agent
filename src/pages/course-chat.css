@@ -43,10 +43,12 @@
 .course-chat--empty .course-chat__main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  align-content: start;
-  gap: 24px;
+  /* 空首页是一组完整的首屏引导，不要像消息列表一样从顶端开始堆。
+     把整组内容放在可视区中间，输入框自然成为首屏的主操作。 */
+  align-content: center;
+  gap: 20px;
   overflow-y: auto;
-  padding: clamp(100px, 22dvh, 220px) max(20px, calc((100% - var(--course-chat-column)) / 2))
+  padding: clamp(84px, 11dvh, 140px) max(20px, calc((100% - var(--course-chat-column)) / 2))
     max(24px, env(safe-area-inset-bottom));
 }
 
@@ -68,6 +70,16 @@
   grid-row: 2;
   min-width: 0;
   padding: 0;
+}
+
+/* 空首页的输入卡比消息态更突出一点：它是用户进入应用后的第一步，
+   但仍沿用消息态的色板和焦点反馈，不制造第二套组件语言。 */
+.course-chat--empty .course-chat__composer {
+  padding: 10px 14px;
+  border-radius: 28px;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 12px 32px rgb(0 0 0 / 0.07);
 }
 
 .course-chat--empty .course-chat__starters {
@@ -1223,7 +1235,8 @@
 
   .course-chat--empty .course-chat__main {
     gap: 20px;
-    padding: clamp(84px, 15dvh, 130px) 10px max(20px, env(safe-area-inset-bottom));
+    /* 窄屏优先保证标题、输入框和快捷入口在键盘未弹出时完整可见。 */
+    padding: clamp(56px, 8dvh, 96px) 10px max(20px, env(safe-area-inset-bottom));
   }
 
   .course-chat__empty {
@@ -1260,6 +1273,11 @@
 
   .course-chat__input {
     width: 100%;
+  }
+
+  .course-chat--empty .course-chat__composer {
+    padding: 8px;
+    border-radius: 24px;
   }
 
   .course-chat__composer-tools {

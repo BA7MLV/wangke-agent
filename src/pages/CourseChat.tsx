@@ -1309,13 +1309,7 @@ export default function CourseChat() {
                  * 历史没就绪时禁用；等待作答时由 AskCard 接管输入栏。
                  */
                 disabled={!sessionReady}
-                placeholder={
-                  generating
-                        ? sendMode === 'queue'
-                          ? '说一句排队，答完这轮自动接着问…'
-                          : '说一句立刻插入，打断这轮换个问法…'
-                        : '随便问点什么，或长按说话'
-                }
+                placeholder="随便问点什么，或长按说话"
                 onKeyDown={(event) => {
                   if (!ime.isSubmitEnter(event)) return;
                   event.preventDefault();
