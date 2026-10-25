@@ -1970,6 +1970,7 @@ export default function ChatPanel({
           </div>
         )}
         <div className="chat-composer__row">
+          <ComposerExpand visible={composerOverflow} key={activeId} value={input} onChange={setInput} />
           {/* testid 挂在外层容器上：e2e 的选择器是 `[data-testid="chat-input"] textarea`，
               需要「容器 → textarea」的层级（mdui 时代是自定义元素 + shadow 里的 textarea，
               HeroUI 是单元素，用一层 div 补回同样的结构）。 */}
@@ -2001,7 +2002,6 @@ export default function ChatPanel({
             />
           </div>
           <div className="chat-composer__tools">
-          <ComposerExpand visible={composerOverflow} key={activeId} value={input} onChange={setInput} />
           <Dropdown>
             <Button isIconOnly variant="tertiary" size="sm" data-testid="panel-chat-add"
               aria-label="添加截图、讲义、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>

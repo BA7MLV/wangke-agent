@@ -1285,6 +1285,10 @@ export default function CourseChat() {
               <ChatAttachmentDraft />
               </div>
               <ChatAddMenu disabled={!sessionReady || !!pendingAsk} />
+              <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onChange={(value) => {
+                setVoiceEditVersion((version) => version + 1);
+                setDraft(value);
+              }} />
               <TextArea
                 ref={composerRef}
                 className="course-chat__input"
@@ -1352,10 +1356,6 @@ export default function CourseChat() {
                 aria-label="输入区工具"
                 orientation="horizontal"
               >
-                <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onChange={(value) => {
-                  setVoiceEditVersion((version) => version + 1);
-                  setDraft(value);
-                }} />
                 {/* 模型 chip 那一格点开是张下拉面板：模型列表 + 思考开关 + 思考深度。
                     后两者原先是工具行上的两颗独立控件（灯泡 icon + 横向滑块），
                     但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——

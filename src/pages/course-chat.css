@@ -503,6 +503,7 @@
 }
 
 .course-chat__user-text {
+  position: relative;
   display: block;
   line-height: 1.6;
   overflow-wrap: anywhere;
@@ -515,9 +516,23 @@
   overflow: hidden;
 }
 
+/* Only the preview's last three lines soften; the full message stays selectable and unchanged. */
+.course-chat__user-text[data-collapsed='true']::after {
+  content: '';
+  position: absolute;
+  inset: auto 0 0;
+  height: 3lh;
+  pointer-events: none;
+  -webkit-backdrop-filter: blur(4px);
+  backdrop-filter: blur(4px);
+  -webkit-mask-image: linear-gradient(to bottom, transparent, #000);
+  mask-image: linear-gradient(to bottom, transparent, #000);
+}
+
 .course-chat__user-expand {
   display: flex;
-  margin: 4px 0 0;
+  width: fit-content;
+  margin: 4px 0 0 auto;
   min-height: 32px;
   padding-inline: 4px;
   gap: 4px;
@@ -878,6 +893,7 @@
 }
 
 .course-chat__composer {
+  position: relative;
   box-sizing: border-box;
   width: min(100%, var(--course-chat-column));
   margin: 0 auto;
@@ -893,6 +909,11 @@
   background: var(--background);
   border: 1px solid var(--border);
   box-shadow: var(--shadow-sm);
+}
+
+/* Keep attachments and course chips clear of the top-right expand control. */
+.course-chat__composer:has(.composer-expand:not([hidden])) .course-chat__composer-context {
+  padding-inline-end: 36px;
 }
 
 /* 聚焦时整卡换主色细描边：焦点状态做在卡片上，

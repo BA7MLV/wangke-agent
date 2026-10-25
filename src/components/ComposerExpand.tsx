@@ -40,7 +40,7 @@ export function useComposerSize(ref: RefObject<HTMLTextAreaElement | null>, valu
 export default function ComposerExpand({ value, onChange, visible }: { value: string; onChange: (value: string) => void; visible: boolean }) {
   const [open, setOpen] = useState(false);
   return <Drawer.Root isOpen={open} onOpenChange={setOpen}>
-    <Button hidden={!visible && !open} isIconOnly size="sm" variant="tertiary" aria-label="展开输入框" aria-haspopup="dialog" aria-expanded={open} data-testid="composer-expand">
+    <Button className="composer-expand" hidden={!visible && !open} isIconOnly size="sm" variant="tertiary" aria-label="展开输入框" aria-haspopup="dialog" aria-expanded={open} data-testid="composer-expand">
       <Sym name="open_in_full" />
     </Button>
     <Drawer.Backdrop variant="opaque" className="composer-sheet__backdrop">
