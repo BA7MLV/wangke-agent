@@ -16,6 +16,9 @@ import { CloudConfiguration } from './cloud/config.js';
 import { receiveFile, byteRange } from './cloud/files.js';
 import { registerCloudRoutes } from './cloud/routes.js';
 import { workerIdentity } from './cloud/tasks.js';
+import { McpRepository } from './mcp/repository.js';
+import { McpManager } from './mcp/manager.js';
+import { registerMcpRoutes } from './mcp/routes.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -71,7 +74,8 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const cloudRecords = new CloudRecords(store);
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
-  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig });
+  const mcp = new McpManager(new McpRepository(store, cloudConfig));
+  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, mcp });
   // Never recreate a bootstrap secret after the database has been initialized.
   const bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
@@ -168,13 +172,14 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
    const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
+   registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
   app.addHook('onRequest', async (request, reply) => {
     const worker = workerIdentity(request);
     if (worker && request.url.startsWith('/api/')) {
       const url = request.url.split('?')[0];
       const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status'].includes(url) || /^\/api\/v1\/files\/[^/]+$/.test(url));
-      const write = request.method === 'POST' && (url === '/api/v1/cloud/records' || url === '/api/v1/files' || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+      const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });
@@ -601,7 +606,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); if (!['completed', 'failed', 'cancelled'].includes(run.status)) store.transaction(() => { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), run.id); }); runner.cancel(run.id); const updated = store.db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as any; return { id: updated.id, threadId: updated.thread_id, mode: updated.mode, status: updated.status, createdAt: updated.created_at, startedAt: updated.started_at ?? null, completedAt: updated.completed_at ?? null, errorCode: updated.error_code ?? null }; });
 
   if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
-  app.addHook('onClose', async () => { await cloudRunner.close(); await runner.close(); store.close(); });
+  app.addHook('onClose', async () => { await cloudRunner.close(); await runner.close(); await mcp.close(); store.close(); });
   return app;
 }
 

@@ -4,6 +4,8 @@ import { executeSandbox, type SandboxExecutor } from './sandbox.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import { DEFAULT_AGENT_POLICY } from '../../../../packages/contracts/src/cloud.js';
 import { botRequest, botCalls, type ModelMessage as Message, type ModelCall as Call } from './model.js';
+import { McpManager, mcpError } from '../mcp/manager.js';
+import { mcpToolDefinition } from '../../../../packages/contracts/src/mcp.js';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
 const now = () => new Date().toISOString();
@@ -23,7 +25,9 @@ export class BotRunner {
   private readonly fetcher: typeof fetch;
   private readonly sandbox: SandboxExecutor;
   private readonly configuration?: CloudConfiguration;
-  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; configuration?: CloudConfiguration } = {}) {
+  private readonly mcp?: McpManager;
+  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; configuration?: CloudConfiguration; mcp?: McpManager } = {}) {
+    this.mcp = options.mcp;
     this.configuration = options.configuration;
     this.fetcher = options.fetch ?? fetch;
     this.sandbox = options.sandbox ?? executeSandbox;
@@ -124,7 +128,11 @@ export class BotRunner {
           this.finish(run.id, 'completed'); return;
         }
         const selected = provider ?? { protocol: 'openai-chat' as const, apiKey: process.env.MODEL_API_KEY };
-        const request = botRequest(selected, model, context, tools);
+        const scopeRow = this.store.db.prepare('SELECT mcp_server_ids FROM threads WHERE id=? AND owner_id=?').get(run.thread_id, owner) as { mcp_server_ids: string | null };
+        const mcpScope = scopeRow.mcp_server_ids === null ? undefined : JSON.parse(scopeRow.mcp_server_ids) as string[];
+        const catalog = await this.mcp?.catalog(owner, mcpScope);
+        if (catalog?.warnings.length) this.append(run.thread_id, 'progress', `MCP: ${catalog.warnings.join('; ')}`);
+        const request = botRequest(selected, model, context, [...tools, ...(catalog?.tools.map(mcpToolDefinition) ?? [])]);
         const response = await this.fetcher(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
           method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS) || 30000))]),
           headers: request.headers,
@@ -150,7 +158,16 @@ export class BotRunner {
         let result = 'Unknown tool or invalid arguments.';
         let state: 'completed' | 'waiting_user' | 'queued' | undefined;
         let wake: string | null = null;
-        if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
+        if (call.function.name.startsWith('mcp_') && this.mcp) {
+          const meta = catalog?.tools.find(t => t.name === call.function.name);
+          this.append(run.thread_id, 'progress', `MCP · ${meta?.serverName ?? ''} / ${meta?.originalName ?? call.function.name}`);
+          try {
+            const latest = this.store.db.prepare('SELECT mcp_server_ids FROM threads WHERE id=? AND owner_id=?').get(run.thread_id, owner) as { mcp_server_ids: string | null };
+            const response = await this.mcp.call(owner, call.function.name, args, latest.mcp_server_ids === null ? undefined : JSON.parse(latest.mcp_server_ids), signal);
+            result = response.text;
+            this.append(run.thread_id, 'progress', `MCP · ${response.serverName} / ${response.toolName} · ${response.isError ? 'Error' : 'OK'} · ${response.durationMs}ms`);
+          } catch (error) { if (signal.aborted) throw error; result = `Error: ${mcpError(error)}`; }
+        } else if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
           const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
           const network = policy.network === 'allow';
           if (policy.shell === 'ask') {

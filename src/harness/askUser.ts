@@ -1,3 +1,5 @@
+import { validateWidgetArgs } from './widget.ts';
+
 /** 提问协议。旧卡片的字符串选项仍可读取，新问题使用稳定 ID。 */
 export type AskUserType = 'single' | 'multiple' | 'text' | 'confirm';
 export interface AskOption { id: string; label: string }
@@ -9,6 +11,8 @@ export interface AskUserData {
   allowSkip?: boolean;
   minSelections?: number;
   maxSelections?: number;
+  /** Optional, untrusted presentation; the structured question remains authoritative. */
+  presentation?: { html: string };
 }
 export interface AskUserAnswer {
   status: 'answered' | 'skipped' | 'declined' | 'cancelled';
@@ -57,33 +61,59 @@ export function validateAskUser(raw: unknown): AskUserValidation {
   const minSelections = type === 'multiple' ? (a.minSelections ?? 1) as number : 1;
   const maxSelections = type === 'multiple' ? (a.maxSelections ?? options.length) as number : 1;
   if (type === 'multiple' && (!Number.isInteger(minSelections) || !Number.isInteger(maxSelections) || minSelections < 1 || maxSelections < minSelections || maxSelections > options.length)) return fail('选择数量必须满足 1 ≤ minSelections ≤ maxSelections ≤ 选项数');
-  return { ok: true, ask: { question, type, options, allowCustom: type !== 'confirm' && a.allowCustom !== false, allowSkip: a.allowSkip === true, minSelections, maxSelections } };
+  // A broken optional presentation must never prevent answering the native question.
+  const html = (a.presentation as { html?: unknown } | null)?.html;
+  const visual = typeof html === 'string' ? validateWidgetArgs({ format: 'html', code: html }) : null;
+  return { ok: true, ask: { question, type, options, allowCustom: type !== 'confirm' && a.allowCustom !== false, allowSkip: a.allowSkip === true, minSelections, maxSelections,
+    ...(visual?.ok ? { presentation: { html: visual.args.code } } : {}) } };
 }
 
 /** 所有入口共用校验，显示文案从原问题取，不能由答案伪造。 */
 export function validateAskAnswer(ask: AskUserData, input: AskUserAnswer | string): AskUserAnswer {
+  return normalizeAnswer(ask, input, false);
+}
+
+/** In-progress input may be empty; permissions, IDs and upper bounds still apply. */
+export function normalizeAskDraft(ask: AskUserData, input: unknown): AskUserAnswer {
+  return normalizeAnswer(ask, input as AskUserAnswer, true);
+}
+
+function normalizeAnswer(ask: AskUserData, input: AskUserAnswer | string, draft: boolean): AskUserAnswer {
+  if (typeof input !== 'string' && (!input || typeof input !== 'object'
+    || !['answered', 'skipped', 'declined', 'cancelled'].includes(input.status)
+    || !['selection', 'custom', 'text'].includes(input.mode)
+    || !Array.isArray(input.selectedIds) || input.selectedIds.some(id => typeof id !== 'string')
+    || typeof input.text !== 'string' || typeof input.note !== 'string')) throw new Error('作答格式无效');
   const type = ask.type ?? 'single';
   const options = askOptions(ask);
   const match = typeof input === 'string' ? options.find(o => o.label === input.trim()) : undefined;
   const answer: AskUserAnswer = typeof input === 'string'
     ? { status: 'answered', mode: match ? 'selection' : type === 'text' ? 'text' : 'custom', selectedIds: match ? [match.id] : [], selectedLabels: [], text: match ? '' : input.trim(), note: '' }
-    : { ...input, selectedIds: [...input.selectedIds], text: input.text.trim(), note: input.note.trim() };
+    : { status: input.status, mode: input.mode, selectedIds: [...input.selectedIds], selectedLabels: [],
+      text: draft ? input.text : input.text.trim(), note: draft ? input.note : input.note.trim() };
+  if (answer.text.length > 4000 || answer.note.length > 2000 || answer.selectedIds.length > MAX_ASK_OPTIONS) throw new Error('作答内容过长');
   if (answer.status === 'skipped') {
+    if (draft) throw new Error('请在原生题卡中跳过或取消');
     if (!ask.allowSkip) throw new Error('这个问题需要回答后才能继续');
     return { status: 'skipped', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
   }
-  if (answer.status === 'cancelled') return { status: 'cancelled', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
+  if (answer.status === 'cancelled') {
+    if (draft) throw new Error('请在原生题卡中跳过或取消');
+    return { status: 'cancelled', mode: 'text', selectedIds: [], selectedLabels: [], text: '', note: '' };
+  }
+  const selected = answer.selectedIds.map(id => options.find(o => o.id === id));
+  const max = type === 'multiple' ? ask.maxSelections ?? options.length : type === 'text' ? 0 : 1;
+  if (selected.some(o => !o) || new Set(answer.selectedIds).size !== selected.length || selected.length > max) throw new Error('选项 ID 无效、重复或超过数量上限');
   if (answer.mode === 'selection') {
-    const selected = answer.selectedIds.map(id => options.find(o => o.id === id));
     const min = type === 'multiple' ? ask.minSelections ?? 1 : 1;
     const max = type === 'multiple' ? ask.maxSelections ?? options.length : 1;
-    if (type === 'text' || selected.some(o => !o) || new Set(answer.selectedIds).size !== selected.length || selected.length < min || selected.length > max) throw new Error(`请选择 ${min === max ? min : `${min}–${max}`} 项`);
+    if (type === 'text' || (!draft && selected.length < min)) throw new Error(`请选择 ${min === max ? min : `${min}–${max}`} 项`);
     answer.selectedLabels = selected.map(o => o!.label);
     answer.text = '';
     answer.status = type === 'confirm' && answer.selectedIds[0] === 'decline' ? 'declined' : 'answered';
   } else {
     if (type === 'confirm' || (type !== 'text' && ask.allowCustom === false)) throw new Error('请使用问题卡中的选项回答');
-    if (!answer.text) throw new Error('请填写你的回答');
+    if (!draft && !answer.text) throw new Error('请填写你的回答');
     answer.mode = type === 'text' ? 'text' : 'custom';
     answer.status = 'answered';
     answer.selectedIds = [];

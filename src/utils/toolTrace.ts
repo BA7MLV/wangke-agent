@@ -131,6 +131,7 @@ export function toolDetail(name: string, argsJson?: string): string | undefined 
  * 而那是**页面语境**不是工具语义，不该硬编码在这个模块里。
  */
 export function toolHint(name: string, argsJson?: string, fallback = '正在处理…'): string {
+  if (name.startsWith('MCP · ')) return name;
   // 提问卡不是「正在做什么」，它把选择权交回用户：文案要换成等待口吻，否则会读成系统还在忙
   if (name === 'ask_user') return '等待你的回答';
   /**
@@ -177,7 +178,7 @@ export function summarizeToolResult(raw: string, max = 160): string {
  * 字符串耦合在这里收口：agent.ts 改前缀时，`test-tool-trace.mjs` 会跟着红。
  */
 export function isToolFailure(result: string): boolean {
-  return result.startsWith('工具执行失败');
+  return result.startsWith('工具执行失败') || result.startsWith('Error:');
 }
 
 /** 单行截断：超长补省略号。所有摘要共用一种「截法」，长短不一的行看起来才是一套 */

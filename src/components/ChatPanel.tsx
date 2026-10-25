@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Button, Dropdown, ListBox, Select, TextArea, Tooltip } from '@heroui/react';
 import { useImeEnter } from '../utils/imeEnter';
 import type { ComponentProps } from '@ant-design/x-markdown';
@@ -465,6 +466,7 @@ export default function ChatPanel({
   materialKind,
   materialFormat,
 }: Props) {
+  const { t: settingsText } = useTranslation('settings');
   /** 材料课程（PDF / Word / Markdown / HTML）：没有字幕、没有播放器，检索与引用都走材料那一套 */
   const isMaterial = materialKind !== undefined;
   const [msgs, setMsgs] = useState<ChatMsg[]>([]);
@@ -493,6 +495,7 @@ export default function ChatPanel({
    * 「模型看不到某技能、但调了却能成功」的错配。
    */
   const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
+  const [mcpServerIds, setMcpServerIds] = useState<string[] | undefined>();
   const [skillsOpen, setSkillsOpen] = useState(false);
   const [handoutPreparing, setHandoutPreparing] = useState(false);
   const [shots, setShots] = useState<Snapshot[]>([]);
@@ -795,6 +798,7 @@ export default function ChatPanel({
     if (activeId == null) {
       setMsgs([]);
       setSkillIds(undefined);
+      setMcpServerIds(undefined);
       return;
     }
     let cancelled = false;
@@ -810,6 +814,7 @@ export default function ChatPanel({
       const page = await readChatPage(activeId);
       const history = page.rows;
       if (!cancelled) setSkillIds(row?.skillIds);
+      if (!cancelled) setMcpServerIds(row?.mcpServerIds);
       if (!cancelled) {
         setHasOlder(page.hasOlder);
         setMsgs(history.map((r) => ({
@@ -933,6 +938,16 @@ export default function ChatPanel({
    * UI 先落地、库写异步补上：勾选框是「点一下就该有反馈」的控件，等 IndexedDB 回来再重渲染
    * 会有一帧迟滞。写失败也只是下次切回来时回到旧范围，不会留下坏状态。
    */
+  const updateMcpServerIds = async (next: string[] | undefined) => {
+    if (activeId == null) return;
+    await db.chatSessions.where('id').equals(activeId).modify(row => {
+      if (next === undefined) delete row.mcpServerIds;
+      else row.mcpServerIds = next;
+    });
+    const { cloud } = await import('../cloud/state');
+    if (cloud.enabled) await (await import('../cloud/sync')).flushCloud();
+    if (historySession.current === activeId) setMcpServerIds(next);
+  };
   const updateSkillIds = (next: number[] | undefined) => {
     if (activeId == null) return;
     setSkillIds(next);
@@ -1129,6 +1144,7 @@ export default function ChatPanel({
           materialKind, materialFormat, refsCount: curRefs.length, shotCount: curShots.length,
           images: curShots.flatMap(s => [{ type: 'text' as const, text: shotTag(s) }, { type: 'image_url' as const, image_url: { url: s.dataUrl } }]),
         }, { signal: abort.signal,
+          onTools: tools => patchAi({ tools, hint: tools.at(-1)?.status === 'running' ? tools.at(-1)?.name : undefined }),
           onDelta: text => { answer += text; updates.stream({ content: answer, processPhase: 'answering' }); },
           onReasoning: text => { reasoning += text; updates.stream({ reasoning, processPhase: 'thinking' }); },
           onRoundStart: () => { answer = ''; patchAi({ content: '' }); },
@@ -1347,6 +1363,7 @@ export default function ChatPanel({
         tools,
         executeTool,
         {
+          mcpSessionId: sessionId,
           // 档位一律传下去（关着就是 'none'）：thinkingParams 按模型声明决定发哪个字段 ——
           // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发。
           // 「关着」也传 'none' 而不是不传：不传等于连 `enable_thinking: false` 都不发，
@@ -1621,6 +1638,7 @@ export default function ChatPanel({
         title: `${source.title} · 分支`,
         createdAt: now,
         ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
+        ...(source.mcpServerIds !== undefined ? { mcpServerIds: [...source.mcpServerIds] } : {}),
       })) as number;
       for (const row of kept) {
         // Interaction snapshots belong to the original message; a fork starts from defaults.
@@ -1635,6 +1653,7 @@ export default function ChatPanel({
       title: `${source.title} · 分支`,
       createdAt: now,
       ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
+      ...(source.mcpServerIds !== undefined ? { mcpServerIds: [...source.mcpServerIds] } : {}),
     }]);
     setActiveId(newId);
     toast.success('已从这条消息分支出新会话');
@@ -1749,7 +1768,7 @@ export default function ChatPanel({
         {iconBtn('export-session-btn', '导出 .md 文件', <Sym name="download" />, downloadSession, loading || msgs.length === 0)}
         {iconBtn('chat-delete-session', '删除当前会话', <Sym name="delete" />, confirmDeleteSession, loading)}
       </PanelBar>
-      <SkillPicker value={skillIds} onChange={updateSkillIds} isOpen={skillsOpen} onOpenChange={setSkillsOpen} hideTrigger />
+      <SkillPicker value={skillIds} onChange={updateSkillIds} mcpValue={mcpServerIds} onMcpChange={updateMcpServerIds} isOpen={skillsOpen} onOpenChange={setSkillsOpen} hideTrigger />
 
       {/* 消息流：AI 靠左、用户靠右。两种气泡的形状差是 MD3 聊天的标志 ——
           靠对话侧收小圆角、另一侧全圆角。流式 markdown / 思考块 / 题卡都留在 AI 气泡内。 */}
@@ -2027,7 +2046,7 @@ export default function ChatPanel({
                 {isMaterial && <Dropdown.Item id="question-bank" textValue="提取原题为题库" data-testid="question-bank-extract"><Sym name="description" />提取原题为题库</Dropdown.Item>}
                 {isMaterial && <Dropdown.Item id="bank-practice" textValue="开始做原题" data-testid="question-bank-practice"><Sym name="quiz" />开始做原题</Dropdown.Item>}
                 <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
-                <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
+                <Dropdown.Item id="skills" textValue={settingsText('mcp.scopeTitle')}><Sym name="extension" />{settingsText('mcp.scopeTitle')}{skillIds !== undefined || mcpServerIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>

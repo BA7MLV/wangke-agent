@@ -10,8 +10,10 @@ import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
 import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
 import SkillPicker from './SkillPicker';
 import './chat-attachments.css';
+import { useTranslation } from 'react-i18next';
 
 export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
+  const { t } = useTranslation('settings');
   const navigate = useNavigate();
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -25,6 +27,8 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   const [handoutPreparing, setHandoutPreparing] = useState(false);
   const skillIds = useCourseChat((state) => state.skillIds);
   const setSkillIds = useCourseChat((state) => state.setSkillIds);
+  const mcpServerIds = useCourseChat((state) => state.mcpServerIds);
+  const setMcpServerIds = useCourseChat((state) => state.setMcpServerIds);
   const loading = useCourseChat((state) => state.loading);
   const addFiles = useChatAttachments((state) => state.add);
   const openCourses = async () => {
@@ -75,14 +79,14 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
             <Dropdown.Item id="images" textValue="上传图片"><Sym name="image" />上传图片</Dropdown.Item>
             <Dropdown.Item id="files" textValue="上传文件"><Sym name="attach_file" />上传文件</Dropdown.Item>
             <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
-            <Dropdown.Item id="skills" textValue="技能范围"><Sym name="extension" />技能范围{skillIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
+            <Dropdown.Item id="skills" textValue={t('mcp.scopeTitle')}><Sym name="extension" />{t('mcp.scopeTitle')}{skillIds !== undefined || mcpServerIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
           </Dropdown.Menu>
         </Dropdown.Popover>
       </Dropdown>
       <input ref={imageInput} type="file" accept={CHAT_IMAGE_ACCEPT} multiple hidden data-testid="chat-image-input" onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
       <input ref={fileInput} type="file" accept={CHAT_FILE_ACCEPT} multiple hidden data-testid="chat-file-input" onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />
     </div>
-    <SkillPicker value={skillIds} onChange={setSkillIds} isOpen={skillsOpen} onOpenChange={setSkillsOpen} hideTrigger />
+    <SkillPicker value={skillIds} onChange={setSkillIds} mcpValue={mcpServerIds} onMcpChange={setMcpServerIds} isOpen={skillsOpen} onOpenChange={setSkillsOpen} hideTrigger />
     <Modal.Root isOpen={coursesOpen} onOpenChange={setCoursesOpen}>
       <Modal.Backdrop><Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
         <Modal.Dialog data-testid="chat-course-picker">

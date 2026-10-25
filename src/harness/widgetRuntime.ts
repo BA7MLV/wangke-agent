@@ -80,6 +80,9 @@ export const WIDGET_MSG = {
   result: 'wbw:result',
   answerDraft: 'wbw:answer-draft',
   answerSync: 'wbw:answer-sync',
+  answerSubmit: 'wbw:answer-submit',
+  selection: 'wbw:selection',
+  scroll: 'wbw:scroll',
 } as const;
 
 /**
@@ -104,7 +107,7 @@ const BRIDGE = `
       var id = ++sequence;
       var timer = setTimeout(function () {
         pending.delete(id); reject(new Error('宿主没有确认此操作，请重试'));
-      }, type === ${JSON.stringify(WIDGET_MSG.prompt)} ? 300000 : 15000);
+      }, [${JSON.stringify(WIDGET_MSG.prompt)}, ${JSON.stringify(WIDGET_MSG.answerSubmit)}].includes(type) ? 300000 : 15000);
       pending.set(id, { resolve: resolve, reject: reject, timer: timer });
       post(type, { requestId: id, value: payload });
     });
@@ -151,9 +154,25 @@ const BRIDGE = `
   var raf = 0;
   function report() {
     raf = 0;
-    var d = document.documentElement, b = document.body;
-    var h = Math.max(d ? d.scrollHeight : 0, d ? d.offsetHeight : 0, b ? b.scrollHeight : 0);
-    post(${JSON.stringify(WIDGET_MSG.height)}, Math.max(80, Math.ceil(h)));
+    var b = document.body;
+    if (!b) return;
+    // Root scrollHeight is floored at the old viewport. Measure visible boxes
+    // instead, including overflowing/absolute descendants but respecting explicit
+    // clipping and excluding fixed overlays (and their entire subtrees).
+    var h = Math.ceil(Math.max(b.offsetHeight, b.getBoundingClientRect().height));
+    function measure(element, clipBottom) {
+      var style = getComputedStyle(element);
+      if (style.position === 'fixed' || style.display === 'none') return;
+      var rect = element.getBoundingClientRect();
+      var bottom = rect.bottom + window.scrollY;
+      if (rect.width || rect.height) h = Math.max(h, Math.min(bottom, clipBottom));
+      if (/^(hidden|clip|auto|scroll)$/.test(style.overflowY))
+        clipBottom = Math.min(clipBottom, rect.top + window.scrollY + element.clientTop + element.clientHeight);
+      for (var child = element.firstElementChild; child; child = child.nextElementSibling) measure(child, clipBottom);
+    }
+    measure(b, Infinity);
+    var gutter = Math.max(0, window.innerHeight - document.documentElement.clientHeight);
+    post(${JSON.stringify(WIDGET_MSG.height)}, Math.max(80, h + gutter));
   }
   function schedule() { if (!raf) raf = requestAnimationFrame(report); }
   var api = {
@@ -166,6 +185,12 @@ const BRIDGE = `
       if (!navigator.userActivation || !navigator.userActivation.isActive)
         return Promise.reject(new Error('请通过点击或键盘操作提交草稿'));
       return request(${JSON.stringify(WIDGET_MSG.answerDraft)}, answer);
+    },
+    submitAnswer: function (answer) {
+      if (!answerInput || answerInput.submitted) return Promise.reject(new Error('本次提问已结束'));
+      if (!navigator.userActivation || !navigator.userActivation.isActive)
+        return Promise.reject(new Error('请通过点击或键盘操作提交回答'));
+      return request(${JSON.stringify(WIDGET_MSG.answerSubmit)}, answer);
     },
     reportHeight: report,
     setWidgetState: function (next) {
@@ -195,6 +220,48 @@ const BRIDGE = `
   Object.defineProperty(window, '__wbw', { value: Object.freeze(api), writable: false, configurable: false });
   setTheme(initial.theme || initial.dark);
   new ResizeObserver(schedule).observe(document.documentElement);
+  document.addEventListener('DOMContentLoaded', function () {
+    new ResizeObserver(schedule).observe(document.body);
+    new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
+    schedule();
+  });
+  // Only bounded, local selection text crosses the boundary. The host owns identity
+  // and the actual quote action; no parent DOM access or generic RPC is exposed.
+  function selection(event) {
+    if (!event.isTrusted) return;
+    var sel = window.getSelection();
+    if (!sel || sel.isCollapsed || !sel.rangeCount) { post(${JSON.stringify(WIDGET_MSG.selection)}, null); return; }
+    var node = sel.anchorNode && sel.anchorNode.parentElement;
+    if (!node || node.closest('input,textarea,[contenteditable]')) return;
+    var text = sel.toString().trim().slice(0, 1600);
+    var context = (sel.getRangeAt(0).commonAncestorContainer.textContent || '').trim();
+    var index = context.indexOf(text);
+    post(${JSON.stringify(WIDGET_MSG.selection)}, { text: text, context: index < 0 ? '' : context.slice(Math.max(0, index - 100), index + text.length + 100) });
+  }
+  document.addEventListener('pointerup', selection);
+  document.addEventListener('keyup', selection);
+  function scrollIntent(event, direction) {
+    if (!event.isTrusted || !direction) return;
+    for (var node = event.target instanceof Element ? event.target : null; node && node !== document.body; node = node.parentElement) {
+      if (/auto|scroll/.test(getComputedStyle(node).overflowY) &&
+        (direction < 0 ? node.scrollTop > 0 : node.scrollTop + node.clientHeight < node.scrollHeight - 1)) return;
+    }
+    post(${JSON.stringify(WIDGET_MSG.scroll)}, direction < 0 ? -1 : 1);
+  }
+  document.addEventListener('wheel', function (event) { if (!event.ctrlKey) scrollIntent(event, event.deltaY); }, { passive: true });
+  var touchY;
+  document.addEventListener('touchstart', function (event) { touchY = event.touches.length === 1 ? event.touches[0].clientY : undefined; }, { passive: true });
+  document.addEventListener('touchmove', function (event) {
+    if (touchY == null || event.touches.length !== 1) return;
+    var next = event.touches[0].clientY;
+    if (Math.abs(touchY - next) > 1) scrollIntent(event, touchY - next);
+    touchY = next;
+  }, { passive: true });
+  document.addEventListener('keydown', function (event) {
+    if (event.target.closest('input,textarea,select,[contenteditable]')) return;
+    if (['ArrowUp','PageUp','Home'].includes(event.key) || event.key === ' ' && event.shiftKey) scrollIntent(event, -1);
+    else if (['ArrowDown','PageDown','End',' '].includes(event.key)) scrollIntent(event, 1);
+  });
   window.addEventListener('load', function () { report(); schedule(); post(${JSON.stringify(WIDGET_MSG.ready)}, 1); });
   document.addEventListener('click', function (e) {
     var t = e.target;
@@ -245,7 +312,7 @@ const CSP = [
 export async function buildWidgetDocument(payload: WidgetPayload, options: {
   dark?: boolean; theme?: WidgetTheme; state?: WidgetState | null; persistent?: boolean;
   /** Only a draft, not a grading/persistence capability. Never include answer keys. */
-  answerInput?: { answer: unknown; submitted: boolean };
+  answerInput?: { answer: unknown; submitted: boolean; question?: unknown };
 } = {}): Promise<string> {
   const libs = payload.libs ?? [];
   const sources = await Promise.all(

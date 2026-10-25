@@ -60,6 +60,8 @@ export interface AgentStopInfo {
 }
 
 export interface AgentCallbacks {
+  /** Explicit opt-in: background generation pipelines do not receive MCP tools. */
+  mcpSessionId?: number;
   /** 正文流式增量 */
   onDelta?: (text: string) => void;
   /** 思考过程流式增量（reasoning_content） */
@@ -126,6 +128,29 @@ export async function runAgentLoop(
   maxRounds = 6,
 ): Promise<ChatMessage[]> {
   const { cloud, withToolPermission } = await import('../cloud/state');
+  const mcpNames = new Set<string>();
+  if (cloud.enabled && cb.mcpSessionId !== undefined) {
+    try {
+      const mcp = await (await import('../mcp/client')).loadMcpTools({ sessionId: cb.mcpSessionId }, cb.signal);
+      tools = [...tools, ...mcp.tools];
+      for (const tool of mcp.tools) mcpNames.add(tool.function.name);
+      const builtin = executeTool;
+      executeTool = (name, args) => name.startsWith('mcp_') ? mcp.execute(name, args) : builtin(name, args);
+      const original = cb;
+      cb = { ...cb,
+        onToolStart: (name, args) => original.onToolStart?.(mcp.label(name), args),
+        onToolEnd: (name, result) => original.onToolEnd?.(mcp.label(name), result),
+      };
+      if (mcp.warnings.length) {
+        const warning = `MCP: ${mcp.warnings.join('; ')}`;
+        messages = [...messages, { role: 'system', content: warning }];
+        cb.onToolStart?.('MCP · connection', '{}'); cb.onToolEnd?.('MCP · connection', `Error: ${warning}`);
+      }
+    } catch (error) {
+      if (cb.signal?.aborted) throw error;
+      cb.onToolStart?.('MCP · connection', '{}'); cb.onToolEnd?.('MCP · connection', 'Error: mcp_connection_failed');
+    }
+  }
   if (cloud.worker) maxRounds = Math.min(maxRounds, cloud.maxSteps);
   const settings = getSettings();
   const target = cb.target ?? targetOfSlot(settings, 'chat');
@@ -225,6 +250,7 @@ export async function runAgentLoop(
     }
 
     for (const call of msg.tool_calls) {
+      cb.signal?.throwIfAborted();
       // 原地打转：同样的工具 + 同样的参数，且期间没有成功写入改变读取结果。
       // 与其等它自己撞上限，不如停下来说清楚它在重复什么
       if (ledger.record(call.function.name, call.function.arguments)) {
@@ -238,7 +264,8 @@ export async function runAgentLoop(
         cb.onCheckpoint?.(out);
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
         const name = call.function.name;
-        if (['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
+        // MCP authorization is enforced by its server-side owner/session/tool scope.
+        if (mcpNames.has(name) || ['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
           result = await executeTool(name, args);
         } else {
           const reads = ['read', 'grep', 'search_transcript', 'get_transcript_range', 'search_material', 'get_material_range', 'use_skill', 'read_skill_reference', 'list_frames', 'get_learning_overview', 'list_courses', 'search_course_library', 'get_course_details', 'list_folders'];
@@ -247,6 +274,7 @@ export async function runAgentLoop(
           result = await withToolPermission(capability, { tool: name, arguments: args }, () => executeTool(name, args));
         }
       } catch (e) {
+        if (cb.signal?.aborted) throw e;
         result = `工具执行失败：${e instanceof Error ? e.message : String(e)}`;
       }
       ledger.recordResult(call.function.name, result);

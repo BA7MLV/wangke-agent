@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { remoteTasks } from '../cloud/state';
+import { cloud, remoteTasks } from '../cloud/state';
 import { cancelResourceTasks, commandChatTask, submitCloudTask } from '../cloud/tasks';
 import type { CloudTask } from '../../packages/contracts/src/cloud';
 import { useChatNotifications } from './chatNotifications';
@@ -309,6 +309,7 @@ export interface CourseChatStore {
   sendMode: SendMode;
   courseCount: number | null;
   skillIds: number[] | undefined;
+  mcpServerIds: string[] | undefined;
   contextCourses: CourseContextItem[];
   pendingAsk: PendingAsk | null;
   pendingPlan: PendingPlan | null;
@@ -396,6 +397,7 @@ export interface CourseChatStore {
    * 那会让用户点了技能范围、界面看着生效了、发第一条消息时没了。
    */
   setSkillIds: (ids: number[] | undefined) => void;
+  setMcpServerIds: (ids: string[] | undefined) => Promise<void>;
   /** 恢复自动选课程。草稿态同样只写内存，理由见 `setSkillIds` */
   clearCourseContext: () => void;
   setCourseContext: (ids: string[]) => Promise<void>;
@@ -468,6 +470,7 @@ const DRAFT_STATE: Partial<CourseChatStore> = {
   messages: [],
   loading: false,
   skillIds: undefined,
+  mcpServerIds: undefined,
   contextCourses: [],
   // 队列属于「正在跑的那一轮」：切到草稿态时，上一条会话没说完的话留在它自己的视图里
   // （park），不会被带进这份全新的空草稿。
@@ -594,6 +597,7 @@ interface SessionView {
   pendingPlan: PendingPlan | null;
   planApplying: boolean;
   skillIds: number[] | undefined;
+  mcpServerIds: string[] | undefined;
   contextCourses: CourseContextItem[];
 }
 
@@ -612,6 +616,7 @@ const EMPTY_VIEW: SessionView = {
   pendingPlan: null,
   planApplying: false,
   skillIds: undefined,
+  mcpServerIds: undefined,
   contextCourses: [],
 };
 
@@ -643,6 +648,7 @@ function topLevelView(s: CourseChatStore): SessionView {
     pendingPlan: s.pendingPlan,
     planApplying: s.planApplying,
     skillIds: s.skillIds,
+    mcpServerIds: s.mcpServerIds,
     contextCourses: s.contextCourses,
   };
 }
@@ -773,6 +779,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   sendMode: 'queue',
   courseCount: null,
   skillIds: undefined,
+  mcpServerIds: undefined,
   contextCourses: [],
   pendingAsk: null,
   pendingPlan: null,
@@ -866,6 +873,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       pendingPlan: null,
       planApplying: false,
       skillIds: session?.skillIds,
+      mcpServerIds: session?.mcpServerIds,
       contextCourses: contextIds
         .filter((cid) => byId.has(cid))
         .map((cid) => ({ id: cid, name: byId.get(cid)! })),
@@ -1055,6 +1063,17 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   // ── 设置类 ────────────────────────────────────────────────────────────────
   setDraft: (text) => set({ draft: text }),
 
+  setMcpServerIds: async (ids) => {
+    const id = get().activeId;
+    if (id != null) {
+      await db.chatSessions.where('id').equals(id).modify(row => {
+        if (ids === undefined) delete row.mcpServerIds;
+        else row.mcpServerIds = ids;
+      });
+      if (cloud.enabled) await (await import('../cloud/sync')).flushCloud();
+    }
+    if (get().activeId === id) set({ mcpServerIds: ids });
+  },
   setSkillIds: (ids) => {
     const id = get().activeId;
     set({ skillIds: ids });
@@ -1128,7 +1147,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       try {
         if (id == null) {
           writeView(0, { loading: true });
-          const row = await newSessionRow(view.skillIds, view.contextCourses.map(c => c.id));
+          const row = await newSessionRow(view.skillIds, view.contextCourses.map(c => c.id), view.mcpServerIds);
           id = row.id!;
           set(s => ({ sessions: [...s.sessions, row], activeId: id, loaded: true }));
         }
@@ -1235,7 +1254,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     if (sessionId == null) {
       try {
         // 草稿态里用户可能已经选过技能范围（那时只写内存，见 setSkillIds），随行一起落库
-        const row = await newSessionRow(view.skillIds, view.contextCourses.map((course) => course.id));
+        const row = await newSessionRow(view.skillIds, view.contextCourses.map((course) => course.id), view.mcpServerIds);
         sessionId = row.id!;
         justCreated = true;
         // 草稿那一轮的登记（key 0）挪到真实 id 上：`stop` / `steer` 按 activeId 找它
@@ -1607,6 +1626,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         toolsForLibrary(hasCourses),
         executeTool,
         {
+          mcpSessionId: turnKey,
           // 档位一律传下去，关着思考就传 'none'：thinkingParams 会按模型声明决定发哪个字段 ——
           // 只有开关的模型（Qwen3.5 系、部分 DeepSeek）拿不到深度参数，但 `enable_thinking` 照发，
           // 所以这里用 supportsThinking 而不是 hasThinkingDepth（后者只管 UI 显示）。
@@ -1994,11 +2014,13 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   // ── 停止生成 ──────────────────────────────────────────────────────────────
   stop: () => {
     if (remoteTasks()) { void cancelResourceTasks(`session:${activeKey()}`); return; }
-    // 只断**当前在看的那条会话**的 LLM 请求与循环；悬着的提问/方案由 releasePending 收掉
-    // （`finally` 里统一做）。后台另有一条在跑时，它不受影响 —— 这是「真并发」的应有之义。
-    const turn = inflight.get(activeKey());
+    // Only stop this conversation. A blocked tool is awaiting its user promise,
+    // not fetch: abort alone cannot reach finally to release that promise.
+    const key = activeKey();
+    const turn = inflight.get(key);
     if (turn) turn.intent = 'stop';
     turn?.abort.abort();
+    releasePending(key);
   },
 
   // ── 重试 / 分支 ───────────────────────────────────────────────────────────
@@ -2162,6 +2184,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         // 上下文与技能范围一并继承：分支出来的是「同一场对话的另一个走法」
         ...(source.contextCourseIds ? { contextCourseIds: [...source.contextCourseIds] } : {}),
         ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
+        ...(source.mcpServerIds !== undefined ? { mcpServerIds: [...source.mcpServerIds] } : {}),
       })) as number;
       for (const row of kept) {
         await db.chats.add({
@@ -2581,13 +2604,14 @@ function drainQueue(sessionId: number): void {
  * 该字段的 `undefined` 与 `[]` 语义不同（不限定 vs 一个都不给），
  * 老数据里「不限定」的形态就是**字段不存在**。
  */
-async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = []): Promise<ChatSessionRow> {
+async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = [], mcpServerIds?: string[]): Promise<ChatSessionRow> {
   const now = Date.now();
   const row: ChatSessionRow = {
     videoId: LIBRARY_ASSISTANT_ID,
     title: '新会话',
     createdAt: now,
     ...(skillIds !== undefined ? { skillIds } : {}),
+    ...(mcpServerIds !== undefined ? { mcpServerIds } : {}),
     ...(contextCourseIds.length ? { contextCourseIds } : {}),
   };
   const id = (await db.chatSessions.add(row)) as number;

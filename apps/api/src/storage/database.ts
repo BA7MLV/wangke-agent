@@ -228,6 +228,14 @@ const MIGRATIONS: Array<[number, string]> = [
     );
   `],
   [12, `ALTER TABLE cloud_tasks ADD COLUMN executor TEXT CHECK(executor IN ('node','media','browser'));`],
+  [13, `
+    CREATE TABLE mcp_servers (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      config TEXT NOT NULL, credentials TEXT NOT NULL, revision TEXT NOT NULL
+    );
+    CREATE INDEX mcp_servers_owner ON mcp_servers(owner_id);
+    ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
+  `],
 ];
 
 export class DatabaseStore {

@@ -167,6 +167,10 @@ const META = {
   // 净化层的报错原文（已阻止渲染）对模型没有可操作性，那这工具就只是一块会说「不行」的牌子。
   // 「它是否真的走了渲染层同一个净化函数」由 probe-svg-sanitize 守（要真浏览器）。
   'test-widget': { service: 'none', antd: false, timeout: 120 },
+  'test-ask-visual': { service: 'none', antd: false, timeout: 120 },
+  'e2e-ask-visual': { service: 'dev', antd: false, timeout: 180, base: true },
+  'e2e-widget-reading': { service: 'dev', antd: false, timeout: 180, base: true },
+  'e2e-widget-corrections': { service: 'dev', antd: false, timeout: 180, base: true },
   // 小型 JSON 快照、消息/源码绑定、隐私边界与过期写入拒绝。
   'test-widget-state': { service: 'none', antd: false, timeout: 120, tsx: true },
   'e2e-widget-state': { service: 'dev', antd: false, timeout: 180, base: true },

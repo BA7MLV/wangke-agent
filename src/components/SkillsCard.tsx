@@ -6,6 +6,7 @@ import { ensureBuiltinSkills, importSkillFile } from '../skills/store';
 import { BUILTIN_SKILLS } from '../skills/builtin';
 
 interface Draft {
+  mcpRequired?: string[];
   id?: number; // 编辑已有 skill 时携带
   builtin: boolean;
   name: string;
@@ -102,7 +103,7 @@ export default function SkillsCard() {
       setDraftError('请填写名称、描述和说明');
       return;
     }
-    const row = { name, description: draft.description.trim(), body, updatedAt: Date.now() };
+    const row = { name, description: draft.description.trim(), body, mcpRequired: draft.mcpRequired, updatedAt: Date.now() };
     setSaving(true);
     try {
       await db.transaction('rw', [db.skills, db.skillRefs], async () => {

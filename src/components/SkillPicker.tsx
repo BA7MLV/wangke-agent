@@ -3,6 +3,8 @@ import { Button, Checkbox, Modal, Tooltip } from '@heroui/react';
 import { Sym, MODAL_CONTAINER_CLASS } from '../ui';
 import { loadEnabledSkillMeta, type SkillMeta } from '../skills/store';
 import './skill-picker.css';
+import McpScope from '../mcp/McpScope';
+import { useTranslation } from 'react-i18next';
 
 interface Props {
   /**
@@ -17,6 +19,8 @@ interface Props {
   isOpen?: boolean;
   onOpenChange?: (open: boolean) => void;
   hideTrigger?: boolean;
+  mcpValue?: string[];
+  onMcpChange?: (ids: string[] | undefined) => Promise<void>;
 }
 
 /**
@@ -34,7 +38,8 @@ interface Props {
  * `tune` 在 HandoutPanel 已经代表「生成参数（模型 + 技能覆盖）」。同一图标两种含义
  * 会让人以为点开是同一类东西。`extension`（拼图块）是 skill / 插件的通用隐喻。
  */
-export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hideTrigger }: Props) {
+export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hideTrigger, mcpValue, onMcpChange }: Props) {
+  const { t } = useTranslation('settings');
   const [internalOpen, setInternalOpen] = useState(false);
   const open = isOpen ?? internalOpen;
   const setOpen = onOpenChange ?? setInternalOpen;
@@ -115,7 +120,7 @@ export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hid
           <Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
             <Modal.Dialog data-testid="skill-picker-dialog">
               <Modal.Header>
-                <Modal.Heading>技能范围</Modal.Heading>
+                <Modal.Heading>{onMcpChange ? t('mcp.scopeTitle') : '技能范围'}</Modal.Heading>
               </Modal.Header>
               <Modal.Body>
                 <div className="skill-picker">
@@ -152,7 +157,7 @@ export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hid
                               大半面积，手指/鼠标落在那里毫无反应，正是「选不了」的来源。 */}
                           <span className="skill-picker__text">
                             <span className="skill-picker__name">{s.name}</span>
-                            <span className="skill-picker__desc">{s.description || '（无描述）'}</span>
+                            <span className="skill-picker__desc">{s.description || '（无描述）'}{s.mcpRequired?.length ? ` · MCP: ${s.mcpRequired.join(', ')}` : ''}</span>
                           </span>
                         </Checkbox.Content>
                       </Checkbox>
@@ -164,6 +169,7 @@ export default function SkillPicker({ value, onChange, isOpen, onOpenChange, hid
                     </div>
                   )}
                 </div>
+                {open && onMcpChange ? <McpScope value={mcpValue} onChange={onMcpChange} /> : null}
               </Modal.Body>
               <Modal.Footer>
                 {skills.length > 0 && (

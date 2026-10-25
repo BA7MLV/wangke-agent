@@ -55,6 +55,7 @@ window.__runCloudTask = async (task) => {
         else await useCourseChat.getState().send(input.text, input.mode, input.sessionId, input.resume, input.attachments ?? []);
         result = null; break;
       case 'qa': result = await (await import('../harness/qaRunner')).runQa(input, {
+        onTools: tools => onProgress({ ...progress, tools }),
         onDelta: text => onProgress({ ...progress, content: String(progress.content ?? '') + text }),
         onReasoning: text => onProgress({ ...progress, reasoning: String(progress.reasoning ?? '') + text }),
         onRoundStart: () => onProgress({ ...progress, content: '' }),

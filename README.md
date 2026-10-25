@@ -95,6 +95,8 @@ flowchart TB
 
 运行 `./install.sh --agent` 可启用后端多步自主执行和独立 Docker 沙盒。支持持久化工作区、定时唤醒、重启恢复和前端停止任务；浏览器关闭不影响后端执行。部署、网络配置和数据备份边界见 [Agent Runtime 部署说明](docs/agent-runtime.md)。
 
+在「设置 → 技能与 MCP」可接入 Streamable HTTP、旧 SSE 和后端 stdio MCP 服务，支持 OAuth、JSON 导入、资源／提示词及按需工具发现，供资料库助手、课程／阅读问答和 Bot 共用。配置、会话范围与部署说明见 [MCP 接入](docs/mcp.md)。
+
 ### 环境要求
 
 | | |

@@ -144,6 +144,7 @@ const ASK_USER_TOOL: ToolDef = {
         maxSelections: { type: 'integer', description: '多选最多选几项，默认全部选项数' },
         confirmLabel: { type: 'string', description: '确认按钮的实际动作，如「按此计划继续」，不超过 60 字' },
         declineLabel: { type: 'string', description: '拒绝按钮文案，默认「暂不执行」' },
+        presentation: { type: 'object', properties: { html: { type: 'string', description: '可选教学可视化展示，遵循 show_widget HTML 片段规范及 wbw 样式。原 question/options 是唯一题面和选项真相。读取 window.__wbw.answerInput，监听 wbw:answerchange；点击时调用 submitAnswer({status:"answered",mode:"selection",selectedIds:[稳定选项ID],selectedLabels:[],text:"",note:""})，或 mode:"text" 填写 text。Promise 等宿主显示真实答案并让用户确认后才成功；取消会拒绝。setAnswerDraft 只同步草稿。不得调用 sendPrompt 冒充作答，不内嵌题库答案，不自行判分。始终保留宿主标准作答入口。' } }, required: ['html'] },
       },
       required: ['question'],
     },

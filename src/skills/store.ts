@@ -11,6 +11,7 @@ const SKILL_BLOCK_BUDGET = 6000;
 
 /** Level 1：技能元数据（常驻上下文，name + description） */
 export interface SkillMeta {
+  mcpRequired?: string[];
   id: number;
   name: string;
   description: string;
@@ -96,7 +97,7 @@ async function doEnsureBuiltinSkills(): Promise<void> {
 export async function loadEnabledSkillMeta(): Promise<SkillMeta[]> {
   await ensureBuiltinSkills();
   const skills = await db.skills.filter((s) => !!s.enabled).sortBy('id');
-  return skills.map((s) => ({ id: s.id!, name: s.name, description: s.description }));
+  return skills.map((s) => ({ id: s.id!, name: s.name, description: s.description, ...(s.mcpRequired ? { mcpRequired: s.mcpRequired } : {}) }));
 }
 
 /**
@@ -127,7 +128,7 @@ export async function loadSkillBodies(ids: number[]): Promise<string> {
 
 /** 元数据列表 → 提示词用的清单文本 */
 export function skillMetaBlock(metas: SkillMeta[]): string {
-  return metas.map((m) => `- ${m.name}：${m.description || '（无描述）'}`).join('\n');
+  return metas.map((m) => `- ${m.name}：${m.description || '（无描述）'}${m.mcpRequired?.length ? ` [MCP: ${m.mcpRequired.join(', ')}]` : ''}`).join('\n');
 }
 
 /** 导入 .md 单文件或 skill zip 包（含 references/），落库并默认启用 */

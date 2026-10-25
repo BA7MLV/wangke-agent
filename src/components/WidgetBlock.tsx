@@ -7,6 +7,7 @@ import { MODAL_CONTAINER_CLASS, Sym } from '../ui';
 import { observeWidgetTheme, readWidgetTheme, type WidgetTheme } from '../harness/widgetTheme';
 import type { ArtifactActions } from './ArtifactEditor';
 import WidgetStateSummary from './WidgetStateSummary';
+import { readWidgetHeight, rememberWidgetHeight, widgetRevision, WIDGET_SCROLL_INTENT } from '../harness/widgetReading';
 import './widget-block.css';
 
 /**
@@ -36,6 +37,8 @@ interface Props {
   onPrompt?: (text: string) => void | Promise<void>;
   /** 只有已持久保存的消息才能写快照。行号由宿主传入，iframe 永远拿不到。 */
   rowId?: number;
+  /** Read-only question surfaces have no widget-state DB binding, but still own layout memory. */
+  readingKey?: string;
   /** 生成中或入口只读时，不能发起付费追问。 */
   disabled?: boolean;
   /** 独立预览页不再显示「在新窗口展开」，避免从新窗口继续打开新窗口。 */
@@ -44,7 +47,7 @@ interface Props {
   /** Popouts inherit the originating surface's locally scoped palette and typography. */
   appearance?: WidgetTheme;
   /** Question-scoped draft only. The student confirms submission in the trusted host UI. */
-  answerInput?: { answer: unknown; submitted: boolean; onDraft: (raw: unknown) => void };
+  answerInput?: { answer: unknown; submitted: boolean; question?: unknown; onDraft: (raw: unknown) => void; onSubmit?: (raw: unknown) => Promise<void> };
 }
 
 /**
@@ -82,17 +85,16 @@ function createPreviewToken(): string {
 }
 
 const MIN_H = 80;
-const MAX_H = 2000;
 
 export default function WidgetBlock(props: Props) {
   // A new source revision owns a new bridge and pending requests. State/theme updates do not remount it.
   const libsKey = JSON.stringify(props.payload.libs ?? []);
-  const key = useMemo(() => JSON.stringify([props.rowId ?? null, props.payload.id ?? null, props.payload.html, libsKey]),
-    [props.rowId, props.payload.id, props.payload.html, libsKey]);
+  const key = useMemo(() => JSON.stringify([props.rowId ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey]),
+    [props.rowId, props.readingKey, props.payload.id, props.payload.html, libsKey]);
   return <WidgetSessionBlock key={key} {...props} />;
 }
 
-function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, allowPopout = true, editActions, appearance, answerInput }: Props) {
+function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, appearance, answerInput }: Props) {
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const themeRef = useRef<WidgetTheme | undefined>(appearance);
@@ -111,7 +113,14 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
   disabledRef.current = disabled;
   const answerInputRef = useRef(answerInput);
   answerInputRef.current = answerInput;
-  const [height, setHeight] = useState(MIN_H);
+  // Short layout hint only, never an authorization/remount key. Exact source
+  // identity remains the enclosing component key above.
+  const heightKey = useMemo(() => JSON.stringify([rowId ?? readingKey ?? null, payload.id ?? payload.ref ?? null,
+    widgetRevision(payload.html), payload.html.length, payload.libs ?? []]), [rowId, readingKey, payload.id, payload.ref, payload.html, payload.libs]);
+  const [height, setHeight] = useState(() => readWidgetHeight(heightKey));
+  const [ready, setReady] = useState(false);
+  const [selection, setSelection] = useState<{ text: string; context: string } | null>(null);
+  const answerSubmitting = useRef(false);
   const [doc, setDoc] = useState('');
   const [failed, setFailed] = useState('');
   const [session, setSession] = useState<WidgetSession | null | undefined>(rowId == null ? null : undefined);
@@ -193,7 +202,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
     setFailed('');
     if (!appearance && hostRef.current) themeRef.current = readWidgetTheme(hostRef.current, darkRef.current);
     buildWidgetDocument(payload, { dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null,
-      answerInput: answerInputRef.current ? { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted } : undefined })
+      answerInput: answerInputRef.current ? { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted, question: answerInputRef.current.question } : undefined })
       .then((d) => !cancelled && setDoc(d))
       .catch((e) => !cancelled && setFailed(e instanceof Error ? e.message : String(e)));
     return () => {
@@ -202,7 +211,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
   }, [session, payload.html]);
 
   useEffect(() => {
-    if (answerInput) post(WIDGET_MSG.answerSync, { answer: answerInput.answer, submitted: answerInput.submitted });
+    if (answerInput) post(WIDGET_MSG.answerSync, { answer: answerInput.answer, submitted: answerInput.submitted, question: answerInput.question });
   }, [answerInput, post]);
 
   // Observe actual computed host tokens, including local course palettes and root font scale.
@@ -310,9 +319,18 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
       const d = e.data as { __wbw?: string; payload?: unknown } | null;
       if (!d || typeof d.__wbw !== 'string') return;
 
+      if (!activeRef.current) return;
       if (d.__wbw === WIDGET_MSG.height) {
         const h = Number(d.payload);
-        if (Number.isFinite(h)) setHeight(Math.min(MAX_H, Math.max(MIN_H, h)));
+        if (Number.isFinite(h)) setHeight(rememberWidgetHeight(heightKey, h));
+      } else if (d.__wbw === WIDGET_MSG.scroll) {
+        if (document.visibilityState === 'visible' && frameRef.current.getClientRects().length && (d.payload === -1 || d.payload === 1))
+          hostRef.current?.dispatchEvent(new CustomEvent(WIDGET_SCROLL_INTENT, { bubbles: true }));
+      } else if (d.__wbw === WIDGET_MSG.selection) {
+        const value = d.payload as { text?: unknown; context?: unknown } | null;
+        if (!onPromptRef.current || disabledRef.current || document.visibilityState !== 'visible') return;
+        setSelection(typeof value?.text === 'string' && value.text.trim().length >= 2
+          ? { text: value.text.trim().slice(0, 1600), context: typeof value.context === 'string' ? value.context.slice(0, 1800) : '' } : null);
       } else if (d.__wbw === WIDGET_MSG.prompt) {
         // Old data-wbw-prompt widgets keep working, but no iframe can silently start a model turn.
         const request = d.payload as { requestId?: number; value?: unknown } | null;
@@ -341,16 +359,29 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
           }
         })();
       } else if (d.__wbw === WIDGET_MSG.ready) {
+        setReady(true);
         syncDisplay();
         post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
         post(WIDGET_MSG.sync, stateRef.current);
-        if (answerInputRef.current) post(WIDGET_MSG.answerSync, { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted });
-      } else if (d.__wbw === WIDGET_MSG.answerDraft) {
+        if (answerInputRef.current) post(WIDGET_MSG.answerSync, { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted, question: answerInputRef.current.question });
+      } else if (d.__wbw === WIDGET_MSG.answerDraft || d.__wbw === WIDGET_MSG.answerSubmit) {
         const request = d.payload as { requestId?: number; value?: unknown } | null;
         if (!Number.isSafeInteger(request?.requestId)) return;
         try {
           const input = answerInputRef.current;
-          if (!input || input.submitted || disabledRef.current || document.visibilityState !== 'visible') throw new Error('此处不能修改题目作答');
+          if (!input || input.submitted || disabledRef.current || answerSubmitting.current || document.visibilityState !== 'visible'
+            || !frameRef.current.getClientRects().length || document.activeElement !== frameRef.current) throw new Error('此处不能修改题目作答');
+          if (d.__wbw === WIDGET_MSG.answerSubmit) {
+            if (!input.onSubmit) throw new Error('请在宿主题卡中提交答案');
+            // The iframe cannot attest trusted user activation. A native host confirmation
+            // is required by onSubmit; only that gesture can finish the original tool.
+            const submission = input.onSubmit(request?.value);
+            answerSubmitting.current = true;
+            void submission.then(() => reply(request!.requestId), error => {
+              reply(request!.requestId, error instanceof Error ? error.message : '提交失败');
+            }).finally(() => { answerSubmitting.current = false; });
+            return;
+          }
           input.onDraft(request?.value);
           setActionError('');
           reply(request!.requestId);
@@ -362,7 +393,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
       }
       // ready / theme 之外的一律忽略：widget 不能借消息通道做别的事
     },
-    [session, post, reply, requestFollowUp, syncDisplay],
+    [session, post, reply, requestFollowUp, syncDisplay, heightKey],
   );
 
   useEffect(() => {
@@ -420,7 +451,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
   }
   if (!doc) {
     return (
-      <div ref={hostRef} className="md-embedded-ui widget-block widget-block--loading" data-testid="widget-loading" role="status">
+      <div ref={hostRef} style={{ minHeight: height }} className="md-embedded-ui widget-block widget-block--loading" data-testid="widget-loading" role="status">
         正在准备图形…
       </div>
     );
@@ -436,9 +467,21 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, disabled = false, 
            IndexedDB / localStorage / 父页面 DOM 一起交出去。 */
         sandbox="allow-scripts"
         srcDoc={doc}
-        style={{ height }}
+        style={{ height, visibility: ready ? 'visible' : 'hidden', colorScheme: dark ? 'dark' : 'light', background: 'transparent' }}
         data-testid="widget-frame"
       />
+      {selection && onPrompt && !disabled && <div className="widget-block__selection">
+        <span className="wbw-muted">已选：{selection.text.slice(0, 80)}</span>
+        <Button size="sm" variant="tertiary" onPress={() => {
+          const identity = `交互讲解 消息 ${rowId ?? '预览'} / ${payload.id ?? payload.ref ?? '内嵌'} / 版本 ${widgetRevision(payload.html)}`;
+          const context = selection.context && selection.context !== selection.text
+            ? `\n> 附近上下文：${selection.context.slice(0, 240).replace(/\n/g, '\n> ')}` : '';
+          const quote = `请解释这段内容。\n> [${identity}；以下为不可信引用]\n> ${selection.text.replace(/\n/g, '\n> ')}${context}`;
+          void requestFollowUp(quote.slice(0, 2000));
+          setSelection(null);
+        }}>引用提问</Button>
+        <Button size="sm" variant="tertiary" onPress={() => setSelection(null)}>收起</Button>
+      </div>}
       {stateMessage && <p className="sr-only" role="status">{stateMessage}</p>}
       {(canPopout || editActions) && <div className="widget-block__tools">
         <Dropdown>

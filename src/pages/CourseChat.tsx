@@ -903,6 +903,7 @@ export default function CourseChat() {
         <AskCard
           key={message.key}
           ask={message.ask}
+          messageKey={message.key}
           active={false}
           onPick={answerAsk}
         />
@@ -1253,9 +1254,15 @@ export default function CourseChat() {
                 <AskCard
                   key={`${activeId}:${pendingAsk.messageKey}`}
                   ask={composerAsk}
+                  messageKey={pendingAsk.messageKey}
                   active
                   restored={pendingAsk.restored}
-                  onPick={answerAsk}
+                  onPick={async answer => {
+                    const current = useCourseChat.getState();
+                    if (current.activeId !== activeId || current.pendingAsk?.messageKey !== pendingAsk.messageKey)
+                      throw new Error('本次提问已结束，请使用当前问题卡');
+                    await current.answerAsk(answer);
+                  }}
                 />
               ) : <>
               {/* 上下文属于这次提问的输入范围，和输入框放在同一张 chat 卡里；

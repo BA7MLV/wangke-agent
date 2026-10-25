@@ -14,13 +14,13 @@ export class CloudConfiguration {
     this.key = fs.readFileSync(keyFile);
     if (this.key.length !== 32) throw new Error('invalid_credentials_key');
   }
-  private seal(value: string) {
+  seal(value: string) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv);
     const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64');
   }
-  private open(value: string) {
+  open(value: string) {
     const bytes = Buffer.from(value, 'base64');
     const cipher = crypto.createDecipheriv('aes-256-gcm', this.key, bytes.subarray(0, 12));
     cipher.setAuthTag(bytes.subarray(12, 28));
