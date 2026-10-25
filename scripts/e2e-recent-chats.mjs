@@ -7,6 +7,9 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
+  page.on('console', (message) => {
+    if (message.type() === 'error' && message.text().includes('[useRecentChats]')) errors.push(message.text());
+  });
   await page.goto(process.env.BASE_URL || 'http://localhost:5173');
   await page.getByTestId('course-chat-page').waitFor();
   await page.evaluate(async () => {
@@ -42,8 +45,51 @@ try {
   await page.getByTestId('chat-recent-901').click();
   await page.getByTestId('course-chat-page').waitFor();
   assert.equal(await page.getByTestId('chat-recent-901').getAttribute('aria-selected'), 'true');
+
+  // 失败回答的真实按钮走 retryMessage 的删除路径；仅替换 send，避免依赖模型服务。
+  await page.evaluate(async () => {
+    const { db } = await import('/src/store/db.ts');
+    const { useCourseChat } = await import('/src/store/courseChat.ts');
+    const row = await db.chats.where('sessionId').equals(901).first();
+    window.__restoreRecentSend = useCourseChat.getState().send;
+    window.__recentRetries = 0;
+    useCourseChat.setState({
+      messages: [
+        { key: 'recent-user', rowId: row.id, role: 'user', content: row.content, createdAt: row.createdAt },
+        { key: 'recent-error', role: 'ai', content: '测试回答失败', error: true, createdAt: row.createdAt + 1 },
+      ],
+      send: async (text, _unused, sessionId) => {
+        // 让列表有机会读到删除后的空会话，再验证重建后订阅仍然有效。
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        await db.chats.add({ sessionId, videoId: row.videoId, role: 'user', content: text, createdAt: 500 });
+        window.__recentRetries++;
+      },
+    });
+  });
+  try {
+    await page.getByTestId('chat-error-continue').click();
+    await page.waitForFunction(() => window.__recentRetries === 1);
+    await page.getByTestId('chat-recent-901').waitFor();
+    assert.equal(await page.getByText('最近会话加载失败，请刷新重试', { exact: true }).count(), 0);
+    await page.evaluate(async () => {
+      const { db } = await import('/src/store/db.ts');
+      // 下一次数据库变化也必须刷新，不能只保留旧列表。
+      await db.chats.add({ sessionId: 904, videoId: '__library_assistant__', role: 'user', content: '重试后的新消息', createdAt: 600 });
+    });
+    await page.getByTestId('chat-recent-904').waitFor();
+    assert.equal(await page.evaluate(async () => {
+      const { db } = await import('/src/store/db.ts');
+      return db.chats.where('sessionId').equals(901).count();
+    }), 1, 'Retry must replace the user row without duplicates');
+  } finally {
+    await page.evaluate(async () => {
+      const { useCourseChat } = await import('/src/store/courseChat.ts');
+      useCourseChat.setState({ send: window.__restoreRecentSend });
+      delete window.__restoreRecentSend;
+    });
+  }
   assert.deepEqual(errors, []);
-  console.log('PASS shared order, empty-session filtering, library menus, pinning and navigation');
+  console.log('PASS shared order, empty-session filtering, library menus, pinning, navigation and failed-answer retry updates');
 } catch (error) {
   for (const context of browser.contexts()) {
     for (const page of context.pages()) console.error(await page.locator('body').innerText());

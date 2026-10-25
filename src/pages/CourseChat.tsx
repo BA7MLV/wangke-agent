@@ -5,7 +5,6 @@ import { MaterialImage } from '../components/MaterialImage';
 import { useNavigate } from 'react-router-dom';
 import {
   Button,
-  Chip,
   Dropdown,
   Input,
   TextArea,
@@ -621,7 +620,6 @@ export default function CourseChat() {
   const recent = useRecentChats(true);
   const setDraft = useCourseChat((s) => s.setDraft);
   const send = useCourseChat((s) => s.send);
-  const clearCourseContext = useCourseChat((s) => s.clearCourseContext);
   const answerAsk = useCourseChat((s) => s.answerAsk);
   const stop = useCourseChat((s) => s.stop);
   // ── 流式期间的输入（排队 / 插入）─────────────────────────────────────────
@@ -1265,30 +1263,8 @@ export default function CourseChat() {
                   }}
                 />
               ) : <>
-              {/* 上下文属于这次提问的输入范围，和输入框放在同一张 chat 卡里；
-                  不再悬在消息区上方，避免用户误以为它是另一条顶栏。 */}
+              {/* 课程引用收在添加菜单中；输入区只保留待发送的附件。 */}
               <div className="course-chat__composer-context">
-              {contextCourses.length > 0 && (
-                <div className="course-chat__context" data-testid="course-chat-context">
-                  <span className="course-chat__context-label">
-                    <Sym name="toc" aria-hidden="true" />
-                    课程上下文
-                  </span>
-                  <div className="course-chat__context-chips">
-                    {contextCourses.map((course) => (
-                      <Chip key={course.id} className="course-chat__context-chip" variant="secondary" size="sm">
-                        {course.name}
-                        <Button isIconOnly size="sm" variant="tertiary" aria-label={`移除课程 ${course.name}`} isDisabled={loading}
-                          onPress={() => void useCourseChat.getState().setCourseContext(contextCourses.filter((item) => item.id !== course.id).map((item) => item.id))}><Sym name="close" /></Button>
-                      </Chip>
-                    ))}
-                  </div>
-                  {iconButton('恢复自动选择课程', <Sym name="refresh" />, clearCourseContext, {
-                    disabled: loading,
-                    testId: 'chat-context-reset',
-                  })}
-                </div>
-              )}
               <ChatAttachmentDraft />
               </div>
               <ChatAddMenu disabled={!sessionReady || !!pendingAsk} />

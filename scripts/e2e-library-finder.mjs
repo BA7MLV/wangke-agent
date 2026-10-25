@@ -50,6 +50,7 @@ try {
   await page.getByLabel('列表视图', { exact: true }).click();
   await marqueeAll();
   // Escape cancels the gesture, restoring the original selection.
+  const selectionBeforeEscape = await page.locator('.finder-item[aria-selected="true"]').count();
   const canvas = await page.getByTestId('video-list').boundingBox();
   await page.mouse.move(canvas.x + 3, canvas.y + 3);
   await page.mouse.down();
@@ -57,7 +58,7 @@ try {
   await page.getByTestId('selection-box').waitFor();
   await page.keyboard.press('Escape');
   await page.mouse.up();
-  assert.equal(await page.locator('.finder-item[aria-selected="true"]').count(), 5);
+  assert.equal(await page.locator('.finder-item[aria-selected="true"]').count(), selectionBeforeEscape);
   await page.getByLabel('图标视图', { exact: true }).click();
   await folder.click();
   assert.equal(await folder.getAttribute('aria-selected'), 'true');

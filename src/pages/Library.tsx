@@ -352,6 +352,7 @@ export default function Library() {
     navigate(AGENT_INSTRUCTIONS_ROUTE, { replace: true });
   }, [agentFileRequested, navigate, setFolderHistory]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
+  const [mobileManaging, setMobileManaging] = useState(false);
   const marquee = useMarqueeSelection(selection, setSelection);
   const [view, setView] = useState<'icons' | 'list'>('icons');
   const [sort, setSort] = useState<'name' | 'recent'>('name');
@@ -621,6 +622,7 @@ export default function Library() {
   };
 
   const openFolder = (key: string | null) => {
+    setMobileManaging(false);
     setFolderHistory((history) => ({ entries: [...history.entries.slice(0, history.index + 1), key], index: history.index + 1 }));
     setSelection(new Set());
     setSearchText('');
@@ -1717,7 +1719,7 @@ export default function Library() {
         </Card.Root>
       )}
 
-      <section className="finder-window" aria-label="资料访达" data-drag-active={finderDragging.length > 0 || undefined}
+      <section className="finder-window" aria-label="资料访达" data-mobile={isMobile || undefined} data-managing={isMobile && mobileManaging || undefined} data-drag-active={finderDragging.length > 0 || undefined}
         onDragOver={(event) => {
           if (inSystemFolder || (event.target as Element).closest('[data-system-folder]')) {
             event.preventDefault();
@@ -1737,10 +1739,13 @@ export default function Library() {
       >
         <header className="finder-toolbar">
           <div className="finder-navigation">
+            {isMobile ? <Button isIconOnly variant="ghost" aria-label="返回上一级" isDisabled={!currentFolder && !inSystemFolder} onPress={() => openFolder(currentFolder?.folder?.parentId != null ? String(currentFolder.folder.parentId) : null)}><Sym name="chevron_left" /></Button> : <>
             <Button isIconOnly variant="ghost" aria-label="后退" isDisabled={folderHistory.index === 0} onPress={() => travelFolder(-1)}><Sym name="chevron_left" /></Button>
             <Button isIconOnly variant="ghost" aria-label="前进" isDisabled={folderHistory.index === folderHistory.entries.length - 1} onPress={() => travelFolder(1)}><Sym name="chevron_right" /></Button>
+            </>}
           </div>
           <h2 className="finder-title">{folderTitle}</h2>
+          {isMobile && <Button className="finder-manage" variant="ghost" isDisabled={inSystemFolder} onPress={() => { setMobileManaging(!mobileManaging); setSelection(new Set()); setActionMenuOpen(false); }}>{mobileManaging ? '完成' : '管理'}</Button>}
           <div className="finder-tools">
             <ToggleButtonGroup className="finder-view-switch" selectionMode="single" disallowEmptySelection selectedKeys={[view]} onSelectionChange={(keys) => { const key = [...keys][0]; if (key === 'icons' || key === 'list') setView(key); }} aria-label="显示方式">
               <ToggleButton id="icons" aria-label="图标视图"><Sym name="grid_view" /></ToggleButton>
@@ -1761,7 +1766,8 @@ export default function Library() {
             </Dropdown>
             <span className="finder-tool-divider" />
             <Button isIconOnly variant="ghost" data-testid="btn-new-folder" aria-label="新建文件夹" isDisabled={inSystemFolder} onPress={() => openFolderModal('create')}><Sym name="create_new_folder" /></Button>
-            <Button isIconOnly variant="ghost" aria-label="导入资料" isDisabled={inSystemFolder} onPress={() => setImportOpen(true)}><Sym name="upload" /></Button>
+            <Button isIconOnly={!isMobile} className="finder-import" variant="ghost" aria-label="导入资料" isDisabled={inSystemFolder} onPress={() => setImportOpen(true)}><Sym name="upload" />{isMobile && '导入'}</Button>
+            <div className="finder-item-actions">
             <Dropdown isOpen={actionMenuOpen} onOpenChange={(open) => { setActionMenuOpen(open); if (!open) setContextPoint(null); }}>
               <Dropdown.Trigger className="finder-tool" aria-label="所选项目的操作" isDisabled={!selectedFolder && !selectedVideo}><Sym name="more_horiz" /></Dropdown.Trigger>
               <Dropdown.Popover {...(contextPoint ? { triggerRef: contextAnchor, placement: 'bottom start' as const } : {})}><Dropdown.Menu aria-label="项目操作" onAction={(key) => {
@@ -1807,6 +1813,7 @@ export default function Library() {
                 <Dropdown.Item id="delete" textValue="删除" className="text-danger">删除</Dropdown.Item>
               </Dropdown.Menu></Dropdown.Popover>
             </Dropdown>
+            </div>
           </div>
           <SearchField className="finder-search" aria-label={currentFolder || inSystemFolder ? '搜索此文件夹' : '搜索全部资料'} value={searchText} onChange={(value) => { setSearchText(value); setSelection(new Set()); }}>
             <SearchField.Group><SearchField.SearchIcon /><SearchField.Input ref={searchInputRef} data-testid="library-search" placeholder="搜索" /><SearchField.ClearButton /></SearchField.Group>
@@ -1823,8 +1830,8 @@ export default function Library() {
           const folder = (event.target as Element).closest<HTMLElement>('[data-group-key]');
           folderDropProps(folder ? Number(folder.dataset.groupKey) : currentFolder?.folder?.id ?? null).onDrop(event);
         }}
-        onPointerDownCapture={beginFinderPointer}
-        onPointerDown={marquee.onPointerDown}
+        onPointerDownCapture={isMobile ? undefined : beginFinderPointer}
+        onPointerDown={isMobile ? undefined : marquee.onPointerDown}
         onClickCapture={(event) => {
           if (suppressFinderClick.current) { event.preventDefault(); event.stopPropagation(); suppressFinderClick.current = false; }
           else marquee.onClickCapture(event);
@@ -1835,7 +1842,8 @@ export default function Library() {
           event.preventDefault();
           const key = item.dataset.videoId ? `file:${item.dataset.videoId}` : `folder:${item.dataset.groupKey}`;
           setSelection(new Set([key]));
-          setContextPoint({ x: event.clientX, y: event.clientY });
+          if (isMobile) setMobileManaging(true);
+          setContextPoint(isMobile ? null : { x: event.clientX, y: event.clientY });
           setActionMenuOpen(true);
         }}
       >
@@ -1883,7 +1891,7 @@ export default function Library() {
           ) : (
             <>
               {view === 'list' && <div className="finder-list-heading" aria-hidden="true"><span>名称</span><span>项目 / 大小</span><span>添加日期</span><span>种类</span></div>}
-              <ListBox aria-label={folderTitle} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode="multiple" selectionBehavior="replace" selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={(key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
+              <ListBox aria-label={folderTitle} className={`finder-items finder-items--${view}`} layout={view === 'icons' ? 'grid' : 'stack'} selectionMode={isMobile ? mobileManaging ? 'single' : 'none' : 'multiple'} selectionBehavior={isMobile ? 'toggle' : 'replace'} selectedKeys={selection} onSelectionChange={(keys) => setSelection(new Set([...keys].map(String)))} onAction={isMobile && mobileManaging ? undefined : (key) => openItem(String(key))} onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}>
                 {showSystemFolder && <ListBox.Item id="system:folder" textValue="system" className="finder-item finder-item--folder" data-testid="system-folder" data-system-folder="true" data-selection-key="system:folder">
                   <span className="finder-item__content">
                     <span className="finder-item__icon"><FolderIcon color="gray" /></span>
@@ -1926,6 +1934,14 @@ export default function Library() {
         {marquee.box && <div className="finder-selection-box" data-testid="selection-box" aria-hidden="true" style={marquee.box} />}
       </div>
         <footer className="finder-footer">
+          {isMobile && mobileManaging && <div className="finder-mobile-actions" aria-label="资料管理">
+            <span role="status">{selectedVideo?.name ?? selectedFolder?.name ?? '轻点一个资料或文件夹进行管理'}</span>
+            <div>
+              <Button variant="ghost" isDisabled={!selectedVideo && !selectedFolder} onPress={() => { if (selectedVideo) openRename(selectedVideo); else if (selectedFolder?.folder) openFolderModal('rename', selectedFolder.folder); }}><Sym name="edit" />重命名</Button>
+              <Button variant="ghost" isDisabled={!selectedVideo} onPress={() => { if (selectedVideo) openMove(selectedVideo); }}><Sym name="folder" />移动</Button>
+              <Button variant="ghost" className="text-danger" isDisabled={!selectedVideo && !selectedFolder} onPress={() => { if (selectedVideo) askDeleteVideo(selectedVideo); else if (selectedFolder?.folder) void confirmDeleteFolder(selectedFolder.folder, selectedFolder.videos.length); }}><Sym name="delete" />删除</Button>
+            </div>
+          </div>}
           {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
            <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{inSystemFolder && <><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current="page" onPress={() => openFolder('system')}>system</Button></>}{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
           {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}

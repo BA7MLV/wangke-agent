@@ -23,7 +23,8 @@ export function useRecentChats(showActive = false) {
   useEffect(() => {
     if (!ready) return;
     // 仅展示发送过消息的会话，后台回答和跨标签页更新也刷新排序。
-    const subscription = liveQuery(async () => new Map(await Promise.all(
+    // 重试会删除再重建提问；两次读取必须来自同一快照，避免跨过中间的空态。
+    const subscription = liveQuery(() => db.transaction('r', db.chats, async () => new Map(await Promise.all(
       sessions.filter((session) => session.id != null).map(async (session) => {
         const query = () => db.chats.where('[sessionId+createdAt+id]').between(
           [session.id!, Dexie.minKey, Dexie.minKey],
@@ -33,14 +34,17 @@ export function useRecentChats(showActive = false) {
           query().filter((message) => message.role === 'user').first(),
           query().first(),
         ]);
-        return [session.id!, user ? latest!.createdAt : 0] as const;
+        return [session.id!, user ? (latest?.createdAt ?? user.createdAt) : 0] as const;
       }),
-    ))).subscribe({
+    )))).subscribe({
       next: (next) => {
         cachedActivity = next;
         setActivity(next);
       },
-      error: () => toast.error('最近会话加载失败，请刷新重试'),
+      error: (error) => {
+        console.error('[useRecentChats] 最近会话查询失败', error);
+        toast.error('最近会话加载失败，请刷新重试');
+      },
     });
     return () => subscription.unsubscribe();
   }, [sessions, ready]);

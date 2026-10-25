@@ -76,6 +76,7 @@
   box-shadow: none;
 }
 .finder-tool { border: 0; cursor: default; }
+.finder-item-actions { display: flex; }
 .finder-tool[data-disabled] { opacity: .35; }
 .finder-toolbar [data-slot='button']:hover, .finder-tool:hover { background: var(--default); }
 .finder-tool:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
@@ -111,6 +112,42 @@
   transform: none;
   transition: none;
 }
+
+/* Touch browsing has its own navigation and explicit single-item management. */
+.finder-window[data-mobile='true'] .finder-toolbar { flex-wrap: wrap; gap: 4px 8px; padding: 8px 12px; }
+.page-library .finder-window[data-mobile='true'] .finder-title { flex: 1; min-width: 0; margin: 0; }
+.finder-window[data-mobile='true'] .finder-toolbar [data-slot='button'],
+.finder-window[data-mobile='true'] .finder-tool,
+.finder-window[data-mobile='true'] .finder-view-switch [data-slot='toggle-button'] { width: 44px; min-width: 44px; height: 44px; min-height: 44px; }
+.finder-window[data-mobile='true'] .finder-toolbar .finder-manage,
+.finder-window[data-mobile='true'] .finder-toolbar .finder-import { width: auto; padding: 0 10px; font-size: 14px; gap: 6px; }
+.finder-window[data-mobile='true'] .finder-search { order: 3; width: 100%; }
+.finder-window[data-mobile='true'] .finder-search [data-slot='search-field-group'] { height: 44px; min-height: 44px; border-radius: 10px; }
+.finder-window[data-mobile='true'] .finder-search input { font-size: 16px; }
+.finder-window[data-mobile='true'] .finder-tools { order: 4; flex: 1 0 100%; gap: 0; }
+.finder-window[data-mobile='true'] .finder-tool-divider { flex: 1; border: 0; margin: 0; }
+.finder-window[data-mobile='true']:not([data-managing='true']) .finder-item-actions { display: none; }
+.finder-window[data-mobile='true'] .finder-canvas { padding: 12px; touch-action: pan-y; }
+.finder-window[data-mobile='true'] .finder-items--list .finder-item { min-height: 64px; grid-template-columns: 36px minmax(0, 1fr) 72px; padding: 10px 8px; }
+.finder-window[data-mobile='true'] .finder-items--list .finder-item__name { white-space: normal; display: -webkit-box; font-size: 14px; line-height: 20px; }
+.finder-window[data-mobile='true'] .finder-list-heading,
+.finder-window[data-mobile='true'] .finder-items--list .finder-item__date,
+.finder-window[data-mobile='true'] .finder-items--list .finder-item__kind,
+.finder-window[data-mobile='true'] .finder-interaction-hint { display: none; }
+.finder-window[data-mobile='true'] .finder-path { padding: 0 12px; }
+.finder-window[data-mobile='true'] .finder-path-target { flex-shrink: 0; max-width: 220px; }
+.finder-window[data-mobile='true'] .finder-path [data-slot='button'] { min-height: 44px; height: auto; max-width: 100%; white-space: normal; text-align: left; }
+.finder-window[data-mobile='true'] .finder-footer { padding-bottom: env(safe-area-inset-bottom); }
+.finder-window[data-mobile='true'][data-managing='true'] .finder-path,
+.finder-window[data-mobile='true'][data-managing='true'] .finder-status { display: none; }
+.finder-mobile-actions { padding: 10px 12px 4px; border-top: 1px solid var(--border); }
+.finder-mobile-actions > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; }
+.finder-mobile-actions > div { display: flex; gap: 4px; margin-top: 6px; }
+.finder-mobile-actions [data-slot='button'] { flex: 1; min-width: 0; min-height: 48px; gap: 6px; padding: 8px; }
+.finder-mobile-actions svg { width: 18px; height: 18px; }
+.finder-window[data-mobile='true'][data-managing='true'] .finder-item__icon::before { content: ''; position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border: 1px solid var(--muted); border-radius: 50%; background: var(--surface); }
+.finder-window[data-mobile='true'][data-managing='true'] .finder-item[data-selected='true'] .finder-item__icon::before { content: '✓'; display: grid; place-items: center; border-color: var(--accent); background: var(--accent); color: var(--accent-foreground); font-size: 14px; }
+.finder-window[data-mobile='true'][data-managing='true'] .finder-items--list .finder-item { padding-right: 32px; }
 .finder-item__icon { display: flex; align-items: center; justify-content: center; width: 128px; height: 112px; margin-bottom: 4px; border: 2px solid transparent; border-radius: 6px; }
 .finder-item__name { max-width: 100%; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; overflow: hidden; overflow-wrap: anywhere; padding: 1px 4px; border-radius: 4px; text-align: center; font-size: 13px; line-height: 18px; color: var(--foreground); }
 .finder-item__meta { font-size: 11px; line-height: 16px; color: var(--muted); font-variant-numeric: tabular-nums; }

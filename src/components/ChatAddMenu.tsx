@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react';
-import { Button, Checkbox, Dropdown, Input, Modal } from '@heroui/react';
+import { Button, Checkbox, Description, Dropdown, Input, Label, Modal } from '@heroui/react';
 import { useNavigate } from 'react-router-dom';
 import { db } from '../store/db';
 import { useCourseChat } from '../store/courseChat';
@@ -30,6 +30,8 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   const mcpServerIds = useCourseChat((state) => state.mcpServerIds);
   const setMcpServerIds = useCourseChat((state) => state.setMcpServerIds);
   const loading = useCourseChat((state) => state.loading);
+  const contextCourses = useCourseChat((state) => state.contextCourses);
+  const contextLabel = contextCourses.length ? `课程引用 · ${contextCourses.length} 门` : '课程引用';
   const addFiles = useChatAttachments((state) => state.add);
   const openCourses = async () => {
     setError(''); setBusy(true); setQuery(''); setCoursesOpen(true);
@@ -62,20 +64,25 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
     }
   };
   return <>
-    <div className="chat-add-menu">
+    <div className="chat-add-menu" title={contextCourses.length ? `已引用 ${contextCourses.length} 门课程，点击查看` : '添加课程、图片、文件或讲义'}>
       <Dropdown>
-        <Button isIconOnly size="sm" variant="tertiary" aria-label="添加课程、图片、文件或讲义" data-testid="chat-add" isDisabled={disabled}>
+        <Button className="chat-add-menu__trigger" isIconOnly size="sm" variant="tertiary" aria-label={`添加课程、图片、文件或讲义${contextCourses.length ? `，已引用 ${contextCourses.length} 门课程` : ''}`} data-testid="chat-add" isDisabled={disabled}>
           <Sym name="add" />
+          {contextCourses.length > 0 && <span className="chat-add-menu__context-dot" data-testid="chat-context-dot" aria-hidden="true" />}
         </Button>
         <Dropdown.Popover placement="top start">
-          <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['courses', 'handout'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
+          <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['handout'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
             if (key === 'courses') void openCourses();
             else if (key === 'images') imageInput.current?.click();
             else if (key === 'files') fileInput.current?.click();
             else if (key === 'skills') setSkillsOpen(true);
             else if (key === 'handout') void addHandout();
           }}>
-            <Dropdown.Item id="courses" textValue="添加课程"><Sym name="school" />添加课程</Dropdown.Item>
+            <Dropdown.Item id="courses" textValue={contextLabel} data-testid="course-chat-context">
+              <Sym name="school" />
+              <Label>{contextLabel}</Label>
+              <Description className="chat-add-menu__context-summary">{contextCourses.length ? contextCourses.map((course) => course.name).join('、') : '自动检索课程库'}</Description>
+            </Dropdown.Item>
             <Dropdown.Item id="images" textValue="上传图片"><Sym name="image" />上传图片</Dropdown.Item>
             <Dropdown.Item id="files" textValue="上传文件"><Sym name="attach_file" />上传文件</Dropdown.Item>
             <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
@@ -90,15 +97,20 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
     <Modal.Root isOpen={coursesOpen} onOpenChange={setCoursesOpen}>
       <Modal.Backdrop><Modal.Container placement="center" size="md" className={MODAL_CONTAINER_CLASS}>
         <Modal.Dialog data-testid="chat-course-picker">
-          <Modal.Header><Modal.Heading>添加课程</Modal.Heading></Modal.Header>
+          <Modal.Header><Modal.Heading>课程引用</Modal.Heading></Modal.Header>
           <Modal.Body>
             <p className="text-sm text-muted">最多选择 {MAX_COURSE_CONTEXT} 门课程作为会话上下文；不选则由助手自动检索全库。</p>
+            <div className="chat-course-picker__selection">
+              <span>{selected.length ? `已选择 ${selected.length} 门课程` : '自动选择课程'}</span>
+              <Button size="sm" variant="tertiary" data-testid="chat-context-reset" isDisabled={busy || loading || selected.length === 0} onPress={() => setSelected([])}>恢复自动选择</Button>
+            </div>
+            {loading && <p className="text-sm text-muted">回复完成后可修改课程引用。</p>}
             <Input aria-label="搜索课程" placeholder="搜索课程" value={query} onChange={(event) => setQuery(event.target.value)} />
             <div className="chat-course-picker__list" aria-busy={busy}>
               {busy ? <p role="status">正在读取课程…</p> : courses.length === 0 ? <>
                 <p>课程库还是空的</p><Button variant="secondary" onPress={() => { setCoursesOpen(false); navigate('/library'); }}>导入课程</Button>
               </> : courses.filter((course) => course.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).map((course) => (
-                <Checkbox key={course.id} isSelected={selected.includes(course.id)} isDisabled={!selected.includes(course.id) && selected.length >= MAX_COURSE_CONTEXT}
+                <Checkbox key={course.id} isSelected={selected.includes(course.id)} isDisabled={loading || (!selected.includes(course.id) && selected.length >= MAX_COURSE_CONTEXT)}
                   onChange={(checked) => setSelected((current) => checked ? [...current, course.id] : current.filter((id) => id !== course.id))}>
                   <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control><span>{course.name}</span></Checkbox.Content>
                 </Checkbox>
@@ -110,7 +122,7 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
           <Modal.Footer>
             {courses.length > 0 && <Button variant="tertiary" onPress={() => { setCoursesOpen(false); navigate('/library'); }}>导入新课程</Button>}
             <Button variant="tertiary" onPress={() => setCoursesOpen(false)}>取消</Button>
-            <Button variant="primary" isDisabled={busy || loading} onPress={() => void saveCourses()}>添加{selected.length ? ` ${selected.length} 门课程` : ''}</Button>
+            <Button variant="primary" isDisabled={busy || loading} onPress={() => void saveCourses()}>保存引用</Button>
           </Modal.Footer>
         </Modal.Dialog>
       </Modal.Container></Modal.Backdrop>

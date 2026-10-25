@@ -124,67 +124,6 @@
   align-items: center;
 }
 
-/* ── 课程上下文：只展示助手本轮实际选中的事实范围 ───────────────────────── */
-.course-chat__context {
-  box-sizing: border-box;
-  flex: 0 0 auto;
-  min-width: 0;
-  min-height: 40px;
-  grid-column: 1 / -1;
-  grid-row: 1;
-  margin: 0;
-  padding: 6px 4px 8px;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 7px;
-  border-bottom: 1px solid var(--border-secondary);
-  background: transparent;
-  color: var(--muted);
-  font-size: 0.8125rem;
-}
-
-.course-chat__context-label {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--foreground);
-  font-weight: 500;
-}
-
-.course-chat__context-label > svg {
-  color: var(--accent);
-  font-size: 18px;
-}
-
-.course-chat__context-chips {
-  min-width: 0;
-  flex: 1 1 auto;
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 5px;
-}
-
-.course-chat__context-chip {
-  box-sizing: border-box;
-  max-width: min(240px, 100%);
-  padding: 3px 9px;
-  overflow: hidden;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--background);
-  color: var(--foreground);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.course-chat__context-reset {
-  flex: 0 0 auto;
-  margin-left: auto;
-}
-
 /* ── 消息流 ───────────────────────────────────────────────────────────── */
 .course-chat__messages {
   overflow-anchor: none;
