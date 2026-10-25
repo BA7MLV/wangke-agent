@@ -17,12 +17,15 @@ import MessageComposer from '../components/MessageComposer';
 import VirtualMessages from '../components/VirtualMessages';
 import { groupMessages, timeOf, type Row } from './botMessages';
 import './bot-workspace.css';
+import { apiUrl } from '../api/base';
+import { useSearchParams } from 'react-router-dom';
 
-function parseAttachment(content: string): { name: string; size?: number; uploading?: boolean } {
+function parseAttachment(content: string): { name: string; fileId?: string; size?: number; uploading?: boolean } {
   try {
-    const value = JSON.parse(content) as { originalName?: unknown; sizeBytes?: unknown; uploading?: unknown };
+    const value = JSON.parse(content) as { originalName?: unknown; name?: unknown; fileId?: unknown; sizeBytes?: unknown; uploading?: unknown };
     return {
-      name: typeof value.originalName === 'string' ? value.originalName : '附件',
+      name: typeof value.originalName === 'string' ? value.originalName : typeof value.name === 'string' ? value.name : '附件',
+      fileId: typeof value.fileId === 'string' ? value.fileId : undefined,
       size: typeof value.sizeBytes === 'number' ? value.sizeBytes : undefined,
       uploading: value.uploading === true,
     };
@@ -73,7 +76,7 @@ const Bubble = memo(function Bubble({
         <span className="imsg-file__icon" aria-hidden="true">
           {file.uploading ? <Spinner size="sm" color="current" /> : <Sym name="description" />}
         </span>
-        <span className="imsg-file__name">{file.name}</span>
+        {file.fileId ? <a className="imsg-file__name" href={apiUrl(`/api/v1/files/${encodeURIComponent(file.fileId)}`)} download={file.name} target="_blank" rel="noreferrer">{file.name}</a> : <span className="imsg-file__name">{file.name}</span>}
         {file.size !== undefined && <span className="imsg-file__size">{formatBytes(file.size)}</span>}
       </div>
     );
@@ -256,6 +259,7 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
 const EMPTY: MessageDto[] = [];
 
 export default function BotWorkspace() {
+  const [search] = useSearchParams();
   const nav = useAppNav('bot');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -263,7 +267,7 @@ export default function BotWorkspace() {
   /** 线程列表只拿摘要；详情（消息）只为当前打开的线程拉 —— 原来每次刷新都把所有线程的全部消息拉一遍。 */
   const [threads, setThreads] = useState<ThreadDto[]>([]);
   const [details, setDetails] = useState<Record<string, ThreadDetail>>({});
-  const [activeId, setActiveId] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(() => search.get('thread'));
   const [draft, setDraft] = useState('');
   const [uploadBusy, setUploadBusy] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);

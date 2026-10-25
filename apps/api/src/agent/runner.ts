@@ -4,6 +4,7 @@ import { executeSandbox, type SandboxExecutor } from './sandbox.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import { DEFAULT_AGENT_POLICY } from '../../../../packages/contracts/src/cloud.js';
 import { botRequest, botCalls, type ModelMessage as Message, type ModelCall as Call } from './model.js';
+import type { StudyTools } from './study.js';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
 const now = () => new Date().toISOString();
@@ -23,7 +24,7 @@ export class BotRunner {
   private readonly fetcher: typeof fetch;
   private readonly sandbox: SandboxExecutor;
   private readonly configuration?: CloudConfiguration;
-  constructor(private readonly store: DatabaseStore, options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; configuration?: CloudConfiguration } = {}) {
+  constructor(private readonly store: DatabaseStore, private readonly options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; configuration?: CloudConfiguration; study?: StudyTools } = {}) {
     this.configuration = options.configuration;
     this.fetcher = options.fetch ?? fetch;
     this.sandbox = options.sandbox ?? executeSandbox;
@@ -42,7 +43,12 @@ export class BotRunner {
   }
 
   enqueue(_runId?: string) { if (!this.stopped) queueMicrotask(() => void this.drain()); }
-  cancel(id: string) { this.active.get(id)?.controller.abort(); }
+  cancel(id: string) {
+    this.active.get(id)?.controller.abort();
+    this.store.db.prepare("UPDATE cloud_tasks SET status='cancelled',updated_at=? WHERE parent_run_id=? AND status IN ('queued','running','waiting_user')").run(now(), id);
+    this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE task_id IN (SELECT id FROM cloud_tasks WHERE parent_run_id=?) AND status IN ('pending','approved','consumed')").run(id);
+    this.store.db.prepare("UPDATE approvals SET status='rejected',resolved_at=?,resolution='Run cancelled' WHERE status='pending' AND (run_id=? OR cloud_permission_id IN (SELECT p.id FROM cloud_permissions p JOIN cloud_tasks t ON t.id=p.task_id WHERE t.parent_run_id=?))").run(now(), id, id);
+  }
   async close() {
     this.stopped = true;
     clearInterval(this.timer);
@@ -54,6 +60,7 @@ export class BotRunner {
     if (this.stopped || this.draining) return;
     this.draining = true;
     try {
+      this.syncChildren();
       const concurrency = Math.max(1, Math.min(8, Number(process.env.BOT_CONCURRENCY) || 1));
       const rows = this.store.db.prepare("SELECT * FROM runs WHERE mode='bot' AND status='queued' AND (wake_at IS NULL OR wake_at<=?) ORDER BY created_at").all(now()) as Run[];
       for (const run of rows) {
@@ -72,7 +79,7 @@ export class BotRunner {
   }
 
   private initialContext(run: Run): Message[] {
-    const history = this.store.db.prepare(`SELECT role,content FROM messages WHERE thread_id=? AND kind='text' AND role IN ('user','assistant')
+    const history = this.store.db.prepare(`SELECT role,content FROM messages WHERE thread_id=? AND kind IN ('text','attachment') AND role IN ('user','assistant')
       AND seq <= COALESCE((SELECT seq FROM messages WHERE id=?),9223372036854775807) ORDER BY seq DESC LIMIT 40`).all(run.thread_id, run.trigger_message_id) as Message[];
     const profiles = this.store.db.prepare('SELECT a.name,a.role,a.system_prompt FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? AND a.enabled=1').all(run.thread_id);
     return [{ role: 'system', content: `You are an autonomous agent. Work toward the user's goal using multiple tool steps. You have broad autonomy inside your own /workspace sandbox. Do not claim work succeeded without checking tool results. Do not seek access outside your sandbox. Network access depends on deployment configuration. Use wait for scheduled follow-up. Use send_message(kind="text") only when finished; progress continues. Ask the user when essential information is missing. Available tools are the only capabilities you have. Agent profiles: ${JSON.stringify(profiles)}` }, ...history.reverse().map((m) => ({ ...m, content: m.content?.slice(0, 12000) ?? '' }))];
@@ -97,10 +104,13 @@ export class BotRunner {
             if (!approval || approval.status === 'pending') { this.store.db.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(run.id); return; }
             const args = JSON.parse(step.arguments);
             const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
-            const allowed = approval.status === 'approved' && policy.shell !== 'deny' && (!args.network || policy.network === 'allow');
+            const plugin = this.options.study?.plugins.get(step.tool);
+            const capability = plugin?.capability(args) ?? 'shell';
+            const capabilities = plugin?.permissions?.(args) ?? [capability];
+            const allowed = approval.status === 'approved' && capabilities.every(k => policy[k] !== 'deny') && (plugin || !args.network || policy.network === 'allow');
             if (allowed) {
               this.store.db.prepare("UPDATE run_steps SET status='running' WHERE id=? AND status='waiting_approval'").run(step.id);
-              step.result = JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: step.id, command: args.command, network: args.network }, signal));
+              step.result = plugin ? await this.executeStudy(plugin.name, args, owner, run, step.id, signal) : JSON.stringify(await this.sandbox({ threadId: run.thread_id, executionId: step.id, command: args.command, network: args.network }, signal));
             } else step.result = 'Command denied by user or current policy.';
             this.store.db.prepare("UPDATE run_steps SET status='completed',result=?,completed_at=? WHERE id=?").run(step.result, now(), step.id);
             this.configuration?.audit(owner, 'shell.resolved', { step: step.id, allowed });
@@ -124,7 +134,7 @@ export class BotRunner {
           this.finish(run.id, 'completed'); return;
         }
         const selected = provider ?? { protocol: 'openai-chat' as const, apiKey: process.env.MODEL_API_KEY };
-        const request = botRequest(selected, model, context, tools);
+        const request = botRequest(selected, model, context, [...tools, ...(this.options.study?.definitions() ?? [])]);
         const response = await this.fetcher(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
           method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS) || 30000))]),
           headers: request.headers,
@@ -150,7 +160,22 @@ export class BotRunner {
         let result = 'Unknown tool or invalid arguments.';
         let state: 'completed' | 'waiting_user' | 'queued' | undefined;
         let wake: string | null = null;
-        if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
+        const studyPlugin = this.options.study?.plugins.get(call.function.name);
+        if (studyPlugin) {
+          const capability = studyPlugin.capability(args);
+          const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
+          const capabilities = studyPlugin.permissions?.(args) ?? [capability];
+          if (capabilities.some(k => policy[k] === 'deny')) result = 'Denied by current learning policy.';
+          else if (capabilities.some(k => policy[k] === 'ask')) {
+            this.store.transaction(() => {
+              this.store.db.prepare("UPDATE run_steps SET status='waiting_approval' WHERE id=?").run(call.id);
+              const message = this.append(run.thread_id, 'approval', `学习权限 ${capability}：${call.function.name}\n${JSON.stringify(args)}`);
+              this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,step_id,status,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, call.id, 'pending', now());
+              this.store.db.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(run.id);
+            });
+            return;
+          } else result = await this.executeStudy(studyPlugin.name, args, owner, run, call.id, signal);
+        } else if (call.function.name === 'shell' && typeof args.command === 'string' && args.command.trim() && args.command.length <= 16000) {
           const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
           const network = policy.network === 'allow';
           if (policy.shell === 'ask') {
@@ -174,12 +199,17 @@ export class BotRunner {
           result = `Scheduled wake: ${wake}`; state = 'queued';
           this.append(run.thread_id, 'progress', `${args.reason.slice(0, 2000)}（下次运行：${wake}）`);
         } else if (call.function.name === 'send_message' && ['text', 'progress', 'question', 'approval', 'attachment'].includes(args.kind) && typeof args.text === 'string' && args.text.length > 0 && args.text.length <= 12000) {
+          let fileAttachment = false;
+          if (args.kind === 'attachment') { try { fileAttachment = Boolean(JSON.parse(args.text)?.fileId); } catch { /* historical plain-text attachments remain supported */ } }
+          if (fileAttachment) result = 'File attachments must use study_send_file with the owned fileId; send_message cannot bypass read policy or approval.';
+          else {
           const message = this.append(run.thread_id, args.kind, args.text);
           result = 'Message delivered.';
           if (args.kind === 'approval') {
             this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,status,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, 'pending', now());
             state = 'waiting_user';
           } else if (args.kind !== 'progress') state = 'completed';
+          }
         }
         signal.throwIfAborted();
         context.push({ role: 'tool', tool_call_id: call.id, content: result.slice(0, 16000) });
@@ -205,6 +235,42 @@ export class BotRunner {
 
   private save(run: Run, context: Message[]) {
     this.store.db.prepare('UPDATE runs SET context_json=?,step_count=? WHERE id=?').run(JSON.stringify(context), run.step_count, run.id);
+  }
+  private async executeStudy(name: string, args: any, owner: string, run: Run, step: string, signal: AbortSignal) {
+    try {
+      const plugin = this.options.study!.plugins.get(name)!;
+      const checkActive = () => {
+        signal.throwIfAborted();
+        if ((this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id) as any)?.status !== 'running') throw new Error('run_not_active');
+        const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
+        const approved = Boolean(this.store.db.prepare("SELECT 1 FROM approvals WHERE run_id=? AND step_id=? AND status='approved'").get(run.id, step));
+        if ((plugin.permissions?.(args) ?? [plugin.capability(args)]).some(k => policy[k] === 'deny' || (policy[k] === 'ask' && !approved))) throw new Error('learning_permission_changed');
+      };
+      checkActive();
+      const value = await plugin.execute(args, { owner, thread: run.thread_id, run: run.id, step, signal, checkActive, append: (kind, text) => { checkActive(); return this.append(run.thread_id, kind, text); } });
+      checkActive();
+      this.configuration?.audit(owner, 'bot.study_tool', { run: run.id, step, name, capability: plugin.capability(args) });
+      return JSON.stringify(value);
+    } catch (error) {
+      signal.throwIfAborted();
+      // Tool errors are actionable but do not expose upstream bodies, URLs or credentials.
+      return JSON.stringify({ error: 'study_tool_failed', detail: error instanceof Error && /^[a-z_]{1,80}$/.test(error.message) ? error.message : 'invalid_input_or_resource_unavailable' });
+    }
+  }
+  private syncChildren() {
+    this.store.transaction(() => {
+      const permissions = this.store.db.prepare(`SELECT p.*,r.thread_id FROM cloud_permissions p JOIN cloud_tasks t ON t.id=p.task_id JOIN runs r ON r.id=t.parent_run_id WHERE p.status='pending' AND r.status NOT IN ('cancelled','failed') AND NOT EXISTS(SELECT 1 FROM approvals a WHERE a.cloud_permission_id=p.id)`).all() as any[];
+      for (const p of permissions) {
+        const m = this.append(p.thread_id, 'approval', `学习子任务权限 ${p.capability}\n${p.arguments}`);
+        this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,status,created_at,cloud_permission_id) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), p.thread_id, m.id, 'pending', now(), p.id);
+      }
+      this.store.db.prepare(`UPDATE cloud_permissions SET status=(SELECT CASE a.status WHEN 'approved' THEN 'approved' ELSE 'rejected' END FROM approvals a WHERE a.cloud_permission_id=cloud_permissions.id),resolved_at=? WHERE status='pending' AND EXISTS(SELECT 1 FROM approvals a WHERE a.cloud_permission_id=cloud_permissions.id AND a.status!='pending')`).run(now());
+      const tasks = this.store.db.prepare(`SELECT t.*,r.thread_id FROM cloud_tasks t JOIN runs r ON r.id=t.parent_run_id WHERE t.status IN ('completed','failed','cancelled','interrupted') AND NOT EXISTS(SELECT 1 FROM cloud_task_events e WHERE e.task_id=t.id AND e.event='bot_terminal_projected')`).all() as any[];
+      for (const t of tasks) {
+        this.append(t.thread_id, 'progress', `学习子任务 ${t.id} (${t.kind})：${t.status}\n${t.result ?? t.error ?? ''}`);
+        this.store.db.prepare('INSERT INTO cloud_task_events(task_id,event) VALUES(?,?)').run(t.id, 'bot_terminal_projected');
+      }
+    });
   }
   private finish(id: string, status: string) {
     this.store.db.prepare("UPDATE runs SET status=?,completed_at=? WHERE id=? AND status='running'").run(status, now(), id);

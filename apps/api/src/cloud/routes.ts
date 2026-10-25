@@ -70,6 +70,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       for (const mutation of mutations) {
         if (!mutation) return fail(reply, 400, 'invalid_mutation');
         if (store.db.prepare('SELECT 1 FROM cloud_operations WHERE owner_id=? AND id=?').get(user.id, mutation.id)) continue;
+        if (task.parent_run_id && configuration.taskPolicy(user.id, task.id).write !== 'allow') return fail(reply, 403, 'bot_child_write_permission_required');
         if (automatic[task.kind]?.includes(mutation.table)) {
           const input = JSON.parse(task.input);
           const rows = [mutation.before, mutation.after].filter(Boolean);
@@ -223,7 +224,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     if (!task || !['running', 'waiting_user'].includes(task.status)) return fail(reply, 409, 'task_not_running');
     const capability = request.body.capability;
     if (!['read', 'write', 'remove', 'shell'].includes(capability)) return fail(reply, 400, 'invalid_capability');
-    const policy = configuration.get(worker.id).policy[capability];
+    const policy = configuration.taskPolicy(worker.id, worker.taskId)[capability];
     if (policy === 'deny') return { status: 'rejected' };
     if (request.body.permissionId) {
       const permission = store.db.prepare('SELECT * FROM cloud_permissions WHERE id=? AND owner_id=? AND task_id=? AND capability=? AND arguments=?')

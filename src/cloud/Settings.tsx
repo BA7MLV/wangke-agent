@@ -6,6 +6,7 @@ import { cloud, cloudRequest } from './state';
 import { applyCloudConfig, flushCloud, stopCloud, useCloudSync } from './sync';
 import { serverClient } from '../api/serverClient';
 import { confirmDialog } from '../ui';
+import GatewaySettings from './GatewaySettings';
 
 export default function CloudSettings() {
   const [config, setConfig] = useState<CloudConfig>();
@@ -76,6 +77,7 @@ export default function CloudSettings() {
       {agents.map(agent => <label key={agent.id} className="flex items-center gap-2"><input type="checkbox" checked={config.trustedAgentIds?.includes(agent.id) ?? false} onChange={e => setConfig({ ...config, trustedAgentIds: e.target.checked ? [...(config.trustedAgentIds ?? []), agent.id] : config.trustedAgentIds?.filter(id => id !== agent.id) })} />{agent.name}</label>)}
     </fieldset>
     <Button isDisabled={busy} onPress={() => void act(async () => { const saved = await cloudRequest<CloudConfig>('/config', { method: 'PUT', body: JSON.stringify(config) }); setConfig(saved); applyCloudConfig(saved); }, '服务器配置已保存')}>保存服务器配置</Button>
+    <GatewaySettings />
     <h3 className="text-lg font-semibold">Passkey</h3>
     <p className="text-sm text-muted">使用 HTTPS 域名或 localhost 访问，并在安装时配置公开 URL。</p>
     <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => serverClient.passkeyRegisterVerify(await startRegistration({ optionsJSON: await serverClient.passkeyRegisterOptions() })), 'Passkey 已添加')}>添加当前设备 Passkey</Button>

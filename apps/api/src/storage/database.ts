@@ -228,6 +228,53 @@ const MIGRATIONS: Array<[number, string]> = [
     );
   `],
   [12, `ALTER TABLE cloud_tasks ADD COLUMN executor TEXT CHECK(executor IN ('node','media','browser'));`],
+  [13, `
+    CREATE TABLE gateway_accounts (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agent_profiles(id),
+      enabled INTEGER NOT NULL DEFAULT 0, preset TEXT NOT NULL DEFAULT 'inherit',
+      config TEXT NOT NULL, cursor TEXT, health TEXT NOT NULL DEFAULT 'stopped', created_at TEXT NOT NULL
+    );
+    CREATE TABLE gateway_pairings (
+      account_id TEXT PRIMARY KEY REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL, expires_at TEXT NOT NULL
+    );
+    CREATE TABLE gateway_bindings (
+      id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      tenant TEXT NOT NULL, peer TEXT NOT NULL, chat TEXT NOT NULL, topic TEXT NOT NULL,
+      thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      context TEXT, revoked INTEGER NOT NULL DEFAULT 0, checkpoint INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(account_id,tenant,peer,chat,topic)
+    );
+    CREATE TABLE gateway_inbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      external_id TEXT NOT NULL, envelope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+      UNIQUE(account_id,external_id)
+    );
+    CREATE TABLE gateway_outbox (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+      binding_id TEXT NOT NULL REFERENCES gateway_bindings(id) ON DELETE CASCADE,
+      payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+      next_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, platform_id TEXT, error TEXT
+    );
+    CREATE INDEX gateway_outbox_queue ON gateway_outbox(status,next_at,seq);
+    CREATE TABLE bot_reminders (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      text TEXT NOT NULL, timezone TEXT NOT NULL, next_at INTEGER NOT NULL,
+      interval_seconds INTEGER, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL
+    );
+    ALTER TABLE cloud_tasks ADD COLUMN parent_run_id TEXT REFERENCES runs(id);
+    ALTER TABLE cloud_tasks ADD COLUMN parent_step_id TEXT REFERENCES run_steps(id);
+    ALTER TABLE approvals ADD COLUMN cloud_permission_id TEXT REFERENCES cloud_permissions(id);
+  `],
+  [14, `
+    CREATE TABLE gateway_projection_failures (
+      binding_id TEXT NOT NULL REFERENCES gateway_bindings(id) ON DELETE CASCADE,
+      event_id INTEGER NOT NULL, error TEXT NOT NULL, next_at INTEGER NOT NULL,
+      PRIMARY KEY(binding_id,event_id)
+    );
+  `],
 ];
 
 export class DatabaseStore {

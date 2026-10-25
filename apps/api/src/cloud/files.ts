@@ -6,7 +6,7 @@ import { pipeline } from 'node:stream/promises';
 import type { DatabaseStore } from '../storage/database.js';
 
 export async function receiveFile(store: DatabaseStore, directory: string, owner: string, stream: Readable,
-  name: string, mime: string, limit: number, declared?: number) {
+  name: string, mime: string, limit: number, declared?: number, checkActive: () => void = () => {}) {
   const id = crypto.randomUUID();
   const storageName = `${id}.bin`;
   const temporaryPath = path.join(directory, `.upload-${id}.tmp`);
@@ -29,6 +29,7 @@ export async function receiveFile(store: DatabaseStore, directory: string, owner
       if (existing) { await fs.promises.rm(temporaryPath, { force: true }); return existing as { id: string; originalName: string; mimeType: string; sizeBytes: number; sha256: string; createdAt: string }; }
     }
     await fs.promises.rename(temporaryPath, storagePath);
+    checkActive(); // No asynchronous gap between authority recheck and the database commit.
     store.db.prepare('INSERT INTO files(id,owner_id,storage_name,original_name,mime_type,size_bytes,sha256,created_at) VALUES(?,?,?,?,?,?,?,?)')
       .run(id, owner, storageName, name, mime, bytes, sha256, createdAt);
     return { id, originalName: name, mimeType: mime, sizeBytes: bytes, sha256, createdAt };

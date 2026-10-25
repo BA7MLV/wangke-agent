@@ -14,13 +14,13 @@ export class CloudConfiguration {
     this.key = fs.readFileSync(keyFile);
     if (this.key.length !== 32) throw new Error('invalid_credentials_key');
   }
-  private seal(value: string) {
+  seal(value: string) {
     const iv = crypto.randomBytes(12);
     const cipher = crypto.createCipheriv('aes-256-gcm', this.key, iv);
     const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
     return Buffer.concat([iv, cipher.getAuthTag(), encrypted]).toString('base64');
   }
-  private open(value: string) {
+  open(value: string) {
     const bytes = Buffer.from(value, 'base64');
     const cipher = crypto.createDecipheriv('aes-256-gcm', this.key, bytes.subarray(0, 12));
     cipher.setAuthTag(bytes.subarray(12, 28));
@@ -75,7 +75,16 @@ export class CloudConfiguration {
     const agents = this.store.db.prepare('SELECT agent_id FROM thread_participants WHERE thread_id=?').all(threadId) as Array<{ agent_id: string }>;
     const trusted = agents.length > 0 && agents.every(a => config.trustedAgentIds?.includes(a.agent_id));
     // Explicit prohibitions and the independent network switch still apply to trusted agents.
-    return { ...config.policy, shell: trusted && config.policy.shell === 'ask' ? 'allow' as const : config.policy.shell };
+    const autonomous = Boolean(this.store.db.prepare(`SELECT 1 FROM gateway_bindings b JOIN gateway_accounts a ON a.id=b.account_id WHERE b.thread_id=? AND b.revoked=0 AND a.enabled=1 AND a.owner_id=? AND a.preset='autonomous'`).get(threadId, owner));
+    const policy = { ...config.policy, shell: trusted && config.policy.shell === 'ask' ? 'allow' as const : config.policy.shell };
+    if (autonomous) for (const key of ['read', 'write', 'shell'] as const) if (policy[key] === 'ask') policy[key] = 'allow';
+    return policy;
+  }
+  taskPolicy(owner: string, taskId: string) {
+    const task = this.store.db.prepare('SELECT t.parent_step_id,r.thread_id FROM cloud_tasks t LEFT JOIN runs r ON r.id=t.parent_run_id WHERE t.id=? AND t.owner_id=?').get(taskId, owner) as any;
+    const policy = task?.thread_id ? this.policy(owner, task.thread_id) : this.get(owner).policy;
+    if (task?.parent_step_id && this.store.db.prepare("SELECT 1 FROM approvals WHERE step_id=? AND status='approved'").get(task.parent_step_id)) return { ...policy, read: policy.read === 'ask' ? 'allow' as const : policy.read, write: policy.write === 'ask' ? 'allow' as const : policy.write };
+    return policy;
   }
   audit(owner: string, action: string, detail: unknown) {
     this.store.db.prepare('INSERT INTO cloud_audit(owner_id,action,detail,created_at) VALUES(?,?,?,?)')

@@ -24,6 +24,7 @@ export type TaskExecutor = (context: TaskContext) => Promise<unknown>;
 const nodeKinds = new Set(['cards', 'comments', 'danmaku', 'modelOnce', 'handoutEdit']);
 /** Routing is explicit: a failed native job must never replay itself in a browser. */
 export function executorFor(task: CloudTask, video: Record<string, any> | null): ExecutorKind {
+  if (task.kind === 'handout' && task.input.botStudyText === true) return 'node';
   if (nodeKinds.has(task.kind)) return 'node';
   if (task.kind === 'material' && ['md', 'docx'].includes(String(task.input.format))) return 'node';
   if (task.kind === 'cover' && video?.kind !== 'material') return 'media';
@@ -42,6 +43,11 @@ export function recordMutation(table: string, key: string | number, before: Reco
 
 export function commitTask(context: TaskContext, mutations: CloudMutation[]) {
   context.checkActive();
+  const linked = context.store.db.prepare('SELECT parent_run_id FROM cloud_tasks WHERE id=? AND owner_id=?').get(context.task.id, context.owner) as any;
+  if (linked?.parent_run_id) {
+    const policy = context.configuration.taskPolicy(context.owner, context.task.id);
+    if (policy.read !== 'allow' || policy.write !== 'allow') throw new Error('bot_child_write_permission_required');
+  }
   if (mutations.length) context.records.apply(context.owner, mutations);
 }
 

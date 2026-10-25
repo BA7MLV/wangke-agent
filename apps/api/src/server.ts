@@ -11,6 +11,12 @@ import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '
 import { DatabaseStore } from './storage/database.js';
 import { BootstrapRepository } from './storage/bootstrapRepository.js';
 import { BotRunner } from './agent/runner.js';
+import { BotApplicationService } from './agent/service.js';
+import { StudyTools } from './agent/study.js';
+import { GatewayCore } from './gateway/core.js';
+import { FeishuPlugin } from './gateway/adapters/feishu.js';
+import { IlinkPlugin } from './gateway/adapters/ilink.js';
+import { registerGatewayRoutes } from './gateway/routes.js';
 import { CloudRecords } from './cloud/records.js';
 import { CloudConfiguration } from './cloud/config.js';
 import { receiveFile, byteRange } from './cloud/files.js';
@@ -71,7 +77,18 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const cloudRecords = new CloudRecords(store);
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
-  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig });
+  const study = new StudyTools(store, cloudConfig, filesDir, options.fetch);
+  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, study });
+  const botService = new BotApplicationService(store, runner);
+  // Factories are account-scoped; a plugin never resolves another owner's file.
+  const gateway = new GatewayCore(store, cloudConfig, botService, {
+    feishu: account => new FeishuPlugin(async (_peer, file) => {
+      if (!account) throw new Error('account_not_found'); return study.file(account.owner_id, file);
+    }, options.fetch),
+    ilink: account => new IlinkPlugin(async (_peer, file) => {
+      if (!account) throw new Error('account_not_found'); return study.file(account.owner_id, file);
+    }, options.fetch),
+  }, filesDir);
   // Never recreate a bootstrap secret after the database has been initialized.
   const bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
@@ -79,6 +96,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.addContentTypeParser('application/octet-stream', (_request, stream, done) => done(null, stream));
   app.addContentTypeParser(/^multipart\/form-data/, (_request, stream, done) => done(null, stream));
   runner.start();
+  gateway.start();
   const attempts = new Map<string, { count: number; until: number; seen: number }>();
   const dummyHash = argon2.hash('unusable-login-dummy', { type: argon2.argon2id });
   const secureCookie = (process.env.PUBLIC_ORIGIN ?? '').startsWith('https://');
@@ -358,15 +376,8 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     if (request.body?.mode !== 'chat' && request.body?.mode !== 'bot') return bad(reply, 400, 'invalid_mode');
-    const id = crypto.randomUUID(); const timestamp = now(); const title = String(request.body.title ?? '').slice(0, 200) || null;
-    store.transaction(() => {
-      store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id, user.id, request.body!.mode, title, timestamp, timestamp);
-      if (request.body!.mode === 'bot') {
-        const agent = ensureDefaultAgent(user.id);
-        store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(id, agent.id, timestamp);
-      }
-    });
-    return reply.code(201).send({ id, mode: request.body.mode, title, createdAt: timestamp, updatedAt: timestamp });
+    const title = String(request.body.title ?? '').slice(0, 200) || null;
+    return reply.code(201).send(botService.create(user.id, request.body.mode, title, request.body.mode === 'bot' ? ensureDefaultAgent(user.id).id : undefined));
   });
   app.post<{ Params: { id: string }; Body: { agentId?: string } }>('/api/v1/threads/:id/participants', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -450,17 +461,12 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
-    const runs = store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_user')").all(thread.id) as Array<{ id: string }>;
-    store.transaction(() => {
-      store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE thread_id=? AND status IN ('queued','running','waiting_user')").run(now(), thread.id);
-    });
-    for (const run of runs) runner.cancel(run.id);
-    return { stopped: runs.length };
+    return botService.stop(user.id, thread.id);
   });
   app.get<{ Params: { id: string } }>('/api/v1/threads/:id/runs', async (request, reply) => {
     const user = requireAuth(request, reply); if (!user) return;
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
-    return { runs: store.db.prepare('SELECT id,status,step_count AS stepCount,wake_at AS wakeAt,error_code AS errorCode FROM runs WHERE thread_id=? ORDER BY created_at DESC LIMIT 50').all(thread.id) };
+    return { runs: botService.status(user.id, thread.id) };
   });
   app.post<{ Params: { id: string }; Body: { clientNonce?: string; role?: MessageRole; kind?: string; content?: string; replyTo?: string } }>('/api/v1/threads/:id/messages', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -479,21 +485,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const existing = store.db.prepare('SELECT * FROM messages WHERE thread_id=? AND client_nonce=?').get(thread.id, nonce) as any;
     if (existing) return makeDto(existing, true);
     try {
-      const message = store.transaction(() => {
-        const seq = (store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(thread.id) as any).seq;
-        const timestamp = now(); const id = crypto.randomUUID();
-        const dto = { id, threadId: thread.id, clientNonce: nonce, seq, role: 'user', kind, content: b.content!, replyTo: b.replyTo ?? null, createdAt: timestamp };
-         store.db.prepare('INSERT INTO messages(id,thread_id,client_nonce,seq,role,kind,content,reply_to,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(id, thread.id, nonce, seq, 'user', kind, b.content, dto.replyTo, timestamp);
-         if (thread.mode === 'bot' && typeof b.content === 'string') {
-           const requested = new Set(Array.from(b.content.matchAll(/@([^\s@,，。！？!?]{1,64})/g), match => match[1].toLocaleLowerCase()));
-           const participants = store.db.prepare('SELECT a.id,a.name FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? AND a.enabled=1').all(thread.id) as Array<{ id: string; name: string }>;
-           for (const participant of participants) if (requested.has(participant.name.toLocaleLowerCase())) store.db.prepare('INSERT OR IGNORE INTO message_mentions(message_id,agent_id,created_at) VALUES(?,?,?)').run(id, participant.id, timestamp);
-         }
-         store.db.prepare('INSERT INTO message_events(id,thread_id,seq,type,payload,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), thread.id, seq, 'message.accepted', JSON.stringify(dto), timestamp);
-        if (thread.mode === 'bot') store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at,trigger_message_id) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), thread.id, 'bot', 'queued', timestamp, id);
-        store.db.prepare('UPDATE threads SET updated_at=? WHERE id=?').run(timestamp, thread.id);
-        return dto;
-      });
+      const message = botService.send(user.id, thread.id, { clientNonce: nonce, kind, content: b.content!, replyTo: b.replyTo });
       if (thread.mode === 'bot') {
         const run = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(message.id) as { id: string } | undefined;
         if (run) runner.enqueue(run.id);
@@ -543,31 +535,13 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const user = requireAuth(request, reply); if (!user) return;
     if (typeof request.body?.approved !== 'boolean') return bad(reply, 400, 'invalid_approval_resolution');
     const resolution = typeof request.body.resolution === 'string' ? request.body.resolution.trim().slice(0, 2000) : '';
-    const resolved = store.transaction(() => {
-      const approval = store.db.prepare('SELECT a.*,t.owner_id FROM approvals a JOIN threads t ON t.id=a.thread_id WHERE a.id=? AND t.owner_id=?').get(request.params.id, user.id) as any;
-      if (!approval) return { error: 'approval_not_found' as const };
-      if (approval.status !== 'pending') return { error: 'approval_already_resolved' as const };
-      const status = request.body!.approved ? 'approved' : 'rejected'; const timestamp = now();
-      store.db.prepare('UPDATE approvals SET status=?,resolved_at=?,resolution=? WHERE id=? AND status=\'pending\'').run(status, timestamp, resolution || null, approval.id);
-      const run = (approval.run_id ? store.db.prepare("SELECT id FROM runs WHERE id=? AND status='waiting_user'").get(approval.run_id) : store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND status='waiting_user' ORDER BY created_at DESC LIMIT 1").get(approval.thread_id)) as { id: string } | undefined;
-      if (run) {
-        const nonce = `approval:${approval.id}:${status}`;
-        const seq = (store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(approval.thread_id) as { seq: number }).seq;
-        const messageId = crypto.randomUUID(); const content = `Approval ${status}: ${resolution || (status === 'approved' ? 'approved' : 'rejected')}`;
-        const dto = { id: messageId, threadId: approval.thread_id, clientNonce: nonce, seq, role: 'user', kind: 'text', content, replyTo: approval.message_id, createdAt: timestamp };
-        store.db.prepare('INSERT INTO messages(id,thread_id,client_nonce,seq,role,kind,content,reply_to,created_at) VALUES(?,?,?,?,?,?,?,?,?)').run(messageId, approval.thread_id, nonce, seq, 'user', 'text', content, approval.message_id, timestamp);
-        store.db.prepare('INSERT INTO message_events(id,thread_id,seq,type,payload,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), approval.thread_id, seq, 'message.accepted', JSON.stringify(dto), timestamp);
-        store.db.prepare("UPDATE runs SET status='queued',completed_at=NULL,error_code=NULL WHERE id=? AND status='waiting_user'").run(run.id);
-        store.db.prepare('UPDATE threads SET updated_at=? WHERE id=?').run(timestamp, approval.thread_id);
-      }
-      return { approval: { id: approval.id, messageId: approval.message_id, threadId: approval.thread_id, runId: approval.run_id ?? run?.id ?? null, status, createdAt: approval.created_at, resolvedAt: timestamp, resolution: resolution || null }, runId: run?.id ?? null };
-    });
+    const resolved = botService.resolve(user.id, request.params.id, request.body.approved, resolution);
     if ('error' in resolved) {
       const errorCode = resolved.error ?? 'approval_not_found';
       return bad(reply, errorCode === 'approval_not_found' ? 404 : 409, errorCode);
     }
     if (resolved.runId) runner.enqueue(resolved.runId);
-    return resolved.approval;
+    return resolved;
   });
 
   app.get<{ Params: { id: string }; Querystring: { after?: string } }>('/api/v1/threads/:id/events', async (request, reply) => {
@@ -598,10 +572,11 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
 
   app.post<{ Body: { threadId?: string; mode?: ConversationMode } }>('/api/v1/runs', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const thread = ownedThread(user.id, request.body?.threadId ?? ''); if (!thread || (request.body?.mode && request.body.mode !== thread.mode)) return bad(reply, 404, 'thread_not_found'); const id = crypto.randomUUID(); const timestamp = now(); store.transaction(() => store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,?,?,?)').run(id, thread.id, thread.mode, 'queued', timestamp)); if (thread.mode === 'bot') runner.enqueue(id); return reply.code(201).send({ id, threadId: thread.id, mode: thread.mode, status: 'queued', createdAt: timestamp, completedAt: null }); });
   app.get<{ Params: { id: string } }>('/api/v1/runs/:id', async (request, reply) => { const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); return { id: run.id, threadId: run.thread_id, mode: run.mode, status: run.status, createdAt: run.created_at, startedAt: run.started_at ?? null, completedAt: run.completed_at ?? null, errorCode: run.error_code ?? null }; });
-  app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); if (!['completed', 'failed', 'cancelled'].includes(run.status)) store.transaction(() => { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), run.id); }); runner.cancel(run.id); const updated = store.db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as any; return { id: updated.id, threadId: updated.thread_id, mode: updated.mode, status: updated.status, createdAt: updated.created_at, startedAt: updated.started_at ?? null, completedAt: updated.completed_at ?? null, errorCode: updated.error_code ?? null }; });
+  app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; return botService.cancelRun(user.id, request.params.id) ?? bad(reply, 404, 'run_not_found'); });
 
   if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
-  app.addHook('onClose', async () => { await cloudRunner.close(); await runner.close(); store.close(); });
+  registerGatewayRoutes(app, gateway, requireAuth, checkOrigin);
+  app.addHook('onClose', async () => { await gateway.close(); await cloudRunner.close(); await runner.close(); store.close(); });
   return app;
 }
 

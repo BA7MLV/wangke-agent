@@ -62,6 +62,10 @@ export class CloudTaskRunner {
     if (this.stopped || this.draining) return;
     this.draining = true;
     try {
+      for (const [id, controller] of this.active) {
+        const row = this.store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(id) as any;
+        if (row?.status === 'cancelled') controller.abort();
+      }
       const limit = Math.max(1, Math.min(4, Number(process.env.CLOUD_CONCURRENCY) || 2));
       const rows = this.store.db.prepare("SELECT * FROM cloud_tasks WHERE status='queued' ORDER BY created_at LIMIT 50").all() as any[];
       for (const row of rows) {
@@ -81,6 +85,10 @@ export class CloudTaskRunner {
   private async execute(origin: string, row: any, signal: AbortSignal) {
     try {
       const task = taskDto(row);
+      if (row.parent_run_id) {
+        const policy = this.options.configuration?.taskPolicy(row.owner_id, row.id);
+        if (!policy || policy.read !== 'allow' || policy.write !== 'allow') throw new Error('bot_child_permission_required');
+      }
       task.status = 'running';
       const video = typeof task.input.videoId === 'string' ? this.records.get(row.owner_id, 'videos', task.input.videoId) : null;
       const executor = executorFor(task, video);

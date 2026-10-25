@@ -1,0 +1,7 @@
+{
+  "discard": "放弃投递", "discardConfirm": "取消此次投递并放行后续消息，不撤回平台可能已经收到的消息；不确定投递可能已送达。Web 结果仍保留。", "projectionFailures": "出站投影失败（保留检查点，每 30 秒重试）",
+  "title": "IM Gateway · 个人学习 Bot",
+  "intro": "仅本人私聊；群消息与机器人消息被拒绝。先保存渠道，再生成一次性绑定命令并从本人 IM 发送。渠道分别保留线程，课程库共享。",
+  "channel": "渠道", "agent": "Bot", "preset": "授权预设", "inherit": "继承现有策略", "autonomous": "高自治（读写/沙盒免逐次审批，显式禁止和删除审批保留）",
+  "appId": "飞书 App ID", "appSecret": "飞书 App Secret（留空保留）", "save": "保存渠道", "new": "添加渠道", "enabled": "启用", "disabled": "停用", "edit": "修改", "pair": "生成本人绑定命令", "revoke": "撤销绑定并停止任务", "takeover": "网页查看 / 接管", "qr": "获取微信登录二维码", "poll": "检查扫码状态", "verify": "验证码", "verifyHint": "仅平台要求验证码时填写", "loginState": "登录状态", "bindings": "本人绑定", "deliveries": "最近投递", "uncertain": "未知结果可能已送达。重试可能重复发送，是否继续？", "retry": "重试投递", "reminders": "持久提醒", "cancel": "取消提醒", "empty": "暂无记录", "refresh": "刷新", "secretHint": "密钥和会话令牌仅在服务器加密保存，普通查询不返回。", "limits": "微信提醒依赖会话 context_token，无法保证长期主动推送。失败结果保留在网页。周期为固定秒数间隔，错过的提醒重启后合并一次；页面显示本地时间及 IANA 时区。", "inboundFailures": "入站处理失败", "revokeConfirm": "撤销后立即停止关联任务、取消提醒及待发消息；需重新绑定。", "saved": "渠道已保存", "threadHint": "在 /bot 选择对应 IM 线程可查看历史并接管。", "permissions": "飞书需企业自建机器人、长连接订阅 im.message.receive_v1、私聊接收/发送及图片文件资源权限。详情见部署文档。"
+}
