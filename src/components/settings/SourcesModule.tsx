@@ -117,7 +117,6 @@ export default function SourcesModule() {
       <Field
         label="油猴桥（推荐）"
         layout="row"
-        hint={bridgeOk ? undefined : '装一次脚本，之后导入全部从本机直连 B 站，不经过任何中转'}
         testId="field-bili-bridge"
       >
         <div
@@ -174,14 +173,9 @@ export default function SourcesModule() {
       </Button>
       {advOpen && (
         <div data-testid="bili-adv" id="bili-advanced-settings">
-          <div className="mt-2.5 mb-3 text-xs text-muted">
-            只有油猴桥不可用、或要改用代理时才需要填。装了桥时请求会自动带上浏览器自己的 Cookie，
-            「B 站 Cookie」可以留空。
-          </div>
           <Field
             label="代理地址"
             layout="row"
-            hint="Cloudflare Worker 的出口 IP 常被 B 站拒绝，优先级低于油猴桥"
             testId="field-bili-proxy"
           >
             <Input
@@ -199,7 +193,6 @@ export default function SourcesModule() {
           </Field>
           <Field
             label="B 站 Cookie"
-            hint="仅存本机 localStorage，用于代理回退路径"
             testId="field-bili-cookie"
           >
             <div>

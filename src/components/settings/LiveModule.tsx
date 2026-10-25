@@ -54,13 +54,11 @@ export default function LiveModule() {
   return (
     <SectionCard
       title="实时链路"
-      subtitle="其他设备打开链接实时读你这台设备的内容（主机下线即断，不是云备份）"
       testId="card-livelink"
     >
       <Field
         label="中继地址"
         layout="row"
-        hint="部署 cloudflare-worker/live-relay 后得到；只配对转发，不存任何数据"
         testId="field-live-relay"
       >
         <Input
@@ -101,7 +99,7 @@ export default function LiveModule() {
         </div>
       </Field>
       {live.enabled && (
-        <Field label="配对码" layout="row" hint="轮换后旧连接全部断开，需要重新配对" testId="field-live-code">
+        <Field label="配对码" layout="row" testId="field-live-code">
           <div className="flex flex-nowrap items-center gap-2">
             <Input
               data-testid="live-code"
@@ -127,7 +125,6 @@ export default function LiveModule() {
         <Field
           label="来宾入口地址"
           layout="row"
-          hint="复制出来的链接用哪个地址打开。平时就在这个部署上开着共享，留空即可；主机跑在 localhost 或内网地址时，填一个来宾能访问的应用地址（比如你部署在 Cloudflare 上的那个）"
           testId="field-live-guest-base"
         >
           <Input

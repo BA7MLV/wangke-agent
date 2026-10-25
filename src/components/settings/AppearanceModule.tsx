@@ -20,10 +20,9 @@ export default function AppearanceModule() {
     <>
       <SectionCard
         title={t('appearance.title')}
-        subtitle={t('appearance.subtitle')}
         testId="card-appearance"
       >
-        <Field label={common('language.label')} hint={common('language.hint')} layout="row" testId="field-ui-language">
+        <Field label={common('language.label')} layout="row" testId="field-ui-language">
           <LanguageSelect />
         </Field>
         <Field label={t('appearance.theme')} layout="row" testId="field-theme">
@@ -47,7 +46,6 @@ export default function AppearanceModule() {
         <Field
           label={t('appearance.fontScale')}
           layout="row"
-          hint={t('appearance.fontScaleHint')}
           testId="field-font-scale"
         >
           <ToggleButtonGroup
@@ -72,7 +70,6 @@ export default function AppearanceModule() {
         <Field
           label={t('appearance.accentColor')}
           layout="row"
-          hint={t('appearance.accentColorHint')}
           testId="field-accent-color"
         >
           <ColorSwatchPicker
@@ -101,7 +98,6 @@ export default function AppearanceModule() {
         <Field
           label={t('appearance.dynamicColor')}
           layout="row"
-          hint={t('appearance.dynamicColorHint')}
           testId="field-dynamic-color"
         >
           <Switch
@@ -121,13 +117,11 @@ export default function AppearanceModule() {
 
       <SectionCard
         title={t('reading.title')}
-        subtitle={t('reading.subtitle')}
         testId="card-material"
       >
         <Field
           label={t('reading.remoteAssets')}
           layout="row"
-          hint={t('reading.remoteAssetsHint')}
           testId="field-html-remote"
         >
           <Switch

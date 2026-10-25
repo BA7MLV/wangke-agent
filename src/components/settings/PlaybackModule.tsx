@@ -54,7 +54,6 @@ export default function PlaybackModule() {
     <SectionCard
       title="播放"
       testId="card-rates"
-      subtitle={`播放器控制栏除内置的 ${PRESET_RATES.map(formatRate).join(' / ')} 外，还会平铺这里添加的档位（${MIN_RATE}–${MAX_RATE}），可逐条删除`}
     >
       <Field label="自定义倍速" testId="field-custom-rates">
         <div className="flex flex-col gap-3">
