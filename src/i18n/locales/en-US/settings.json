@@ -23,6 +23,29 @@
       "generic": "Operation failed. Check the connection and try again.", "mcp_auth_failed": "Authentication failed. Check the token, headers or authorize with OAuth again.", "mcp_timeout": "Connection or tool call timed out. Check the server or adjust the timeout.", "mcp_connection_failed": "Cannot connect. Check the transport, URL or executable, dependencies and network.", "mcp_invalid_url": "Use an HTTP(S) URL without user info, query parameters or a fragment. Configure authentication separately.", "mcp_invalid_config": "Check the name, transport, URL and timeout (1–120 seconds).", "mcp_invalid_credentials": "Invalid credentials. Headers and environment must be JSON objects of strings; protocol headers cannot be overridden.", "mcp_not_found": "Server deleted. Refresh the list.", "mcp_server_limit": "At most 30 servers can be configured.", "mcp_tools_unsupported": "This server does not support MCP tools.", "mcp_catalog_limit": "Tool catalog too large. Reduce the tools exposed by the server.", "mcp_config_changed": "Configuration changed. Test the connection again."
     }
   },
+  "skillPicker": {
+    "title": "Choose skills",
+    "auto": "Automatic", "none": "No skills", "custom": "Custom",
+    "trigger": "Skills: {{mode}}",
+    "count": "{{count}} / {{total}}",
+    "countLabel": "{{count}} of {{total}} selected",
+    "unavailable": "Your selected skills are unavailable. Choose again.",
+    "useAuto": "Automatic", "useNone": "Use none",
+    "search": "Search skills", "searchPlaceholder": "Search skills", "clearSearch": "Clear search",
+    "builtin": "Built-in skills", "yours": "Your skills",
+    "requiresMcp": "Requires MCP: {{names}}",
+    "loading": "Loading skills…", "loadError": "Skills could not be loaded. Please try again.", "retry": "Reload",
+    "empty": "No enabled skills yet",
+    "noResults": "No matching skills",
+    "manage": "Manage skills", "done": "Done", "close": "Close skill picker",
+    "builtins": {
+      "handout": { "title": "Course handouts", "description": "Build notes and revision outlines, with math, coding and civil-service exam guidance as needed." },
+      "questions": { "title": "Question bank", "description": "Extract original questions and images for practice and grading." },
+      "diagram": { "title": "Visual explanations", "description": "Explain with flowcharts, relationship diagrams and function plots." },
+      "interactive": { "title": "Interactive explanations", "description": "Explore what changes with adjustable parameters, algorithm steps and small simulations." },
+      "organize": { "title": "Organize materials", "description": "Plan folders for courses and materials, then organize after confirmation." }
+    }
+  },
   "agent": {
     "title": "Agent default instructions",
     "subtitle": "Set lasting response preferences and learning habits in Markdown. This is the same /system/AGENTS.md shown in the library: edits stay in sync, and the Agent can read it directly.",

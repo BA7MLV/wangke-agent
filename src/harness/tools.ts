@@ -12,7 +12,7 @@ import {
   searchMaterial,
 } from './searchMaterial';
 import { fmtUnitRef, unitNoun, type UnitKind } from '../materials/units.ts';
-import { isSkillAllowed } from '../skills/scope';
+import { COURSE_HANDOUT_SKILL, isLegacyHandoutSkill, LEGACY_HANDOUT_TOPICS } from '../skills/catalog';
 // 工具层与 md 编辑面的**唯一**耦合点（注册表 + 窄接口，见该文件开头的边界说明）。
 // 别在这里 import md-editor 里的别的模块：edits / agentDiff 都是 CodeMirror 侧的，
 // 绕过 bridge 就等于把「工具层不认 CodeMirror」这条边界拆了。
@@ -395,8 +395,7 @@ export interface ToolExecutorOptions {
    * 会话级技能白名单（问答面板的「技能范围」限定）。
    *
    * ⚠️ **`undefined` 与 `[]` 不同**：`undefined` = 不限制；`[]` = 全部拒绝。
-   * 判定统一走 `skills/scope.ts` 的 `isSkillAllowed`，不要在这里另写一份 ——
-   * 两份判定迟早会不一致，而不一致就是漏洞口子。
+   * 与元数据、资源目录统一使用 loadSessionSkillMeta，包含已合并的历史 ID。
    */
   allowedSkillIds?: number[];
 }
@@ -404,16 +403,6 @@ export interface ToolExecutorOptions {
 /** 构造绑定到某个课程的工具执行器；`kind` 决定走字幕检索还是材料检索 */
 export function createToolExecutor(courseId: string, opts: ToolExecutorOptions = {}) {
   const { kind, onQuiz, onWidget, allowedSkillIds } = opts;
-
-  /**
-   * 技能是否在本次会话的可选范围内。
-   *
-   * 这是白名单的**唯一执行点**：提示词里收窄清单只是「告诉模型有哪些」，
-   * 模型仍可能凭历史消息里的印象去调一个已不在清单里的技能 —— 只在提示词层收窄，
-   * 白名单就形同虚设。这里拒绝掉，才算是硬边界。
-   */
-  const skillAllowed = (id: number | undefined) =>
-    allowedSkillIds === undefined || (id != null && allowedSkillIds.includes(id));
 
   return async (name: string, args: Record<string, unknown>): Promise<string> => {
     if (name === 'search_transcript') {
@@ -465,39 +454,44 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
         .sortBy('ts');
       return formatFrameList(rows);
     }
-    if (name === 'use_skill') {
+    if (name === 'use_skill' || name === 'read_skill_reference') {
       const skillName = String(args.name ?? '');
-      const skill = await db.skills.where('name').equals(skillName).first();
-      if (!skill || !skill.enabled) return `未找到技能：${skillName}（名称需与技能列表完全一致）`;
+      // 两种读取都在执行时核对白名单，不能只依赖提示词中收窄的技能清单。
+      const { loadSessionSkillMeta } = await import('../skills/store');
+      const available = await loadSessionSkillMeta(allowedSkillIds);
+      const matches = await db.skills.where('name').equals(skillName).toArray();
+      const requested = matches.find((s) => s.enabled && available.some((m) => m.id === s.id))
+        ?? matches.find((s) => s.enabled && isLegacyHandoutSkill(s))
+        ?? matches[0];
+      if (!requested || !requested.enabled) return `未找到已启用的技能：${skillName}（名称需与技能列表完全一致）`;
+      const merged = isLegacyHandoutSkill(requested);
+      const skill = merged
+        ? await db.skills.filter((s) => !!s.builtin && s.name === COURSE_HANDOUT_SKILL).first()
+        : requested;
+      if (!skill || !skill.enabled) return `未找到已启用的技能：${merged ? COURSE_HANDOUT_SKILL : skillName}`;
       // 文案要指向「可选范围」而不是含糊的「不允许」：模型收到「未找到」会换个名字再试，
       // 收到「不在范围内」才知道该收手 —— 否则会白烧好几轮工具调用。
-      if (!skillAllowed(skill.id)) {
+      if (!available.some((s) => s.id === skill.id)) {
         return `技能「${skillName}」不在本次会话的可选技能范围内。请改用系统提示词中列出的技能，或直接依据课程内容回答。`;
+      }
+      if (name === 'read_skill_reference') {
+        let path = String(args.path ?? '');
+        if (merged) {
+          // 只兼容真实存在的旧参考路径，不把任意拼错的路径当成成功读取。
+          const oldRef = await db.skillRefs.where('skillId').equals(requested.id!).filter((r) => r.path === path).first();
+          if (!oldRef) return `技能「${skillName}」下未找到参考文档：${path}`;
+          path = LEGACY_HANDOUT_TOPICS[skillName];
+        }
+        const ref = await db.skillRefs.where('skillId').equals(skill.id!).filter((r) => r.path === path).first();
+        return ref?.body ?? `技能「${skill.name}」下未找到参考文档：${path}`;
       }
       const refs = await db.skillRefs.where('skillId').equals(skill.id!).toArray();
       const refList =
         refs.length > 0
-          ? `\n\n该技能附带的参考文档（用 read 读取以下完整路径）：\n${refs.map((r) => `- /skills/${encodeURIComponent(skillName)}/references/${r.path.split('/').map(encodeURIComponent).join('/')}`).join('\n')}`
+          ? `\n\n该技能附带的参考文档（用 read 读取以下完整路径）：\n${refs.map((r) => `- /skills/${encodeURIComponent(skill.name)}/references/${r.path.split('/').map(encodeURIComponent).join('/')}`).join('\n')}`
           : '';
-      return skill.body + refList;
-    }
-    if (name === 'read_skill_reference') {
-      const skillName = String(args.name ?? '');
-      const path = String(args.path ?? '');
-      const skill = await db.skills.where('name').equals(skillName).first();
-      if (!skill || !skill.enabled) return `未找到已启用的技能：${skillName}`;
-      // 边界与 use_skill 保持一致：它是 use_skill 的后续步骤，理论上不会绕过，
-      // 但两处判定不一致就是一个可利用的漏洞口子。
-      if (!skillAllowed(skill.id)) {
-        return `技能「${skillName}」不在本次会话的可选技能范围内，无法读取其参考文档。`;
-      }
-      const ref = await db.skillRefs
-        .where('skillId')
-        .equals(skill.id!)
-        .filter((r) => r.path === path)
-        .first();
-      if (!ref) return `技能「${skillName}」下未找到参考文档：${path}`;
-      return ref.body;
+      const notice = merged ? `「${skillName}」已并入「${skill.name}」。本次按需读取 ${LEGACY_HANDOUT_TOPICS[skillName]}，遵循下方 Markdown 流程。\n\n` : '';
+      return notice + skill.body + refList;
     }
     if (name === 'present_quiz') {
       if (!onQuiz) return '当前入口未接入答题卡，未展示题目。';

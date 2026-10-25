@@ -91,7 +91,7 @@ export default function HandoutPanel({ videoId, hasSubtitles }: Props) {
 
   /** 打开技能覆盖面板时加载：启用中的技能 + 本视频的手动覆盖 */
   const loadSkillState = useCallback(async () => {
-    const metas = await loadEnabledSkillMeta();
+    const metas = await loadEnabledSkillMeta('legacy-handout');
     setSkills(metas);
     const ov = (await db.videos.get(videoId))?.skillOverride;
     const map: Record<number, SkillMode> = {};

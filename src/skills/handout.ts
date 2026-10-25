@@ -1,6 +1,5 @@
 import { loadEnabledSkillMeta } from './store';
-
-const HANDOUT_SKILL = '课程讲义';
+import { COURSE_HANDOUT_SKILL as HANDOUT_SKILL } from './catalog';
 
 /** 显式快捷操作仍走普通 read 技能资源与会话白名单，不另建生成执行体。 */
 export async function prepareHandoutPrompt(skillIds?: number[]) {

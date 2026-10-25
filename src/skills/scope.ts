@@ -37,6 +37,18 @@ export function intersectSkillIds(enabledIds: number[], allow?: number[]): numbe
   return enabledIds.filter((id) => set.has(id));
 }
 
+/** 合并前的 ID 是新入口的别名；仍与启用集合求交，空白名单绝不扩权。 */
+export function intersectSkillMetaIds(
+  enabled: { id: number; legacyIds?: number[] }[],
+  allow?: number[],
+): number[] {
+  if (allow === undefined) return enabled.map((skill) => skill.id);
+  const selected = new Set(allow);
+  return enabled
+    .filter((skill) => selected.has(skill.id) || skill.legacyIds?.some((id) => selected.has(id)))
+    .map((skill) => skill.id);
+}
+
 /**
  * 单个技能是否在可选范围内（工具层放行条件）。
  *

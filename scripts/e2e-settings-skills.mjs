@@ -54,16 +54,16 @@ async function clickOrSkip(selector, what) {
 
 console.log('=== 设置页写作技能（阶段 1 交互）===');
 
-// 写作技能在「数据」模块里，而 `#/settings` 只落到默认的「模型」模块 ——
-// 必须直接深链过去，否则脚本会一直等一张不存在的卡片。
-await page.goto(`${BASE}/#/settings/data`, { waitUntil: 'networkidle' });
+// 技能已有独立模块，默认设置入口不会挂载技能列表。
+await page.goto(`${BASE}/#/settings/skills`, { waitUntil: 'networkidle' });
 await page.waitForSelector('[data-testid="card-skills"] [data-testid="skill-row"]', { timeout: 15000 });
 
 // ── 1. 列表渲染：每行都要有名字（回归 slot="headline" 那个坑） ──────────────
 const listText = await page.locator('[data-testid="card-skills"]').innerText();
-const hasBuiltin = listText.includes('公文讲义写作');
+const hasBuiltin = listText.includes('课程讲义');
 const rowCount = await rows.count();
-check(rowCount > 0, `技能列表有 ${rowCount} 行`);
+check(rowCount === 5, `新安装技能列表有 ${rowCount} 个任务入口（应为 5）`);
+check(!listText.includes('公文版式规格'), '旧 IR 规范不混入日常技能列表');
 check(hasBuiltin, '行内渲染出技能名（不是只有按钮）');
 check(
   (await page.locator('[data-testid="skill-toggle"]').count()) === rowCount,
@@ -73,6 +73,13 @@ check(
   (await page.locator('[data-testid="skill-edit"]').count()) === rowCount,
   '每行都有查看/编辑按钮',
 );
+
+// 合并不应让旧版被禁用的规范永久失去管理入口。
+await page.click('[data-testid="skill-catalog-mode"]');
+check((await rows.count()) === 6, '旧版管理入口保留六份 IR 规范');
+check((await page.locator('[data-testid="card-skills"]').innerText()).includes('公文版式规格'), '旧版规范仍可查看和启停');
+await page.click('[data-testid="skill-catalog-mode"]');
+check((await rows.count()) === 5, '返回日常技能后恢复五个任务入口');
 
 // ── 2. 新建对话框：打开 ──────────────────────────────────────────────────
 await page.click('[data-testid="btn-skill-new"]');
@@ -106,6 +113,7 @@ if (await clickOrSkip('[data-testid="btn-skill-new"]', '再次点新建')) {
   await waitOpen();
   if (await isOpen()) {
     await page.locator('[data-testid="skill-name"] input').fill(NAME);
+    await page.locator('[data-testid="skill-desc"] input').fill('用于端到端冒烟测试。');
     await page.locator('[data-testid="skill-body"] textarea').fill('用于端到端冒烟测试的技能正文。');
     if (await clickOrSkip('[data-testid="skill-save"]', '点保存')) {
       await page.waitForTimeout(1200);
