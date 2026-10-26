@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import { BotRunner } from '../apps/api/src/agent/runner.ts';
 import { ToolRegistry } from '../apps/api/src/agent/tools/registry.ts';
+import { CloudTaskRunner } from '../apps/api/src/cloud/tasks.ts';
+import { publishBotEvent } from '../apps/api/src/agent/events.ts';
 
 const failures = [];
 const rejected = error => failures.push(error);
@@ -9,8 +11,11 @@ try {
   const runner = new BotRunner({ transaction() { throw new Error('simulated_db_failure SECRET'); } });
   runner.start();
   runner.enqueue();
+  const childRunner = new CloudTaskRunner({ transaction() { throw new Error('child_db_failure'); } });
+  childRunner.start('http://127.0.0.1:1');
   await new Promise(resolve => setTimeout(resolve, 30));
   await runner.close();
+  await childRunner.close();
   runner.enqueue();
   await new Promise(resolve => setTimeout(resolve, 30));
   assert.equal(failures.length, 0, 'scheduler/start/error persistence must not leak rejections');
@@ -27,5 +32,8 @@ try {
   let performed = false;
   await assert.rejects(registry.execute('strict', { x: 1 }, { owner: 'o', thread: 't', run: 'r', step: 's', signal: new AbortController().signal, checkActive() { throw new Error('revoked'); } }, async () => { performed = true; }));
   assert.equal(performed, false);
+  publishBotEvent({ transaction() { throw new Error('observer_storage_failed'); } }, { owner: 'owner', type: 'run.started' }, async () => { throw new Error('observer_failed'); });
+  await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(failures.length, 0, 'observer failures never leak rejected promises');
   console.log('Hardening: background rejection isolation, close guard, schema strictness and authorization boundary passed');
 } finally { process.off('unhandledRejection', rejected); }

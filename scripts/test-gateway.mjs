@@ -133,7 +133,8 @@ try {
 
   // Fixed-interval reminders survive restart, use explicit IANA timezone, coalesce and cancel.
   const study = new StudyTools(store, cfg, files, async () => { throw new Error('no_network'); });
-  const ctx = { owner, thread: binding.thread_id, run: 'not-needed', step: 'reminder-1', signal: new AbortController().signal, checkActive() {}, append: (kind, text) => bot.append(binding.thread_id, 'assistant', kind, text) };
+  store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,?,?,?)').run('direct-study-fixture', binding.thread_id, 'bot', 'cancelled', at);
+  const ctx = { owner, thread: binding.thread_id, run: 'direct-study-fixture', step: 'reminder-1', signal: new AbortController().signal, checkActive() {}, append: (kind, text) => bot.append(binding.thread_id, 'assistant', kind, text) };
   const reminder = study.plugins.get('study_reminder');
   await assert.rejects(() => reminder.execute({ action: 'create', at: '2099-01-01T09:00:00', timezone: 'Asia/Shanghai', text: 'bad' }, ctx), /invalid_reminder/);
   await assert.rejects(() => reminder.execute({ action: 'create', at: '2099-01-01T09:00:00+08:00', timezone: 'Bad/Zone', text: 'bad' }, ctx));
