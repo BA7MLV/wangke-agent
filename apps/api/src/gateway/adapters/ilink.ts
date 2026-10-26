@@ -26,7 +26,19 @@ export function normalizeIlink(m: any): GatewayEnvelope {
   return { messageId: m.message_id === undefined ? '' : String(m.message_id), tenant: '', peer: m.from_user_id ?? '', chat: m.from_user_id ?? '', topic: '', direct: !m.group_id, human: m.message_type === 1, text: texts.join('\n'), context: m.context_token, attachments };
 }
 export class IlinkPlugin implements ChannelPlugin {
-  readonly manifest = { id: 'ilink', version: 1 as const, name: '微信 iLink', capabilities: { direct: true as const, groups: false as const, images: true, files: true, proactive: 'context-dependent' as const, deduplicationWindowMs: 0 } };
+  readonly manifest: ChannelPlugin['manifest'] = {
+    id: 'ilink', version: 1, name: '微信 iLink',
+    configFields: [
+      { key: 'baseUrl', label: 'Base URL', secret: false, required: false, write: 'replace-or-preserve' },
+      { key: 'botToken', label: 'Bot Token', secret: true, required: false, write: 'replace-or-preserve' },
+      { key: 'botId', label: 'Bot ID', secret: false, required: false, write: 'replace-or-preserve' },
+    ],
+    loginSteps: [{ action: 'qr', label: 'QR', fields: [] }, { action: 'poll', label: 'Check login', fields: ['qrcode', 'redirectHost', 'verifyCode'] }],
+    loginPublicFields: ['status', 'qrcode', 'qrDataUrl', 'redirectHost'],
+    loginConfigFields: ['botToken', 'botId', 'baseUrl'],
+    management: ['configure', 'pair', 'revoke', 'login', 'retry', 'discard'],
+    capabilities: { direct: true, groups: false, images: true, files: true, proactive: 'context-dependent', deduplicationWindowMs: 0 },
+  };
   constructor(private resolveFile: FileResolver, private fetcher: typeof fetch = fetch) {}
   validate(c: Record<string, string>) { if (c.baseUrl) tencentUrl(c.baseUrl); }
   private async request(c: Record<string, string>, path: string, body: any, signal: AbortSignal, authenticated = true): Promise<any> {

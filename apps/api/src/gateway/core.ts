@@ -5,6 +5,8 @@ import type { CloudConfiguration } from '../cloud/config.js';
 import type { BotApplicationService } from '../agent/service.js';
 import { receiveFile } from '../cloud/files.js';
 import { DeliveryError, type ChannelPlugin, type GatewayEnvelope, type GatewayPayload } from './plugin.js';
+import { cleanupGateway, gatewayLimits } from './retention.js';
+import { publishBotEvent } from '../agent/events.js';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -17,6 +19,8 @@ export class GatewayCore {
   private logins = new Map<string, AbortController>();
   private restartAfter = new Map<string, number>();
   private busy = false;
+  private processingAccounts = new Set<string>();
+  private cleanupAt = 0;
   private stopped = false;
   private timer?: ReturnType<typeof setInterval>;
   constructor(readonly store: DatabaseStore, readonly secrets: CloudConfiguration, readonly bot: BotApplicationService,
@@ -29,6 +33,8 @@ export class GatewayCore {
   list(owner: string) {
     return (this.store.db.prepare('SELECT id,channel,agent_id AS agentId,enabled,preset,health,created_at AS createdAt FROM gateway_accounts WHERE owner_id=?').all(owner) as any[]).map(a => ({ ...a,
       manifest: this.factories[a.channel]?.().manifest,
+      configuration: Object.fromEntries((this.factories[a.channel]?.().manifest.configFields ?? []).map(field => { const config = this.config(this.account(owner, a.id)); return [field.key, field.secret ? { configured: Boolean(config[field.key]) } : { value: config[field.key] ?? '' }]; })),
+      pressure: this.store.db.prepare("SELECT (SELECT COUNT(*) FROM gateway_inbox WHERE account_id=? AND status='pending') AS inbox,(SELECT COUNT(*) FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id WHERE b.account_id=? AND o.status IN ('pending','sending','failed','uncertain')) AS outbox").get(a.id, a.id),
       bindings: this.store.db.prepare('SELECT id,tenant,peer,chat,thread_id AS threadId,revoked FROM gateway_bindings WHERE account_id=?').all(a.id),
     }));
   }
@@ -37,7 +43,11 @@ export class GatewayCore {
     if (!this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=? AND enabled=1').get(value.agentId, owner)) throw new Error('agent_not_found');
     const old = value.id ? this.account(owner, value.id) : null;
     if (old && old.channel !== value.channel) throw new Error('channel_immutable');
-    const config = { ...(old ? this.config(old) : {}), ...value.config };
+    const fields = this.factories[value.channel]().manifest.configFields;
+    if (value.config !== undefined && (!value.config || typeof value.config !== 'object' || Array.isArray(value.config))) throw new Error('invalid_config');
+    const supplied = Object.fromEntries(Object.entries(value.config ?? {}).filter(([key, value]) => value !== '' || !fields?.some(field => field.key === key && field.secret)));
+    const config = { ...(old ? this.config(old) : {}), ...supplied };
+    if (fields && Object.keys(config).some(key => !fields.some(field => field.key === key))) throw new Error('unknown_channel_config_field');
     if (Object.values(config).some(v => typeof v !== 'string' || v.length > 16384)) throw new Error('invalid_config');
     this.factories[value.channel]().validate(config);
     const id = old?.id ?? crypto.randomUUID();
@@ -149,6 +159,9 @@ export class GatewayCore {
     const a = this.account(owner, id), live = this.live.get(id);
     const plugin = live?.plugin ?? this.factories[a.channel](a);
     if (!plugin.login) throw new Error('login_not_supported');
+    if (!action || typeof action !== 'object' || Object.values(action).some(value => typeof value !== 'string' || value.length > 16384)) throw new Error('invalid_channel_login_action');
+    const step = plugin.manifest.loginSteps?.find(step => step.action === action.action);
+    if (plugin.manifest.loginSteps && (!step || Object.keys(action).some(key => key !== 'action' && !step.fields.includes(key)))) throw new Error('invalid_channel_login_action');
     this.logins.get(id)?.abort();
     const controller = new AbortController(); this.logins.set(id, controller);
     let result: Record<string, string>;
@@ -156,20 +169,28 @@ export class GatewayCore {
       result = await plugin.login(this.config(a), action, AbortSignal.any([controller.signal, live?.controller.signal ?? controller.signal, AbortSignal.timeout(40_000)]));
       controller.signal.throwIfAborted();
     } finally { if (this.logins.get(id) === controller) this.logins.delete(id); }
-    const { botToken, botId, baseUrl, ...publicResult } = result;
-    if (botToken) {
-      this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify({ ...this.config(a), botToken, botId, baseUrl })), id);
+    if (!result || Object.keys(result).length > 20 || Object.values(result).some(value => typeof value !== 'string' || value.length > 128000)) throw new Error('invalid_channel_login_result');
+    const loginConfig = Object.fromEntries(Object.entries(result).filter(([key]) => plugin.manifest.loginConfigFields?.includes(key)));
+    if (Object.keys(loginConfig).length) {
+      const config = { ...this.config(a), ...loginConfig }; plugin.validate(config);
+      this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify(config)), id);
       await this.stop(id); if (a.enabled) this.launch(id);
     }
-    return publicResult;
+    return Object.fromEntries(Object.entries(result).filter(([key]) => plugin.manifest.loginPublicFields?.includes(key) && !plugin.manifest.loginConfigFields?.includes(key)));
   }
   receive(id: string, batch: GatewayEnvelope[], cursor?: string) {
     const a = this.store.db.prepare('SELECT * FROM gateway_accounts WHERE id=?').get(id) as any;
-    if (!a?.enabled || this.stopped) return;
+    if (!a?.enabled || this.stopped) throw new Error('gateway_account_disabled');
     this.store.transaction(() => {
       for (const message of batch) {
-        if (!message.direct || !message.human || !message.messageId || !message.peer || message.text.length > 100000) continue;
-        const inserted = this.store.db.prepare('INSERT OR IGNORE INTO gateway_inbox(account_id,external_id,envelope) VALUES(?,?,?)').run(id, JSON.stringify([message.tenant, message.messageId]), this.secrets.seal(JSON.stringify(message)));
+        if (!message.direct || !message.human || !message.messageId || !message.peer) continue;
+        if (typeof message.text !== 'string' || message.text.length > 100000) throw new Error('gateway_envelope_too_large');
+        const external = JSON.stringify([message.tenant, message.messageId]);
+        if (this.store.db.prepare('SELECT 1 FROM gateway_inbox WHERE account_id=? AND external_id=?').get(id, external)) continue;
+        const capacity = this.store.db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending FROM gateway_inbox WHERE account_id=?").get(id) as { total: number; pending: number };
+        if (capacity.total >= gatewayLimits().dedupe || capacity.pending >= gatewayLimits().pending && message.text.trim() !== '/stop') throw new Error('gateway_inbox_capacity');
+        if (JSON.stringify(message).length > 128000) throw new Error('gateway_envelope_too_large');
+        const inserted = this.store.db.prepare('INSERT OR IGNORE INTO gateway_inbox(account_id,external_id,envelope,received_at) VALUES(?,?,?,?)').run(id, external, this.secrets.seal(JSON.stringify(message)), Date.now());
         if (!inserted.changes) continue;
         const b = this.binding(id, message);
         // Control path never waits behind media, model, or another inbox item.
@@ -196,12 +217,31 @@ export class GatewayCore {
     const task = this.process().catch(() => this.runtimeFailure()).finally(() => { this.busy = false; }); this.track(task); await task;
   }
   private async process() {
+    if (Date.now() >= this.cleanupAt) { cleanupGateway(this.store); this.cleanupAt = Date.now() + 60000; }
     for (const a of this.store.db.prepare('SELECT id FROM gateway_accounts WHERE enabled=1').all() as any[]) {
       if (!this.live.has(a.id) && (this.restartAfter.get(a.id) ?? 0) <= Date.now()) this.launch(a.id);
     }
     this.reminders();
     // Small bounded batch; network has a timeout and stop/revoke aborts it.
-    const rows = this.store.db.prepare("SELECT i.*,a.owner_id,a.agent_id,a.enabled FROM gateway_inbox i JOIN gateway_accounts a ON a.id=i.account_id WHERE i.status='pending' AND a.enabled=1 ORDER BY i.id LIMIT 10").all() as any[];
+    const rows = this.store.db.prepare("SELECT * FROM (SELECT i.*,a.owner_id,a.agent_id,a.enabled,ROW_NUMBER() OVER(PARTITION BY i.account_id ORDER BY i.id) AS position FROM gateway_inbox i JOIN gateway_accounts a ON a.id=i.account_id WHERE i.status='pending' AND a.enabled=1 AND i.account_id NOT IN (SELECT value FROM json_each(?))) WHERE position<=10 ORDER BY id LIMIT 40").all(JSON.stringify([...this.processingAccounts])) as any[];
+    const groups = new Map<string, any[]>();
+    for (const row of rows) { const group = groups.get(row.account_id) ?? []; group.push(row); groups.set(row.account_id, group); }
+    const tasks: Promise<void>[] = [];
+    for (const [account, group] of groups) {
+      if (this.processingAccounts.size >= 4) break;
+      this.processingAccounts.add(account);
+      tasks.push(this.processInbox(group).finally(() => this.processingAccounts.delete(account)));
+    }
+    this.project();
+    await this.deliver();
+    // Network attachment I/O owns only its account, not the scheduler. Another
+    // tick may admit other accounts while these bounded workers are awaiting.
+    this.busy = false;
+    await Promise.all(tasks);
+    this.project();
+    await this.deliver();
+  }
+  private async processInbox(rows: any[]) {
     for (const row of rows) {
       if (this.stopped) return;
       const live = this.live.get(row.account_id); if (!live) continue;
@@ -260,8 +300,6 @@ export class GatewayCore {
         this.store.db.prepare("UPDATE gateway_inbox SET status='failed',error='inbound_processing_failed' WHERE id=? AND status='pending'").run(row.id);
       } finally { this.inbound.delete(row.id); }
     }
-    this.project();
-    await this.deliver();
   }
   project() {
       for (const b of this.store.db.prepare('SELECT * FROM gateway_bindings WHERE revoked=0').all() as any[]) {
@@ -293,6 +331,11 @@ export class GatewayCore {
       }
   }
   enqueue(binding: string, source: string, payload: GatewayPayload) {
+    const id = hash(`${binding}:${source}`).slice(0, 32);
+    if (this.store.db.prepare('SELECT 1 FROM gateway_outbox WHERE id=?').get(id)) return;
+    if (JSON.stringify(payload).length > 128000) throw new Error('gateway_payload_too_large');
+    const capacity = this.store.db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN o.status IN ('pending','sending','uncertain','failed') THEN 1 ELSE 0 END) AS pending FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id WHERE b.account_id=(SELECT account_id FROM gateway_bindings WHERE id=?)").get(binding) as { total: number; pending: number };
+    if (capacity.pending >= gatewayLimits().pending || capacity.total >= gatewayLimits().dedupe) throw new Error('gateway_outbox_capacity');
     this.store.db.prepare('INSERT OR IGNORE INTO gateway_outbox(id,binding_id,payload,created_at) VALUES(?,?,?,?)').run(hash(`${binding}:${source}`).slice(0, 32), binding, JSON.stringify(payload), Date.now());
   }
   private async deliver() {
@@ -302,10 +345,11 @@ export class GatewayCore {
       AND NOT EXISTS(SELECT 1 FROM gateway_outbox p WHERE p.binding_id=o.binding_id AND p.seq<o.seq AND p.status IN ('pending','sending','uncertain','failed')) ORDER BY o.seq LIMIT 10`).all(Date.now()) as any[];
     for (const row of rows) {
       const live = this.live.get(row.account_id); if (!live || live.controller.signal.aborted) continue;
-      this.store.db.prepare("UPDATE gateway_outbox SET status='sending',attempts=attempts+1 WHERE id=?").run(row.id);
+      if (!this.store.db.prepare("UPDATE gateway_outbox SET status='sending',attempts=attempts+1 WHERE id=? AND status='pending'").run(row.id).changes) continue;
       try {
         const platformId = await live.plugin.send(this.config(row), { messageId: '', tenant: row.tenant, peer: row.peer, chat: row.chat, topic: row.topic, direct: true, human: true, text: '', context: row.context ? this.secrets.open(row.context) : undefined }, JSON.parse(row.payload), row.id, AbortSignal.any([live.controller.signal, AbortSignal.timeout(30_000)]));
         this.store.db.prepare("UPDATE gateway_outbox SET status='sent',platform_id=?,error=NULL WHERE id=? AND status='sending'").run(platformId, row.id);
+        publishBotEvent(this.store, { owner: row.owner_id, type: 'delivery.finished', status: 'sent' });
       } catch (e) {
         const error = e instanceof DeliveryError ? e : new DeliveryError('transport_result_unknown', true);
         if (error.code === 'login_required') this.store.db.prepare("UPDATE gateway_accounts SET health='login_required' WHERE id=?").run(row.account_id);

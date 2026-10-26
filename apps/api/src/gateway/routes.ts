@@ -4,7 +4,7 @@ import type { GatewayCore } from './core.js';
 export function registerGatewayRoutes(app: FastifyInstance, gateway: GatewayCore, auth: (r: FastifyRequest, p: FastifyReply) => { id: string } | null, origin: (r: FastifyRequest, p: FastifyReply) => boolean) {
   app.get('/api/v1/gateway', async (r, p) => {
     const user = auth(r, p); if (!user) return;
-    return { accounts: gateway.list(user.id),
+    return { accounts: gateway.list(user.id), channels: Object.values(gateway.factories).map(factory => factory().manifest),
       deliveries: gateway.store.db.prepare(`SELECT o.id,o.seq,o.status,o.attempts,o.error,o.created_at AS createdAt,b.thread_id AS threadId,a.channel FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id JOIN gateway_accounts a ON a.id=b.account_id WHERE a.owner_id=? ORDER BY o.seq DESC LIMIT 100`).all(user.id),
       inboxFailures: gateway.store.db.prepare("SELECT i.id,i.error,a.channel FROM gateway_inbox i JOIN gateway_accounts a ON a.id=i.account_id WHERE a.owner_id=? AND i.status='failed' ORDER BY i.id DESC LIMIT 50").all(user.id),
       projectionFailures: gateway.store.db.prepare('SELECT f.event_id AS eventId,f.error,b.thread_id AS threadId,a.channel FROM gateway_projection_failures f JOIN gateway_bindings b ON b.id=f.binding_id JOIN gateway_accounts a ON a.id=b.account_id WHERE a.owner_id=? LIMIT 50').all(user.id),

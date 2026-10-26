@@ -3,8 +3,9 @@ import { Button } from '@heroui/react';
 import { useTranslation } from 'react-i18next';
 import { request, serverClient } from '../api/serverClient';
 import { confirmDialog } from '../ui';
+import type { GatewayManifest } from '../../packages/contracts/src/gateway';
 
-interface Account { id: string; channel: string; agentId: string; preset: string; enabled: number; health: string; bindings: Array<{ id: string; peer: string; threadId: string; revoked: number }> }
+interface Account { id: string; channel: string; agentId: string; preset: string; enabled: number; health: string; manifest?: GatewayManifest; pressure?: { inbox: number; outbox: number }; configuration?: Record<string, { value?: string; configured?: boolean }>; bindings: Array<{ id: string; peer: string; threadId: string; revoked: number }> }
 interface Activity { accounts: Account[]; deliveries: Array<{ id: string; channel: string; status: string; attempts: number; error: string | null }>; reminders: Array<{ id: string; text: string; timezone: string; nextAt: number; intervalSeconds: number | null; status: string }>; inboxFailures: Array<{ id: number; channel: string; error: string }>; projectionFailures: Array<{ eventId: number; channel: string; threadId: string; error: string }> }
 const blank = { id: '', channel: 'feishu', agentId: '', preset: 'autonomous', enabled: false };
 export default function GatewaySettings() {
@@ -12,15 +13,17 @@ export default function GatewaySettings() {
   const [data, setData] = useState<Activity>();
   const [agents, setAgents] = useState<Array<{ id: string; name: string }>>([]);
   const [form, setForm] = useState(blank);
-  const [appId, setAppId] = useState(''); const [appSecret, setAppSecret] = useState('');
+  const [extraConfig, setExtraConfig] = useState<Record<string, string>>({});
+  const [channels, setChannels] = useState<GatewayManifest[]>([]);
   const [busy, setBusy] = useState(false); const [error, setError] = useState(''); const [notice, setNotice] = useState('');
   const [login, setLogin] = useState<{ account: string; qrcode: string; qrDataUrl: string; status: string; redirectHost?: string }>();
   const [verifyCode, setVerifyCode] = useState('');
+  const [loginFields, setLoginFields] = useState<Record<string, string>>({});
   const refresh = async () => setData(await request<Activity>('/gateway'));
   useEffect(() => {
     const controller = new AbortController(); let disposed = false, timer: ReturnType<typeof setTimeout>;
     async function poll() {
-      try { const value = await request<Activity>('/gateway', { signal: controller.signal }); if (!disposed) setData(value); }
+      try { const value = await request<Activity & { channels?: GatewayManifest[] }>('/gateway', { signal: controller.signal }); if (!disposed) { setData(value); setChannels(value.channels ?? []); } }
       catch (e) { if (!disposed) setError((e as Error).message); }
       if (!disposed) timer = setTimeout(() => void poll(), 4000);
     }
@@ -30,28 +33,29 @@ export default function GatewaySettings() {
   async function act(fn: () => Promise<unknown>) { setBusy(true); setError(''); try { await fn(); await refresh(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
   const post = <T,>(path: string, body: unknown = {}) => request<T>(`/gateway${path}`, { method: 'POST', body: JSON.stringify(body) });
   async function save(a = form) {
-    const config: Record<string, string> = {}; if (appId) config.appId = appId; if (appSecret) config.appSecret = appSecret;
-    await post('/accounts', { ...a, id: a.id || undefined, config }); setAppId(''); setAppSecret(''); setNotice(t('saved')); setForm(blank);
+    await post('/accounts', { ...a, id: a.id || undefined, config: extraConfig }); setExtraConfig({}); setNotice(t('saved')); setForm(blank);
   }
   return <section aria-label={t('title')} className="flex min-w-0 flex-col gap-4" data-testid="gateway-settings">
     <h3 className="text-lg font-semibold">{t('title')}</h3><p className="text-sm text-muted">{t('intro')}</p>
     <p className="text-sm text-muted">{t('secretHint')}</p><p className="text-sm text-muted">{t('permissions')}</p>
     <fieldset className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4">
       <legend>{form.id ? t('edit') : t('new')}</legend>
-      <label>{t('channel')}<select className="input w-full" disabled={!!form.id} value={form.channel} onChange={e => setForm({ ...form, channel: e.target.value })}><option value="feishu">飞书 / Feishu</option><option value="ilink">微信 / WeChat iLink</option></select></label>
+      <label>{t('channel')}<select className="input w-full" disabled={!!form.id} value={form.channel} onChange={e => { setForm({ ...form, channel: e.target.value }); setExtraConfig({}); }}>{channels.map(channel => <option key={channel.id} value={channel.id}>{channel.name}</option>)}</select></label>
       <label>{t('agent')}<select className="input w-full" value={form.agentId} onChange={e => setForm({ ...form, agentId: e.target.value })}><option value="">—</option>{agents.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}</select></label>
       <label>{t('preset')}<select className="input w-full" value={form.preset} onChange={e => setForm({ ...form, preset: e.target.value })}><option value="inherit">{t('inherit')}</option><option value="autonomous">{t('autonomous')}</option></select></label>
-      {form.channel === 'feishu' ? <><label>{t('appId')}<input className="input w-full" value={appId} onChange={e => setAppId(e.target.value)} autoComplete="off" /></label><label>{t('appSecret')}<input className="input w-full" type="password" value={appSecret} onChange={e => setAppSecret(e.target.value)} autoComplete="new-password" /></label></> : null}
+       {(channels.find(channel => channel.id === form.channel)?.configFields ?? []).map(field => <label key={field.key}>{field.key === 'appId' ? t('appId') : field.key === 'appSecret' ? t('appSecret') : field.label}<input className="input w-full" type={field.secret ? 'password' : 'text'} autoComplete={field.secret ? 'new-password' : 'off'} value={extraConfig[field.key] ?? ''} onChange={e => setExtraConfig({ ...extraConfig, [field.key]: e.target.value })} /></label>)}
       <label className="flex items-center gap-2"><input type="checkbox" checked={form.enabled} onChange={e => setForm({ ...form, enabled: e.target.checked })} />{t('enabled')}</label>
       <Button isDisabled={busy || !form.agentId} onPress={() => void act(() => save())}>{t('save')}</Button>
     </fieldset>
     {data?.accounts.map(a => <div key={a.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4">
       <strong>{a.channel} · {a.health} · {a.enabled ? t('enabled') : t('disabled')}</strong>
-      <div className="flex flex-wrap gap-2"><Button variant="secondary" isDisabled={busy} onPress={() => { setForm({ id: a.id, channel: a.channel, agentId: a.agentId, preset: a.preset, enabled: !!a.enabled }); setAppId(''); setAppSecret(''); }}>{t('edit')}</Button>
+      {a.pressure ? <p className="text-sm text-muted">{t('pressure', a.pressure)}</p> : null}
+      <div className="flex flex-wrap gap-2"><Button variant="secondary" isDisabled={busy} onPress={() => { setForm({ id: a.id, channel: a.channel, agentId: a.agentId, preset: a.preset, enabled: !!a.enabled }); setExtraConfig(Object.fromEntries(Object.entries(a.configuration ?? {}).filter(([, field]) => field.value !== undefined).map(([key, field]) => [key, field.value!]))); }}>{t('edit')}</Button>
         <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => { await post('/accounts', { ...a, enabled: !a.enabled, config: {} }); })}>{a.enabled ? t('disabled') : t('enabled')}</Button>
         <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => { const r = await post<{ command: string; expiresAt: string }>(`/accounts/${a.id}/pair`); setNotice(`${r.command}\n${r.expiresAt}`); })}>{t('pair')}</Button>
         {a.channel === 'ilink' ? <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => { const r = await post<{ qrcode: string; qrDataUrl: string; status: string }>(`/accounts/${a.id}/login`, { action: 'qr' }); setLogin({ ...r, account: a.id }); setVerifyCode(''); })}>{t('qr')}</Button> : null}
       </div>
+      {a.channel !== 'ilink' ? a.manifest?.loginSteps?.map(step => <div key={step.action} className="flex flex-col gap-2">{step.fields.map(field => <label key={field}>{field}<input className="input w-full" type="password" autoComplete="off" value={loginFields[`${a.id}:${field}`] ?? ''} onChange={e => setLoginFields({ ...loginFields, [`${a.id}:${field}`]: e.target.value })} /></label>)}<Button isDisabled={busy} onPress={() => void act(async () => { const result = await post(`/accounts/${a.id}/login`, { action: step.action, ...Object.fromEntries(step.fields.map(field => [field, loginFields[`${a.id}:${field}`] ?? ''])) }); setLoginFields({}); setNotice(JSON.stringify(result)); })}>{step.label}</Button></div>) : null}
       {a.bindings.map(b => <div key={b.id} className="flex flex-wrap items-center gap-2"><span className="break-all text-sm">{b.peer} · {b.revoked ? t('disabled') : t('bindings')}</span><a href={`#/bot?thread=${encodeURIComponent(b.threadId)}`}>{t('takeover')}</a>{!b.revoked ? <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => { if (await confirmDialog({ headline: t('revoke'), description: t('revokeConfirm'), confirmText: t('revoke'), danger: true })) await post(`/accounts/${a.id}/revoke`, { bindingId: b.id }); })}>{t('revoke')}</Button> : null}</div>)}
     </div>)}
     {login ? <div className="flex flex-col items-start gap-3"><img width={300} height={300} className="max-w-full" src={login.qrDataUrl} alt={t('qr')} /><p role="status">{t('loginState')}: {login.status}</p><label>{t('verify')}<input className="input w-full" inputMode="numeric" autoComplete="one-time-code" value={verifyCode} onChange={e => setVerifyCode(e.target.value)} placeholder={t('verifyHint')} /></label><Button isDisabled={busy || ['confirmed','expired','verify_code_blocked'].includes(login.status)} onPress={() => void act(async () => { const r = await post<{ status: string; redirectHost?: string }>(`/accounts/${login.account}/login`, { action: 'poll', qrcode: login.qrcode, verifyCode, redirectHost: login.redirectHost }); setLogin({ ...login, ...r }); setVerifyCode(''); })}>{t('poll')}</Button></div> : null}
