@@ -6,6 +6,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { parseSkillMarkdown } from '../src/skills/types.ts';
+import { isLegacyHandoutSkill } from '../src/skills/catalog.ts';
 
 const DIR = 'src/skills/builtin';
 let passed = 0;
@@ -36,8 +37,10 @@ const skills = dirs.map((d) => {
   return { dir: d, ...skill, refs };
 });
 
-test('恰好 11 个内置 skill', () => {
-  assert.equal(skills.length, 11);
+test('五个对话任务入口，六份旧 IR 规范仅作兼容资产', () => {
+  const active = skills.filter((s) => !isLegacyHandoutSkill({ ...s, builtin: 1 }));
+  assert.deepEqual(active.map((s) => s.name).sort(), ['课程讲义', '原题题库', '讲解配图', '交互式讲解', '资料整理'].sort());
+  assert.equal(skills.length - active.length, 6);
 });
 
 test('每个 skill 有 name + description（路由依赖 description）', () => {
@@ -58,7 +61,7 @@ test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科�
   assert.ok(names.includes('资料整理'));
 });
 
-test('「讲解配图」约定 JSON 图种与 Mermaid 专用图种、节点上限，并划清不用于讲义', () => {
+test('「讲解配图」约定图种、节点上限、数学坐标及文件导出边界', () => {
   const s = skills.find((x) => x.name === '讲解配图');
   assert.ok(s, '缺讲解配图');
   // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这三个，
@@ -75,18 +78,19 @@ test('「讲解配图」约定 JSON 图种与 Mermaid 专用图种、节点上�
   assert.match(s.body, /不超过 10 个节点/);
   assert.match(s.body, /不超过 10 个字/);
   // JSON 中间层的口径（替代了过去的 svg 安全约束）：
-  // 模型不手算坐标、字段名大小写敏感、标签按纯文本写（渲染器转义）
-  assert.match(s.body, /不要手算任何坐标/);
+  // 布局由渲染器计算，plot 的数学坐标仍须按题意提供。
+  assert.match(s.body, /不要手算节点布局或连线路由坐标/);
+  assert.match(s.body, /数学点位.*坐标按题意提供/);
   assert.match(s.body, /大小写敏感/);
   assert.match(s.body, /标签文本按纯文本写/);
-  // 讲义走公文 IR、不渲染图表围栏，技能必须自己说清适用范围
+  // 会话出图与讲义文件交付各有能力边界。
   assert.match(s.body, /讲义/);
 });
 
 test('「讲解配图」的 description 点明适用范围（路由靠它决定选不选）', () => {
   const s = skills.find((x) => x.name === '讲解配图');
   assert.match(s.description, /问答|解析/);
-  assert.match(s.description, /讲义/);
+  assert.match(s.description, /Markdown.*导出/);
 });
 
 test('「交互式讲解」区分本地调参与确认追问，附带运行时及示例参考', () => {
@@ -95,8 +99,8 @@ test('「交互式讲解」区分本地调参与确认追问，附带运行时�
   for (const kw of ['show_widget', 'modelContent', 'privateContent', '16 KiB', '用户确认', '本地重绘', 'diagram']) {
     assert.ok(s.body.includes(kw), `缺约定：${kw}`);
   }
-  assert.match(s.description, /问答/);
-  assert.match(s.description, /不用于讲义/);
+  assert.match(s.description, /会话教学/);
+  assert.match(s.description, /不把会话组件.*Markdown.*讲义正文/);
   assert.deepEqual(s.refs.map((r) => r.path).sort(), ['references/examples.md', 'references/runtime.md']);
   assert.ok(s.body.length < 4000, '正文保持精简，细节放参考文件');
 });
@@ -163,6 +167,26 @@ test('「课程讲义」复用资源工具，直接输出 Markdown，未读范�
   }
   assert.match(s.description, /对话/);
   assert.match(s.body, /不调用旧讲义流水线/);
+});
+
+test('合并后的讲义按需加载通用写作与四类专题，不再把 IR 输出要求带进对话', () => {
+  const s = skills.find((x) => x.name === '课程讲义');
+  assert.deepEqual(s.refs.map((r) => r.path).sort(), [
+    'references/writing.md', 'references/math-writing.md', 'references/coding-writing.md',
+    'references/gongkao-xingce.md', 'references/gongkao-shenlun.md',
+  ].sort());
+  for (const ref of s.refs) {
+    assert.ok(s.body.includes(ref.path), `缺按需入口：${ref.path}`);
+    assert.doesNotMatch(ref.body, /只输出.*IR|完整 IR JSON|text 字段禁止.*Markdown/);
+  }
+  const xingce = s.refs.find((r) => r.path.endsWith('gongkao-xingce.md')).body;
+  for (const topic of ['言语理解', '判断推理', '数量关系', '资料分析', '常识判断', '科学推理', '数字推理']) {
+    assert.ok(xingce.includes(topic), `合并遗漏行测模块：${topic}`);
+  }
+  const shenlun = s.refs.find((r) => r.path.endsWith('gongkao-shenlun.md')).body;
+  for (const topic of ['归纳概括', '综合分析', '提出对策', '贯彻执行', '申发论述', '县级', '乡镇', '粤港澳大湾区']) {
+    assert.ok(shenlun.includes(topic), `合并遗漏申论模块：${topic}`);
+  }
 });
 
 test('「原题题库」复用现有工具，保留原图并区分可批改答案与参考答案', () => {

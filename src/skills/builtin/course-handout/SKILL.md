@@ -22,6 +22,7 @@ description: 根据课程字幕、阅读材料或对话附件整理学习讲义�
 
 ## 组织正文
 
+- 先用当前 `read` 读取本技能加载回执返回路径下的 `references/writing.md`，再按实际内容只读取相关专题：公式较多读 `references/math-writing.md`，编程读 `references/coding-writing.md`，行测读 `references/gongkao-xingce.md`，申论读 `references/gongkao-shenlun.md`。跨领域可读多个相关专题，不全量加载，不套用无关学科要求；使用回执给出的真实技能路径，不猜宿主文件路径。专题只补充领域规则，不替代本文件的来源、保存与交付约束。
 - 生成普通 Markdown 讲义并通过现有 `edit` 保存，可在对话流式展示草稿；不输出 IR/JSON，不调用旧讲义流水线，不等待 DOCX、抽帧或排版任务。
 - 开头给出准确标题、来源与覆盖范围，然后给出概述和章节提纲。
 - 按课程逻辑展开：核心概念与定义 → 原理/方法/步骤 → 原文例题及推导 → 对比与易错点 → 复习清单。原文没有的环节可以省略，不凑模板。

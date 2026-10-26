@@ -194,7 +194,7 @@ const c = await mount(`<div id="box" style="height:300px">tall</div>
 check(c, '桥接回报');
 if (c) {
   check(c.h === 1, '桥接对象 __wbw 已注入');
-  check(c.keys === 'persistent,reportHeight,sendPrompt,setWidgetState,theme,widgetState', `桥接只有受限能力（实测 ${c.keys}）—— 没有读课程/调用工具/跳转`);
+  check(c.keys === 'answerInput,display,persistent,reportHeight,sendPrompt,setAnswerDraft,setWidgetState,submitAnswer,theme,widgetState', `桥接只有受限能力（实测 ${c.keys}）—— 没有读课程/调用工具/跳转`);
 }
 
 console.log('\n=== D. 正常能力没被误伤 ===');

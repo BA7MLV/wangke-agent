@@ -43,12 +43,10 @@ export default function StudyTimeCard() {
     <SectionCard
       title="学习时长"
       testId="card-study-time"
-      subtitle="打开应用就会自动计时：只算「页面在前台」且「没长时间离开」的时间；正在播放视频时不判空闲"
     >
       <Field
         label="自动记录"
         layout="row"
-        hint="关掉后不再累计新时长，已有记录保留"
         testId="field-study-tracking"
       >
         <Switch
@@ -68,7 +66,6 @@ export default function StudyTimeCard() {
       <Field
         label="多久没操作算离开"
         layout="row"
-        hint="播放视频时这条不生效（看课本来就不需要一直操作）"
         testId="field-study-idle"
       >
         {/* mdui-segmented-button-group 的 selects="single" → ToggleButtonGroup 的

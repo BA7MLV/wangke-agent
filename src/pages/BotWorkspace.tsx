@@ -3,6 +3,7 @@ import {
   Button,
   Dropdown,
   Input,
+  Modal,
   Label,
   Spinner,
   TextField,
@@ -19,6 +20,9 @@ import { groupMessages, timeOf, type Row } from './botMessages';
 import './bot-workspace.css';
 import { apiUrl } from '../api/base';
 import { useSearchParams } from 'react-router-dom';
+import BotMcpScope from '../mcp/BotMcpScope';
+import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
+import { useTranslation } from 'react-i18next';
 
 function parseAttachment(content: string): { name: string; fileId?: string; size?: number; uploading?: boolean } {
   try {
@@ -260,6 +264,8 @@ const EMPTY: MessageDto[] = [];
 
 export default function BotWorkspace() {
   const [search] = useSearchParams();
+  const { t } = useTranslation('settings');
+  const [mcpOpen, setMcpOpen] = useState(false);
   const nav = useAppNav('bot');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -524,14 +530,16 @@ export default function BotWorkspace() {
             <Dropdown.Popover placement="bottom end">
               <Dropdown.Menu
                 aria-label="Bot 操作"
-                disabledKeys={active ? [] : ['stop']}
+                disabledKeys={active ? [] : ['stop', 'mcp']}
                 onAction={(key) => {
                   if (key === 'stop') void stop();
+                  else if (key === 'mcp') setMcpOpen(true);
                   else if (key === 'passkey') void addPasskey();
                   else if (key === 'logout') void logout();
                 }}
               >
                 <Dropdown.Item id="stop" textValue="停止当前任务"><Sym name="stop" />停止当前任务</Dropdown.Item>
+                <Dropdown.Item id="mcp" textValue={t('mcp.scope')}><Sym name="extension" />{t('mcp.scope')}</Dropdown.Item>
                 <Dropdown.Item id="passkey" textValue="添加 Passkey"><Sym name="key" />添加 Passkey</Dropdown.Item>
                 <Dropdown.Item id="logout" textValue="退出登录" variant="danger"><Sym name="key_off" />退出登录</Dropdown.Item>
               </Dropdown.Menu>
@@ -542,6 +550,11 @@ export default function BotWorkspace() {
       fill
       rootClassName="bot-page"
     >
+      <Modal.Root isOpen={mcpOpen} onOpenChange={setMcpOpen}><Modal.Backdrop><Modal.Container size="md" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
+        <Modal.Header><Modal.Heading>{t('mcp.scope')}</Modal.Heading></Modal.Header>
+        <Modal.Body>{mcpOpen && activeId ? <BotMcpScope key={activeId} threadId={activeId} /> : null}</Modal.Body>
+        <Modal.Footer><Button onPress={() => setMcpOpen(false)}>{t('mcp.save')}</Button></Modal.Footer>
+      </Modal.Dialog></Modal.Container></Modal.Backdrop></Modal.Root>
       <section className="bot-conversation" aria-label="Bot 对话">
         <div
           ref={scrollRef}

@@ -46,7 +46,7 @@ try {
     export { exportMigrationZip } from '${join(root, 'src/store/migration.ts')}';
     export { db } from '${join(root, 'src/store/db.ts')}';
   `);
-  await build({ entryPoints: [entry], outfile: join(out, 'bundle.mjs'), bundle: true, format: 'esm', platform: 'node', logLevel: 'silent', loader: { '.md': 'text' } });
+  await build({ entryPoints: [entry], outfile: join(out, 'bundle.mjs'), bundle: true, format: 'esm', platform: 'node', logLevel: 'silent', loader: { '.md': 'text' }, define: { 'import.meta.env': '{}' } });
   const api = await import(pathToFileURL(join(out, 'bundle.mjs')).href);
   const config = { ...api.defaultJevSettings(), apiKey: 'jev-secret', skillRouting: true, contextCompression: true };
   const question = { type: 'noul', instructions: 'Is this relevant?' };

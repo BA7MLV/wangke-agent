@@ -9,7 +9,6 @@ import { closeSettings } from '../settingsDialogStore';
 export default function AgentModule() {
   const { t } = useTranslation('settings');
   const inputId = useId();
-  const scopeId = useId();
   const instructions = useSettings((s) => s.agentInstructions);
   const update = useSettings((s) => s.update);
 
@@ -23,15 +22,13 @@ export default function AgentModule() {
   };
 
   return (
-    <SectionCard title={t('agent.title')} subtitle={t('agent.subtitle')} testId="card-agent-instructions">
+    <SectionCard title={t('agent.title')} testId="card-agent-instructions">
       <Field
         label={<label htmlFor={inputId}>{t('agent.label')}</label>}
-        hint={t('agent.hint')}
       >
         <TextArea
           id={inputId}
           aria-label={t('agent.label')}
-          aria-describedby={scopeId}
           data-testid="agent-instructions"
           className="w-full min-w-0 resize-y font-mono text-sm"
           rows={14}
@@ -48,9 +45,6 @@ export default function AgentModule() {
           {t('agent.reset')}
         </Button>
       </div>
-      <p id={scopeId} className="mt-4 text-xs leading-normal text-muted text-pretty">
-        {t('agent.scope')}
-      </p>
       <a href="#/library?file=/system/AGENTS.md" onClick={() => closeSettings()} className="mt-3 inline-block text-sm text-accent underline" data-testid="agent-instructions-open-file">{t('agent.openFile')}</a>
     </SectionCard>
   );

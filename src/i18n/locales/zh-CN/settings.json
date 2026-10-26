@@ -8,8 +8,43 @@
     "playback": "播放",
     "shortcuts": "快捷键",
     "study": "学习",
-    "skills": "技能",
+    "skills": "技能与 MCP",
     "data": "数据"
+  },
+  "mcp": {
+    "transport": "连接类型", "stdioHint": "命令在后端服务器运行。请先安装依赖，使用独立容器时可填写 docker 命令；进程由连接管理器启动，禁用后关闭。", "command": "可执行程序", "args": "参数（JSON 数组）", "cwd": "工作目录（服务器绝对路径，可留空）", "env": "环境变量（JSON，留空保留）", "logs": "进程日志", "noLogs": "暂无进程日志。", "import": "导入 JSON", "importHint": "支持 mcpServers 和 VS Code mcp.servers / servers。先预览再导入；同名项不会被覆盖。变量占位符需替换为实际值。", "preview": "预览", "importConfirm": "确认导入", "authorize": "开始 OAuth 授权", "authorized": "OAuth 已授权", "notAuthorized": "OAuth 未授权", "openAuthorization": "前往授权（完成后返回刷新）", "disconnect": "断开授权", "revoked": "已撤销远程令牌并清除本地凭据。", "disconnectedLocal": "本地凭据已清除。远程未确认撤销，如需撤销请到服务方账号设置操作。",
+    "skills": "技能", "title": "MCP 服务器", "description": "技能决定怎么做，MCP 提供外部工具。连接由服务器管理，问答和 Bot 均可使用。",
+    "offline": "连接服务端后即可配置 MCP。", "add": "添加服务器", "refresh": "刷新", "loading": "正在读取…", "empty": "尚未添加 MCP 服务器。", "edit": "编辑服务器", "delete": "删除", "deleteConfirm": "删除「{{name}}」的连接配置？历史对话会保留。", "cancel": "取消", "save": "保存",
+    "test": "测试连接", "tools": "查看工具", "noTools": "该服务器未提供工具。", "parameters": "参数定义", "name": "名称", "url": "服务 URL", "transportHint": "请选择服务对应的 Streamable HTTP 或旧 SSE 入口，地址需能被后端服务器访问。", "oauthHint": "保存后点击「开始 OAuth 授权」。需要服务方支持动态客户端注册。", "missingDependencies": "{{skill}}：本次会话缺少可用的 MCP 依赖：{{servers}}", "auth": "认证方式", "authNone": "无需认证", "authHeaders": "自定义请求头", "headers": "请求头（JSON）", "timeout": "超时（秒，1–120）", "secretKept": "已配置，留空保留", "secretHint": "凭据加密保存在服务器。留空保留原值，填写新值替换，点击下方清除。", "clearSecret": "清除凭据", "enableServer": "启用 {{name}}", "enableTool": "启用工具 {{name}}", "toolCount": "{{count}} 个工具",
+    "scope": "MCP 范围", "scopeTitle": "技能与 MCP 范围", "scopeHint": "仅选中的服务器可供本次会话使用。继承全局会自动包含后续启用的服务器。", "inherited": "当前继承全局启用项", "scopeNone": "本次会话已关闭全部 MCP", "scopeSelected": "已选择 {{count}} 个服务器", "inherit": "继承全局", "disableAll": "全部关闭",
+    "status": { "disconnected": "未连接", "connecting": "连接中", "ready": "可用", "auth_failed": "认证失败", "failed": "连接失败", "disabled": "已禁用" },
+    "errors": {
+      "mcp_invalid_import": "JSON 配置格式不正确。", "mcp_import_fields": "配置包含不支持的字段，请核对后导入。", "mcp_import_variables": "请先替换环境变量或输入占位符。", "mcp_import_duplicate": "已有同名服务器，未导入任何配置。请先重命名。", "mcp_invalid_command": "请检查程序、参数 JSON 数组和服务器绝对工作目录。", "mcp_oauth_required": "请先在设置中完成 OAuth 授权。", "mcp_oauth_state": "授权已过期或已使用，请重新发起。", "mcp_oauth_failed": "OAuth 授权失败，请检查服务端授权支持。", "mcp_oauth_origin": "请设置 MCP_PUBLIC_ORIGIN 为后端可公开访问的地址。", "mcp_oauth_denied": "授权已取消，请重新发起。",
+      "generic": "操作失败，请检查连接后重试。", "mcp_auth_failed": "认证失败，请检查 Token、请求头或重新完成 OAuth 授权。", "mcp_timeout": "连接或工具调用超时，请检查服务状态或调整超时。", "mcp_connection_failed": "无法连接，请确认连接类型、服务地址或程序、依赖和网络。", "mcp_invalid_url": "请填写 HTTP(S) 地址，不含账号、查询参数或片段。认证请使用专用配置。", "mcp_invalid_config": "请检查名称、连接类型、地址及超时范围（1–120 秒）。", "mcp_invalid_credentials": "凭据格式不正确。请求头和环境变量必须是字符串键值 JSON，不能覆盖协议请求头。", "mcp_not_found": "服务器已删除，请刷新。", "mcp_server_limit": "最多添加 30 个服务器。", "mcp_tools_unsupported": "该服务器不支持 MCP 工具。", "mcp_catalog_limit": "工具目录过大，请减少服务器暴露的工具。", "mcp_config_changed": "配置已更新，请重新测试连接。"
+    }
+  },
+  "skillPicker": {
+    "title": "选择技能",
+    "auto": "自动", "none": "不使用技能", "custom": "自定义",
+    "trigger": "技能：{{mode}}",
+    "count": "{{count}} / {{total}}",
+    "countLabel": "已选 {{count}} 项，共 {{total}} 项",
+    "unavailable": "所选技能已不可用，请重新选择。",
+    "useAuto": "自动选择", "useNone": "暂不使用",
+    "search": "搜索技能", "searchPlaceholder": "搜索技能", "clearSearch": "清除搜索",
+    "builtin": "内置技能", "yours": "我的技能",
+    "requiresMcp": "需要 MCP：{{names}}",
+    "loading": "正在读取技能…", "loadError": "技能读取失败，请重试。", "retry": "重新加载",
+    "empty": "还没有启用的技能",
+    "noResults": "没有找到匹配的技能",
+    "manage": "管理技能", "done": "完成", "close": "关闭技能选择",
+    "builtins": {
+      "handout": { "title": "课程讲义", "description": "整理讲义与复习提纲；数学、编程、行测、申论规范按需加载。" },
+      "questions": { "title": "原题题库", "description": "从资料提取原题与原图，整理题库、练习和批改。" },
+      "diagram": { "title": "讲解配图", "description": "用流程图、关系图或函数图像辅助理解，按需画图。" },
+      "interactive": { "title": "交互式讲解", "description": "通过调参、算法单步与小型模拟，探索“变了会怎样”。" },
+      "organize": { "title": "资料整理", "description": "为课程和资料规划分类，确认后再整理归档。" }
+    }
   },
   "agent": {
     "title": "Agent 默认提示词",

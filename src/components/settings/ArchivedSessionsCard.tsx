@@ -47,7 +47,6 @@ export default function ArchivedSessionsCard() {
     <SectionCard
       title="已归档会话"
       testId="card-archived-sessions"
-      subtitle="在侧栏 Recent 的「更多」菜单里归档的对话。恢复后会回到 Recent，删除则不可逆。"
     >
       {sessions.length === 0 ? (
         <EmptyState data-testid="archived-empty">还没有归档任何会话</EmptyState>

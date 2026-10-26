@@ -1032,7 +1032,6 @@ export default function ModelsModule() {
     <>
       <SectionCard
         title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
-        subtitle={draftProvider ? '填写 API Key 后保存。返回、取消或关闭设置不会新增供应商，也不会保存密钥。' : selectedProvider ? '配置连接、检查可用模型并管理该供应商的模型。' : connectingProvider ? '选择常用提供商，或连接你自己的兼容端点。当前支持 API 密钥接入。' : '选择供应商后进入独立详情页，管理连接和模型。'}
         testId="card-api"
       >
         {draftProvider ? (
@@ -1172,7 +1171,6 @@ export default function ModelsModule() {
       {!draftProvider && !selectedProvider && !connectingProvider && <>
       <SectionCard
         title="选择模型"
-        subtitle="按用途选择已添加的模型；图片理解可自动复用，决策模型为可选项。"
         testId="card-models"
       >
         <div className="flex flex-col gap-2.5">
@@ -1195,7 +1193,6 @@ export default function ModelsModule() {
 
       <SectionCard
         title="运行参数"
-        subtitle="检索深度与并发。日常不需要动，换模型或觉得回答太慢时再调"
         testId="card-tuning"
       >
         <Field

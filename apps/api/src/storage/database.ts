@@ -275,6 +275,14 @@ const MIGRATIONS: Array<[number, string]> = [
       PRIMARY KEY(binding_id,event_id)
     );
   `],
+  [15, `
+    CREATE TABLE mcp_servers (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      config TEXT NOT NULL, credentials TEXT NOT NULL, revision TEXT NOT NULL
+    );
+    CREATE INDEX mcp_servers_owner ON mcp_servers(owner_id);
+    ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
+  `],
 ];
 
 export class DatabaseStore {
@@ -293,12 +301,53 @@ export class DatabaseStore {
     this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
     const current = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get() as { version: number };
     for (const [version, sql] of MIGRATIONS) {
+      if (version > 12) break;
       if (version <= current.version) continue;
       this.db.transaction(() => {
         this.db.exec(sql);
         this.db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(version, new Date().toISOString());
       })();
     }
+    // Versions 13 and 14 were shipped by two independent branches. Never infer
+    // their contents from the numeric watermark or replay an ALTER blindly.
+    this.db.transaction(() => {
+      const columns = (db: Database.Database, table: string) => db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+      const expected = new Database(':memory:');
+      try {
+        for (const [, sql] of MIGRATIONS) expected.exec(sql);
+        const groups = [
+          { version: 13, tables: ['gateway_accounts', 'gateway_pairings', 'gateway_bindings', 'gateway_inbox', 'gateway_outbox', 'bot_reminders'], extra: [['cloud_tasks', 'parent_run_id'], ['cloud_tasks', 'parent_step_id'], ['approvals', 'cloud_permission_id']] },
+          { version: 14, tables: ['gateway_projection_failures'], extra: [] },
+          { version: 15, tables: ['mcp_servers'], extra: [['threads', 'mcp_server_ids']] },
+        ];
+        const present = groups.map(group => {
+          const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
+          if (markers.some(Boolean) && !markers.every(Boolean)) throw new Error(`schema_layout_partial_v${group.version}: restore a consistent backup before upgrading`);
+          if (markers.every(Boolean)) {
+            for (const table of group.tables) {
+              const actual = columns(this.db, table);
+              const trusted = columns(expected, table);
+              if (JSON.stringify(actual) !== JSON.stringify(trusted)) throw new Error(`schema_layout_untrusted_${table}`);
+            }
+            for (const [table, name] of group.extra) {
+              const actual = columns(this.db, table).find(c => c.name === name);
+              const trusted = columns(expected, table).find(c => c.name === name);
+              if (JSON.stringify(actual) !== JSON.stringify(trusted)) throw new Error(`schema_layout_untrusted_${table}_${name}`);
+            }
+          }
+          return markers.every(Boolean);
+        });
+        const validLegacy = current.version <= 12 ? present.every(v => !v)
+          : current.version === 13 ? (!present[1] && present[0] !== present[2])
+          : current.version === 14 ? (present[0] && present[1] && !present[2])
+          : current.version === 15 ? present.every(Boolean) : false;
+        if (!validLegacy) throw new Error('schema_layout_unknown: do not edit migration numbers; restore a consistent backup');
+        for (const [index, group] of groups.entries()) {
+          if (!present[index]) this.db.exec(MIGRATIONS.find(([v]) => v === group.version)![1]);
+          this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)').run(group.version, new Date().toISOString());
+        }
+      } finally { expected.close(); }
+    })();
   }
 
   transaction<T>(fn: () => T): T {

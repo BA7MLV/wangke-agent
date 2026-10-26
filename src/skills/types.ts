@@ -4,6 +4,7 @@ export interface SkillFile {
   name: string;
   description: string;
   body: string;
+  mcpRequired?: string[];
 }
 
 /**
@@ -59,6 +60,7 @@ export function parseSkillMarkdown(filename: string, text: string): SkillFile {
   let name = filename.replace(/\.(md|markdown)$/i, '');
   let description = '';
   let body = text;
+  let mcpRequired: string[] | undefined;
 
   const fm = text.match(/^---\r?\n([\s\S]*?)\r?\n---\r?\n?/);
   if (fm) {
@@ -69,6 +71,13 @@ export function parseSkillMarkdown(filename: string, text: string): SkillFile {
       if (!m) continue;
       const key = m[1];
       const raw = m[2].trim();
+      if (key === 'requires-mcp') {
+        let parsed: unknown;
+        try { parsed = JSON.parse(raw); } catch { throw new Error('requires-mcp must be a JSON array of server names'); }
+        if (!Array.isArray(parsed) || parsed.length > 30 || parsed.some(v => typeof v !== 'string' || !v.trim() || v.length > 100)) throw new Error('Invalid requires-mcp');
+        mcpRequired = [...new Set(parsed.map(v => v.trim()))];
+        continue;
+      }
 
       let val: string;
       if (BLOCK_SCALAR_RE.test(raw)) {
@@ -83,10 +92,10 @@ export function parseSkillMarkdown(filename: string, text: string): SkillFile {
       else if (key === 'description') description = val;
     }
   }
-  return { name: name.trim(), description: description.trim(), body: body.trim() };
+  return { name: name.trim(), description: description.trim(), body: body.trim(), ...(mcpRequired ? { mcpRequired } : {}) };
 }
 
 /** 序列化为带 frontmatter 的 .md 文本（导出/编辑用） */
 export function serializeSkillMarkdown(skill: SkillFile): string {
-  return `---\nname: ${skill.name}\ndescription: ${skill.description}\n---\n\n${skill.body}\n`;
+  return `---\nname: ${skill.name}\ndescription: ${skill.description}\n${skill.mcpRequired?.length ? `requires-mcp: ${JSON.stringify(skill.mcpRequired)}\n` : ''}---\n\n${skill.body}\n`;
 }

@@ -219,6 +219,8 @@ export interface ChatSessionRow {
    * 那会把「用户明确禁用了全部技能」静默退化成「全部可用」。
    */
   skillIds?: number[];
+  /** undefined inherits enabled servers; [] disables MCP for this conversation. */
+  mcpServerIds?: string[];
   /**
    * 置顶（非索引字段，无需升级版本）。展示层排前面，组内按最近消息倒序。
    * 不设 = 未置顶，老会话零迁移。
@@ -473,6 +475,7 @@ export interface StudyDayRow {
 }
 
 export interface SkillRow {
+  mcpRequired?: string[];
   id?: number;
   name: string;
   description: string;

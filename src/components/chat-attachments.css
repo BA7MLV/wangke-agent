@@ -7,7 +7,10 @@
 .chat-course-picker__list { display: flex; flex-direction: column; gap: 12px; max-height: 40dvh; overflow-y: auto; padding-block: 12px; }
 .course-chat__composer-context { grid-area: context; min-width: 0; max-height: 28dvh; overflow-y: auto; margin-bottom: 8px; }
 .chat-attachment-resize { overflow: hidden; min-width: 0; }
-.course-chat__composer-context:not(:has(.course-chat__context, .chat-attachments, .chat-attachment-resize[data-open='true'])) { display: none; }
+.course-chat__composer-context:not(:has(.chat-attachments, .chat-attachment-resize[data-open='true'])) { display: none; }
+.chat-add-menu__trigger { position: relative; }
+.chat-add-menu__context-dot { position: absolute; top: 4px; right: 4px; width: 6px; height: 6px; border-radius: var(--radius-full); background: var(--accent); box-shadow: 0 0 0 2px var(--background); pointer-events: none; }
+.chat-course-picker__selection { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; font-size: 0.8125rem; color: var(--muted); }
 .course-chat__composer > .chat-add-menu { grid-area: add; }
 .course-chat__user-content > .chat-attachments { margin-bottom: 8px; max-width: min(100%, 400px); align-self: flex-end; }
 

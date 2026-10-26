@@ -36,7 +36,7 @@ export async function routeHandoutSkills(
   videoName: string,
   sample: string,
 ): Promise<RoutedSkills> {
-  const metas = await loadEnabledSkillMeta();
+  const metas = await loadEnabledSkillMeta('legacy-handout');
   if (metas.length === 0) return { selected: [], block: '' };
 
   let autoIds: Set<number>;

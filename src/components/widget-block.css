@@ -20,6 +20,8 @@
   width: 100%;
   border: 0;
 }
+.widget-block__selection { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; font-size: .875rem; }
+.widget-block__selection > span { flex: 1 1 12rem; overflow-wrap: anywhere; color: var(--muted); }
 
 .widget-block--loading,
 .widget-block--error {

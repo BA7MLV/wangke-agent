@@ -64,7 +64,7 @@ function SeekStep({ label, testId, value, onChange }: {
 }) {
   const [draft, setDraft] = useState<string | null>(null);
   return (
-    <Field label={label} hint="1–120 秒">
+    <Field label={label}>
       <Input aria-label={label} data-testid={testId} type="number" min={1} max={120} step={1}
         className="w-32 tabular-nums" value={draft ?? String(value)}
         onChange={(event) => {
@@ -87,7 +87,7 @@ export default function ShortcutsModule() {
   const change = (patch: Partial<ShortcutSettings>) => update({ shortcuts: { ...shortcuts, ...patch } });
   return (
     <>
-      <SectionCard title="快捷键" subtitle="自动保存并立即生效。先点击播放器使其获得焦点；输入文字、选择输入法候选字或打开设置时不会触发。" testId="card-shortcuts">
+      <SectionCard title="快捷键" testId="card-shortcuts">
         <Field label="启用播放器快捷键" layout="row">
           <Switch aria-label="启用播放器快捷键" data-testid="shortcuts-enabled" isSelected={shortcuts.enabled}
             onChange={(enabled) => change({ enabled })}>
@@ -101,7 +101,7 @@ export default function ShortcutsModule() {
           ))}
         </div>
       </SectionCard>
-      <SectionCard title="按键配置" subtitle="点击按键框后按下新的按键或组合键，替换该项的全部原绑定。Tab 切换下一项，Esc 取消；清除可停用单项。系统或浏览器可能保留部分组合键。" testId="card-shortcut-bindings">
+      <SectionCard title="按键配置" testId="card-shortcut-bindings">
         <div className="mb-3 flex justify-end">
           <Button variant="secondary" size="sm" data-testid="shortcuts-reset"
             onPress={() => update({ shortcuts: defaultShortcutSettings() })}>恢复默认设置</Button>
@@ -110,7 +110,6 @@ export default function ShortcutsModule() {
           <ShortcutRecorder key={id} action={id} label={label} value={shortcuts.bindings[id]} bindings={shortcuts.bindings}
             onChange={(value) => change({ bindings: { ...shortcuts.bindings, [id]: value } })} />
         ))}
-        <p className="mt-4 text-sm text-muted">默认采用 B 站式操作：播放时长按小幅快进键临时 3 倍速，松开恢复；↑ / ↓ 每次调整 10% 音量。数字键 0–9 跳到视频的 0%–90%；逐帧按约 30 fps 计算，仅暂停时生效。滑块、菜单等控件获得焦点后，方向键优先操作控件本身。</p>
       </SectionCard>
     </>
   );

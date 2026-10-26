@@ -3,9 +3,11 @@ import { Button, Chip, EmptyState, Input, Modal, Switch, TextArea, TextField } f
 import { Field, SectionCard, Sym, confirmDialog, toast, MODAL_CONTAINER_CLASS } from '../ui';
 import { db, type SkillRow, type SkillRefRow } from '../store/db';
 import { ensureBuiltinSkills, importSkillFile } from '../skills/store';
-import { BUILTIN_SKILLS } from '../skills/builtin';
+import { BUILTIN_SKILLS, LEGACY_HANDOUT_SKILLS } from '../skills/builtin';
+import { isLegacyHandoutSkill } from '../skills/catalog';
 
 interface Draft {
+  mcpRequired?: string[];
   id?: number; // 编辑已有 skill 时携带
   builtin: boolean;
   name: string;
@@ -17,6 +19,7 @@ interface Draft {
 /** 设置页「写作技能」卡片：管理可注入讲义生成与问答的 skill（SKILL.md 单文件或含 references/ 的 zip 包） */
 export default function SkillsCard() {
   const [skills, setSkills] = useState<SkillRow[]>([]);
+  const [showLegacy, setShowLegacy] = useState(false);
   const [refCounts, setRefCounts] = useState<Record<number, number>>({});
   const [draft, setDraft] = useState<Draft | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
@@ -85,7 +88,10 @@ export default function SkillsCard() {
         toast.error(`导入 ${f.name} 失败：${e instanceof Error ? e.message : String(e)}`);
       }
     }
-    if (ok > 0) void reload();
+    if (ok > 0) {
+      setShowLegacy(false);
+      void reload();
+    }
   };
 
   const onPickFiles = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -102,7 +108,7 @@ export default function SkillsCard() {
       setDraftError('请填写名称、描述和说明');
       return;
     }
-    const row = { name, description: draft.description.trim(), body, updatedAt: Date.now() };
+    const row = { name, description: draft.description.trim(), body, mcpRequired: draft.mcpRequired, updatedAt: Date.now() };
     setSaving(true);
     try {
       await db.transaction('rw', [db.skills, db.skillRefs], async () => {
@@ -120,6 +126,7 @@ export default function SkillsCard() {
         }
       });
       setDraft(null);
+      setShowLegacy(false);
       toast.success('已保存');
       void reload();
     } catch {
@@ -138,7 +145,7 @@ export default function SkillsCard() {
   };
 
   const resetBuiltin = async (skill: SkillRow) => {
-    const src = BUILTIN_SKILLS.find((s) => s.name === skill.name);
+    const src = [...BUILTIN_SKILLS, ...LEGACY_HANDOUT_SKILLS].find((s) => s.name === skill.name);
     if (!src) return;
     await db.skills.update(skill.id!, {
       description: src.description,
@@ -148,6 +155,8 @@ export default function SkillsCard() {
     toast.success('已重置为内置版本');
     void reload();
   };
+
+  const visibleSkills = skills.filter((skill) => isLegacyHandoutSkill(skill) === showLegacy);
 
   return (
     <SectionCard
@@ -182,15 +191,19 @@ export default function SkillsCard() {
       }
     >
       <div className="mb-3 text-muted">
-        启用的技能按相关性自动注入讲义生成与课程问答。支持 SKILL.md 单文件（.md）或含 references/
+        课程讲义统一加载写作、数学、编程、行测与申论规范，专题按需读取。支持 SKILL.md 单文件（.md）或含 references/
         参考文档的 zip 包；技能正文会注入提示词，请只导入可信来源。
       </div>
+      <Button variant="tertiary" size="sm" className="mb-3" data-testid="skill-catalog-mode" onPress={() => setShowLegacy(!showLegacy)}>
+        {showLegacy ? '返回日常技能' : '管理旧版讲义规范'}
+      </Button>
+      {showLegacy && <div className="mb-3 text-muted">这些规范仅供旧版 IR 讲义流水线使用，保留原有启停设置；日常对话使用「课程讲义」及其参考文档。</div>}
 
-      {skills.length === 0 ? (
+      {visibleSkills.length === 0 ? (
         <EmptyState data-testid="skill-empty">暂无技能</EmptyState>
       ) : (
         <div className="flex flex-col">
-          {skills.map((skill) => (
+          {visibleSkills.map((skill) => (
             <SkillItem
               key={skill.id}
               skill={skill}

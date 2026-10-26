@@ -13,7 +13,10 @@ try {
   await page.addInitScript(() => {
     if (window.top !== window) return;
     window.__styleTestImport = (path) => {
-      const resource = performance.getEntriesByType('resource').findLast((entry) => new URL(entry.name).pathname === path);
+      const resource = performance.getEntriesByType('resource').findLast((entry) => {
+        const pathname = new URL(entry.name).pathname;
+        return pathname === path || path.startsWith('/node_modules/.vite/deps/') && pathname.endsWith(`/deps/${path.split('/').pop()}`);
+      });
       return import(resource?.name ?? path);
     };
     if (!localStorage.getItem('wangke-settings')) localStorage.setItem('wangke-settings', JSON.stringify({ version: 3, state: {
@@ -53,7 +56,15 @@ try {
       const style = getComputedStyle(el);
       return { tag: el.tagName, ...Object.fromEntries(['margin', 'padding', 'font-size', 'line-height', 'border-radius', 'display', 'list-style-type'].map((key) => [key, style.getPropertyValue(key)])) };
     })));
-  assert.deepEqual(proseStyles[0], proseStyles[1], 'prose spacing, lists, code and tables retain their existing appearance');
+  // Markdown deliberately replaces XMarkdown's block table with MdTable's
+  // semantic table inside a scrolling wrapper (also asserted below). Compare
+  // cell typography/spacing, but not that intentional container layout change.
+  const proseWithoutTableLayout = styles => styles.map(style => {
+    if (style.tag !== 'TABLE') return style;
+    const { display, margin, ...rest } = style;
+    return rest;
+  });
+  assert.deepEqual(proseWithoutTableLayout(proseStyles[0]), proseWithoutTableLayout(proseStyles[1]), 'prose spacing, lists, code and table cells retain their existing appearance');
   await page.evaluate(() => { window.__proseStyleRoot.unmount(); document.getElementById('prose-style-comparison').remove(); });
   const initial = '先观察参数，再对照结果。';
   const { rowId, sessionId } = await page.evaluate(async (content) => {

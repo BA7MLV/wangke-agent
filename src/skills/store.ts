@@ -1,6 +1,7 @@
 import { db, type SkillRow } from '../store/db';
-import { BUILTIN_SKILLS } from './builtin';
-import { intersectSkillIds } from './scope';
+import { BUILTIN_SKILLS, LEGACY_HANDOUT_SKILLS } from './builtin';
+import { COURSE_HANDOUT_SKILL, isLegacyHandoutSkill } from './catalog';
+import { intersectSkillMetaIds } from './scope';
 import { parseSkillMarkdown } from './types';
 import { parseSkillZip, type ParsedSkillPackage } from './zip';
 import { cloud } from '../cloud/state';
@@ -11,6 +12,11 @@ const SKILL_BLOCK_BUDGET = 6000;
 
 /** Level 1：技能元数据（常驻上下文，name + description） */
 export interface SkillMeta {
+  /** 界面区分内置与用户技能；不进入模型提示词。 */
+  builtin?: boolean;
+  /** 已合并入口的旧内置 ID（仅启用项），不进入模型提示词。 */
+  legacyIds?: number[];
+  mcpRequired?: string[];
   id: number;
   name: string;
   description: string;
@@ -54,7 +60,7 @@ async function doEnsureBuiltinSkills(): Promise<void> {
     // Builtins are bundled code. Workers may prepare a private copy, never publish
     // skill changes using their task's data-mutation authority.
     if (cloud.worker) markCloudApply();
-    for (const s of BUILTIN_SKILLS) {
+    for (const s of [...LEGACY_HANDOUT_SKILLS, ...BUILTIN_SKILLS]) {
       let row = await db.skills.filter((r) => r.name === s.name && !!r.builtin).first();
       if (row?.id != null) {
         if (row.body !== s.body || row.description !== s.description) {
@@ -92,11 +98,19 @@ async function doEnsureBuiltinSkills(): Promise<void> {
   });
 }
 
-/** Level 1：加载所有启用中技能的元数据（供路由器 / 问答 agent 发现技能） */
-export async function loadEnabledSkillMeta(): Promise<SkillMeta[]> {
+/** Level 1：对话与旧 IR 流水线各自发现适用规范，失败兜底也不会混入另一套协议。 */
+export async function loadEnabledSkillMeta(context: 'chat' | 'legacy-handout' = 'chat'): Promise<SkillMeta[]> {
   await ensureBuiltinSkills();
   const skills = await db.skills.filter((s) => !!s.enabled).sortBy('id');
-  return skills.map((s) => ({ id: s.id!, name: s.name, description: s.description }));
+  const legacyIds = skills.filter(isLegacyHandoutSkill).map((s) => s.id!);
+  return skills
+    .filter((s) => !s.builtin || (context === 'legacy-handout' ? isLegacyHandoutSkill(s) : !isLegacyHandoutSkill(s)))
+    .map((s) => ({
+      id: s.id!, name: s.name, description: s.description,
+      builtin: !!s.builtin,
+      ...(s.mcpRequired ? { mcpRequired: s.mcpRequired } : {}),
+      ...(context === 'chat' && s.builtin && s.name === COURSE_HANDOUT_SKILL ? { legacyIds } : {}),
+    }));
 }
 
 /**
@@ -109,7 +123,7 @@ export async function loadEnabledSkillMeta(): Promise<SkillMeta[]> {
  */
 export async function loadSessionSkillMeta(skillIds?: number[]): Promise<SkillMeta[]> {
   const enabled = await loadEnabledSkillMeta();
-  const usable = new Set(intersectSkillIds(enabled.map((m) => m.id), skillIds));
+  const usable = new Set(intersectSkillMetaIds(enabled, skillIds));
   return enabled.filter((m) => usable.has(m.id));
 }
 
@@ -127,7 +141,7 @@ export async function loadSkillBodies(ids: number[]): Promise<string> {
 
 /** 元数据列表 → 提示词用的清单文本 */
 export function skillMetaBlock(metas: SkillMeta[]): string {
-  return metas.map((m) => `- ${m.name}：${m.description || '（无描述）'}`).join('\n');
+  return metas.map((m) => `- ${m.name}：${m.description || '（无描述）'}${m.mcpRequired?.length ? ` [MCP: ${m.mcpRequired.join(', ')}]` : ''}`).join('\n');
 }
 
 /** 导入 .md 单文件或 skill zip 包（含 references/），落库并默认启用 */

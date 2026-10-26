@@ -7,7 +7,8 @@ import { courseResourceTools, createResourceExecutor } from './resources';
 import { PROMPTS } from './prompts';
 import { estimateTokens, fitHistoryToBudget } from './context';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
-import { db, type ChatImage, type QuizState } from '../store/db';
+import { db, type ChatImage, type QuizState, type ChatToolCall } from '../store/db';
+import { toolDetail, summarizeToolResult, isToolFailure } from '../utils/toolTrace';
 import { catalogOf, getSettings, modelOverridesOf, type ModelTarget } from '../store/settings';
 import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage, ContentPart } from '../api/siliconflow';
@@ -90,6 +91,7 @@ export type QaCard =
   | { kind: 'widget'; widget: WidgetPayload };
 
 export interface QaSink {
+  onTools?: (tools: ChatToolCall[]) => void;
   onReasoning?: (text: string) => void;
   onDelta?: (text: string) => void;
   /** 新一轮开始（round 从 0 起，见 `AgentCallbacks`）；此前轮次流出的正文只是检索旁白 */
@@ -103,6 +105,7 @@ export interface QaSink {
 }
 
 export interface QaRunResult {
+  tools?: ChatToolCall[];
   /** 助手行落库后的 id；**空回答兜底那条不落库，所以没有 id** */
   rowId?: number;
   /** 最终正文（空回答时是兜底文案，被中断时是「已流出内容 + （已停止生成）」） */
@@ -127,6 +130,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
         sink.onDelta?.(p.content.slice(content.length)); content = p.content;
       }
       if (typeof p.reasoning === 'string') { sink.onReasoning?.(p.reasoning.slice(reasoning.length)); reasoning = p.reasoning; }
+      if (Array.isArray(p.tools)) sink.onTools?.(p.tools);
     }, sink.signal);
   }
   const settings = getSettings();
@@ -240,6 +244,8 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
    * 材料没有字幕、没有画面（工具集本身就少两样），md 且编辑面开着才多一个 edit_markdown。
    */
   const tools = courseResourceTools(canEditMd);
+  const traces: ChatToolCall[] = [];
+  let toolStarted = 0;
 
   // ── 跑循环（照搬 ChatPanel 的四个局部计数器）────────────────────────────────
   let answer = '';
@@ -275,6 +281,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       {
         // 覆盖模型槽位：不传就是老行为（settings 的 chat 槽位，面板与课程助手都走这条）
         target: input.modelTarget,
+        mcpSessionId: sessionId,
         // 开着思考就把档位传下去：thinkingParams 按模型声明决定发哪个字段 ——
         // 只有开关的模型拿不到深度参数，但 `enable_thinking` 照发
         thinkingEffort:
@@ -307,10 +314,18 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
           if (answer) sink.onDelta?.(sink.onRoundStart ? answer : answer.slice(previous.length));
         },
         onToolStart: (name, argsJson) => {
+          toolStarted = Date.now();
+          traces.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
+          sink.onTools?.([...traces]);
           lastHint = qaToolHint(name, argsJson, isMaterial);
           sink.onToolStart?.(name, argsJson);
         },
-        onToolEnd: (name, result) => sink.onToolEnd?.(name, result),
+        onToolEnd: (name, result) => {
+          const trace = traces.at(-1);
+          if (trace) { trace.status = isToolFailure(result) ? 'error' : 'done'; trace.result = summarizeToolResult(result); trace.ms = Date.now() - toolStarted; }
+          sink.onTools?.([...traces]);
+          sink.onToolEnd?.(name, result);
+        },
         onStop: (info) => {
           stopped.push(info);
           sink.onStop?.(info);
@@ -329,7 +344,9 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
     if (sink.signal?.aborted) {
       const partial = answer.trim() || lastNarration.trim();
       const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
+      for (const trace of traces) if (trace.status === 'running') trace.status = 'error';
       const rowId = (await db.chats.add({
+        tools: traces,
         videoId,
         sessionId,
         role: 'assistant',
@@ -339,7 +356,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
         ...(widgetState ? { widget: widgetState } : {}),
         ...(widgets.length ? { widgets } : {}),
       })) as number;
-      return { rowId, content, reasoning: reasoning || undefined, reasoningMs,
+      return { rowId, content, tools: traces, reasoning: reasoning || undefined, reasoningMs,
         ...(widgetState ? { widget: widgetState } : {}), ...(widgets.length ? { widgets } : {}),
         ...(stopped[0] ? { stopped: stopped[0] } : {}) };
     }
@@ -355,6 +372,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   const finalAnswer = answer.trim();
   if (finalAnswer || quizState || widgetState) {
     const rowId = (await db.chats.add({
+      tools: traces,
       videoId,
       sessionId,
       role: 'assistant',
@@ -366,6 +384,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       ...(widgets.length ? { widgets } : {}),
     })) as number;
     return {
+      tools: traces,
       rowId,
       content: finalAnswer,
       ...(reasoning ? { reasoning } : {}),
@@ -380,6 +399,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   // 用户看到的就是「点了没反应」，既不知道它查了多少轮，也不知道自己该做什么。
   // ⚠️ 只返回、不落库：这一段是「模型没答上来」，存成正式回答会污染历史。
   return {
+    tools: traces,
     content: noAnswerNotice({
       // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
       // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
@@ -407,6 +427,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
  * 工具名对不上就退回通用文案（真正的错误由 executor 返回给模型）。
  */
 export function qaToolHint(name: string, argsJson: string, isMaterial: boolean): string {
+  if (name.startsWith('MCP · ')) return name;
   let hint = isMaterial ? '正在检索材料…' : '正在检索字幕…';
   try {
     const args = JSON.parse(argsJson || '{}') as { query?: string; name?: string };

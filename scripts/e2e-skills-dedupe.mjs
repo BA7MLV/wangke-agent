@@ -34,7 +34,7 @@ page.on('pageerror', (e) => errors.push(String(e).slice(0, 250)));
 
 console.log('=== 内置写作技能幂等性（dev 档）===');
 
-await page.goto(`${BASE}/#/settings`, { waitUntil: 'networkidle' });
+await page.goto(`${BASE}/#/settings/skills`, { waitUntil: 'networkidle' });
 await page.waitForSelector('[data-testid="card-skills"] [data-testid="skill-row"]', { timeout: 20000 });
 // 等首屏那轮补齐彻底落库（StrictMode 双调用的第二次也跑完）
 await page.waitForTimeout(1500);
@@ -42,15 +42,16 @@ await page.waitForTimeout(1500);
 // ── 1. 页面自身加载后不得有重复内置行 ──────────────────────────────────────
 const afterBoot = await page.evaluate(async () => {
   const { db } = await import('/src/store/db.ts');
-  const { BUILTIN_SKILLS } = await import('/src/skills/builtin.ts');
+  const { BUILTIN_SKILLS, LEGACY_HANDOUT_SKILLS } = await import('/src/skills/builtin.ts');
+  const registered = [...LEGACY_HANDOUT_SKILLS, ...BUILTIN_SKILLS];
   const builtinRows = (await db.skills.toArray()).filter((r) => !!r.builtin);
   const names = builtinRows.map((r) => r.name);
   return {
-    expect: BUILTIN_SKILLS.length,
+    expect: registered.length,
     actual: builtinRows.length,
     dupes: [...new Set(names.filter((n, i) => names.indexOf(n) !== i))],
-    expectedNames: BUILTIN_SKILLS.map((s) => s.name),
-    missing: BUILTIN_SKILLS.map((s) => s.name).filter((n) => !names.includes(n)),
+    expectedNames: registered.map((s) => s.name),
+    missing: registered.map((s) => s.name).filter((n) => !names.includes(n)),
   };
 });
 check(
@@ -63,7 +64,7 @@ check(afterBoot.missing.length === 0, `内置技能未缺失（缺：${JSON.stri
 // ── 2. 显式并发调用：确定性复现（不依赖 StrictMode 时机） ──────────────────
 const concurrent = await page.evaluate(async () => {
   const { db } = await import('/src/store/db.ts');
-  const { BUILTIN_SKILLS } = await import('/src/skills/builtin.ts');
+  const { BUILTIN_SKILLS, LEGACY_HANDOUT_SKILLS } = await import('/src/skills/builtin.ts');
   const { ensureBuiltinSkills } = await import('/src/skills/store.ts');
 
   // 清掉内置行，回到「首次启动」的干净状态（用户行保留，后面要验证它不受影响）
@@ -88,7 +89,8 @@ const concurrent = await page.evaluate(async () => {
   const names = builtinRows.map((r) => r.name);
   const copy = rows.find((r) => r.id === copyId);
   return {
-    expect: BUILTIN_SKILLS.length,
+    expect: BUILTIN_SKILLS.length + LEGACY_HANDOUT_SKILLS.length,
+    visible: BUILTIN_SKILLS.length,
     actual: builtinRows.length,
     dupes: [...new Set(names.filter((n, i) => names.indexOf(n) !== i))],
     copyIntact: copy?.body === '用户自己改过的正文' && copy?.builtin === 0,
@@ -107,8 +109,8 @@ await page.waitForSelector('[data-testid="skill-row"]', { timeout: 20000 });
 await page.waitForTimeout(1200);
 const uiRows = await page.locator('[data-testid="skill-row"]').count();
 check(
-  uiRows === concurrent.expect + 1,
-  `重载后列表 ${uiRows} 行（应为内置 ${concurrent.expect} + 1 个用户副本）`,
+  uiRows === concurrent.visible + 1,
+  `重载后列表 ${uiRows} 行（应为任务入口 ${concurrent.visible} + 1 个用户副本）`,
 );
 
 console.log(errors.length ? `[page errors]\n${errors.join('\n')}` : '无 page 错误');

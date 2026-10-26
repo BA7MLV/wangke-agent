@@ -9,11 +9,11 @@
 - 用户点击追问后出现可取消、可改写问题的确认框，以“当前情况”展示本次发送的参数，原始数据按需展开；确认前不调用聊天发送入口。
 - 独立预览的追问会等待原会话接收回执；原窗口关闭或暂不能发送时明确报错，不会声称已经送达。
 - 只附带 `modelContent`，并标记为不可信数据。不自动附带 `privateContent`、HTML、库源码或操作历史；普通输入消息也不自动注入组件快照。
-- `privateContent` 的含义是“宿主不自动发送模型”，不是秘密保险箱。生成的组件脚本能看到自己的整个快照，因此两部分都不要存秘密。用户显式导出本机数据时，快照可随消息一起导出。
+- `privateContent` 的含义是“宿主不自动发送模型”，**不是不上服务器**，也不是秘密保险箱。生成的组件脚本能看到自己的整个快照，因此两部分都不要存秘密。用户显式导出数据时，快照可随消息一起导出。
 
 ## 持久化
 
-快照保存在当前浏览器 IndexedDB 的消息行，和当前普通聊天记录的存储边界一致，不宣称服务端或跨设备同步。通过宿主分配的 widget ID、消息 ID、会话和源码绑定，iframe 不能指定要访问的记录。旧消息第一次打开时补齐实例 ID，无须数据库索引迁移。
+快照首先写入当前浏览器 IndexedDB 的消息行。云模式安装 `installCloudCache` 后，`chats` 属于 `CLOUD_TABLES`，完整聊天记录的 before/after（含快照两部分）会进入 outbox 并由通用云同步链路上传。`saveWidgetState` 成功只确认本机事务及云模式下的 outbox 写入，**不表示服务器已经确认，也不保证另一设备此时可见**；跨设备一致性尚未做双设备实测。通过宿主分配的 widget ID、消息 ID、会话和源码绑定，iframe 不能指定要访问的记录。旧消息第一次打开时补齐实例 ID，无须数据库索引迁移。
 
 保存只更新快照，不覆盖正文、思考或工具记录。宿主在事务提交后 ACK；失败会拒绝 Promise 并显示错误。缺少持久消息的临时组件不能声称已经保存。源码修改会更换 ID 并清空快照，避免重放不兼容状态；旧 iframe 的迟到写入、已删除消息的写入会被拒绝。分支新消息不会继承原消息快照。
 
@@ -22,6 +22,20 @@
 快照只接受 JSON，两部分合计不超过 16 KiB（UTF-8），嵌套最多 16 层。宿主只提供小型控件样式，不新增任意工具调用、文件访问或宿主数据读取能力。`sandbox="allow-scripts"`、不透明源、禁外网 CSP 与本地按需内联库保持不变。
 
 ## 当前范围
+
+### 可视化提问
+
+`ask_user` 可附带 `presentation: {html}`，使用同一 HTML 校验、沙箱、主题与 UI kit；非法可选 HTML 被丢弃，原生问题仍可回答。结构化 question/type/options（稳定 ID）是唯一题面来源，HTML 不能改变它们。
+
+页面从 `window.__wbw.answerInput` 读取 `{answer, submitted, question}`，监听 `wbw:answerchange`。`setAnswerDraft(answer)` 更新原生题卡的同一份草稿；`submitAnswer(answer)` 要求点击/键盘动作，并在可信宿主中展示从原问题校验得到的文案，用户再点“确认回答”后调用原 `answerAsk`，解除原工具挂起并按既有 `TurnResume` 续跑。它不是 `sendPrompt`。宿主校验来源、可见性、iframe 焦点、当前待答状态及重复请求；最终确认不依赖 iframe 对用户激活的自证。
+
+原生输入始终可用。页面只传稳定 selectedIds 或 text/note，selectedLabels 由宿主重新计算；答案不得含宿主操作权限。取消视觉确认只回到修改，不结束问题；停止、在聊天里回复、过期和重载恢复沿用原提问状态机。已提交答案随原问题保存并回放；未提交草稿是易失的，刷新后重新填写。正式 `present_quiz` 只允许 `setAnswerDraft`，不能使用 `submitAnswer` 绕过宿主提交、判分和错题链路。
+
+### 阅读融合
+
+按消息/组件/源码版本的短布局提示键缓存最近 200 个高度（80–2000px，内存中，不是数据库快照）；短版本 hash 只影响布局估计，不用于授权或 React 重挂身份，后者仍使用精确源码。重挂先占位，文档 ready 后显露 iframe，主题/状态变化不重建。测量 body 和可见后代边界而不是被旧 viewport 撑住的根 scrollHeight；包含未裁切的正常流/absolute 溢出，尊重 hidden/clip/auto/scroll 裁切，排除 fixed 子树，因此内容可缩短；横向滚动条计入高度。生成内容应有正常流根节点，浮层限制在根内，不用 100vh/height:100% 制造测高反馈。
+
+iframe 内未被可滚动控件消费的 wheel/touch/阅读键意图会暂停聊天跟随。正文选区只桥接限长文本，不访问宿主 DOM；宿主提供“引用提问”，通过既有可编辑、可取消的追问框适配聊天入口，附带宿主消息/组件身份和源码版本标记。引用来自不可信页面，不能当材料证据。源码更新会使旧桥接与未发送选区失效。
 
 `show_widget` 返回不含源码的 `wbw-widget` 引用围栏，模型把引用原样放在正文相应位置。多个调用按 `widgets` 顺序保留，不再互相覆盖；每幅图有独立快照。只能引用当前消息自身的载荷，重复引用只展示一次；旧消息与遗漏引用的图形仍在末尾兼容显示。`widget` 保留为最后一幅图的旧客户端兼容别名，不重复渲染。
 
@@ -42,10 +56,13 @@
 ```sh
 npx tsx scripts/test-widget-state.mjs
 node scripts/test-widget.mjs
+node scripts/test-ask-visual.mjs
 npx tsx scripts/test-artifact-edit.mjs
 npx tsc -b --pretty false
 # 先运行 npm run dev；以下使用独立浏览器上下文和假模型，不消耗真实 API tokens
 node scripts/e2e-widget-state.mjs
+node scripts/e2e-ask-visual.mjs
+node scripts/e2e-widget-reading.mjs
 node scripts/e2e-widget-layout.mjs
 node scripts/e2e-widget-style-isolation.mjs
 node scripts/probe-widget-sandbox.mjs

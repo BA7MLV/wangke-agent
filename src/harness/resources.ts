@@ -1,5 +1,6 @@
 import type { ToolDef } from '../api/siliconflow';
 import { db } from '../store/db';
+import { loadSessionSkillMeta } from '../skills/store';
 import { readHighlightCatalog } from '../materials/highlightContext';
 import { handoutFileOf } from '../materials/handoutFile';
 import { questionBankFileOf } from '../materials/questionBankFile';
@@ -230,7 +231,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     if (resource.type === 'skills' || resource.type === 'skill') {
       if (name !== 'read') return '技能资源只支持 read。';
       if (resource.type === 'skills') {
-        const skills = await db.skills.filter((s) => !!s.enabled && (options.allowedSkillIds === undefined || (s.id != null && options.allowedSkillIds.includes(s.id)))).toArray();
+        const skills = await loadSessionSkillMeta(options.allowedSkillIds);
         return skills.map((s) => `${skillPath(s.name)} — ${s.name}`).join('\n') || '本次会话没有可用技能。';
       }
       return executeLocal(resource.reference === undefined ? 'use_skill' : 'read_skill_reference', { name: resource.name, path: resource.reference });

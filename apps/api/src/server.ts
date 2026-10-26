@@ -22,6 +22,9 @@ import { CloudConfiguration } from './cloud/config.js';
 import { receiveFile, byteRange } from './cloud/files.js';
 import { registerCloudRoutes } from './cloud/routes.js';
 import { workerIdentity } from './cloud/tasks.js';
+import { McpRepository } from './mcp/repository.js';
+import { McpManager } from './mcp/manager.js';
+import { registerMcpRoutes } from './mcp/routes.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -77,8 +80,9 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const cloudRecords = new CloudRecords(store);
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
+  const mcp = new McpManager(new McpRepository(store, cloudConfig));
   const study = new StudyTools(store, cloudConfig, filesDir, options.fetch);
-  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, study });
+  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, study, mcp });
   const botService = new BotApplicationService(store, runner);
   // Factories are account-scoped; a plugin never resolves another owner's file.
   const gateway = new GatewayCore(store, cloudConfig, botService, {
@@ -186,13 +190,14 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
    const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
+   registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
   app.addHook('onRequest', async (request, reply) => {
     const worker = workerIdentity(request);
     if (worker && request.url.startsWith('/api/')) {
       const url = request.url.split('?')[0];
       const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status'].includes(url) || /^\/api\/v1\/files\/[^/]+$/.test(url));
-      const write = request.method === 'POST' && (url === '/api/v1/cloud/records' || url === '/api/v1/files' || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+      const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });
@@ -576,7 +581,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
 
   if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
   registerGatewayRoutes(app, gateway, requireAuth, checkOrigin);
-  app.addHook('onClose', async () => { await gateway.close(); await cloudRunner.close(); await runner.close(); store.close(); });
+  app.addHook('onClose', async () => { await gateway.close(); await cloudRunner.close(); await runner.close(); await mcp.close(); store.close(); });
   return app;
 }
 

@@ -9,6 +9,9 @@ const TOKENS: Record<string, string> = {
   '--wbw-surface': '--default-soft', '--wbw-border': '--border',
   '--wbw-accent': '--accent', '--wbw-accent-foreground': '--accent-foreground',
   '--wbw-focus': '--focus', '--wbw-radius': '--radius-sm',
+  '--wbw-success': '--success', '--wbw-warning': '--warning', '--wbw-danger': '--danger',
+  '--wbw-series-1': '--accent', '--wbw-series-2': '--success',
+  '--wbw-series-3': '--warning', '--wbw-series-4': '--danger',
 };
 
 export function readWidgetTheme(element: HTMLElement, dark: boolean): WidgetTheme {

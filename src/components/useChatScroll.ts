@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, type RefObject } from 
 import { prefersReducedMotion } from '../utils/motion';
 import { useViewportResize } from '../utils/useMobile';
 import type { VirtualMessagesHandle } from './VirtualMessages';
+import { WIDGET_SCROLL_INTENT } from '../harness/widgetReading';
 
 const NEAR_BOTTOM_PX = 24;
 
@@ -176,6 +177,7 @@ export function useChatScroll(
     element.addEventListener('touchmove', onTouchMove, { passive: true });
     element.addEventListener('keydown', onKeyDown);
     element.addEventListener('pointerdown', onPointerDown);
+    element.addEventListener(WIDGET_SCROLL_INTENT, pauseFollowing);
     return () => {
       element.removeEventListener('scroll', onScroll);
       element.removeEventListener('wheel', onWheel);
@@ -183,6 +185,7 @@ export function useChatScroll(
       element.removeEventListener('touchmove', onTouchMove);
       element.removeEventListener('keydown', onKeyDown);
       element.removeEventListener('pointerdown', onPointerDown);
+      element.removeEventListener(WIDGET_SCROLL_INTENT, pauseFollowing);
     };
   }, [scrollRef, pauseFollowing, syncButton]);
 

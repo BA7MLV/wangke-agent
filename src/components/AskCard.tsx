@@ -1,19 +1,23 @@
-import { useId, useState } from 'react';
-import { Button, Checkbox, TextArea } from '@heroui/react';
+import { useEffect, useId, useRef, useState } from 'react';
+import { Button, Checkbox, Modal, TextArea } from '@heroui/react';
 import type { AskUserState } from '../store/db';
-import { askOptions, validateAskAnswer, type AskUserAnswer } from '../harness/askUser';
-import { Sym } from '../ui';
+import { askAnswerText, askOptions, normalizeAskDraft, validateAskAnswer, type AskUserAnswer } from '../harness/askUser';
+import { MODAL_CONTAINER_CLASS, Sym, useResolvedDark } from '../ui';
+import { useSettings } from '../store/settings';
+import WidgetBlock from './WidgetBlock';
 import './ask-cards.css';
 
 interface Props {
   ask: AskUserState;
   active: boolean;
   restored?: boolean;
+  messageKey?: string;
   onPick: (answer: AskUserAnswer) => Promise<void>;
 }
 
-export default function AskCard({ ask, active, restored, onPick }: Props) {
+export default function AskCard({ ask, active, restored, messageKey, onPick }: Props) {
   const id = useId();
+  const dark = useResolvedDark(useSettings(s => s.theme));
   const [selected, setSelected] = useState<string[]>([]);
   const [custom, setCustom] = useState(false);
   const [text, setText] = useState('');
@@ -21,6 +25,9 @@ export default function AskCard({ ask, active, restored, onPick }: Props) {
   const [showNote, setShowNote] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const [confirmation, setConfirmation] = useState<AskUserAnswer | null>(null);
+  const receipt = useRef<{ resolve: () => void; reject: (error: Error) => void } | null>(null);
+  const submitting = useRef(false);
   const answered = ask.picked != null;
   const actionable = active && !answered;
   const type = ask.type ?? 'single';
@@ -28,21 +35,87 @@ export default function AskCard({ ask, active, restored, onPick }: Props) {
   const freeText = type === 'text' || custom;
   const min = ask.minSelections ?? 1;
   const max = ask.maxSelections ?? options.length;
+  const draft: AskUserAnswer = ask.answer ?? { status: 'answered', mode: freeText ? type === 'text' ? 'text' : 'custom' : 'selection',
+    selectedIds: selected, selectedLabels: [], text, note: showNote && !freeText ? note : '' };
+
+  useEffect(() => {
+    if (!actionable) {
+      receipt.current?.reject(new Error('本次提问已结束'));
+      receipt.current = null;
+      setConfirmation(null);
+    }
+  }, [actionable]);
+  useEffect(() => () => {
+    receipt.current?.reject(new Error('提问页面已关闭'));
+    receipt.current = null;
+  }, []);
+  useEffect(() => {
+    if (!confirmation) return;
+    // Expire before the sandbox request timeout: a stale dialog cannot submit later.
+    const timer = window.setTimeout(() => {
+      if (submitting.current) return;
+      receipt.current?.reject(new Error('确认已超时，请重新选择并提交'));
+      receipt.current = null; setConfirmation(null);
+    }, 280_000);
+    return () => window.clearTimeout(timer);
+  }, [confirmation]);
+
+  function applyDraft(raw: unknown) {
+    if (!actionable || submitting.current || receipt.current) throw new Error('当前不能修改作答');
+    const answer = normalizeAskDraft(ask, raw);
+    if (answer.status === 'cancelled' || answer.status === 'skipped') throw new Error('请在原生题卡中跳过或取消');
+    setSelected(answer.selectedIds); setText(answer.text); setNote(answer.note);
+    setCustom(answer.mode === 'custom'); setShowNote(!!answer.note); setError('');
+    return answer;
+  }
+
+  function requestSubmit(raw: unknown): Promise<void> {
+    const answer = validateAskAnswer(ask, raw as AskUserAnswer);
+    applyDraft(answer);
+    return new Promise((resolve, reject) => {
+      receipt.current = { resolve, reject };
+      setConfirmation(answer);
+    });
+  }
+
+  function cancelVisual() {
+    if (submitting.current) return;
+    receipt.current?.reject(new Error('用户取消了提交，可继续修改'));
+    receipt.current = null;
+    setConfirmation(null);
+  }
+
+  async function confirmVisual() {
+    if (!actionable || !confirmation || submitting.current || !receipt.current) return;
+    const pending = receipt.current;
+    receipt.current = null;
+    submitting.current = true; setBusy(true);
+    try {
+      await onPick(validateAskAnswer(ask, confirmation));
+      pending.resolve();
+    } catch (reason) {
+      const error = reason instanceof Error ? reason : new Error('提交失败');
+      setError(error.message); pending.reject(error);
+    } finally {
+      if (receipt.current === pending) receipt.current = null;
+      submitting.current = false; setBusy(false); setConfirmation(null);
+    }
+  }
 
   async function submit(ids = selected, status: AskUserAnswer['status'] = 'answered') {
-    if (busy) return;
+    if (submitting.current || receipt.current) return;
     setError('');
     try {
       const answer = validateAskAnswer(ask, {
         status, mode: freeText ? type === 'text' ? 'text' : 'custom' : 'selection',
         selectedIds: ids, selectedLabels: [], text, note: showNote && !freeText ? note : '',
       });
-      setBusy(true);
+      submitting.current = true; setBusy(true);
       await onPick(answer);
     } catch (e) {
       setError(e instanceof Error ? e.message : '提交失败，请重试');
     } finally {
-      setBusy(false);
+      submitting.current = false; setBusy(false);
     }
   }
 
@@ -60,6 +133,23 @@ export default function AskCard({ ask, active, restored, onPick }: Props) {
         {restored && !answered && <span className="ask-card__restored" data-testid="ask-restored"><Sym name="history" aria-hidden="true" />会话已恢复</span>}
       </div>
       <p className="ask-card__question" id={`${id}-question`}>{ask.question}</p>
+      {ask.presentation && (actionable || answered) && <>
+        <WidgetBlock payload={{ html: ask.presentation.html }} dark={dark} readingKey={messageKey}
+          allowPopout={false} disabled={!actionable || busy} answerInput={{ answer: draft, submitted: !actionable,
+            question: { question: ask.question, type, options, allowCustom: ask.allowCustom, minSelections: min, maxSelections: max },
+            onDraft: applyDraft, onSubmit: requestSubmit }} />
+        {actionable && <p className="ask-card__hint">图形无法使用时，请直接使用下方标准作答。未提交草稿刷新后不保留。</p>}
+      </>}
+      {confirmation && actionable && <Modal.Root isOpen onOpenChange={open => { if (!open) cancelVisual(); }}>
+        <Modal.Backdrop><Modal.Container placement="center" size="sm" className={MODAL_CONTAINER_CLASS}>
+          <Modal.Dialog data-testid="ask-visual-confirm">
+            <Modal.Header><Modal.Heading>确认提交回答</Modal.Heading></Modal.Header>
+            <Modal.Body><p>{ask.question}</p><p className="whitespace-pre-wrap">{askAnswerText(confirmation)}</p></Modal.Body>
+            <Modal.Footer><Button variant="tertiary" isDisabled={busy} onPress={cancelVisual}>继续修改</Button>
+              <Button isDisabled={busy} onPress={() => void confirmVisual()}>确认回答</Button></Modal.Footer>
+          </Modal.Dialog>
+        </Modal.Container></Modal.Backdrop>
+      </Modal.Root>}
       {actionable ? (
         <form onSubmit={e => { e.preventDefault(); void submit(); }}>
           <p className="ask-card__hint" role="status">{busy ? '正在提交…' : '等待你的回答'}{!freeText && type === 'multiple' ? ` · 可多选，选择 ${min === max ? min : `${min}–${max}`} 项` : ''}</p>
