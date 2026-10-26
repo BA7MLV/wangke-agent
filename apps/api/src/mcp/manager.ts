@@ -6,6 +6,7 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { McpOAuthProvider } from './oauth.js';
+import { ToolRegistry } from '../agent/tools/registry.js';
 import type { McpCallResult, McpCatalog, McpServer, McpTool } from '../../../../packages/contracts/src/mcp.js';
 import { mcpResultText } from '../../../../packages/contracts/src/mcp.js';
 import { McpRepository, type StoredServer } from './repository.js';
@@ -215,6 +216,7 @@ export class McpManager {
           const params = args.arguments && typeof args.arguments === 'object' && !Array.isArray(args.arguments) ? args.arguments as Record<string, unknown> : {};
           if (action === 'call') {
             if (!c.tools.some(t => !t.kind && t.originalName === name) || latest.disabledTools.includes(name)) throw new Error('mcp_tool_disabled');
+            this.validateArguments(c.tools.find(t => !t.kind && t.originalName === name)!.inputSchema, params);
             result = CallToolResultSchema.parse(await c.client.callTool({ name, arguments: params }, CallToolResultSchema, options));
           } else {
             let data: unknown;
@@ -243,7 +245,13 @@ export class McpManager {
             else throw new Error('mcp_invalid_arguments');
             result = { content: [{ type: 'text', text: JSON.stringify(data) }] };
           }
-        } else result = CallToolResultSchema.parse(await c.client.callTool({ name: tool.originalName, arguments: args }, CallToolResultSchema, options));
+        } else {
+          this.validateArguments(tool.inputSchema, args);
+          result = CallToolResultSchema.parse(await c.client.callTool({ name: tool.originalName, arguments: args }, CallToolResultSchema, options));
+        }
+        signal?.throwIfAborted();
+        const after = this.repository.get(owner, server.id);
+        if (!after?.enabled || after.revision !== c.revision || after.disabledTools.includes(tool.originalName) || (tool.kind === 'gateway' && args.action === 'call' && after.disabledTools.includes(String(args.name)))) throw new Error('mcp_authorization_changed');
         return { text: mcpResultText(result), isError: result.isError === true, durationMs: Date.now() - start, serverName: server.name, toolName: tool.originalName };
       } catch (error) {
         if (signal?.aborted) throw error;
@@ -254,5 +262,11 @@ export class McpManager {
       } finally { c.active--; c.touched = Date.now(); }
     }
     throw new Error('mcp_tool_unavailable');
+  }
+  private validateArguments(schema: object, args: unknown) {
+    const registry = new ToolRegistry();
+    try { registry.register({ type: 'function', function: { name: 'remote', description: '', parameters: schema } }, 'uncertain'); }
+    catch { throw new Error('mcp_schema_unsupported'); }
+    if (!registry.validate('remote', args).ok) throw new Error('mcp_invalid_arguments');
   }
 }

@@ -1,4 +1,5 @@
 import { Ajv, type ValidateFunction } from 'ajv';
+import { BudgetBlocked } from '../budget.js';
 
 export type Recovery = 'read' | 'idempotent' | 'uncertain';
 export type ToolDefinition = { type: string; function: { name: string; description: string; parameters: object } };
@@ -54,13 +55,21 @@ export class ToolRegistry {
     const signal = AbortSignal.any([context.signal, AbortSignal.timeout(entry.timeoutMs)]);
     const scoped: ExecutionContext = { ...context, signal, checkActive: () => { signal.throwIfAborted(); context.checkActive(); } };
     scoped.checkActive();
+    let abort: (() => void) | undefined;
     try {
-      const value = await operation(scoped);
+      const interrupted = new Promise<never>((_resolve, reject) => {
+        abort = () => reject(signal.reason);
+        signal.addEventListener('abort', abort, { once: true });
+      });
+      const value = await Promise.race([operation(scoped), interrupted]);
       scoped.checkActive();
       return { ok: true, value };
-    } catch {
+    } catch (error) {
+      if (error instanceof BudgetBlocked) throw error;
       context.signal.throwIfAborted();
-      return { ok: false, error: { code: signal.aborted ? 'tool_timeout' : 'tool_failed', hint: entry.recovery === 'uncertain' ? 'Side effects may have occurred. Inspect evidence; do not automatically replay.' : 'Check current permissions and input before retrying.' } };
-    }
+      const safeCodes = ['skill_not_available', 'skill_reference_not_found', 'invalid_skill_reference', 'memory_revision_conflict', 'memory_not_found', 'memory_source_tombstoned'];
+      const code = signal.aborted ? 'tool_timeout' : error instanceof Error && safeCodes.includes(error.message) ? error.message : 'tool_failed';
+      return { ok: false, error: { code, hint: entry.recovery === 'uncertain' ? 'Side effects may have occurred. Inspect evidence; do not automatically replay.' : 'Check current permissions and input before retrying.' } };
+    } finally { if (abort) signal.removeEventListener('abort', abort); }
   }
 }

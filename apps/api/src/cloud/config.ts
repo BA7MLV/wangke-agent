@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseStore } from '../storage/database.js';
 import { DEFAULT_AGENT_POLICY, type CloudConfig, type CloudProvider } from '../../../../packages/contracts/src/cloud.js';
+import { validateBudget } from '../agent/budget.js';
 
 export class CloudConfiguration {
   private key: Buffer;
@@ -63,6 +64,7 @@ export class CloudConfiguration {
     if (!policy || !['read', 'write', 'remove', 'shell'].every(k => ['allow', 'ask', 'deny'].includes((policy as any)[k])) ||
         !['allow', 'deny'].includes(policy.network) || !Number.isInteger(policy.maxSteps) || policy.maxSteps < 1 || policy.maxSteps > 1000) throw new Error('invalid_policy');
     const clean: CloudConfig = { providers, llmModel: value.llmModel, visionModel: value.visionModel, asrModel: value.asrModel,
+      ...(value.botBudget ? { botBudget: validateBudget(value.botBudget) } : {}),
       policy: { read: policy.read, write: policy.write, remove: policy.remove, shell: policy.shell, network: policy.network, maxSteps: policy.maxSteps },
       trustedAgentIds: Array.isArray(value.trustedAgentIds) ? value.trustedAgentIds.filter(id => typeof id === 'string' && Boolean(this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=?').get(id, owner))).slice(0, 100) : [] };
     this.store.db.prepare('INSERT INTO cloud_config(owner_id,value,updated_at) VALUES(?,?,?) ON CONFLICT(owner_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
@@ -87,7 +89,7 @@ export class CloudConfiguration {
     return policy;
   }
   audit(owner: string, action: string, detail: unknown) {
-    this.store.db.prepare('INSERT INTO cloud_audit(owner_id,action,detail,created_at) VALUES(?,?,?,?)')
-      .run(owner, action, JSON.stringify(detail), new Date().toISOString());
+    appendAudit(this.store, owner, action, detail);
   }
 }
+import { appendAudit } from '../storage/audit.js';

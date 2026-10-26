@@ -72,6 +72,7 @@ function modelFetch(context: TaskContext): typeof fetch {
       return response;
     } catch (error) {
       context.signal.throwIfAborted();
+      if (error instanceof Error && error.name === 'BudgetBlocked') throw error;
       // Provider errors must not persist URLs, request headers or credentials in task results.
       throw new Error('model_connection_failed');
     }

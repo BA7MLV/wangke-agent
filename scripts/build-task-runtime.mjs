@@ -1,4 +1,7 @@
 import { build } from 'esbuild';
+import { cpSync } from 'node:fs';
+
+cpSync('src/skills/builtin', 'dist-api/src/skills/builtin', { recursive: true });
 
 const result = await build({
   entryPoints: ['apps/api/runtime/node.ts'],

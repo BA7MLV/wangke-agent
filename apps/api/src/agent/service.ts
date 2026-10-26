@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
 import type { BotRunner } from './runner.js';
 const now = () => new Date().toISOString();
+type AppendedMessage = { id: string; threadId: string; clientNonce: string | null; seq: number; role: string; kind: string; content: string; replyTo: string | null; createdAt: string };
 /** Shared, owner-scoped entry point for Web and IM. No synthetic HTTP credentials. */
 export class BotApplicationService {
   constructor(readonly store: DatabaseStore, readonly runner: BotRunner) {}
@@ -21,6 +22,10 @@ export class BotApplicationService {
   }
   append(threadId: string, role: string, kind: string, content: string, nonce: string | null = null, replyTo: string | null = null) {
     return this.store.transaction(() => {
+    if (nonce) {
+      const saved = this.store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? AND client_nonce=?').get(threadId, nonce) as AppendedMessage | undefined;
+      if (saved) return saved;
+    }
     const seq = (this.store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(threadId) as any).seq;
     const id = crypto.randomUUID(), timestamp = now();
     const dto = { id, threadId, clientNonce: nonce, seq, role, kind, content, replyTo, createdAt: timestamp };

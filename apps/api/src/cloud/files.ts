@@ -4,10 +4,22 @@ import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { DatabaseStore } from '../storage/database.js';
+const operationUploads = new Set<string>();
 
 export async function receiveFile(store: DatabaseStore, directory: string, owner: string, stream: Readable,
-  name: string, mime: string, limit: number, declared?: number, checkActive: () => void = () => {}) {
-  const id = crypto.randomUUID();
+  name: string, mime: string, limit: number, declared?: number, checkActive: () => void = () => {}, operationFileId?: string) {
+  const id = operationFileId ?? crypto.randomUUID();
+  if (!/^[a-f0-9-]{36}$/.test(id)) throw new Error('invalid_file_operation');
+  if (operationFileId) {
+    checkActive();
+    const existing = store.db.prepare('SELECT id,original_name AS originalName,mime_type AS mimeType,size_bytes AS sizeBytes,sha256,created_at AS createdAt FROM files WHERE id=? AND owner_id=?').get(id, owner);
+    if (existing) return existing as { id: string; originalName: string; mimeType: string; sizeBytes: number; sha256: string; createdAt: string };
+    if (store.db.prepare('SELECT 1 FROM files WHERE id=?').get(id)) throw new Error('file_operation_not_owned');
+  }
+  const operationKey = `${directory}\0${id}`;
+  // A competing retry must never remove another upload's temporary/final file.
+  if (operationUploads.has(operationKey)) throw new Error('file_operation_inflight');
+  operationUploads.add(operationKey);
   const storageName = `${id}.bin`;
   const temporaryPath = path.join(directory, `.upload-${id}.tmp`);
   const storagePath = path.join(directory, storageName);
@@ -36,7 +48,7 @@ export async function receiveFile(store: DatabaseStore, directory: string, owner
   } catch (error) {
     await Promise.all([fs.promises.rm(temporaryPath, { force: true }), fs.promises.rm(storagePath, { force: true })]);
     throw error;
-  }
+  } finally { operationUploads.delete(operationKey); }
 }
 
 export function byteRange(header: string | undefined, size: number): { start: number; end: number } | null | false {

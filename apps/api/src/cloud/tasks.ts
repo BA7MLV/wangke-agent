@@ -6,6 +6,8 @@ import { CloudRecords } from './records.js';
 import { executeBrowserTask } from './browser.js';
 import { executeMediaTask } from './media.js';
 import { executorFor, type TaskContext, type TaskExecutor } from './execution.js';
+import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
+import { accountedFetch } from '../agent/accounted-fetch.js';
 export { workerIdentity } from './workerAuth.js';
 
 export const TASK_KINDS: CloudTaskKind[] = ['chat', 'qa', 'transcribe', 'handout', 'cards', 'comments', 'danmaku', 'material', 'cover', 'artifactEdit', 'handoutEdit', 'modelOnce'];
@@ -39,17 +41,27 @@ export class CloudTaskRunner {
   private draining = false;
   private timer?: ReturnType<typeof setInterval>;
   private running = new Map<string, Promise<void>>();
+  private retryAt = 0;
+  private failures = 0;
+  private recovered = false;
   private readonly records: CloudRecords;
   constructor(private store: DatabaseStore, private options: RunnerOptions = {}) {
     this.records = options.records ?? new CloudRecords(store);
   }
 
   start(origin: string) {
-    this.store.db.prepare("UPDATE cloud_tasks SET status='interrupted',error='服务器重启，任务已中断，可重试' WHERE status IN ('running','waiting_user')").run();
-    this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE status IN ('pending','approved','consumed') AND task_id IN (SELECT id FROM cloud_tasks WHERE status NOT IN ('running','waiting_user'))").run();
-    this.timer = setInterval(() => void this.drain(origin), 1000);
+    if (this.timer || this.stopped) return;
+    this.timer = setInterval(() => this.schedule(origin), 1000);
     this.timer.unref();
-    void this.drain(origin);
+    this.schedule(origin);
+  }
+  private schedulerFailure() {
+    this.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(5, this.failures++));
+    console.error('cloud_task_scheduler_unavailable');
+  }
+  private schedule(origin: string) {
+    if (this.stopped || Date.now() < this.retryAt) return;
+    void this.drain(origin).catch(() => this.schedulerFailure());
   }
   async cancel(id: string) { this.active.get(id)?.abort(); await this.running.get(id); }
   async close() {
@@ -62,9 +74,16 @@ export class CloudTaskRunner {
     if (this.stopped || this.draining) return;
     this.draining = true;
     try {
+      if (!this.recovered) {
+        this.store.transaction(() => {
+          this.store.db.prepare("UPDATE cloud_tasks SET status='interrupted',error='服务器重启，任务已中断，可重试' WHERE status IN ('running','waiting_user')").run();
+          this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE status IN ('pending','approved','consumed') AND task_id IN (SELECT id FROM cloud_tasks WHERE status NOT IN ('running','waiting_user'))").run();
+        });
+        this.recovered = true;
+      }
       for (const [id, controller] of this.active) {
         const row = this.store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(id) as any;
-        if (row?.status === 'cancelled') controller.abort();
+        if (row?.status === 'cancelled' || this.store.db.prepare("SELECT 1 FROM cloud_tasks t JOIN runs r ON r.id=t.parent_run_id WHERE t.id=? AND r.status IN ('cancelled','failed','paused')").get(id)) controller.abort();
       }
       const limit = Math.max(1, Math.min(4, Number(process.env.CLOUD_CONCURRENCY) || 2));
       const rows = this.store.db.prepare("SELECT * FROM cloud_tasks WHERE status='queued' ORDER BY created_at LIMIT 50").all() as any[];
@@ -77,9 +96,10 @@ export class CloudTaskRunner {
         if (!claim.changes) continue;
         const controller = new AbortController();
         this.active.set(row.id, controller);
-        const promise = this.execute(origin, row, controller.signal).finally(() => { this.active.delete(row.id); this.running.delete(row.id); });
+        const promise = this.execute(origin, row, controller.signal).catch(() => this.schedulerFailure()).finally(() => { this.active.delete(row.id); this.running.delete(row.id); });
         this.running.set(row.id, promise);
       }
+      this.failures = 0; this.retryAt = 0;
     } finally { this.draining = false; }
   }
   private async execute(origin: string, row: any, signal: AbortSignal) {
@@ -96,6 +116,7 @@ export class CloudTaskRunner {
       task.executor = executor;
       const checkActive = () => {
         signal.throwIfAborted();
+        if (row.parent_run_id && this.store.db.prepare("SELECT 1 FROM runs WHERE id=? AND status IN ('cancelled','failed','paused')").get(row.parent_run_id)) throw new Error('parent_run_not_active');
         if (this.stopped || (this.store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(row.id) as { status: string } | undefined)?.status !== 'running') {
           throw new DOMException('任务已停止', 'AbortError');
         }
@@ -105,7 +126,12 @@ export class CloudTaskRunner {
         task, owner: row.owner_id, store: this.store, records: this.records,
         configuration: this.options.configuration ?? new CloudConfiguration(this.store, path.join(directory, 'config')),
         filesDir: this.options.filesDir ?? process.env.FILES_DIR ?? path.join(directory, 'files'),
-        signal, fetch: this.options.fetch ?? fetch, checkActive,
+        signal, fetch: row.parent_run_id ? async (url, init) => {
+          checkActive();
+          const response = await accountedFetch(new UsageLedger(this.store, this.options.configuration), { owner: row.owner_id, run: row.parent_run_id, step: row.parent_step_id, task: row.id, purpose: `study:${row.kind}` }, (this.options.configuration?.get(row.owner_id, true).providers ?? []), this.options.fetch ?? fetch)(url, init);
+          checkActive();
+          return response;
+        } : this.options.fetch ?? fetch, checkActive,
         report: progress => {
           checkActive();
           this.store.db.prepare("UPDATE cloud_tasks SET progress=?,updated_at=? WHERE id=? AND status='running'")
@@ -115,10 +141,11 @@ export class CloudTaskRunner {
       const execute = this.options.executors?.[executor] ?? (executor === 'node' ? executeNodeTask
         : executor === 'media' ? executeMediaTask : (ctx: TaskContext) => executeBrowserTask(ctx, origin));
       const result = await execute(context);
-      signal.throwIfAborted();
+      checkActive();
       this.store.db.prepare("UPDATE cloud_tasks SET status='completed',result=?,error=NULL,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
         .run(JSON.stringify(result ?? null), new Date().toISOString(), row.id);
     } catch (error) {
+      if (error instanceof BudgetBlocked && row.parent_run_id) this.store.db.prepare("UPDATE runs SET status='paused',error_code=? WHERE id=? AND status NOT IN ('completed','cancelled','failed')").run(error.code, row.parent_run_id);
       const message = error instanceof Error ? error.message : '执行器运行失败';
       this.store.db.prepare("UPDATE cloud_tasks SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
         .run(this.stopped ? 'interrupted' : signal.aborted ? 'cancelled' : 'failed', message.slice(0, 1000), new Date().toISOString(), row.id);

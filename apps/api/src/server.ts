@@ -11,6 +11,8 @@ import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '
 import { DatabaseStore } from './storage/database.js';
 import { BootstrapRepository } from './storage/bootstrapRepository.js';
 import { BotRunner } from './agent/runner.js';
+import { registerBotManagement } from './agent/routes.js';
+import { MemoryWorker } from './agent/memory-worker.js';
 import { BotApplicationService } from './agent/service.js';
 import { StudyTools } from './agent/study.js';
 import { GatewayCore } from './gateway/core.js';
@@ -83,6 +85,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const mcp = new McpManager(new McpRepository(store, cloudConfig));
   const study = new StudyTools(store, cloudConfig, filesDir, options.fetch);
   const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, study, mcp });
+  const memoryWorker = new MemoryWorker(store, cloudConfig, options.fetch);
   const botService = new BotApplicationService(store, runner);
   // Factories are account-scoped; a plugin never resolves another owner's file.
   const gateway = new GatewayCore(store, cloudConfig, botService, {
@@ -100,6 +103,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.addContentTypeParser('application/octet-stream', (_request, stream, done) => done(null, stream));
   app.addContentTypeParser(/^multipart\/form-data/, (_request, stream, done) => done(null, stream));
   runner.start();
+  memoryWorker.start();
   gateway.start();
   const attempts = new Map<string, { count: number; until: number; seen: number }>();
   const dummyHash = argon2.hash('unusable-login-dummy', { type: argon2.argon2id });
@@ -201,6 +205,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });
+      if (store.db.prepare("SELECT 1 FROM cloud_tasks t JOIN runs r ON r.id=t.parent_run_id WHERE t.id=? AND r.status IN ('cancelled','failed','paused')").get(worker.taskId)) return reply.code(403).send({ error: 'worker_parent_inactive' });
     }
     if (request.url.split('?')[0] === '/api/v1/files' && request.method === 'POST') {
       if (!checkOrigin(request, reply)) return;
@@ -581,7 +586,8 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
 
   if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
   registerGatewayRoutes(app, gateway, requireAuth, checkOrigin);
-  app.addHook('onClose', async () => { await gateway.close(); await cloudRunner.close(); await runner.close(); await mcp.close(); store.close(); });
+  registerBotManagement(app, store, cloudConfig, runner, memoryWorker, requireAuth, checkOrigin);
+  app.addHook('onClose', async () => { await gateway.close(); await memoryWorker.close(); await cloudRunner.close(); await runner.close(); await mcp.close(); store.close(); });
   return app;
 }
 

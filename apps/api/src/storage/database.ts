@@ -284,6 +284,7 @@ const MIGRATIONS: Array<[number, string]> = [
     ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
   `],
   [16, `
+    CREATE INDEX cloud_audit_owner_id ON cloud_audit(owner_id,id);
     ALTER TABLE threads ADD COLUMN skill_ids TEXT;
     ALTER TABLE runs ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0;
     ALTER TABLE runs ADD COLUMN budget_json TEXT;
@@ -292,7 +293,7 @@ const MIGRATIONS: Array<[number, string]> = [
       step_id TEXT, task_id TEXT, purpose TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
       attempt INTEGER NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL,
       reserved_tokens INTEGER NOT NULL, input_tokens INTEGER, output_tokens INTEGER, cache_tokens INTEGER,
-      cost REAL, pricing_source TEXT, usage_source TEXT NOT NULL DEFAULT 'unknown'
+      cost REAL, pricing_source TEXT, price_json TEXT, usage_source TEXT NOT NULL DEFAULT 'unknown'
     );
     CREATE INDEX bot_requests_owner_day ON bot_requests(owner_id,started_at);
     CREATE INDEX bot_requests_run ON bot_requests(run_id);
@@ -327,6 +328,10 @@ const MIGRATIONS: Array<[number, string]> = [
       next_at INTEGER NOT NULL DEFAULT 0
     );
   `],
+  [17, `
+    ALTER TABLE gateway_inbox ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0;
+    UPDATE gateway_inbox SET received_at=CAST(strftime('%s','now') AS INTEGER)*1000;
+  `],
 ];
 
 export class DatabaseStore {
@@ -338,7 +343,7 @@ export class DatabaseStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
-    this.migrate();
+    try { this.migrate(); } catch (error) { this.db.close(); throw error; }
   }
 
   private migrate() {
@@ -358,7 +363,7 @@ export class DatabaseStore {
       const columns = (db: Database.Database, table: string) => db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
       const expected = new Database(':memory:');
       try {
-        for (const [, sql] of MIGRATIONS) expected.exec(sql);
+        for (const [version, sql] of MIGRATIONS) if (version <= 15) expected.exec(sql);
         const groups = [
           { version: 13, tables: ['gateway_accounts', 'gateway_pairings', 'gateway_bindings', 'gateway_inbox', 'gateway_outbox', 'bot_reminders'], extra: [['cloud_tasks', 'parent_run_id'], ['cloud_tasks', 'parent_step_id'], ['approvals', 'cloud_permission_id']] },
           { version: 14, tables: ['gateway_projection_failures'], extra: [] },
@@ -369,9 +374,10 @@ export class DatabaseStore {
           if (markers.some(Boolean) && !markers.every(Boolean)) throw new Error(`schema_layout_partial_v${group.version}: restore a consistent backup before upgrading`);
           if (markers.every(Boolean)) {
             for (const table of group.tables) {
-              const actual = columns(this.db, table);
+              const actual = columns(this.db, table).filter(c => !(current.version >= 17 && table === 'gateway_inbox' && c.name === 'received_at'));
               const trusted = columns(expected, table);
               if (JSON.stringify(actual) !== JSON.stringify(trusted)) throw new Error(`schema_layout_untrusted_${table}`);
+              if (JSON.stringify(this.db.prepare(`PRAGMA foreign_key_list(${table})`).all()) !== JSON.stringify(expected.prepare(`PRAGMA foreign_key_list(${table})`).all())) throw new Error(`schema_foreign_keys_untrusted_${table}`);
             }
             for (const [table, name] of group.extra) {
               const actual = columns(this.db, table).find(c => c.name === name);
