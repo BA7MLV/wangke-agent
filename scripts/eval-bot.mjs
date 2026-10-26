@@ -33,7 +33,7 @@ for (const fixture of fixtures) for (let repeat = 1; repeat <= repeats; repeat++
     const configuration = new CloudConfiguration(store, path.join(directory, 'config'));
     const defaults = configuration.get(owner, true);
     configuration.save(owner, { ...(configured ?? defaults), providers: configured?.providers ?? [{ id: 'offline', name: 'Offline fake — not quality evaluation', baseUrl: 'https://offline.invalid/v1', protocol: 'openai-chat', apiKey: 'not-real', catalogId: '', serves: ['chat'] }], llmModel: configured?.llmModel ?? { providerId: 'offline', model: 'scripted' }, policy: { ...defaults.policy, read: 'allow', write: 'allow', remove: 'deny', ...fixture.policy }, botBudget: { ...DEFAULT_BOT_BUDGET, ...configured?.botBudget, ...(real ? { runCost: Number(process.env.BOT_EVAL_MAX_COST) / (fixtures.length * repeats) } : {}), ...(fixture.tinyBudget ? { runTokens: 100 } : {}) } });
-    const records = new CloudRecords(store), course = { id: 'course-a', name: 'Biology' };
+    const records = new CloudRecords(store), course = { id: 'course-a', name: 'Biology', size: 0, mimeType: 'video/mp4', duration: 90, createdAt: 1, status: 'transcribed' };
     const seed = (table, key, after) => records.apply(owner, [{ id: crypto.randomUUID(), table, key, before: null, after }]);
     seed('videos', 'course-a', course);
     for (let id = 1; id <= 3; id++) seed('segments', id, { id, videoId: 'course-a', idx: id - 1, start: (id - 1) * 30, end: id * 30, text: 'A cell is the basic unit of life. Mitochondria produce energy.', status: 1 });
@@ -46,6 +46,8 @@ for (const fixture of fixtures) for (let repeat = 1; repeat <= repeats; repeat++
       if (Array.isArray(input)) return input.map(value);
       if (input && typeof input === 'object') return Object.fromEntries(Object.entries(input).map(([k, v]) => [k, value(v)]));
       if (input === '@course') return course;
+      if (input === '@renamedCourse') return { ...course, name: 'Biology Review' };
+      if (input === '@forbiddenCourse') return { ...course, name: 'Forbidden' };
       if (input === '@future') return new Date(Date.now() + 3600000).toISOString();
       if (input === '@task') return store.db.prepare('SELECT id FROM cloud_tasks ORDER BY created_at DESC LIMIT 1').get()?.id;
       if (input === '@artifact') return store.db.prepare('SELECT id FROM bot_artifacts ORDER BY created_at DESC LIMIT 1').get()?.id;

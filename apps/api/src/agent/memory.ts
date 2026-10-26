@@ -6,6 +6,40 @@ export interface MemoryInput { scope: 'owner' | 'bot' | 'course'; scopeId: strin
 export type MemoryRow = { id: string; owner_id: string; scope: MemoryInput['scope']; scope_id: string; kind: MemoryInput['kind']; content: string; source: string; source_revision: string | null; revision: number; status: string; origin: string; created_at: string; updated_at: string };
 export class BotMemory {
   constructor(readonly store: DatabaseStore) {}
+  private sourceRevision(owner: string, value: MemoryInput): string | undefined {
+    const { source } = value;
+    if (value.kind === 'course_fact' && !source.startsWith('record:') && !source.startsWith('file:')) throw new Error('course_fact_requires_locatable_source');
+    if (source.startsWith('record:')) {
+      const [, table, ...parts] = source.split(':');
+      if (!['videos', 'segments', 'materialBlocks', 'handouts', 'cards', 'subtitleTracks', 'comments', 'danmakus', 'files', 'courseFiles'].includes(table)) throw new Error('invalid_memory_source');
+      let key: unknown;
+      try { key = JSON.parse(parts.join(':')); } catch { throw new Error('invalid_memory_source'); }
+      if (typeof key !== 'string' && typeof key !== 'number') throw new Error('invalid_memory_source');
+      const row = this.store.db.prepare('SELECT revision,value FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?').get(owner, table, JSON.stringify(key)) as { revision: number; value: string | null } | undefined;
+      if (!row?.value) throw new Error('memory_source_not_found');
+      const record = JSON.parse(row.value) as Record<string, unknown>;
+      const course = ['videos', 'files', 'courseFiles'].includes(table) ? record.id : record.videoId ?? record.materialId;
+      if (value.scope === 'course' && course !== value.scopeId) throw new Error('memory_source_course_mismatch');
+      return String(row.revision);
+    }
+    if (source.startsWith('file:')) {
+      const id = source.slice(5);
+      const row = this.store.db.prepare('SELECT id,created_at FROM files WHERE id=? AND owner_id=?').get(id, owner) as { id: string; created_at: string } | undefined;
+      if (!row) throw new Error('memory_source_not_found');
+      if (value.scope === 'course') {
+        const linked = this.store.db.prepare("SELECT 1 FROM cloud_records WHERE owner_id=? AND record_key=? AND value IS NOT NULL AND (table_name='courseFiles' AND json_extract(value,'$.fileId')=? OR table_name='files' AND json_extract(value,'$.blob.$file')=?)").get(owner, JSON.stringify(value.scopeId), id, id);
+        if (!linked) throw new Error('memory_source_course_mismatch');
+      }
+      return `${row.id}:${row.created_at}`;
+    }
+    if (source.startsWith('message:') || source.startsWith('run:')) {
+      const message = source.startsWith('message:');
+      if (!this.store.db.prepare(`SELECT 1 FROM ${message ? 'messages' : 'runs'} s JOIN threads t ON t.id=s.thread_id WHERE s.id=? AND t.owner_id=?`).get(source.slice(source.indexOf(':') + 1), owner)) throw new Error('memory_source_not_found');
+      return undefined;
+    }
+    if (!source.startsWith('user:')) throw new Error('invalid_memory_source');
+    return undefined; // Explicit manual preference, not a claimed document revision.
+  }
   private validate(owner: string, value: MemoryInput) {
     if (!['owner', 'bot', 'course'].includes(value.scope) || !['preference', 'course_fact'].includes(value.kind) || typeof value.content !== 'string' || !value.content.trim() || value.content.length > 8000 || typeof value.source !== 'string' || !value.source || value.source.length > 300 || typeof value.scopeId !== 'string') throw new Error('invalid_memory');
     if (value.scope === 'owner' && value.scopeId !== '') throw new Error('invalid_memory_scope');
@@ -19,6 +53,7 @@ export class BotMemory {
     return this.store.db.prepare(`SELECT * FROM bot_memories WHERE owner_id=? AND (? OR status!='deleted') AND instr(lower(content),lower(?))>0 ORDER BY updated_at DESC,id LIMIT 50 OFFSET ?`).all(owner, Number(includeDeleted), query.slice(0, 200), Math.max(0, offset)) as MemoryRow[];
   }
   get(owner: string, id: string) {
+    this.refreshStale(owner);
     const row = this.store.db.prepare('SELECT * FROM bot_memories WHERE id=? AND owner_id=?').get(id, owner) as MemoryRow | undefined;
     if (!row) throw new Error('memory_not_found');
     return row;
@@ -26,6 +61,7 @@ export class BotMemory {
   save(owner: string, value: MemoryInput, options: { id?: string; revision?: number; origin?: 'explicit' | 'consolidated' } = {}) {
     this.validate(owner, value);
     return this.store.transaction(() => {
+      value = { ...value, sourceRevision: this.sourceRevision(owner, value) };
       const existing = options.id ? this.get(owner, options.id) : undefined;
       if (existing && existing.revision !== options.revision) throw new Error('memory_revision_conflict');
       if (options.origin === 'consolidated' && this.store.db.prepare("SELECT 1 FROM bot_memories WHERE owner_id=? AND source=? AND scope=? AND scope_id=? AND status='deleted'").get(owner, value.source, value.scope, value.scopeId)) throw new Error('memory_source_tombstoned');
@@ -60,14 +96,21 @@ export class BotMemory {
     if (!version) throw new Error('memory_version_not_found');
     const row = JSON.parse(version.value) as MemoryRow;
     if (row.status === 'deleted') throw new Error('cannot_restore_tombstone');
-    return this.save(owner, { scope: row.scope, scopeId: row.scope_id, kind: row.kind, content: row.content, source: row.source, sourceRevision: row.source_revision ?? undefined }, { id, revision: expected });
+    const input = { scope: row.scope, scopeId: row.scope_id, kind: row.kind, content: row.content, source: row.source };
+    if (row.kind === 'course_fact' && this.sourceRevision(owner, input) !== row.source_revision) throw new Error('memory_source_changed');
+    return this.save(owner, input, { id, revision: expected });
   }
   refreshStale(owner: string) {
-    const rows = this.store.db.prepare("SELECT * FROM bot_memories WHERE owner_id=? AND status='active' AND source LIKE 'record:%'").all(owner) as MemoryRow[];
+    const rows = this.store.db.prepare("SELECT * FROM bot_memories WHERE owner_id=? AND status='active'").all(owner) as MemoryRow[];
     for (const row of rows) {
-      const [, table, ...key] = row.source.split(':');
-      const record = this.store.db.prepare('SELECT revision,value FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?').get(owner, table, key.join(':')) as { revision: number; value: string | null } | undefined;
-      if (!record?.value || String(record.revision) !== row.source_revision) this.store.db.prepare("UPDATE bot_memories SET status='stale' WHERE id=? AND status='active'").run(row.id);
+      let stale = false;
+      try {
+        const input = { scope: row.scope, scopeId: row.scope_id, kind: row.kind, content: row.content, source: row.source };
+        this.validate(owner, input);
+        const revision = this.sourceRevision(owner, input);
+        stale = (revision ?? null) !== row.source_revision;
+      } catch { stale = true; }
+      if (stale) this.store.db.prepare("UPDATE bot_memories SET status='stale' WHERE id=? AND status='active'").run(row.id);
     }
   }
   context(owner: string, thread: string) {

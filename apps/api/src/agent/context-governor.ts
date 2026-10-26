@@ -5,8 +5,9 @@ import type { ToolDefinition } from './tools/registry.js';
 import { BudgetBlocked } from './budget.js';
 import { BotArtifacts } from './artifacts.js';
 import { publishBotEvent } from './events.js';
+import { textTokens } from './request-budget.js';
 
-/** Conservative estimate (UTF-16 chars / 2), not an exact tokenizer. Raw
+/** Conservative wire estimate, not an exact tokenizer. Raw
  * context and step evidence are never modified by compaction. */
 export class ContextGovernor {
   constructor(readonly store: DatabaseStore) {}
@@ -20,15 +21,15 @@ export class ContextGovernor {
     const id = crypto.createHash('sha256').update(`completed\0${run}`).digest('hex');
     this.store.db.prepare('INSERT OR IGNORE INTO bot_summaries(id,run_id,source_start,source_end,version,model,content,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, run, 0, history.length, 1, 'extractive-v1:no-model', content, new Date().toISOString());
   }
-  view(owner: string, run: string, history: ModelMessage[], tools: ToolDefinition[], capacity: number): ModelMessage[] {
-    const fits = (messages: ModelMessage[]) => Math.ceil((JSON.stringify(messages).length + JSON.stringify(tools).length) / 2) + 4096 <= capacity;
+  view(owner: string, run: string, history: ModelMessage[], tools: ToolDefinition[], capacity: number, estimate = (messages: ModelMessage[]) => textTokens({ messages, tools }) + 4096): ModelMessage[] {
+    const fits = (messages: ModelMessage[]) => estimate(messages) <= capacity;
     if (fits(history)) return history;
     const artifacts = new BotArtifacts(this.store);
     const view = history.map((message, index) => message.role === 'tool' && (message.content?.length ?? 0) > 2000
-      ? { ...message, content: JSON.stringify(artifacts.put(owner, run, message.tool_call_id ?? `context:${index}`, message.content!)) } : { ...message });
+      ? { ...message, content: JSON.stringify({ ...artifacts.put(owner, run, message.tool_call_id ?? `context:${index}`, message.content!), preview: message.content!.slice(0, 200) }) } : { ...message });
     if (fits(view)) return view;
     // Start at an assistant envelope or user message, never inside a tool pair.
-    let cut = Math.max(1, view.length - 8);
+    let cut = Math.max(1, view.length - 4);
     while (cut > 1 && view[cut]?.role === 'tool') cut--;
     if (cut <= 1) throw new BudgetBlocked('context_capacity_exceeded');
     const source = view.slice(1, cut);
@@ -37,9 +38,9 @@ export class ContextGovernor {
       'Goals, explicit constraints and pending user requests (verbatim):',
       ...source.filter(m => m.role === 'user').map(m => m.content ?? ''),
       'Execution evidence and unfinished/approval status references:',
-      ...source.filter(m => m.role === 'tool').map(m => {
+      ...source.filter(m => m.role === 'tool').map((m, index, evidence) => {
         const artifact = artifacts.put(owner, run, m.tool_call_id ?? 'summary', m.content ?? '');
-        return `step=${m.tool_call_id} artifact=${artifact.artifactId}: ${(m.content ?? '').slice(0, 200)}`;
+        return `step=${m.tool_call_id} artifact=${artifact.artifactId}${index >= evidence.length - 8 ? `: ${(m.content ?? '').slice(0, 80)}` : ''}`;
       }),
       'Original history is preserved in the run checkpoint and run_steps; missing/interrupted results are not successes.',
     ].join('\n');

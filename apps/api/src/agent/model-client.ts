@@ -1,4 +1,5 @@
-import type { RequestAttribution, UsageLedger } from './budget.js';
+import { BudgetBlocked, type RequestAttribution, type UsageLedger } from './budget.js';
+import { boundedRequest, checkRequestCapacity } from './request-budget.js';
 
 type JsonObject = Record<string, unknown>;
 const object = (v: unknown): JsonObject | undefined => v && typeof v === 'object' && !Array.isArray(v) ? v as JsonObject : undefined;
@@ -73,6 +74,14 @@ async function sleep(ms: number, signal: AbortSignal) {
 export class ModelClient {
   constructor(readonly ledger: UsageLedger, readonly fetcher: typeof fetch = fetch) {}
   async request(url: string, init: RequestInit, attribution: RequestAttribution, reserveTokens: number, options: { attempts?: number; timeoutMs?: number; chainMs?: number } = {}): Promise<unknown> {
+    if (typeof init.body === 'string') {
+      const payload: unknown = JSON.parse(init.body);
+      if (!object(payload)) throw new Error('invalid_model_body');
+      const request = boundedRequest(payload as JsonObject, url);
+      checkRequestCapacity(request.total, this.ledger.limits(attribution.owner, attribution.run).contextTokens);
+      reserveTokens = request.total;
+      init = { ...init, body: JSON.stringify(request.body) };
+    }
     const signal = AbortSignal.any([init.signal ?? new AbortController().signal, AbortSignal.timeout(options.chainMs ?? 120000)]);
     for (let attempt = 1; attempt <= (options.attempts ?? 3); attempt++) {
       signal.throwIfAborted();
@@ -93,11 +102,14 @@ export class ModelClient {
         }
         const body = await abortable(limitedJson(response), requestSignal);
         requestSignal.throwIfAborted();
-        this.ledger.settle(id, 'completed', modelUsage(body));
+        if (this.ledger.settle(id, 'completed', modelUsage(body))) throw new BudgetBlocked('model_usage_exceeded_reservation');
+        this.ledger.checkAdmission(attribution);
         return body;
       } catch (error) {
         this.ledger.settle(id, signal.aborted ? 'cancelled' : error instanceof ModelFailure ? error.code : 'network_unknown');
         signal.throwIfAborted();
+        if (error instanceof BudgetBlocked) throw error;
+        this.ledger.checkAdmission(attribution);
         failure = error instanceof ModelFailure ? error : new ModelFailure('model_connection_failed', true);
       }
       if (!failure.retryable || attempt === (options.attempts ?? 3)) throw failure;

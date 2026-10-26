@@ -30,6 +30,7 @@ try {
   const thread = service.create(owner, 'bot', 'Service regression');
   const message = service.send(owner, thread.id, { clientNonce: 'services', content: 'Keep my explicit constraint' });
   const run = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(message.id).id;
+  store.db.prepare("UPDATE runs SET status='running' WHERE id=?").run(run);
   const attribution = { owner, run, purpose: 'bot', provider: 'fake', model: 'fake' };
   let ledger = new UsageLedger(store, configuration);
   const first = ledger.reserve(attribution, 1, 600);

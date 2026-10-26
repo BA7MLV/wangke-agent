@@ -27,11 +27,19 @@ export class UsageLedger {
     const row = run ? this.store.db.prepare('SELECT budget_json FROM runs WHERE id=?').get(run) as { budget_json: string | null } | undefined : undefined;
     return validateBudget({ ...defaults, ...(row?.budget_json ? JSON.parse(row.budget_json) : {}) });
   }
+  checkAdmission(a: RequestAttribution) {
+    if (a.run) {
+      const row = this.store.db.prepare('SELECT r.status FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(a.run, a.owner) as { status: string } | undefined;
+      if (!row) throw new Error('request_run_not_owned');
+      const allowed = a.purpose === 'memory' ? ['completed'] : a.purpose.startsWith('study:') && a.task ? ['running', 'queued', 'waiting_user', 'completed'] : ['running'];
+      if (!allowed.includes(row.status)) throw new Error('request_run_not_active');
+    }
+    if (a.task && !this.store.db.prepare("SELECT 1 FROM cloud_tasks WHERE id=? AND owner_id=? AND parent_run_id=? AND status IN ('running','waiting_user')").get(a.task, a.owner, a.run ?? null)) throw new Error('request_task_not_active_or_owned');
+  }
   reserve(a: RequestAttribution, attempt: number, tokens: number) {
     return this.store.transaction(() => {
       if (!Number.isSafeInteger(tokens) || tokens < 1 || !Number.isSafeInteger(attempt) || attempt < 1) throw new Error('invalid_request_reservation');
-      if (a.run && !this.store.db.prepare('SELECT 1 FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(a.run, a.owner)) throw new Error('request_run_not_owned');
-      if (a.task && !this.store.db.prepare('SELECT 1 FROM cloud_tasks WHERE id=? AND owner_id=? AND parent_run_id=?').get(a.task, a.owner, a.run ?? null)) throw new Error('request_task_not_owned');
+      this.checkAdmission(a);
       const limits = this.limits(a.owner, a.run);
       const sum = (where: string, params: string[]) => (this.store.db.prepare(`SELECT COALESCE(SUM(COALESCE(input_tokens+output_tokens,reserved_tokens)),0) AS tokens FROM bot_requests WHERE ${where}`).get(...params) as { tokens: number }).tokens;
       if (sum('owner_id=? AND started_at>=?', [a.owner, new Date().toISOString().slice(0, 10)]) + tokens > limits.dayTokens) throw new BudgetBlocked('owner_daily_token_budget');
@@ -55,12 +63,18 @@ export class UsageLedger {
     });
   }
   settle(id: string, status: string, usage?: { input: number; output: number; cache?: number; cacheCreation?: number }) {
-    this.store.transaction(() => {
-      const row = this.store.db.prepare("SELECT * FROM bot_requests WHERE id=? AND ended_at IS NULL").get(id) as (RequestAttribution & { owner_id: string; run_id: string | null; price_json: string | null }) | undefined;
-      if (!row) return;
+    return this.store.transaction(() => {
+      const row = this.store.db.prepare("SELECT * FROM bot_requests WHERE id=? AND ended_at IS NULL").get(id) as (RequestAttribution & { owner_id: string; run_id: string | null; price_json: string | null; reserved_tokens: number }) | undefined;
+      if (!row) return false;
       const price = row.price_json ? JSON.parse(row.price_json) as BotBudget['prices'][number] : undefined;
       this.store.db.prepare('UPDATE bot_requests SET ended_at=?,status=?,input_tokens=?,output_tokens=?,cache_tokens=?,cost=?,usage_source=? WHERE id=? AND ended_at IS NULL').run(new Date().toISOString(), status, usage?.input ?? null, usage?.output ?? null, usage?.cache ?? null, usage && price ? ((usage.input + (usage.cacheCreation ?? 0)) * price.inputPerMillion + usage.output * price.outputPerMillion) / 1000000 : null, usage ? usage.cacheCreation ? 'provider_tokens:cache_write_2x_estimate' : 'provider' : 'unknown_reserved', id);
       publishBotEvent(this.store, { owner: row.owner_id, run: row.run_id ?? undefined, requestId: id, type: 'model.finished', status });
+      // Provider usage is authoritative, even when it violates the estimate.
+      // Preserve the full overage and stop future tools/requests (not a refund
+      // or an impossible promise to undo already billed provider tokens).
+      const exceeded = !!usage && usage.input + usage.output > row.reserved_tokens;
+      if (exceeded && row.run_id) this.store.db.prepare("UPDATE runs SET status='paused',error_code='model_usage_exceeded_reservation' WHERE id=? AND status IN ('running','queued','waiting_user')").run(row.run_id);
+      return exceeded;
     });
   }
 }

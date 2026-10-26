@@ -1,25 +1,33 @@
 import type { CloudProvider } from '../../../../packages/contracts/src/cloud.js';
-import { UsageLedger, type RequestAttribution } from './budget.js';
+import { BudgetBlocked, UsageLedger, type RequestAttribution } from './budget.js';
 import { modelUsage } from './model-client.js';
+import { boundedRequest, checkRequestCapacity } from './request-budget.js';
 
 /** Instrument the existing learning/proxy protocol implementation rather than
  * adding a second converter or counting parent and child requests twice. */
 export function accountedFetch(ledger: UsageLedger, base: Omit<RequestAttribution, 'provider' | 'model'>, providers: CloudProvider[], fetcher: typeof fetch): typeof fetch {
   let attempt = 0;
   return async (url, init) => {
+    if (!base.run) return fetcher(url, init); // Ordinary non-Bot traffic is unchanged.
     const endpoint = String(url);
-    const provider = providers.find(p => endpoint.startsWith(`${p.baseUrl}/`) && /\/(chat\/completions|responses|messages)$/.test(endpoint));
-    if (!provider) return fetcher(url, init);
+    const modelEndpoint = /\/(chat\/completions|responses|messages)$/.test(new URL(endpoint).pathname);
+    const provider = providers.find(p => endpoint.startsWith(`${p.baseUrl}/`) && modelEndpoint);
+    if (!provider) { if (modelEndpoint) throw new Error('model_attribution_missing'); return fetcher(url, init); }
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { model?: string; max_tokens?: number; max_output_tokens?: number } : undefined;
     if (!body || typeof body.model !== 'string') throw new Error('model_attribution_missing');
-    const id = ledger.reserve({ ...base, provider: provider.id, model: body.model }, ++attempt, Math.ceil(String(init?.body).length / 2) + Math.max(4096, Number(body.max_output_tokens ?? body.max_tokens) || 4096));
+    const request = boundedRequest(body, endpoint);
+    checkRequestCapacity(request.total, ledger.limits(base.owner, base.run).contextTokens);
+    const attribution = { ...base, provider: provider.id, model: body.model };
+    const id = ledger.reserve(attribution, ++attempt, request.total);
     try {
-      const response = await fetcher(url, init);
+      const response = await fetcher(url, { ...init, body: JSON.stringify(request.body) });
+      ledger.checkAdmission(attribution);
       if (!response.ok) { ledger.settle(id, `http_${response.status}`); return response; }
       if (!response.headers.get('content-type')?.includes('text/event-stream')) {
         let usage;
         try { usage = modelUsage(await response.clone().json()); } catch { /* unknown remains reserved */ }
-        ledger.settle(id, 'completed', usage);
+        if (ledger.settle(id, 'completed', usage)) throw new BudgetBlocked('model_usage_exceeded_reservation');
+        ledger.checkAdmission(attribution);
         return response;
       }
       let usage: ReturnType<typeof modelUsage>, pending = '';
@@ -38,12 +46,13 @@ export function accountedFetch(ledger: UsageLedger, base: Omit<RequestAttributio
       const decoder = new TextDecoder();
       const observed = response.body?.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
         transform(chunk, controller) {
+          ledger.checkAdmission(attribution);
           pending += decoder.decode(chunk, { stream: true });
           const lines = pending.split('\n'); pending = lines.pop()!.slice(-65536);
           for (const line of lines) observe(line);
           controller.enqueue(chunk);
         },
-        flush() { observe(pending + decoder.decode()); ledger.settle(id, 'completed', usage); },
+        flush() { observe(pending + decoder.decode()); if (ledger.settle(id, 'completed', usage)) throw new BudgetBlocked('model_usage_exceeded_reservation'); ledger.checkAdmission(attribution); },
       }));
       // Interrupted streams retain an inflight/unknown reservation, including
       // process death, rather than advertising zero consumption.
