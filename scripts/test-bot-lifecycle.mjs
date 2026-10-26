@@ -95,6 +95,41 @@ await fixture(async ({ store, run, state, start, close }) => {
   for (const c of calls) assert.equal(store.db.prepare('SELECT status FROM run_steps WHERE id=?').get(c.id).status, 'interrupted');
 });
 
+// A transient lifecycle-monitor read failure must recover the abandoned run,
+// not merely abort its request and leave status=running with no active task.
+await fixture(async ({ store, run, state, start, close }) => {
+  const prepare = store.db.prepare.bind(store.db);
+  let inject = false, faulted = false, modelCalls = 0, aborted = false;
+  const unhandled = [];
+  const onRejected = error => unhandled.push(error);
+  process.on('unhandledRejection', onRejected);
+  store.db.prepare = sql => {
+    if (inject && !faulted && sql === 'SELECT status FROM runs WHERE id=?') {
+      faulted = true;
+      throw new Error('simulated_monitor_db_unavailable');
+    }
+    return prepare(sql);
+  };
+  try {
+    start({ fetch: async (_url, init) => {
+      modelCalls++;
+      if (modelCalls > 1) return batch(['send_message', { kind: 'text', text: 'Recovered after monitor read failure' }]);
+      inject = true;
+      return new Promise((_resolve, reject) => init.signal.addEventListener('abort', () => { aborted = true; reject(init.signal.reason); }, { once: true }));
+    } });
+    await until(() => state().status === 'completed');
+    await close();
+    assert.ok(faulted && aborted);
+    assert.equal(modelCalls, 2);
+    assert.equal(state().step_count, 1);
+    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM bot_requests WHERE run_id=?').get(run).n, 2);
+    assert.deepEqual(unhandled, []);
+  } finally {
+    store.db.prepare = prepare;
+    process.off('unhandledRejection', onRejected);
+  }
+});
+
 await fixture(async ({ store, run, owner }) => {
   const ledger = new UsageLedger(store), a = { owner, run, provider: 'fake', model: 'fake', purpose: 'bot' };
   for (const status of ['queued', 'paused', 'cancelled', 'failed', 'completed', 'waiting_user']) { store.db.prepare('UPDATE runs SET status=? WHERE id=?').run(status, run); assert.throws(() => ledger.reserve(a, 1, 10), /not_active/); }

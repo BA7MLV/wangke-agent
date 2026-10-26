@@ -143,7 +143,16 @@ export class BotRunner {
     const appendActive = (kind: string, text: string, nonce?: string) => this.store.transaction(() => { checkActive(); return this.append(run.thread_id, kind, text, nonce); });
     // External child/proxy budget pauses do not call this runner's cancel().
     // Abort outstanding model/tool I/O as well as checking every commit gate.
-    const monitor = setInterval(() => { try { checkActive(); } catch { lifecycle.abort(); } }, 25);
+    const monitor = setInterval(() => {
+      try { checkActive(); }
+      catch {
+        // Expected pause/cancel/timeouts already abort one of these signals.
+        // A failed DB read needs bounded scheduler recovery as well, otherwise
+        // the aborted task leaves an unclaimed status=running row indefinitely.
+        if (!signal.aborted && !lifecycle.signal.aborted) this.schedulerFailure();
+        lifecycle.abort();
+      }
+    }, 25);
     monitor.unref();
     let timeLimit: AbortSignal | undefined;
     try {
