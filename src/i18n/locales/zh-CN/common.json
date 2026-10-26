@@ -28,8 +28,6 @@
     "login": "登录",
     "signingIn": "正在登录…",
     "passkey": "使用 Passkey 登录",
-    "configureTitle": "配置个人云端",
-    "enter": "进入课程",
     "back": "返回",
     "loading": "正在载入课程…",
     "progress": "第 {{current}} 步，共 {{total}} 步",
@@ -37,7 +35,8 @@
       "settle": "散开的方块拼成一棵树",
       "vault": "保险库门",
       "padlock": "挂锁",
-      "hub": "连在一起的节点"
+      "hub": "连在一起的节点",
+      "phone": "手机"
     },
     "errors": {
       "invalid_credentials": "账号或密码不对",
@@ -47,6 +46,46 @@
       "passkey_verification_failed": "Passkey 验证没通过",
       "passkey_unavailable": "Passkey 当前不可用",
       "passkey_cancelled": "Passkey 登录已取消"
+    },
+    "nameTitle": "怎么称呼你",
+    "nameLabel": "你的称呼",
+    "namePlaceholder": "名字或昵称",
+    "models": {
+      "title": "选择模型",
+      "done": "完成",
+      "saving": "正在保存…",
+      "skip": "稍后再说",
+      "none": "未提供",
+      "followChat": "跟随主模型",
+      "clear": "不使用",
+      "use": "使用",
+      "provider": "供应商",
+      "model": "模型",
+      "searchProvider": "搜索供应商",
+      "searchModel": "搜索模型",
+      "custom": "自定义",
+      "baseUrl": "API 地址",
+      "apiKey": "API Key",
+      "apiKeySaved": "API Key 已保存",
+      "modelId": "模型 ID",
+      "slot": {
+        "chat": "主模型",
+        "vision": "图片理解",
+        "asr": "语音识别",
+        "decision": "决策模型"
+      },
+      "hint": {
+        "chat": "负责讲义生成与课程问答，支持视觉时也可直接读图",
+        "vision": "主模型可读图时自动复用，否则使用已添加的图片理解模型；也可独立指定",
+        "asr": "把视频音轨转成字幕，可以和文本模型不在同一家",
+        "decision": "可选：负责技能路由与历史筛选，不生成回答；选择后需单独开启功能"
+      },
+      "cap": {
+        "vision": "读图",
+        "audio": "音频",
+        "reasoning": "思考",
+        "tools": "工具"
+      }
     }
   }
 }

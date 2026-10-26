@@ -28,8 +28,6 @@
     "login": "Sign in",
     "signingIn": "Signing in…",
     "passkey": "Sign in with Passkey",
-    "configureTitle": "Set up your cloud",
-    "enter": "Open courses",
     "back": "Back",
     "loading": "Loading courses…",
     "progress": "Step {{current}} of {{total}}",
@@ -37,7 +35,8 @@
       "settle": "Scattered tiles settling into a tree",
       "vault": "A vault door",
       "padlock": "A padlock",
-      "hub": "Connected nodes"
+      "hub": "Connected nodes",
+      "phone": "Phone"
     },
     "errors": {
       "invalid_credentials": "Wrong username or password",
@@ -47,6 +46,46 @@
       "passkey_verification_failed": "Passkey check failed",
       "passkey_unavailable": "Passkey isn't available right now",
       "passkey_cancelled": "Passkey sign-in cancelled"
+    },
+    "nameTitle": "What should we call you?",
+    "nameLabel": "Your name",
+    "namePlaceholder": "Name or nickname",
+    "models": {
+      "title": "Choose models",
+      "done": "Done",
+      "saving": "Saving…",
+      "skip": "Not now",
+      "none": "Not set",
+      "followChat": "Same as main",
+      "clear": "Remove",
+      "use": "Use",
+      "provider": "Provider",
+      "model": "Model",
+      "searchProvider": "Search providers",
+      "searchModel": "Search models",
+      "custom": "Custom",
+      "baseUrl": "API URL",
+      "apiKey": "API key",
+      "apiKeySaved": "API key saved",
+      "modelId": "Model ID",
+      "slot": {
+        "chat": "Main model",
+        "vision": "Image understanding",
+        "asr": "Speech recognition",
+        "decision": "Decision model"
+      },
+      "hint": {
+        "chat": "Writes handouts and answers course questions; reads images too when it supports vision",
+        "vision": "Reuses the main model when it can read images, otherwise an added vision model; can also be set on its own",
+        "asr": "Turns video audio into subtitles; can be from a different provider",
+        "decision": "Optional: routes skills and filters history without writing answers; turn its features on separately"
+      },
+      "cap": {
+        "vision": "Vision",
+        "audio": "Audio",
+        "reasoning": "Reasoning",
+        "tools": "Tools"
+      }
     }
   }
 }

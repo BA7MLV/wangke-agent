@@ -32,6 +32,7 @@ export class CloudConfiguration {
       providers: process.env.MODEL_API_KEY ? [{ id: 'server', name: '服务端模型', baseUrl: process.env.MODEL_BASE_URL || 'https://api.openai.com/v1', apiKey: process.env.MODEL_API_KEY, protocol: 'openai-chat', catalogId: '', serves: ['chat', 'vision', 'asr'] }] : [],
       llmModel: { providerId: 'server', model: process.env.MODEL_NAME || (process.env.MODEL_API_KEY ? 'gpt-4o-mini' : '') },
       visionModel: { providerId: '', model: '' }, asrModel: { providerId: '', model: '' },
+      decisionModel: { providerId: '', model: '' },
       policy: { ...DEFAULT_AGENT_POLICY },
     };
     if (!secrets) value.providers = value.providers.map(({ apiKey, ...p }) => ({ ...p, configured: Boolean(apiKey) }));
@@ -52,10 +53,11 @@ export class CloudConfiguration {
       if (typeof apiKey !== 'string' || apiKey.length > 4096) throw new Error('invalid_provider_key');
       return { id: p.id, name: p.name, baseUrl: url.href.replace(/\/+$/, ''), protocol: p.protocol, apiKey,
         catalogId: typeof p.catalogId === 'string' ? p.catalogId.slice(0, 100) : '',
-        serves: Array.isArray(p.serves) ? p.serves.filter(s => ['chat', 'vision', 'asr'].includes(s)) : ['chat'] };
+        serves: Array.isArray(p.serves) ? p.serves.filter(s => ['chat', 'vision', 'asr', 'decision'].includes(s)) : ['chat'] };
     });
-    for (const slot of ['llmModel', 'visionModel', 'asrModel'] as const) {
-      const ref = value[slot];
+    const decisionModel = value.decisionModel ?? { providerId: '', model: '' };
+    for (const slot of ['llmModel', 'visionModel', 'asrModel', 'decisionModel'] as const) {
+      const ref = slot === 'decisionModel' ? decisionModel : value[slot];
       if (!ref || typeof ref.model !== 'string' || ref.model.length > 200 || typeof ref.providerId !== 'string' ||
           (ref.model && !ids.has(ref.providerId))) throw new Error('invalid_model_slot');
     }
@@ -63,6 +65,7 @@ export class CloudConfiguration {
     if (!policy || !['read', 'write', 'remove', 'shell'].every(k => ['allow', 'ask', 'deny'].includes((policy as any)[k])) ||
         !['allow', 'deny'].includes(policy.network) || !Number.isInteger(policy.maxSteps) || policy.maxSteps < 1 || policy.maxSteps > 1000) throw new Error('invalid_policy');
     const clean: CloudConfig = { providers, llmModel: value.llmModel, visionModel: value.visionModel, asrModel: value.asrModel,
+      decisionModel: { providerId: decisionModel.providerId, model: decisionModel.model },
       policy: { read: policy.read, write: policy.write, remove: policy.remove, shell: policy.shell, network: policy.network, maxSteps: policy.maxSteps },
       trustedAgentIds: Array.isArray(value.trustedAgentIds) ? value.trustedAgentIds.filter(id => typeof id === 'string' && Boolean(this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=?').get(id, owner))).slice(0, 100) : [] };
     this.store.db.prepare('INSERT INTO cloud_config(owner_id,value,updated_at) VALUES(?,?,?) ON CONFLICT(owner_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')

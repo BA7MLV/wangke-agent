@@ -165,6 +165,8 @@ export interface Settings {
   agentRounds: number;
   /** 类似 AGENTS.md 的全局用户指令，补充所有问答 Agent 的系统提示词。 */
   agentInstructions: string;
+  /** 使用者怎么称呼自己；Bot 和助教用它称呼你。空 = 不指定。 */
+  userName: string;
   /** 哔哩哔哩导入代理地址（油猴桥不可用时的回退，Cloudflare Worker 常被拒 IP） */
   bilibiliProxy: string;
   /** 实时链路中继地址（Cloudflare Worker），如 wss://wangke-live-relay.xxx.workers.dev */
@@ -281,6 +283,7 @@ function initialSettings(): Settings {
     captionScale: 1,
     agentRounds: 6,
     agentInstructions: '',
+    userName: '',
     bilibiliProxy: '',
     liveRelay: '',
     bilibiliCookie: '',
@@ -335,6 +338,11 @@ function migrateDecisionSettings(settings: Settings, raw?: Record<string, unknow
   return next;
 }
 
+/** 称呼只留一行短文本：去掉控制字符和首尾空白，最多 40 字。 */
+export function normalizeUserName(value: unknown): string {
+  return typeof value === 'string' ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : '';
+}
+
 /** 决策连接由当前槽位解析，绝不回退到另一供应商或聊天接口。 */
 export function decisionConfigOf(s: Settings): JevSettings {
   const ref = s.decisionModel;
@@ -361,6 +369,7 @@ export const useSettings = create<SettingsStore>()(
        * 静默停在第 0 格（显示「不思考」），而真正发出去的还是那个不存在的名字。
        */
       update: (patch) => {
+        if (Object.hasOwn(patch, 'userName')) patch = { ...patch, userName: normalizeUserName(patch.userName) };
         if (Object.hasOwn(patch, 'agentInstructions')) patch = { ...patch, agentInstructions: normalizeAgentInstructions(patch.agentInstructions) };
         if (Object.hasOwn(patch, 'uiLanguage')) patch = { ...patch, uiLanguage: normalizeUiLanguage(patch.uiLanguage) };
         if (patch.favorites) patch = { ...patch, favorites: { ...patch.favorites, decision: patch.favorites.decision ?? get().favorites.decision } };
@@ -493,6 +502,7 @@ export function migrateSettings(persisted: Record<string, unknown>, version: num
     captionScale: typeof s.captionScale === 'number' ? s.captionScale : base.captionScale,
     agentRounds: typeof s.agentRounds === 'number' ? s.agentRounds : base.agentRounds,
     agentInstructions: normalizeAgentInstructions(s.agentInstructions),
+    userName: normalizeUserName(s.userName),
     bilibiliProxy: s.bilibiliProxy ?? base.bilibiliProxy,
     liveRelay: s.liveRelay ?? base.liveRelay,
     bilibiliCookie: s.bilibiliCookie ?? base.bilibiliCookie,
@@ -553,6 +563,7 @@ export function getSettings(): Settings {
     captionScale: s.captionScale,
     agentRounds: s.agentRounds,
     agentInstructions: s.agentInstructions,
+    userName: s.userName,
     bilibiliProxy: s.bilibiliProxy,
     liveRelay: s.liveRelay,
     bilibiliCookie: s.bilibiliCookie,

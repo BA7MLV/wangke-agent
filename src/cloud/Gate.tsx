@@ -4,10 +4,11 @@ import { startAuthentication } from '@simplewebauthn/browser';
 import { useTranslation } from 'react-i18next';
 import { serverClient, ServerApiError } from '../api/serverClient';
 import { startCloud } from './sync';
-import CloudSettings from './Settings';
+import { useSettings } from '../store/settings';
 import { FeedbackHost, Sym } from '../ui';
 import LanguageSelect from '../components/LanguageSelect';
 import OnboardingFigure, { loadFigures } from './onboarding/OnboardingFigure';
+const ModelSetup = lazy(() => import('./onboarding/ModelSetup'));
 import { errorKey, initialStep, previousStep, SETUP_STEPS, STEP_FIGURE, stepForError, stepIndex, type OnboardingStep } from './onboarding/flow';
 import './onboarding/onboarding.css';
 
@@ -17,19 +18,21 @@ const TITLE = {
   welcome: 'onboarding.welcomeTitle',
   key: 'onboarding.keyTitle',
   account: 'onboarding.accountTitle',
+  name: 'onboarding.nameTitle',
   login: 'onboarding.loginTitle',
-  configure: 'onboarding.configureTitle',
+  models: 'onboarding.models.title',
 } as const satisfies Record<OnboardingStep, string>;
 
 const ACTION = {
   welcome: 'onboarding.start',
   key: 'onboarding.continue',
   account: 'onboarding.create',
+  name: 'onboarding.continue',
   login: 'onboarding.login',
 } as const;
 
 /**
- * 云端入口：首次部署走四步引导（欢迎 → 密钥 → 管理员 → 配置），之后是单页登录。
+ * 云端入口：首次部署走五步引导（欢迎 → 密钥 → 管理员 → 称呼 → 选模型），之后是单页登录。
  * 每一步只有一个标题、一张 2.5D 线稿和必要的输入框；说明交给布局和图形。
  */
 export default function CloudGate({ initialized, authenticated, error: initialError = '' }: { initialized: boolean; authenticated: boolean; error?: string }) {
@@ -40,6 +43,7 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
   const [name, setName] = useState('Administrator');
   const [password, setPassword] = useState('');
+  const [nickname, setNickname] = useState(() => useSettings.getState().userName);
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(initialError);
@@ -70,7 +74,7 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
         : await serverClient.login(name, password);
       await startCloud(response.user!.id);
       setPassword(''); setSecret(''); setReady(true);
-      if (setup) go('configure');
+      if (setup) go(step === 'account' ? 'name' : 'models');
     } catch (e) {
       const code = e instanceof ServerApiError ? (e.code === 'webauthn_not_configured' ? 'passkey_unavailable' : e.code)
         : passkey && (e as Error).name === 'NotAllowedError' ? 'passkey_cancelled'
@@ -86,7 +90,11 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
     if (busy) return;
     if (step === 'welcome') go('key');
     else if (step === 'key') go('account');
-    else void signIn();
+    else if (step === 'name') {
+      // 账号偏好：登录后 preferences 会把它同步到服务器，Bot 用它称呼你。
+      useSettings.getState().update({ userName: nickname });
+      go('models');
+    } else void signIn();
   };
 
   const readSecret = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -99,7 +107,8 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
 
   const back = previousStep(step);
   const index = stepIndex(step);
-  const configure = step === 'configure';
+  const configure = step === 'models';
+  const enter = () => { location.hash = '/'; setSetup(false); };
   const title = t(TITLE[step]);
   const figure = STEP_FIGURE[step];
 
@@ -123,8 +132,9 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
       <h1 className="ob__title">{title}</h1>
 
       {configure ? <section className="ob__configure">
-        <CloudSettings />
-        <Button className="ob__primary" size="lg" onPress={() => { location.hash = '/'; setSetup(false); }}>{t('onboarding.enter')}</Button>
+        <Suspense fallback={<div className="ob-models__loading" role="status"><Spinner aria-label={t('onboarding.loading')} /></div>}>
+          <ModelSetup onDone={enter} />
+        </Suspense>
       </section> :
         <form className="ob__form" onSubmit={submit} noValidate={step === 'welcome'}>
           {step === 'key' && <div className="ob__group" data-shake={attempt || undefined} key={`key-${attempt}`}>
@@ -148,6 +158,13 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
             <TextField fullWidth isRequired>
               <Label className="sr-only">{t('onboarding.password')}</Label>
               <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus={step === 'account' || !!name} />
+            </TextField>
+          </div>}
+
+          {step === 'name' && <div className="ob__group">
+            <TextField fullWidth>
+              <Label className="sr-only">{t('onboarding.nameLabel')}</Label>
+              <Input className="ob__input" placeholder={t('onboarding.namePlaceholder')} value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={40} autoComplete="nickname" autoFocus enterKeyHint="next" />
             </TextField>
           </div>}
 

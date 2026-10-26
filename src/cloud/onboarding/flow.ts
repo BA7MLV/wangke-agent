@@ -1,28 +1,29 @@
 /**
  * 「初始化个人云端」的步骤与出错回退规则。纯函数，不碰 DOM，单测见 scripts/test-onboarding.mjs。
  *
- * 首次部署：welcome → key → account → configure
- * 已初始化：login →（登录后带 #/setup 才进）configure
+ * 首次部署：welcome → key → account → name → models（可跳过）
+ * 已初始化：login →（登录后带 #/setup 才进）models
  */
-export type OnboardingStep = 'welcome' | 'key' | 'account' | 'login' | 'configure';
+export type OnboardingStep = 'welcome' | 'key' | 'account' | 'name' | 'login' | 'models';
 
-/** 首次部署的四步，用来画页码点。login 不在里面：它是单页。 */
-export const SETUP_STEPS = ['welcome', 'key', 'account', 'configure'] as const satisfies readonly OnboardingStep[];
+/** 首次部署的五步，用来画页码点。login 不在里面：它是单页。 */
+export const SETUP_STEPS = ['welcome', 'key', 'account', 'name', 'models'] as const satisfies readonly OnboardingStep[];
 
 /** 每一步配哪个 hairline 图形：拼好的云 → 保险库 → 挂锁 → 连起来的节点。 */
 export const STEP_FIGURE = {
   welcome: 'settle',
   key: 'vault',
   account: 'padlock',
+  name: 'phone',
   login: 'padlock',
-  configure: 'hub',
+  models: 'hub',
 } as const satisfies Record<OnboardingStep, string>;
 
 export type FigureName = (typeof STEP_FIGURE)[OnboardingStep];
 
-/** 已登录的人来到这里只可能是 #/setup，直接进配置页。 */
+/** 已登录的人来到这里只可能是 #/setup，直接进选模型。 */
 export function initialStep({ initialized, authenticated }: { initialized: boolean; authenticated: boolean }): OnboardingStep {
-  if (authenticated) return 'configure';
+  if (authenticated) return 'models';
   return initialized ? 'login' : 'welcome';
 }
 
@@ -30,6 +31,8 @@ export function initialStep({ initialized, authenticated }: { initialized: boole
 export function previousStep(step: OnboardingStep): OnboardingStep | null {
   if (step === 'key') return 'welcome';
   if (step === 'account') return 'key';
+  // 账号已经建好，名字页不能退回去重建；选模型页可以回去改名字。
+  if (step === 'models') return 'name';
   return null;
 }
 

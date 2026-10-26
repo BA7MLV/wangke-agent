@@ -102,7 +102,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       const user = authorize(request, reply); if (!user) return;
       const provider = configuration.get(user.id, true).providers.find(p => p.id === request.params.provider);
       const endpoint = request.params['*'];
-      if (!provider || !['models', 'chat/completions', 'responses', 'messages', 'audio/transcriptions'].includes(endpoint)) return fail(reply, 404, 'model_endpoint_not_found');
+      if (!provider || !['models', 'chat/completions', 'responses', 'messages', 'audio/transcriptions', 'systemone'].includes(endpoint)) return fail(reply, 404, 'model_endpoint_not_found');
       if ((endpoint === 'models') !== (request.method === 'GET')) return fail(reply, 405, 'method_not_allowed');
       const headers: Record<string, string> = {};
       if (provider.apiKey) {

@@ -21,11 +21,27 @@ export function applyCloudConfig(config: CloudConfig) {
   useSettings.setState({
     providers: config.providers.map(p => ({ ...p, baseUrl: apiUrl(`/api/v1/cloud/models/${encodeURIComponent(p.id)}`), apiKey: p.configured ? 'server-managed' : 'server-local' })),
     llmModel: config.llmModel, visionModel: config.visionModel, asrModel: config.asrModel,
-    // Optional decision-model credentials from a former local installation must not bypass the server.
-    jev: { skillRouting: false, contextCompression: false },
-    decisionModel: { providerId: '', model: '' },
+    ...decisionPatch(config),
     syncEnabled: false,
   });
+}
+
+/**
+ * 决策模型只认服务器配置：旧本机安装留下的决策凭据不能绕过服务器。
+ * 选了决策模型也不会自动打开技能路由 / 上下文压缩，仍需用户在设置里单独开启。
+ */
+function decisionPatch(config: CloudConfig) {
+  const ref = config.decisionModel;
+  const state = useSettings.getState();
+  if (!ref?.model || !config.providers.some(p => p.id === ref.providerId)) {
+    return { jev: { skillRouting: false, contextCompression: false }, decisionModel: { providerId: '', model: '' } };
+  }
+  const saved = state.savedModels ?? [];
+  const known = saved.some(m => m.providerId === ref.providerId && m.model === ref.model && m.slots.includes('decision'));
+  return {
+    decisionModel: { providerId: ref.providerId, model: ref.model },
+    ...(known ? {} : { savedModels: [...saved, { ...ref, name: '', slots: ['decision' as const], modelType: 'decision', toolCalling: false, decisionProtocol: 'typesafe-systemone' as const }] }),
+  };
 }
 
 async function uploadBlob(blob: Blob): Promise<{ $file: string; type: string }> {
