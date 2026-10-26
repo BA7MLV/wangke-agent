@@ -21,7 +21,7 @@ export function botRequest(provider: Pick<CloudProvider, 'protocol' | 'apiKey'>,
   }
   if (provider.apiKey) headers.authorization = `Bearer ${provider.apiKey}`;
   if (provider.protocol === 'openai-responses') return { path: 'responses', headers, body: {
-    model, store: false, max_output_tokens: 4096,
+    model, store: false, max_output_tokens: 4096, include: ['reasoning.encrypted_content'],
     input: messages.flatMap((m): object[] => m.role === 'tool'
       ? [{ type: 'function_call_output', call_id: m.tool_call_id, output: m.content ?? '' }]
       : [ ...(m.response_items ?? []), ...(m.content ? [{ role: m.role, content: m.content }] : []), ...(m.tool_calls ?? []).map(c => ({ type: 'function_call', call_id: c.id, name: c.function.name, arguments: c.function.arguments })) ]),
@@ -34,11 +34,11 @@ export function responseContinuation(protocol: CloudProvider['protocol'], body: 
   if (!body || typeof body !== 'object') return undefined;
   if (protocol === 'anthropic-messages') {
     const content = (body as { content?: unknown }).content;
-    return Array.isArray(content) ? content.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && ['thinking', 'redacted_thinking'].includes(item.type))) : undefined;
+    return Array.isArray(content) ? content.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && ['thinking', 'redacted_thinking', 'text'].includes(item.type))) : undefined;
   }
   if (protocol !== 'openai-responses') return undefined;
   const output = (body as { output?: unknown }).output;
-  return Array.isArray(output) ? output.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && item.type === 'reasoning')) : undefined;
+  return Array.isArray(output) ? output.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === 'object' && item.type !== 'function_call')) : undefined;
 }
 
 export function botCalls(protocol: CloudProvider['protocol'], body: unknown): Array<{ function: ModelCall['function'] }> | undefined {

@@ -42,6 +42,15 @@ try {
   configuration = new CloudConfiguration(store, path.join(root, 'config'));
   ledger = new UsageLedger(store, configuration);
   assert.throws(() => ledger.reserve(attribution, 2, 600), /run_token_budget/, 'restart does not reset unknown reservations');
+  configure({ runTokens: 100000, dayTokens: 1000 });
+  assert.throws(() => ledger.reserve(attribution, 2, 600), /owner_daily_token_budget/);
+  store.db.prepare("UPDATE bot_requests SET started_at='2000-01-01T00:00:00.000Z'").run();
+  const secondStore = new DatabaseStore(path.join(root, 'db.sqlite'));
+  try {
+    const secondLedger = new UsageLedger(secondStore, new CloudConfiguration(secondStore, path.join(root, 'config')));
+    const admissions = await Promise.allSettled([Promise.resolve().then(() => ledger.reserve(attribution, 1, 600)), Promise.resolve().then(() => secondLedger.reserve(attribution, 1, 600))]);
+    assert.equal(admissions.filter(result => result.status === 'fulfilled').length, 1, 'concurrent database clients cannot over-reserve the new UTC day');
+  } finally { secondStore.close(); }
   configure({ runTokens: 100000, runCost: 1 });
   assert.throws(() => ledger.reserve(attribution, 2, 10), /model_price_required/);
   configure({ runTokens: 100000, prices: [{ provider: 'fake', model: 'fake', inputPerMillion: 1, outputPerMillion: 2, source: 'test:2026-10-26' }] });
@@ -59,7 +68,7 @@ try {
   assert.deepEqual(modelUsage({ usage: { input_tokens: 10, output_tokens: 5, cache_read_input_tokens: 20, cache_creation_input_tokens: 30 } }), { input: 60, output: 5, cache: 20, cacheCreation: 30 });
   const envelopes = {
     'openai-chat': { choices: [{ finish_reason: 'tool_calls', message: { tool_calls: [{ function: { name: 'read', arguments: '{}' } }] } }], usage: { prompt_tokens: 1, completion_tokens: 2 } },
-    'openai-responses': { status: 'completed', output: [{ type: 'reasoning', encrypted_content: 'opaque' }, { type: 'function_call', name: 'read', arguments: '{}' }], usage: { input_tokens: 1, output_tokens: 2 } },
+    'openai-responses': { status: 'completed', output: [{ type: 'reasoning', encrypted_content: 'opaque' }, { type: 'message', role: 'assistant', phase: 'commentary', content: [{ type: 'output_text', text: 'checking' }] }, { type: 'function_call', name: 'read', arguments: '{}' }], usage: { input_tokens: 1, output_tokens: 2 } },
     'anthropic-messages': { stop_reason: 'tool_use', content: [{ type: 'thinking', thinking: 'opaque', signature: 'signature' }, { type: 'tool_use', name: 'read', input: {} }], usage: { input_tokens: 1, output_tokens: 2 } },
   };
   for (const [protocol, envelope] of Object.entries(envelopes)) {
@@ -69,6 +78,7 @@ try {
     const continuation = responseContinuation(protocol, envelope);
     const request = botRequest({ protocol }, 'fake', [{ role: 'assistant', content: null, tool_calls: [{ id: 'call', type: 'function', function: { name: 'read', arguments: '{}' } }], response_items: continuation }, { role: 'tool', tool_call_id: 'call', content: '{}' }], []);
     if (protocol !== 'openai-chat') assert.ok(JSON.stringify(request).includes('opaque'));
+    if (protocol === 'openai-responses') { assert.ok(JSON.stringify(request).includes('commentary')); assert.deepEqual(request.body.include, ['reasoning.encrypted_content']); }
   }
   for (const status of [401, 402, 403]) {
     let calls = 0;
