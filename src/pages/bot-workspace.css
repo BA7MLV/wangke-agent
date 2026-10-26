@@ -10,12 +10,6 @@
   --imsg-radius: 17px;
 }
 
-.bot-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-}
-
 .bot-center {
   display: grid;
   place-items: center;

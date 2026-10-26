@@ -4,15 +4,21 @@ import { Button, Spinner } from '@heroui/react';
 import { useTranslation } from 'react-i18next';
 import type { AgentProfileDto, ProjectDto } from '@wangke/contracts';
 import { serverClient } from '../api/serverClient';
-import { PageShell, promptDialog, Sym, toast } from '../ui';
-import { useAppNav } from '../components/appNav';
+import { promptDialog, Sym, toast } from '../ui';
+import ModeShell, { AppMenu, ModeSwitch, MoreMenu } from '../components/ModeShell';
 import { projectError } from '../projects/errors';
+import { formatListTime } from './botMessages';
 import '../projects/projects.css';
+import './projects-home.css';
 
+/*
+ * 「项目」模式的首页：一张 iOS 分组列表，每个项目一行；右上角「新建项目」。
+ * 项目里面是会话 + 文件（BotWorkspace 的项目模式），Bot 的结果在那里做富渲染。
+ */
 export default function Projects() {
   const { t } = useTranslation('projects');
+  const { t: tc, i18n } = useTranslation();
   const navigate = useNavigate();
-  const nav = useAppNav('projects');
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [agents, setAgents] = useState<AgentProfileDto[]>([]);
   const [error, setError] = useState('');
@@ -41,16 +47,57 @@ export default function Projects() {
     catch (error) { toast.error(projectError(error)); }
     finally { setBusy(false); }
   };
-  const visible = projects.filter(p => archived || !p.archived);
-  return <PageShell title={t('title')} rail={nav} wide actions={<Button variant="primary" size="sm" isDisabled={busy || !agents.length} onPress={() => void create()}><Sym name="add" />{t('create')}</Button>}>
-    <div className="project-list-header"><p className="project-muted">{t('description')}</p><label><input type="checkbox" checked={archived} onChange={e => setArchived(e.target.checked)} /> {t('showArchived')}</label></div>
-    {error ? <div role="alert" className="project-error">{error}<Button onPress={() => setRevision(v => v + 1)}>{t('retry')}</Button></div>
-      : loading ? <div className="project-empty"><Spinner /></div>
-      : visible.length === 0 ? <div className="project-empty"><Sym name="folder_open" /><p>{t('empty')}</p><Button onPress={() => void create()} isDisabled={busy || !agents.length}>{t('create')}</Button></div>
-      : <div className="project-grid">{visible.map(project => <article className="project-card" key={project.id}>
-        <button className="project-card-open" onClick={() => navigate(`/projects/${project.id}`)}><Sym name="folder" /><h2>{project.name}</h2>{project.archived && <small>{t('archived')}</small>}</button>
-        <code>{project.workspacePath}</code>
-        <div className="project-controls"><Button variant="secondary" size="sm" onPress={() => navigate(`/projects/${project.id}`)}>{t('chat')}</Button><Button variant="tertiary" size="sm" onPress={() => navigate(`/projects/${project.id}/files`)}>{t('files')}</Button><Button variant="ghost" size="sm" isDisabled={busy} onPress={() => void archive(project)}>{t(project.archived ? 'restore' : 'archive')}</Button></div>
-      </article>)}</div>}
-  </PageShell>;
+  const visible = projects.filter(p => archived || !p.archived).sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+  const filter = [{ key: 'archived', label: tc(archived ? 'botHome.hideArchived' : 'botHome.showArchived'), icon: <Sym name="archive" />, onAction: () => setArchived(v => !v) }];
+  const createButton = (
+    <Button isIconOnly variant="ghost" className="ms-icon-btn" aria-label={t('create')} isDisabled={busy || !agents.length} onPress={() => void create()}>
+      <Sym name="add" />
+    </Button>
+  );
+
+  return (
+    <ModeShell mode="projects">
+      <div className="ph">
+        <header className="ph-bar">
+          <div className="ph-bar__side"><span className="ms-desktop-only" /></div>
+          <ModeSwitch mode="projects" />
+          <div className="ph-bar__side ph-bar__side--end">
+            <span className="ms-desktop-only"><MoreMenu label={tc('botHome.more')} actions={filter} /></span>
+            <span className="ms-mobile-only"><AppMenu extra={filter} /></span>
+            {createButton}
+          </div>
+        </header>
+        <div className="ph-scroll">
+          <h1 className="ph-title">{t('title')}</h1>
+          {error ? <div role="alert" className="bh-inline-error">{error}<Button size="sm" variant="secondary" onPress={() => setRevision(v => v + 1)}>{t('retry')}</Button></div>
+            : loading ? <div className="ph-empty"><Spinner color="current" /></div>
+            : visible.length === 0 ? (
+              <div className="ph-empty">
+                <span className="ph-empty__icon" aria-hidden="true"><Sym name="folder" /></span>
+                <Button variant="primary" className="ph-empty__cta" onPress={() => void create()} isDisabled={busy || !agents.length}>{t('create')}</Button>
+              </div>
+            ) : (
+              <ul className="ph-list">
+                {visible.map(project => (
+                  <li key={project.id} className="ph-row" data-archived={project.archived || undefined}>
+                    <button type="button" className="ph-row__open" onClick={() => navigate(`/projects/${project.id}`)}>
+                      <span className="ph-row__icon" aria-hidden="true"><Sym name="folder" /></span>
+                      <span className="ph-row__body">
+                        <span className="ph-row__name">{project.name}</span>
+                        {project.archived && <span className="ph-row__meta">{t('archived')}</span>}
+                      </span>
+                      <time className="ph-row__time" dateTime={project.updatedAt}>{formatListTime(project.updatedAt, i18n.language)}</time>
+                    </button>
+                    <MoreMenu label={tc('botHome.more')} className="ph-row__more" actions={[
+                      { key: 'files', label: t('files'), icon: <Sym name="folder_open" />, onAction: () => navigate(`/projects/${project.id}/files`) },
+                      { key: 'archive', label: t(project.archived ? 'restore' : 'archive'), icon: <Sym name={project.archived ? 'archive_restore' : 'archive'} />, disabled: busy, onAction: () => void archive(project) },
+                    ]} />
+                  </li>
+                ))}
+              </ul>
+            )}
+        </div>
+      </div>
+    </ModeShell>
+  );
 }

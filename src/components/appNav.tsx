@@ -19,10 +19,12 @@ import { useTranslation } from 'react-i18next';
 export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot' | 'projects'): NavConfig {
   const navigate = useNavigate();
   const { t } = useTranslation('projects');
+  const { t: tc } = useTranslation();
   const createSession = useCourseChat((s) => s.createSession);
   // 导航统一使用 Tabler 描边字形；选中态仍由 ListBox 的底色表达。
   const items: NavItem[] = [
-    ...(cloud.enabled ? [{ value: 'bot', label: t('botChat'), icon: <Sym name="smart_toy" />, onClick: () => navigate('/chat'), testId: 'nav-rail-bot' }] : []),
+    // 云端模式的两个主模式是「聊天」和「项目」（见 components/ModeShell.tsx），课程问答和资料退到后面。
+    ...(cloud.enabled ? [{ value: 'bot', label: tc('botHome.nav.chat'), icon: <Sym name="chat_bubble" />, onClick: () => navigate('/'), testId: 'nav-rail-bot' }] : []),
     { value: 'projects', label: t('title'), icon: <Sym name="folder" />, onClick: () => navigate('/projects'), testId: 'nav-rail-projects' },
     {
       /**
