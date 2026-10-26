@@ -289,9 +289,9 @@ Independent acceptance still outstanding: Docker daemon is unavailable
 WeChat/Feishu account has been tested in this round. Real-model quality/cost
 acceptance is unauthorised and unrun. Existing build CSS/dynamic-import warnings
 remain non-fatal. Dependency audit previously reported 15 vulnerabilities;
-unrelated dependency upgrades were not attempted. Final permission/recovery
-review remains with the main reviewer; the final external-plan checkbox is
-intentionally left unchecked.
+unrelated dependency upgrades were not attempted. At the original handoff the
+final permission/recovery review and external-plan checkbox were reserved for
+the main reviewer; see the final independent acceptance record below.
 
 ## Independent-review fixes (2026-10-26)
 
@@ -342,4 +342,77 @@ Offline evaluation after fixing complete domain fixtures passed **20/20 scripted
 latest report:
 `/var/folders/2r/zv45t_9d6ljfqfj6l1r0yvtr0000gn/T/bot-evaluation-IMM7qT/results.json`.
 It is still not model-quality acceptance. No real IM or paid model was contacted.
-The final external-plan item remains unchecked for the independent reviewer.
+At this repair handoff, the final external-plan item was still reserved for the
+independent reviewer.
+
+## Final independent software acceptance (2026-10-26)
+
+The main reviewer completed source review and isolated fault-injection checks,
+returned the confirmed defects to the designated `gpt-6.1-sol` implementation
+agent, and independently retested the resulting changes. The software scope is
+accepted on `feat/im-study-gateway`; real-platform/deployment/model acceptance
+is still recorded separately below.
+
+Final implementation follow-ups:
+
+- `467ba6c`: the reviewer reproduced a transient lifecycle-monitor database read
+  failure leaving a run permanently `running` after its request was aborted.
+  The added regression failed before the fix and passed afterward. Unexpected
+  monitor failures now enter bounded scheduler recovery; expected pauses,
+  cancellation and time limits retain their existing transitions. Recovery
+  completes the task without restarting the process, leaks no rejection and
+  records both physical requests. Verified on macOS Node 26.3.0 and 22.23.4.
+- `294a851`: immediate Gateway worker exception containment, identity-owned
+  scheduler gates and abort/drain shutdown, plus strengthened migration tests.
+  The reviewer's original delayed-send/error-persistence probe now reports
+  `Unhandled while other send awaited: []`. Detailed evidence is in
+  [gateway-migration-review.md](gateway-migration-review.md).
+
+The main reviewer independently passed these checks on macOS Node 26.3.0:
+
+```sh
+npm run build
+npm run test:api
+npm run test:bot
+npm run test:cloud
+npx tsx scripts/test-task-executors.mjs
+npm run test:mcp
+npx tsx scripts/test-bot-domain.mjs
+npx tsx scripts/test-bot-lifecycle.mjs
+npx tsx scripts/test-bot-request-budget.mjs
+npm run test:bot:management
+npx tsx scripts/eval-bot.mjs
+npm run test:gateway
+npm run test:i18n
+npm run build:api
+git diff --check
+```
+
+The full build preceded the two final backend-only fixes; API compilation and
+the affected lifecycle/Gateway regressions passed again after those fixes.
+The management browser test performed real UI operations at 390/1440px; the
+reviewer also inspected both screenshots, retained outside git in
+`/private/var/folders/2r/zv45t_9d6ljfqfj6l1r0yvtr0000gn/T/opencode/bot-parent-review-ui/`.
+The independent scripted evaluation passed 20/20, with report at
+`/var/folders/2r/zv45t_9d6ljfqfj6l1r0yvtr0000gn/T/bot-evaluation-FZJ7yB/results.json`.
+
+After the final implementation commit, the reviewer also ran the complete
+`npm run test:bot:hardening` under macOS Node 22.23.4. This includes all five
+migration layouts with two authenticated restarts and end-to-end fake
+IM/Bot/MCP delivery, as well as scheduler, domain, request-budget, context,
+memory, skills and retention regressions. Verification used an isolated
+`better-sqlite3@12.11.1` Node 22 build via a temporary preload hook; the worktree's
+Node 26 native dependency was not rebuilt. This is macOS evidence, not Linux
+or Docker evidence.
+
+All task changes are committed on the feature worktree. The integrated main
+baseline remains `221d397`; the original `/Users/ba7mlv/Downloads/wangke-520`
+checkout now contains separate ongoing project-workspace changes. The clean
+delivery claim applies to this feature worktree. No push or merge to main has
+been performed.
+
+Outstanding acceptance is tracked in the project backlog: Linux/Docker
+deployment (daemon unavailable), real WeChat/Feishu accounts, and explicitly
+configured/authorized real-model evaluation. The original IM plan's real-account
+acceptance remains incomplete; completing this hardening software plan does not
+certify those environments or real-model quality.
