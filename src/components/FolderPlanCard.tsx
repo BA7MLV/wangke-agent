@@ -135,7 +135,7 @@ export default function FolderPlanCard({ plan, active, restored, busy, onConfirm
         <p className="plan-card__done" data-testid="plan-card-applied">
           <Sym name="check" aria-hidden="true" />
           已执行。到
-          <button type="button" className="plan-card__link" onClick={() => navigate('/')}>
+          <button type="button" className="plan-card__link" onClick={() => navigate('/course-chat')}>
             资料
           </button>
           就能看到新的分类。

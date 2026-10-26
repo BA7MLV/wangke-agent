@@ -13,6 +13,7 @@ import { preloadOnIdle } from './utils/preload';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
 import CloudActivity from './cloud/Activity';
+import { cloud } from './cloud/state';
 
 /*
  * 按路由拆包：首页（对话）同步加载，其余页面点进去才下载。
@@ -26,6 +27,7 @@ const pages = {
   player: () => import('./pages/Player'),
   study: () => import('./pages/Study'),
   bot: () => import('./pages/BotWorkspace'),
+  projects: () => import('./pages/Projects'),
   live: () => import('./pages/LiveGuest'),
   widget: () => import('./pages/WidgetPreview'),
 };
@@ -33,6 +35,7 @@ const Library = lazy(pages.library);
 const Player = lazy(pages.player);
 const Study = lazy(pages.study);
 const BotWorkspace = lazy(pages.bot);
+const Projects = lazy(pages.projects);
 const LiveGuest = lazy(pages.live);
 const WidgetPreview = lazy(pages.widget);
 
@@ -98,16 +101,19 @@ export default function App() {
         <SettingsModal />
         <Suspense fallback={<div className="route-fallback" aria-busy="true" />}>
         <Routes>
-          {/* 对话页是默认首页：打开应用直接进入课程助手 */}
-          <Route path="/" element={<CourseChat />} />
-          <Route path="/chat" element={<CourseChat />} />
+          <Route path="/" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
+          <Route path="/chat" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
+          <Route path="/course-chat" element={<CourseChat />} />
           <Route path="/bot" element={<BotWorkspace />} />
+          <Route path="/projects" element={<Projects />} />
+          <Route path="/projects/:projectId" element={<BotWorkspace />} />
+          <Route path="/projects/:projectId/files" element={<BotWorkspace />} />
           <Route path="/library" element={<Library />} />
           <Route path="/player/:id" element={<Player />} />
           <Route path="/study" element={<Study />} />
           {/* #/settings 不是独立页面，而是唤起设置弹窗的入口（见上面的 useEffect）。
               这里仍渲染默认首页，让用户「改完设置就能接着用」。 */}
-          <Route path="/settings/*" element={<CourseChat />} />
+          <Route path="/settings/*" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
           {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂左侧导航 ——
               它读的是主机的内容，与本机导航的目的地不是一回事（见 LiveGuest.tsx 文件头）。 */}
           <Route path="/live" element={<LiveGuest />} />

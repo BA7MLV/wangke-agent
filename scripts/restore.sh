@@ -82,6 +82,11 @@ for part in db files config; do
   mkdir -p "$DATA_DIR/data/$part"
   if [ -d "$stage/data/$part" ]; then cp -a "$stage/data/$part/." "$DATA_DIR/data/$part/"; fi
 done
+# A root-run installation still executes project commands as 1000:1000.
+# Extraction above deliberately discards archive owners; restore the workspace owner.
+if [ "$(id -u)" -eq 0 ] && [ -d "$DATA_DIR/data/files/projects" ]; then
+  chown -R 1000:1000 "$DATA_DIR/data/files/projects"
+fi
 if [ -f "$stage/.env" ]; then cp -p "$stage/.env" "$DATA_DIR/.env"; chmod 600 "$DATA_DIR/.env"; fi
 chmod 700 "$DATA_DIR" "$DATA_DIR/data" 2>/dev/null || true
 echo "restore complete; previous data was backed up in $DATA_DIR/backups"

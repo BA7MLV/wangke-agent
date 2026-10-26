@@ -236,6 +236,45 @@ const MIGRATIONS: Array<[number, string]> = [
     CREATE INDEX mcp_servers_owner ON mcp_servers(owner_id);
     ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
   `],
+  [14, `
+    CREATE TABLE projects (
+      id TEXT PRIMARY KEY,
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      name TEXT NOT NULL,
+      instructions TEXT NOT NULL DEFAULT '',
+      shell_policy TEXT NOT NULL DEFAULT 'ask' CHECK(shell_policy IN ('allow','ask','deny')),
+      network_policy TEXT NOT NULL DEFAULT 'deny' CHECK(network_policy IN ('allow','deny')),
+      archived INTEGER NOT NULL DEFAULT 0,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+      UNIQUE(id, owner_id)
+    );
+    CREATE INDEX projects_owner ON projects(owner_id, updated_at);
+    CREATE TABLE project_executions (
+      project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,
+      execution_id TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE project_agents (
+      project_id TEXT NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      agent_id TEXT NOT NULL REFERENCES agent_profiles(id) ON DELETE CASCADE,
+      role TEXT NOT NULL CHECK(role IN ('read','write','manage')),
+      PRIMARY KEY(project_id, agent_id)
+    );
+    ALTER TABLE threads ADD COLUMN project_id TEXT REFERENCES projects(id) ON DELETE RESTRICT;
+    ALTER TABLE threads ADD COLUMN agent_id TEXT REFERENCES agent_profiles(id) ON DELETE SET NULL;
+    ALTER TABLE threads ADD COLUMN archived INTEGER NOT NULL DEFAULT 0;
+    UPDATE threads SET agent_id=(SELECT agent_id FROM thread_participants WHERE thread_id=threads.id ORDER BY joined_at,agent_id LIMIT 1);
+    CREATE INDEX threads_project ON threads(owner_id, project_id, updated_at);
+    CREATE INDEX threads_agent ON threads(owner_id, agent_id, updated_at);
+    CREATE TRIGGER threads_project_owner_insert BEFORE INSERT ON threads
+      WHEN NEW.project_id IS NOT NULL AND NOT EXISTS(SELECT 1 FROM projects WHERE id=NEW.project_id AND owner_id=NEW.owner_id)
+      BEGIN SELECT RAISE(ABORT, 'project_owner_mismatch'); END;
+    CREATE TRIGGER threads_scope_immutable BEFORE UPDATE OF project_id,owner_id ON threads
+      WHEN NEW.project_id IS NOT OLD.project_id OR NEW.owner_id IS NOT OLD.owner_id
+      BEGIN SELECT RAISE(ABORT, 'thread_scope_immutable'); END;
+    CREATE TRIGGER project_grant_owner BEFORE INSERT ON project_agents
+      WHEN NOT EXISTS(SELECT 1 FROM projects p JOIN agent_profiles a ON a.owner_id=p.owner_id WHERE p.id=NEW.project_id AND a.id=NEW.agent_id)
+      BEGIN SELECT RAISE(ABORT, 'project_owner_mismatch'); END;
+  `],
 ];
 
 export class DatabaseStore {

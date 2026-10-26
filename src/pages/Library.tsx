@@ -69,6 +69,7 @@ import { formatCaughtError } from '../utils/errorText';
 import { uuid } from '../utils/uuid';
 import './library.css';
 import { folderAncestors, validFolderDrop, moveLibraryItems, undoLibraryMove } from '../materials/libraryFolders';
+import { useProjectLibrary } from '../projects/useProjectLibrary';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -314,6 +315,7 @@ export default function Library() {
   // 设置与历史聊天中的深链接也进入普通 Markdown 阅读页。
   const agentFileRequested = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const nav = useAppNav('home');
+  const projectLibrary = useProjectLibrary();
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
   const recent = useRecentChats();
   useEffect(() => {
@@ -578,7 +580,8 @@ export default function Library() {
     (!searchQuery || 'system agents.md agent 默认提示词 全局指令'.includes(searchQuery));
   const showAgentFile = inSystemFolder && (filter === 'all' || filter === 'material') &&
     (!searchQuery || 'agents.md agent 默认提示词 全局指令'.includes(searchQuery));
-  const visibleCount = displayedVideos.length + folderTiles.length + (showAgentFile ? 1 : 0) + (showSystemFolder ? 1 : 0);
+  const projectTiles = !currentFolder && !inSystemFolder && filter === 'all' ? projectLibrary.projects.filter(p => !searchQuery || p.name.toLocaleLowerCase().includes(searchQuery)) : [];
+  const visibleCount = displayedVideos.length + folderTiles.length + projectTiles.length + (showAgentFile ? 1 : 0) + (showSystemFolder ? 1 : 0);
   const folderPath = folderAncestors(folders, currentFolder?.folder?.id ?? null);
   // Keep the native drag source mounted while spring-loading another directory.
   const renderedFolders = finderDragging.length
@@ -635,7 +638,8 @@ export default function Library() {
     setFilter('all');
   };
   const openItem = (key: string) => {
-    if (key === 'system:agent-instructions') navigate(AGENT_INSTRUCTIONS_ROUTE);
+    if (key.startsWith('project:')) navigate(`/projects/${key.slice(8)}/files`);
+    else if (key === 'system:agent-instructions') navigate(AGENT_INSTRUCTIONS_ROUTE);
     else if (key === 'system:folder') openFolder('system');
     else if (key.startsWith('folder:')) openFolder(key.slice(7));
     else if (key.startsWith('file:')) navigate(`/player/${key.slice(5)}`);
@@ -1201,7 +1205,7 @@ export default function Library() {
 
   const startFinderDrag = (event: { currentTarget: HTMLElement; dataTransfer?: DataTransfer }, key: string) => {
     const keys = (finderPressSelection.current.includes(key) ? finderPressSelection.current : selection.has(key) ? [...selection] : [key])
-      .filter((item) => !item.startsWith('system:'));
+      .filter((item) => item.startsWith('file:') || item.startsWith('folder:'));
     finderDragKeys.current = keys;
     setFinderDragging(keys);
     dragOrigin.current = folderKey;
@@ -1819,6 +1823,7 @@ export default function Library() {
             <SearchField.Group><SearchField.SearchIcon /><SearchField.Input ref={searchInputRef} data-testid="library-search" placeholder="搜索" /><SearchField.ClearButton /></SearchField.Group>
           </SearchField>
         </header>
+        {projectLibrary.error && <Banner variant="error" title="项目目录加载失败" description={projectLibrary.error} action={<Button size="sm" onPress={projectLibrary.retry}>重试</Button>} />}
         {hasFilters && <div className="finder-search-scope"><span>搜索范围：{folderTitle}{filter !== 'all' ? ` · ${LIBRARY_FILTERS.find((item) => item.value === filter)?.label}` : ''}</span><Button variant="ghost" size="sm" onPress={clearFilters}>清除筛选</Button></div>}
       <div className="finder-canvas" data-testid="video-list" onClick={(event) => { if (event.target === event.currentTarget) setSelection(new Set()); }}
         ref={canvasRef}
@@ -1827,6 +1832,7 @@ export default function Library() {
         onDragEnterCapture={finderCanvasDragOver}
         onDragOverCapture={finderCanvasDragOver}
         onDropCapture={(event) => {
+          if ((event.target as Element).closest('[data-project-folder]')) { event.preventDefault(); event.stopPropagation(); return; }
           const folder = (event.target as Element).closest<HTMLElement>('[data-group-key]');
           folderDropProps(folder ? Number(folder.dataset.groupKey) : currentFolder?.folder?.id ?? null).onDrop(event);
         }}
@@ -1876,7 +1882,7 @@ export default function Library() {
                 </Button>
               }
             />
-          ) : videos.length === 0 && folders.length === 0 && !showAgentFile && !showSystemFolder && !hasFilters ? (
+          ) : videos.length === 0 && folders.length === 0 && !projectTiles.length && !showAgentFile && !showSystemFolder && !hasFilters ? (
             // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
             // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
             <EmptyState testId="empty-state" icon={<Sym name="folder_open" />} title="还没有资料" action={<Button variant="secondary" onPress={() => setImportOpen(true)}>导入文件</Button>} />
@@ -1910,6 +1916,15 @@ export default function Library() {
                     <span className="finder-item__kind">系统 Markdown</span>
                   </span>
                 </ListBox.Item>}
+                {projectTiles.map(project => <ListBox.Item key={`project:${project.id}`} id={`project:${project.id}`} textValue={project.name} className="finder-item finder-item--folder" data-project-folder="true" data-system-folder="true" data-selection-key={`project:${project.id}`}>
+                  <span className="finder-item__content">
+                    <span className="finder-item__icon"><FolderIcon color="blue" /></span>
+                    <span className="finder-item__name" title={project.workspacePath}>{project.name}</span>
+                    <span className="finder-item__meta">项目工作区</span>
+                    <span className="finder-item__date">{new Date(project.createdAt).toLocaleDateString()}</span>
+                    <span className="finder-item__kind">项目文件夹</span>
+                  </span>
+                </ListBox.Item>)}
                 {renderedFolders.map(renderGroupHeader)}
                 {renderedVideos.map((video) => <ListBox.Item key={`file:${video.id}`} id={`file:${video.id}`} textValue={video.name} className="finder-item" data-testid="video-item" data-video-id={video.id} hidden={!displayedVideos.some((row) => row.id === video.id)} data-dragging={finderDragging.includes(`file:${video.id}`) || undefined}>
                   <span className="finder-item__content"

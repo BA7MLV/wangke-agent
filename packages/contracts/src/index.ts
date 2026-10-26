@@ -7,7 +7,12 @@ export interface ThreadDto {
   title: string | null;
   createdAt: string;
   updatedAt: string;
+  projectId?: string | null;
+  agentId?: string | null;
+  archived?: boolean;
 }
+
+export type { ProjectDto, ProjectDetailDto, ProjectPolicy, ProjectRole, ProjectGrantDto, ProjectFileDto, ProjectTextDto } from './projects.js';
 
 export interface AgentProfileDto {
   id: string;

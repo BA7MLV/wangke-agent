@@ -1,4 +1,4 @@
-import { useLayoutEffect, useState, type RefObject } from 'react';
+import { useLayoutEffect, useState, type ClipboardEventHandler, type RefObject } from 'react';
 import { Button, Drawer, TextArea } from '@heroui/react';
 import { Sym } from '../ui';
 import './composer-expand.css';
@@ -37,7 +37,7 @@ export function useComposerSize(ref: RefObject<HTMLTextAreaElement | null>, valu
   return overflow;
 }
 
-export default function ComposerExpand({ value, onChange, visible }: { value: string; onChange: (value: string) => void; visible: boolean }) {
+export default function ComposerExpand({ value, onChange, onPaste, visible }: { value: string; onChange: (value: string) => void; onPaste?: ClipboardEventHandler<HTMLTextAreaElement>; visible: boolean }) {
   const [open, setOpen] = useState(false);
   return <Drawer.Root isOpen={open} onOpenChange={setOpen}>
     <Button className="composer-expand" hidden={!visible && !open} isIconOnly size="sm" variant="tertiary" aria-label="展开输入框" aria-haspopup="dialog" aria-expanded={open} data-testid="composer-expand">
@@ -52,7 +52,7 @@ export default function ComposerExpand({ value, onChange, visible }: { value: st
             <Drawer.CloseTrigger aria-label="收起输入框"><Sym name="fullscreen_exit" /></Drawer.CloseTrigger>
           </Drawer.Header>
           <Drawer.Body className="composer-sheet__body">
-            <TextArea autoFocus aria-label="完整消息" value={value} onChange={(event) => onChange(event.target.value)}
+            <TextArea autoFocus aria-label="完整消息" value={value} onChange={(event) => onChange(event.target.value)} onPaste={onPaste}
               className="composer-sheet__input" />
           </Drawer.Body>
           <Drawer.Footer className="composer-sheet__footer"><Button slot="close">完成</Button></Drawer.Footer>

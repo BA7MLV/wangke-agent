@@ -1,4 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import {
   Button,
   Dropdown,
@@ -9,10 +10,10 @@ import {
   TextField,
   cn,
 } from '@heroui/react';
-import { PageShell, Sym, toast, type RecentItem } from '../ui';
+import { PageShell, Sym, toast, promptDialog, confirmDialog, type RecentItem } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
-import type { MessageDto, SseEvent, ThreadDto } from '@wangke/contracts';
+import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
 import { browserSupportsWebAuthn, startAuthentication, startRegistration } from '@simplewebauthn/browser';
 import MessageComposer from '../components/MessageComposer';
 import VirtualMessages from '../components/VirtualMessages';
@@ -21,6 +22,10 @@ import './bot-workspace.css';
 import BotMcpScope from '../mcp/BotMcpScope';
 import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { useTranslation } from 'react-i18next';
+import ProjectSettings from '../projects/ProjectSettings';
+import ProjectFiles from '../projects/ProjectFiles';
+import { projectError } from '../projects/errors';
+import '../projects/projects.css';
 
 function parseAttachment(content: string): { name: string; size?: number; uploading?: boolean } {
   try {
@@ -49,11 +54,13 @@ const Bubble = memo(function Bubble({
   approval,
   onReact,
   onResolve,
+  projectId,
 }: {
   row: Row;
   approval?: ApprovalDto;
   onReact: (messageId: string) => void;
   onResolve: (approvalId: string, approved: boolean) => void;
+  projectId?: string;
 }) {
   const { message, first, last, stamp } = row;
   const mine = message.role === 'user';
@@ -72,12 +79,18 @@ const Bubble = memo(function Bubble({
     );
   } else if (message.kind === 'attachment') {
     const file = parseAttachment(message.content);
+    let download: string | undefined;
+    try {
+      const attachment = JSON.parse(message.content);
+      if (projectId && attachment.projectId === projectId && typeof attachment.projectPath === 'string') download = serverClient.projectDownloadUrl(projectId, attachment.projectPath);
+      else if (!projectId && typeof attachment.fileId === 'string') download = serverClient.fileDownloadUrl(attachment.fileId);
+    } catch { /* The message may be a plain-text attachment description. */ }
     body = (
       <div className="imsg-bubble imsg-bubble--file">
         <span className="imsg-file__icon" aria-hidden="true">
           {file.uploading ? <Spinner size="sm" color="current" /> : <Sym name="description" />}
         </span>
-        <span className="imsg-file__name">{file.name}</span>
+        {download ? <a className="imsg-file__name" href={download} download>{file.name}</a> : <span className="imsg-file__name">{file.name}</span>}
         {file.size !== undefined && <span className="imsg-file__size">{formatBytes(file.size)}</span>}
       </div>
     );
@@ -260,9 +273,32 @@ function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () 
 const EMPTY: MessageDto[] = [];
 
 export default function BotWorkspace() {
+  const { projectId } = useParams();
+  return <Workspace key={projectId ?? 'bots'} projectId={projectId} />;
+}
+
+function Workspace({ projectId }: { projectId?: string }) {
   const { t } = useTranslation('settings');
+  const { t: tp } = useTranslation('projects');
+  const navigate = useNavigate();
+  const location = useLocation();
+  const [search, setSearch] = useSearchParams();
+  const initialThreadId = useRef(search.get('thread'));
+  const filesOpen = Boolean(projectId && location.pathname.endsWith('/files'));
   const [mcpOpen, setMcpOpen] = useState(false);
-  const nav = useAppNav('bot');
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [project, setProject] = useState<ProjectDetailDto | null>(null);
+  const [agents, setAgents] = useState<AgentProfileDto[]>([]);
+  const [agentId, setAgentId] = useState('');
+  const [showArchived, setShowArchived] = useState(false);
+  const [listLoading, setListLoading] = useState(true);
+  const [listError, setListError] = useState('');
+  const [detailError, setDetailError] = useState('');
+  const [detailRevision, setDetailRevision] = useState(0);
+  const [sendBusy, setSendBusy] = useState(false);
+  const sendLock = useRef(false);
+  const loadVersion = useRef(0);
+  const nav = useAppNav(projectId ? 'projects' : 'bot');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [connectError, setConnectError] = useState('');
@@ -270,7 +306,10 @@ export default function BotWorkspace() {
   const [threads, setThreads] = useState<ThreadDto[]>([]);
   const [details, setDetails] = useState<Record<string, ThreadDetail>>({});
   const [activeId, setActiveId] = useState<string | null>(null);
-  const [draft, setDraft] = useState('');
+  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const draftKey = activeId ?? `new:${agentId}`;
+  const draft = drafts[draftKey] ?? '';
+  const setDraft = (value: string) => setDrafts(old => ({ ...old, [draftKey]: value }));
   const [uploadBusy, setUploadBusy] = useState(false);
   const uploadInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -279,6 +318,9 @@ export default function BotWorkspace() {
 
   const active = activeId ? details[activeId] ?? null : null;
   const activeSummary = threads.find((thread) => thread.id === activeId) ?? null;
+  const availableAgents = agents.filter(agent => agent.enabled && (!projectId || project?.grants.some(g => g.agentId === agent.id)));
+  const visibleThreads = threads.filter(thread => (showArchived || !thread.archived) && (projectId || (thread.agentId ?? agents[0]?.id) === agentId));
+  const canChat = !listLoading && !listError && !project?.archived && !activeSummary?.archived && availableAgents.some(a => a.id === (activeSummary?.agentId ?? agentId));
   const messages = active?.messages ?? EMPTY;
   const rows = useMemo(() => groupMessages(messages), [messages]);
   const approvalByMessage = useMemo(() => {
@@ -292,37 +334,51 @@ export default function BotWorkspace() {
   }, []);
 
   const refresh = useCallback(async () => {
-    const result = await serverClient.threads();
-    const bots = result.threads.filter((thread) => thread.mode === 'bot');
-    setThreads(bots);
-    setActiveId((id) => id && bots.some((thread) => thread.id === id) ? id : bots[0]?.id ?? null);
-  }, []);
+    const version = ++loadVersion.current;
+    setListError(''); setListLoading(true);
+    try {
+      const [result, profiles, nextProject] = await Promise.all([serverClient.threads(projectId), serverClient.agents(), projectId ? serverClient.project(projectId) : Promise.resolve(null)]);
+      if (loadVersion.current !== version) return;
+      const bots = result.threads.filter(thread => thread.mode === 'bot' && (projectId ? thread.projectId === projectId : !thread.projectId));
+      setThreads(bots); setAgents(profiles.agents); setProject(nextProject);
+      const firstAgent = profiles.agents.find(a => a.enabled && (!nextProject || nextProject.grants.some(g => g.agentId === a.id)));
+      const requested = bots.find(thread => thread.id === initialThreadId.current);
+      if (requested) { setActiveId(requested.id); setAgentId(requested.agentId ?? firstAgent?.id ?? ''); if (requested.archived) setShowArchived(true); }
+      else setAgentId(id => id && profiles.agents.some(a => a.id === id) ? id : firstAgent?.id ?? '');
+      initialThreadId.current = null;
+    } catch (error) { if (loadVersion.current === version) setListError(projectError(error)); }
+    finally { if (loadVersion.current === version) setListLoading(false); }
+  }, [projectId]);
 
   useEffect(() => {
+    let ignore = false;
     void Promise.all([serverClient.bootstrapStatus(), serverClient.session()])
       .then(([nextStatus, nextSession]) => {
+        if (ignore) return;
         setStatus(nextStatus);
         setSession(nextSession);
         if (nextSession.authenticated) void refresh();
       })
-      .catch((e) => setConnectError(e instanceof ServerApiError ? e.code : '连不上 Bot 服务'));
+      .catch((e) => { if (!ignore) setConnectError(e instanceof ServerApiError ? e.code : '连不上 Bot 服务'); });
+    return () => { ignore = true; loadVersion.current++; };
   }, [refresh]);
 
   // 打开线程时才拉它的消息。
   useEffect(() => {
     if (!activeId || details[activeId]) return;
     let cancelled = false;
+    setDetailError('');
     void serverClient.thread(activeId).then((detail) => {
       if (!cancelled) setDetails((old) => ({ ...old, [activeId]: detail }));
-    }).catch(() => toast.error('线程加载失败'));
+    }).catch(error => { if (!cancelled) setDetailError(projectError(error)); });
     return () => { cancelled = true; };
-  }, [activeId, details]);
+  }, [activeId, details, detailRevision]);
 
   // 事件流：每个线程独立游标，切换时从 0 回放（服务端按 message.id 去重）。
   const activeLoaded = Boolean(active);
   useEffect(() => {
     // 等详情到手再开事件流，否则详情请求在路上时到达的事件会被丢掉。
-    if (!activeId || !activeLoaded || !session?.authenticated) return;
+    if (!activeId || !activeLoaded || !session?.authenticated || filesOpen) return;
     const controller = new AbortController();
     let stopped = false;
     cursorRef.current = 0;
@@ -332,6 +388,9 @@ export default function BotWorkspace() {
       patchActive(activeId, (thread) => thread.messages.some((message) => message.id === event.message.id)
         ? { ...thread, messages: thread.messages.map((message) => message.id === event.message.id ? event.message : message) }
         : { ...thread, messages: [...thread.messages, event.message].sort((a, b) => a.seq - b.seq) });
+      if (event.message.kind === 'approval') void serverClient.thread(activeId).then(detail => {
+        if (!controller.signal.aborted) patchActive(activeId, thread => ({ ...thread, approvals: detail.approvals }));
+      }).catch(() => {});
     };
     const run = async () => {
       while (!stopped) {
@@ -348,7 +407,7 @@ export default function BotWorkspace() {
       stopped = true;
       controller.abort();
     };
-  }, [activeId, activeLoaded, session?.authenticated, patchActive]);
+  }, [activeId, activeLoaded, session?.authenticated, patchActive, filesOpen]);
 
   // 吸底：用户停在底部时，新消息和高度变化都把视图留在最新一条；往上翻了就不打扰。
   const followEnd = useCallback(() => {
@@ -361,15 +420,15 @@ export default function BotWorkspace() {
   useEffect(followEnd, [rows.length, followEnd]);
 
   const create = async () => {
-    try {
-      const thread = await serverClient.createThread('新的 Bot 任务');
-      setThreads((old) => [thread, ...old]);
-      setDetails((old) => ({ ...old, [thread.id]: { ...thread, messages: [] } }));
-      setActiveId(thread.id);
-    } catch {
-      toast.error('新建线程失败');
-    }
+    if (!agentId || project?.archived) return null;
+    const thread = await serverClient.createThread(tp('newTitle'), { projectId, agentId });
+    setThreads((old) => [thread, ...old]);
+    setDetails((old) => ({ ...old, [thread.id]: { ...thread, messages: [] } }));
+    setActiveId(thread.id);
+    setSearch({ thread: thread.id }, { replace: true });
+    return thread;
   };
+  const newDraft = () => { setActiveId(null); setSearch({}, { replace: true }); };
 
   const appendPending = (threadId: string, kind: MessageDto['kind'], content: string, nonce: string): MessageDto => {
     const pending: MessageDto = {
@@ -390,18 +449,29 @@ export default function BotWorkspace() {
   };
 
   const send = async () => {
-    if (!active || !draft.trim()) return;
+    if (!canChat || !draft.trim() || sendLock.current || (activeId && !active)) return;
+    sendLock.current = true; setSendBusy(true);
     const content = draft.trim();
     const nonce = crypto.randomUUID();
-    const pending = appendPending(active.id, 'text', content, nonce);
-    setDraft('');
+    const sourceKey = draftKey;
+    let targetId: string | undefined;
+    let pending: MessageDto | undefined;
     try {
-      settlePending(active.id, pending.id, await serverClient.sendMessage(active.id, content, nonce));
-    } catch {
-      settlePending(active.id, pending.id, null);
-      setDraft(content);
-      toast.error('没发出去，内容已放回输入框');
-    }
+      const target = active ?? await create();
+      if (!target) return;
+      targetId = target.id;
+      pending = appendPending(target.id, 'text', content, nonce);
+      setDrafts(old => ({ ...old, [sourceKey]: '' }));
+      settlePending(target.id, pending.id, await serverClient.sendMessage(target.id, content, nonce));
+      if (target.title === tp('newTitle')) {
+        const updated = await serverClient.updateThread(target.id, { title: content.slice(0, 60) }).catch(() => null);
+        if (updated) setThreads(old => old.map(thread => thread.id === updated.id ? updated : thread));
+      }
+    } catch (error) {
+      if (targetId && pending) settlePending(targetId, pending.id, null);
+      setDrafts(old => ({ ...old, [targetId ?? sourceKey]: content }));
+      toast.error(projectError(error));
+    } finally { sendLock.current = false; setSendBusy(false); }
   };
 
   const upload = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -412,12 +482,18 @@ export default function BotWorkspace() {
     const nonce = crypto.randomUUID();
     const pending = appendPending(active.id, 'attachment', JSON.stringify({ originalName: file.name, sizeBytes: file.size, uploading: true }), nonce);
     try {
-      const uploaded = await serverClient.uploadFile(file);
-      const content = JSON.stringify({ fileId: uploaded.id, originalName: uploaded.originalName, mimeType: uploaded.mimeType, sizeBytes: uploaded.sizeBytes, sha256: uploaded.sha256 });
+      let content: string;
+      if (projectId) {
+        const uploaded = await serverClient.uploadProjectFile(projectId, file.name, file);
+        content = JSON.stringify({ projectId, projectPath: uploaded.path, originalName: file.name, sizeBytes: file.size });
+      } else {
+        const uploaded = await serverClient.uploadFile(file);
+        content = JSON.stringify({ fileId: uploaded.id, originalName: uploaded.originalName, mimeType: uploaded.mimeType, sizeBytes: uploaded.sizeBytes, sha256: uploaded.sha256 });
+      }
       settlePending(active.id, pending.id, await serverClient.sendAttachment(active.id, content, nonce));
-    } catch {
+    } catch (error) {
       settlePending(active.id, pending.id, null);
-      toast.error('附件上传失败');
+      toast.error(projectError(error));
     } finally {
       setUploadBusy(false);
     }
@@ -475,12 +551,44 @@ export default function BotWorkspace() {
     }
   };
 
-  const recent: RecentItem[] = useMemo(() => threads.map((thread) => ({
+  const editThread = async (thread: ThreadDto, action: 'rename' | 'archive' | 'delete') => {
+    try {
+      if (action === 'delete') {
+        if (!await confirmDialog({ headline: tp('deleteConfirm', { name: thread.title }), description: tp('sessionDeleteHint'), confirmText: tp('delete'), cancelText: tp('cancel'), danger: true })) return;
+        await serverClient.deleteThread(thread.id);
+        setThreads(old => old.filter(row => row.id !== thread.id));
+        if (activeId === thread.id) newDraft();
+        setDetails(old => { const next = { ...old }; delete next[thread.id]; return next; });
+        return;
+      }
+      let title: string | null = null;
+      if (action === 'rename') {
+        title = await promptDialog({ headline: tp('rename'), defaultValue: thread.title ?? '', confirmText: tp('save'), cancelText: tp('cancel') });
+        if (!title) return;
+      }
+      const updated = await serverClient.updateThread(thread.id, title ? { title } : { archived: !thread.archived });
+      setThreads(old => old.map(row => row.id === thread.id ? updated : row));
+      patchActive(thread.id, detail => ({ ...detail, ...updated }));
+      if (updated.archived && activeId === thread.id) newDraft();
+    } catch (error) { toast.error(projectError(error)); }
+  };
+  const recent: RecentItem[] = visibleThreads.map((thread) => ({
     id: thread.id,
-    label: thread.title || '未命名任务',
+    label: `${thread.archived ? `${tp('archived')} · ` : ''}${thread.title || tp('newTitle')}`,
     active: thread.id === activeId,
-    onClick: () => setActiveId(thread.id),
-  })), [threads, activeId]);
+    onClick: () => { setActiveId(thread.id); setSearch({ thread: thread.id }, { replace: true }); if (filesOpen) navigate(`/projects/${projectId}?thread=${thread.id}`); },
+    menu: [
+      { key: 'rename', label: tp('rename'), icon: <Sym name="edit" />, onAction: () => void editThread(thread, 'rename') },
+      { key: 'archive', label: tp(thread.archived ? 'restore' : 'archive'), icon: <Sym name="archive" />, onAction: () => void editThread(thread, 'archive') },
+      { key: 'delete', label: tp('delete'), icon: <Sym name="delete" />, danger: true, onAction: () => void editThread(thread, 'delete') },
+    ],
+  }));
+  const createAgent = async () => {
+    const name = await promptDialog({ headline: tp('newBot'), placeholder: tp('name'), confirmText: tp('save'), cancelText: tp('cancel') });
+    if (!name) return;
+    try { const agent = await serverClient.createAgent({ name }); setAgents(old => [...old, agent]); setAgentId(agent.id); newDraft(); }
+    catch (error) { toast.error(projectError(error)); }
+  };
 
   const reload = () => {
     void Promise.all([serverClient.bootstrapStatus(), serverClient.session()]).then(([nextStatus, nextSession]) => {
@@ -511,12 +619,14 @@ export default function BotWorkspace() {
 
   return (
     <PageShell
-      title={activeSummary?.title || 'Bot'}
+      title={project?.name ?? activeSummary?.title ?? tp('botChat')}
+      subtitle={projectId ? activeSummary?.title : agents.find(a => a.id === agentId)?.name}
+      onBack={projectId ? () => navigate('/projects') : undefined}
       rail={nav}
-      recent={{ label: 'Bot 线程', items: recent }}
+      recent={{ label: tp(projectId ? 'sessions' : 'botSessions'), items: recent }}
       actions={(
         <div className="bot-toolbar">
-          <Button isIconOnly variant="tertiary" size="sm" aria-label="新建线程" onPress={() => void create()}>
+          <Button isIconOnly variant="tertiary" size="sm" aria-label={tp('newSession')} isDisabled={sendBusy || project?.archived} onPress={newDraft}>
             <Sym name="edit" />
           </Button>
           <Dropdown>
@@ -526,7 +636,7 @@ export default function BotWorkspace() {
             <Dropdown.Popover placement="bottom end">
               <Dropdown.Menu
                 aria-label="Bot 操作"
-                disabledKeys={active ? [] : ['stop', 'mcp']}
+                disabledKeys={[...(!active ? ['stop', 'mcp'] : []), ...(projectId ? ['mcp'] : [])]}
                 onAction={(key) => {
                   if (key === 'stop') void stop();
                   else if (key === 'mcp') setMcpOpen(true);
@@ -546,12 +656,23 @@ export default function BotWorkspace() {
       fill
       rootClassName="bot-page"
     >
+      <div className="bot-scope-bar">
+        {projectId && <div className="project-tabs"><Button size="sm" variant={!filesOpen ? 'secondary' : 'ghost'} onPress={() => navigate(`/projects/${projectId}${activeId ? `?thread=${activeId}` : ''}`)}>{tp('chat')}</Button><Button size="sm" variant={filesOpen ? 'secondary' : 'ghost'} onPress={() => navigate(`/projects/${projectId}/files`)}>{tp('files')}</Button><Button size="sm" variant="ghost" isDisabled={!project} onPress={() => setSettingsOpen(true)}>{tp('settings')}</Button></div>}
+        {!filesOpen && <>
+          <label>{tp('bot')}<select aria-label={tp('bot')} value={activeSummary?.agentId ?? agentId} disabled={sendBusy || listLoading} onChange={e => { setAgentId(e.target.value); newDraft(); }}>{availableAgents.map(agent => <option key={agent.id} value={agent.id}>{agent.name}</option>)}</select></label>
+          {!projectId && <Button size="sm" variant="ghost" onPress={() => void createAgent()}>{tp('newBot')}</Button>}
+          <label><input type="checkbox" checked={showArchived} onChange={e => setShowArchived(e.target.checked)} />{tp('showArchived')}</label>
+        </>}
+        {project && <p className="project-muted">{tp(project.archived ? 'readOnly' : 'projectOnly')}</p>}
+      </div>
+      {listError && <div className="project-error" role="alert">{listError}<Button onPress={() => void refresh()}>{tp('retry')}</Button></div>}
+      {settingsOpen && project && <ProjectSettings project={project} agents={agents} onChange={next => { setProject(next); const first = next.grants.find(g => agents.some(a => a.id === g.agentId && a.enabled)); if (!next.grants.some(g => g.agentId === agentId)) setAgentId(first?.agentId ?? ''); }} onClose={() => setSettingsOpen(false)} />}
       <Modal.Root isOpen={mcpOpen} onOpenChange={setMcpOpen}><Modal.Backdrop><Modal.Container size="md" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>
         <Modal.Header><Modal.Heading>{t('mcp.scope')}</Modal.Heading></Modal.Header>
         <Modal.Body>{mcpOpen && activeId ? <BotMcpScope key={activeId} threadId={activeId} /> : null}</Modal.Body>
         <Modal.Footer><Button onPress={() => setMcpOpen(false)}>{t('mcp.save')}</Button></Modal.Footer>
       </Modal.Dialog></Modal.Container></Modal.Backdrop></Modal.Root>
-      <section className="bot-conversation" aria-label="Bot 对话">
+      {filesOpen ? project && <ProjectFiles key={project.id} project={project} /> : <section className="bot-conversation" aria-label="Bot 对话">
         <div
           ref={scrollRef}
           className="bot-messages"
@@ -561,15 +682,12 @@ export default function BotWorkspace() {
             stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
           }}
         >
-          {!threads.length ? (
+          {listLoading ? <div className="bot-center"><Spinner /></div> : !activeId ? (
             <div className="bot-center">
-              <Button variant="primary" onPress={() => void create()}>
-                <Sym name="edit" />
-                新建线程
-              </Button>
+              <p>{projectId && !availableAgents.length ? tp('noAgent') : tp('newSession')}</p>
             </div>
           ) : !active ? (
-            <div className="bot-center"><Spinner color="current" /></div>
+            <div className="bot-center">{detailError ? <div className="project-error" role="alert">{detailError}<Button onPress={() => setDetailRevision(v => v + 1)}>{tp('retry')}</Button></div> : <Spinner color="current" />}</div>
           ) : (
             <VirtualMessages items={rows} scrollRef={scrollRef} onResize={followEnd} key={active.id}>
               {(row) => (
@@ -578,6 +696,7 @@ export default function BotWorkspace() {
                   approval={approvalByMessage.get(row.message.id)}
                   onReact={react}
                   onResolve={resolveApproval}
+                  projectId={projectId}
                 />
               )}
             </VirtualMessages>
@@ -591,12 +710,12 @@ export default function BotWorkspace() {
           value={draft}
           onChange={setDraft}
           onSubmit={() => void send()}
-          disabled={!active}
-          onAttach={() => uploadInputRef.current?.click()}
+          disabled={!canChat || sendBusy || Boolean(activeId && !active)}
+          onAttach={active ? () => uploadInputRef.current?.click() : undefined}
           attachBusy={uploadBusy}
         />
-        <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || uploadBusy} />
-      </section>
+        <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label="添加附件" onChange={upload} disabled={!active || !canChat || uploadBusy} />
+      </section>}
     </PageShell>
   );
 }

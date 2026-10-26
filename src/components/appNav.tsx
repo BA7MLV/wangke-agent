@@ -1,6 +1,8 @@
 import { useNavigate } from 'react-router-dom';
 import { Sym, toast, type NavConfig, type NavItem } from '../ui';
 import { useCourseChat } from '../store/courseChat';
+import { cloud } from '../cloud/state';
+import { useTranslation } from 'react-i18next';
 
 /**
  * 应用级导航（新会话 / 课程库）的唯一来源。
@@ -14,11 +16,14 @@ import { useCourseChat } from '../store/courseChat';
  *
  * 播放页也用这份配置（value='home'：播放页是课程库的下级页面）。
  */
-export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig {
+export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot' | 'projects'): NavConfig {
   const navigate = useNavigate();
+  const { t } = useTranslation('projects');
   const createSession = useCourseChat((s) => s.createSession);
   // 导航统一使用 Tabler 描边字形；选中态仍由 ListBox 的底色表达。
   const items: NavItem[] = [
+    ...(cloud.enabled ? [{ value: 'bot', label: t('botChat'), icon: <Sym name="smart_toy" />, onClick: () => navigate('/chat'), testId: 'nav-rail-bot' }] : []),
+    { value: 'projects', label: t('title'), icon: <Sym name="folder" />, onClick: () => navigate('/projects'), testId: 'nav-rail-projects' },
     {
       /**
        * 首项是**动作**（`isAction`）而不是页面：它回答的不是「你在哪」而是
@@ -29,7 +34,7 @@ export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig 
        * 不必付任何代价。见 docs/plans/2026-10-15-懒创建会话-design.md §七。
        */
       value: 'chat',
-      label: '新会话',
+       label: cloud.enabled ? '课程问答' : '新会话',
       isAction: true,
       // 图标仍是「聊天」而不是「加号」：这一格的去处还是对话页，
       // 新会话只是它默认落到的那条（草稿态）会话。
@@ -48,7 +53,7 @@ export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig 
       onClick: () => {
         if (active === 'chat' && useCourseChat.getState().activeId == null) toast.info('已在新会话');
         else void createSession();
-        navigate('/');
+         navigate(cloud.enabled ? '/course-chat' : '/');
       },
       testId: 'nav-rail-chat',
     },
@@ -59,13 +64,13 @@ export function useAppNav(active: 'home' | 'chat' | 'study' | 'bot'): NavConfig 
       onClick: () => navigate('/library'),
       testId: 'nav-rail-home',
     },
-    {
+    ...(!cloud.enabled ? [{
       value: 'bot',
       label: 'Bot',
       icon: <Sym name="smart_toy" />,
       onClick: () => navigate('/bot'),
       testId: 'nav-rail-bot',
-    },
+    }] : []),
   ];
   return { value: active, items };
 }

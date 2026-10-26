@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState } from 'react';
+import { useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState, type ClipboardEvent } from 'react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from '../components/markdown/Markdown';
 import { MaterialImage } from '../components/MaterialImage';
@@ -22,6 +22,8 @@ import ChatAddMenu from '../components/ChatAddMenu';
 import ComposerExpand, { useComposerSize } from '../components/ComposerExpand';
 import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
 import { useChatAttachments } from '../store/chatAttachments';
+import { MAX_CHAT_ATTACHMENTS } from '../chat/attachments';
+import { pastedTextAttachment } from '../chat/paste';
 import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, PendingReply, useMessageEnter } from '../components/motion';
 import ResponseProcess from '../components/ResponseProcess';
@@ -605,6 +607,25 @@ export default function CourseChat() {
   const skillIds = useCourseChat((s) => s.skillIds);
   const contextCourses = useCourseChat((s) => s.contextCourses);
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
+  const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
+    if (pendingAsk) return;
+    const attachments = useChatAttachments.getState();
+    const files = Array.from(event.clipboardData.files);
+    if (files.length) {
+      event.preventDefault();
+      attachments.add(files);
+      return;
+    }
+    const file = pastedTextAttachment(event.clipboardData.getData('text/plain'));
+    if (!file) return;
+    event.preventDefault();
+    if (attachments.items.length >= MAX_CHAT_ATTACHMENTS) {
+      toast.error(`每条消息最多 ${MAX_CHAT_ATTACHMENTS} 个附件，请移除附件后重新粘贴`);
+      return;
+    }
+    attachments.add([file]);
+    toast.info('粘贴内容超过 4000 字节，已自动转换为 txt 附件');
+  };
   const pendingQuestion = pendingAsk ? messages.find((message) => message.key === pendingAsk.messageKey)?.ask : undefined;
   const composerAsk = pendingQuestion?.picked == null ? pendingQuestion : undefined;
   const composerOverflow = useComposerSize(composerRef, draft, !composerAsk);
@@ -1268,7 +1289,7 @@ export default function CourseChat() {
               <ChatAttachmentDraft />
               </div>
               <ChatAddMenu disabled={!sessionReady || !!pendingAsk} />
-              <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onChange={(value) => {
+              <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onPaste={handlePaste} onChange={(value) => {
                 setVoiceEditVersion((version) => version + 1);
                 setDraft(value);
               }} />
@@ -1284,10 +1305,7 @@ export default function CourseChat() {
                   setVoiceEditVersion((version) => version + 1);
                   setDraft(event.target.value);
                 }}
-                onPaste={(event) => {
-                  const files = Array.from(event.clipboardData.files);
-                  if (files.length && !pendingAsk) { event.preventDefault(); useChatAttachments.getState().add(files); }
-                }}
+                onPaste={handlePaste}
                 /**
                  * 移动端键盘的回车键改成「发送」：Android Chrome 认 enterkeyhint，
                  * 会把按键的文案与语义从「换行」换成「发送」（iOS Safari 暂不认，

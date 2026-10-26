@@ -33,8 +33,11 @@ export function registerMcpRoutes(app: FastifyInstance, deps: {
       ids = session.mcpServerIds;
     } else {
       if (typeof context.threadId !== 'string') throw new Error('mcp_invalid_context');
-      const thread = store.db.prepare('SELECT mcp_server_ids FROM threads WHERE id=? AND owner_id=?').get(context.threadId, owner) as { mcp_server_ids: string | null } | undefined;
+      const thread = store.db.prepare('SELECT mcp_server_ids,project_id FROM threads WHERE id=? AND owner_id=?').get(context.threadId, owner) as { mcp_server_ids: string | null; project_id: string | null } | undefined;
       if (!thread) throw new Error('mcp_context_denied');
+      // Existing connectors are owner-scoped, not project-scoped. A project
+      // cannot widen its boundary through a global external connector.
+      if (thread.project_id) return [];
       ids = thread.mcp_server_ids === null ? undefined : JSON.parse(thread.mcp_server_ids);
     }
     if (ids !== undefined && (!Array.isArray(ids) || ids.some(id => typeof id !== 'string'))) throw new Error('mcp_invalid_scope');
@@ -131,6 +134,7 @@ export function registerMcpRoutes(app: FastifyInstance, deps: {
     try {
       scope(user.id, request.body, request);
       const { serverIds, threadId } = request.body;
+      if (threadId && (store.db.prepare('SELECT project_id FROM threads WHERE id=? AND owner_id=?').get(threadId, user.id) as { project_id: string | null })?.project_id) throw new Error('mcp_context_denied');
       // Browser chat scopes live in the synchronized chatSession record. Bot threads use SQLite.
       if (!threadId || (serverIds !== null && (!Array.isArray(serverIds) || serverIds.length > 30 || serverIds.some(id => typeof id !== 'string' || !manager.repository.get(user.id, id))))) throw new Error('mcp_invalid_scope');
       store.db.prepare('UPDATE threads SET mcp_server_ids=? WHERE id=? AND owner_id=?').run(serverIds === null ? null : JSON.stringify(serverIds), threadId, user.id);

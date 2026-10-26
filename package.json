@@ -18,6 +18,8 @@
     "test:api-split": "tsx scripts/test-api-split.mjs",
     "test:migration": "node scripts/test-migration.mjs",
     "test:bot": "tsx scripts/test-bot-runtime.mjs",
+    "test:projects": "tsx scripts/test-projects.mjs",
+    "test:projects:e2e": "tsx scripts/test-projects-e2e.mjs",
     "test:mcp": "tsx scripts/test-mcp.mjs && tsx scripts/test-mcp-compat.mjs",
     "test:sandbox": "node scripts/test-sandbox.mjs",
     "test:cloud": "tsx scripts/test-cloud.mjs",

@@ -17,8 +17,12 @@ services:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
       SANDBOX_IMAGE: wangke-sandbox:0.1.0
       SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
+      SANDBOX_PROJECTS_DIR: /data/files/projects
+      SANDBOX_UID: ${WANGKE_UID:-1000}
+      SANDBOX_GID: ${WANGKE_GID:-1000}
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
+      - "${WANGKE_HOST_DATA_DIR:-./data}:/data:ro"
     read_only: true
     tmpfs:
       - /tmp:size=64m

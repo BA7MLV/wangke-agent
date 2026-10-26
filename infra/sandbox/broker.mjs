@@ -1,22 +1,40 @@
 import http from 'node:http';
 import { spawn, execFile } from 'node:child_process';
 import { timingSafeEqual } from 'node:crypto';
+import fs from 'node:fs';
+import path from 'node:path';
+import { promisify } from 'node:util';
+import { sandboxArgs, uuid } from './arguments.mjs';
+export { sandboxArgs } from './arguments.mjs';
 
 const token = process.env.SANDBOX_TOKEN;
 if (!token || token.length < 32) throw new Error('SANDBOX_TOKEN must contain at least 32 characters');
-const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const active = new Map();
-const remove = (name) => new Promise((resolve) => execFile('docker', ['rm', '-f', name], { timeout: 10_000 }, () => resolve()));
+const executions = new Map();
+const cancelled = new Map();
+const remove = async name => {
+  try { await promisify(execFile)('docker', ['rm', '-f', name], { timeout: 10_000 }); }
+  catch (error) { if (!/No such container/i.test(String(error.stderr))) throw error; }
+};
 
-export function sandboxArgs({ threadId, executionId, command, network = false }) {
-  return ['run', '--rm', '--name', `wangke-exec-${executionId}`, '--label', 'wangke.sandbox=true',
-    '--init', '--user', '1000:1000', '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
-    '--read-only', '--pids-limit=128', '--memory=1g', '--memory-swap=1g', '--cpus=1',
-    '--network', network ? process.env.SANDBOX_NETWORK || 'none' : 'none', '--tmpfs', '/tmp:rw,nosuid,size=256m',
-    '--mount', `type=volume,source=wangke-workspace-${threadId},target=/workspace`,
-    '--workdir', '/workspace', '--env', 'HOME=/workspace',
-    process.env.SANDBOX_IMAGE || 'wangke-sandbox:0.1.0',
-    'timeout', '--signal=KILL', '120', 'bash', '-lc', command];
+let hostRoot;
+async function projectRoot(id) {
+  const root = process.env.SANDBOX_PROJECTS_DIR;
+  if (!root || !path.isAbsolute(root)) throw new Error('project_mount_not_configured');
+  const target = path.join(root, id);
+  if (!fs.lstatSync(target).isDirectory() || fs.realpathSync(target) !== path.join(fs.realpathSync(root), id)) throw new Error('invalid_project_directory');
+  if (!hostRoot) {
+    if (process.env.SANDBOX_PROJECTS_HOST_DIR) hostRoot = process.env.SANDBOX_PROJECTS_HOST_DIR;
+    else if (fs.existsSync('/.dockerenv')) {
+      // Compose may use a relative host path. Docker reports the canonical
+      // daemon-side source, so never interpret it relative to the broker CWD.
+      const { stdout } = await promisify(execFile)('docker', ['inspect', '--format', '{{json .Mounts}}', process.env.HOSTNAME], { timeout: 10000 });
+      const mount = JSON.parse(stdout).filter(m => m.Type === 'bind' && (root === m.Destination || root.startsWith(`${m.Destination}/`))).sort((a, b) => b.Destination.length - a.Destination.length)[0];
+      if (!mount) throw new Error('project_mount_not_configured');
+      hostRoot = path.join(mount.Source, path.relative(mount.Destination, root));
+    } else hostRoot = fs.realpathSync(root);
+  }
+  return hostRoot;
 }
 
 const server = http.createServer(async (req, res) => {
@@ -25,20 +43,41 @@ const server = http.createServer(async (req, res) => {
   const supplied = Buffer.from(req.headers.authorization || '');
   const expected = Buffer.from(`Bearer ${token}`);
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return reply(401, { error: 'unauthorized' });
-  if (req.url !== '/execute' || req.method !== 'POST') return reply(404, { error: 'not_found' });
+  if (!['/execute', '/cancel'].includes(req.url) || req.method !== 'POST') return reply(404, { error: 'not_found' });
   let body;
   try {
     let bytes = 0; const chunks = [];
     for await (const chunk of req) { bytes += chunk.length; if (bytes > 32_768) throw new Error(); chunks.push(chunk); }
     body = JSON.parse(Buffer.concat(chunks).toString());
-    if (!uuid.test(body.threadId) || !uuid.test(body.executionId) || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000) throw new Error();
+    if (!body || !uuid.test(body.executionId)) throw new Error();
+    if (req.url === '/execute' && (!uuid.test(body.threadId) || (body.projectId !== undefined && !uuid.test(body.projectId)) || (body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000)) throw new Error();
   } catch { return reply(400, { error: 'invalid_request' }); }
-  if (active.has(body.threadId) || active.size >= 8) return reply(409, { error: 'sandbox_busy' });
+  for (const [id, expires] of cancelled) if (expires < Date.now()) cancelled.delete(id);
+  if (req.url === '/cancel') {
+    // Tombstone first, including execute requests still waiting in the network.
+    cancelled.set(body.executionId, Date.now() + 300_000);
+    const execution = executions.get(body.executionId);
+    if (execution) { execution.cancelled = true; execution.stop?.(); await execution.done; }
+    try { await remove(`wangke-exec-${body.executionId}`); return reply(200, { cancelled: true }); }
+    catch { return reply(503, { error: 'sandbox_cleanup_pending' }); }
+  }
+  if (cancelled.has(body.executionId)) return reply(409, { error: 'execution_cancelled' });
+  const scope = body.projectId ? `project:${body.projectId}` : `thread:${body.threadId}`;
+  if (active.has(scope) || executions.has(body.executionId) || active.size >= 8) return reply(409, { error: 'sandbox_busy' });
   const name = `wangke-exec-${body.executionId}`;
-  active.set(body.threadId, name);
+  let resolveDone;
+  const execution = { name, cancelled: false, stop: null, done: new Promise(resolve => { resolveDone = resolve; }) };
+  const finish = () => { active.delete(scope); executions.delete(body.executionId); resolveDone(); };
+  active.set(scope, execution); executions.set(body.executionId, execution);
+  let args;
+  try { args = sandboxArgs(body, body.projectId ? await projectRoot(body.projectId) : undefined); }
+  catch { finish(); return reply(400, { error: 'invalid_project_workspace' }); }
+  if (res.destroyed || execution.cancelled) { finish(); return reply(409, { error: 'execution_cancelled' }); }
   let stdout = ''; let stderr = ''; let size = 0; let timer;
-  const child = spawn('docker', sandboxArgs(body), { stdio: ['ignore', 'pipe', 'pipe'] });
-  const stop = () => { child.kill('SIGKILL'); void remove(name); };
+  const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
+  let removing;
+  const stop = () => { child.kill('SIGKILL'); removing ??= remove(name).catch(() => {}); };
+  execution.stop = stop;
   const disconnected = () => { if (!res.writableEnded) stop(); };
   res.on('close', disconnected);
   timer = setTimeout(stop, 130_000);
@@ -52,10 +91,17 @@ const server = http.createServer(async (req, res) => {
   child.on('error', () => { stderr = 'Unable to start sandbox'; });
   child.on('close', async (code) => {
     clearTimeout(timer);
-    await remove(name);
-    active.delete(body.threadId);
-    reply(200, { stdout: stdout.slice(0, 60_000), stderr: stderr.slice(0, 60_000), exitCode: code ?? 137 });
+    try {
+      await removing;
+      await remove(name);
+      finish();
+      reply(200, { stdout: stdout.slice(0, 60_000), stderr: stderr.slice(0, 60_000), exitCode: code ?? 137 });
+    } catch { finish(); reply(503, { error: 'sandbox_cleanup_pending' }); }
   });
 });
 server.listen(3001, process.env.HOST || '0.0.0.0');
-process.on('SIGTERM', async () => { server.close(); await Promise.all([...active.values()].map(remove)); process.exit(0); });
+process.on('SIGTERM', async () => {
+  server.close();
+  await Promise.all([...active.values()].map(async execution => { execution.cancelled = true; execution.stop?.(); await execution.done; }));
+  process.exit(0);
+});

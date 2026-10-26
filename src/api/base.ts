@@ -19,7 +19,7 @@ declare global {
 
 function resolveBase(): string {
   const runtime = typeof window !== 'undefined' ? window.__WANGKE_CONFIG__?.apiBaseUrl : undefined;
-  const value = (runtime || import.meta.env.VITE_API_BASE_URL || '').trim();
+  const value = (runtime || import.meta.env?.VITE_API_BASE_URL || '').trim();
   return value.replace(/\/+$/, '');
 }
 

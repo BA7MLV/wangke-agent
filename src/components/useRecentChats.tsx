@@ -5,6 +5,7 @@ import { db } from '../store/db';
 import { useCourseChat } from '../store/courseChat';
 import { confirmDialog, promptDialog, Sym, toast } from '../ui';
 import type { RecentItem } from '../ui/layout';
+import { cloud } from '../cloud/state';
 
 // 页面切换会重挂 hook，但最近会话不应因此退回空态。
 // 只缓存查询结果；每次挂载仍订阅 liveQuery，删除、后台消息等会继续实时更新。
@@ -89,7 +90,7 @@ export function useRecentChats(showActive = false) {
     if (newId == null) toast.warning('这条会话还没有内容，无法分支');
     else {
       toast.success('已分支出新会话');
-      if (!showActive) navigate('/');
+      if (!showActive) navigate(cloud.enabled ? '/course-chat' : '/');
     }
   };
 
@@ -105,7 +106,7 @@ export function useRecentChats(showActive = false) {
       onUnpin: () => void useCourseChat.getState().setPinned(id, false),
       onClick: () => {
         void useCourseChat.getState().loadSession(id);
-        if (!showActive) navigate('/');
+        if (!showActive) navigate(cloud.enabled ? '/course-chat' : '/');
       },
       testId: `chat-recent-${id}`,
       menu: [

@@ -12,7 +12,7 @@ void i18n.use(initReactI18next).init({
   supportedLngs: [...SUPPORTED_LOCALES],
   load: 'currentOnly',
   defaultNS: 'common',
-  ns: ['common', 'settings'],
+  ns: ['common', 'settings', 'projects'],
   initAsync: false,
   interpolation: { escapeValue: false }, // 文本转义交给 React，译文不作为 HTML 注入。
   react: { useSuspense: false },

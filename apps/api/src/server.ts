@@ -19,6 +19,10 @@ import { workerIdentity } from './cloud/tasks.js';
 import { McpRepository } from './mcp/repository.js';
 import { McpManager } from './mcp/manager.js';
 import { registerMcpRoutes } from './mcp/routes.js';
+import { ProjectRepository } from './projects/repository.js';
+import { ProjectError } from './projects/files.js';
+import { registerProjectRoutes } from './projects/routes.js';
+import type { SandboxCleanup, SandboxExecutor } from './agent/sandbox.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -61,7 +65,7 @@ function webauthnChallengeFromResponse(body: unknown): string | null {
   }
 }
 
-export function buildServer(options: { dbPath?: string; staticDir?: string; fetch?: typeof fetch } = {}) {
+export function buildServer(options: { dbPath?: string; staticDir?: string; fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxCleanup?: SandboxCleanup } = {}) {
   const secretFile = process.env.BOOTSTRAP_SECRET_FILE ?? path.join(defaultDataDir, 'config/bootstrap-secret');
   const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(defaultDataDir, 'db/wangke.sqlite');
   const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 15 * 60 * 1000);
@@ -75,11 +79,17 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
   const mcp = new McpManager(new McpRepository(store, cloudConfig));
-  const runner = new BotRunner(store, { fetch: options.fetch, configuration: cloudConfig, mcp });
+  const projects = new ProjectRepository(store, path.join(filesDir, 'projects'));
+  const runner = new BotRunner(store, { fetch: options.fetch, sandbox: options.sandbox, sandboxCleanup: options.sandboxCleanup, configuration: cloudConfig, mcp, projects });
+  projects.isActive = id => runner.isProjectActive(id);
   // Never recreate a bootstrap secret after the database has been initialized.
   const bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 16 * 1024 * 1024 });
+  app.setErrorHandler((error, _request, reply) => {
+    if (error instanceof ProjectError) return reply.code(error.status).send({ error: error.code });
+    return reply.send(error);
+  });
   app.addContentTypeParser('application/octet-stream', (_request, stream, done) => done(null, stream));
   app.addContentTypeParser(/^multipart\/form-data/, (_request, stream, done) => done(null, stream));
   runner.start();
@@ -173,6 +183,10 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
 
    const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
    registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
+   registerProjectRoutes(app, { projects, requireAuth, checkOrigin, maxFileBytes, stopProject: (id) => {
+     const runs = store.db.prepare("SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.project_id=? AND r.status IN ('queued','running','waiting_user')").all(id) as Array<{ id: string }>;
+     for (const run of runs) { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=?").run(now(), run.id); runner.cancel(run.id); }
+   } });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
   app.addHook('onRequest', async (request, reply) => {
     const worker = workerIdentity(request);
@@ -358,25 +372,59 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     return reply.code(201).send(agentDto(row));
   });
 
-  app.get('/api/v1/threads', async (request, reply) => { const user = requireAuth(request, reply); if (!user) return; return { threads: store.db.prepare('SELECT id,mode,title,created_at AS createdAt,updated_at AS updatedAt FROM threads WHERE owner_id=? ORDER BY updated_at DESC').all(user.id) }; });
-  app.post<{ Body: { mode?: ConversationMode; title?: string } }>('/api/v1/threads', async (request, reply) => {
+  const threadFields = 'id,mode,title,project_id AS projectId,agent_id AS agentId,archived,created_at AS createdAt,updated_at AS updatedAt';
+  app.get<{ Querystring: { projectId?: string; agentId?: string } }>('/api/v1/threads', async (request, reply) => {
+    const user = requireAuth(request, reply); if (!user) return;
+    const { projectId, agentId } = request.query;
+    if (projectId) projects.get(user.id, projectId);
+    if (agentId) projects.agent(user.id, agentId);
+    const rows = store.db.prepare(`SELECT ${threadFields} FROM threads WHERE owner_id=?${projectId ? ' AND project_id=?' : ''}${agentId ? ' AND agent_id=?' : ''} ORDER BY updated_at DESC,id`).all(user.id, ...(projectId ? [projectId] : []), ...(agentId ? [agentId] : [])) as Array<Record<string, unknown>>;
+    return { threads: rows.map(row => ({ ...row, archived: Boolean(row.archived) })) };
+  });
+  app.post<{ Body: { mode?: ConversationMode; title?: string; projectId?: string; agentId?: string } }>('/api/v1/threads', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     if (request.body?.mode !== 'chat' && request.body?.mode !== 'bot') return bad(reply, 400, 'invalid_mode');
+    const projectId = request.body.projectId ?? null;
+    if (projectId !== null && (typeof projectId !== 'string' || !projectId || request.body.mode !== 'bot')) return bad(reply, 400, 'invalid_project');
+    const agentId = request.body.agentId ?? (request.body.mode === 'bot' ? ensureDefaultAgent(user.id).id : null);
+    if (agentId !== null) projects.agent(user.id, agentId);
+    if (projectId) projects.authorize(user.id, projectId, agentId);
     const id = crypto.randomUUID(); const timestamp = now(); const title = String(request.body.title ?? '').slice(0, 200) || null;
     store.transaction(() => {
-      store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id, user.id, request.body!.mode, title, timestamp, timestamp);
+      store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,project_id,agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)').run(id, user.id, request.body!.mode, title, projectId, agentId, timestamp, timestamp);
       if (request.body!.mode === 'bot') {
-        const agent = ensureDefaultAgent(user.id);
-        store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(id, agent.id, timestamp);
+        store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(id, agentId, timestamp);
       }
     });
-    return reply.code(201).send({ id, mode: request.body.mode, title, createdAt: timestamp, updatedAt: timestamp });
+    return reply.code(201).send({ id, mode: request.body.mode, title, projectId, agentId, archived: false, createdAt: timestamp, updatedAt: timestamp });
+  });
+  app.patch<{ Params: { id: string }; Body: { title?: unknown; archived?: unknown } }>('/api/v1/threads/:id', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const user = requireAuth(request, reply); if (!user) return;
+    const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    const body = request.body;
+    if (!body || Object.keys(body).some(k => !['title', 'archived'].includes(k)) || (body.title !== undefined && (typeof body.title !== 'string' || !body.title.trim() || body.title.length > 200)) || (body.archived !== undefined && typeof body.archived !== 'boolean')) return bad(reply, 400, 'invalid_thread');
+    store.db.prepare('UPDATE threads SET title=?,archived=?,updated_at=? WHERE id=?').run(body.title ?? thread.title, Number(body.archived ?? thread.archived), now(), thread.id);
+    if (body.archived === true) {
+      const runs = store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_user')").all(thread.id) as Array<{ id: string }>;
+      for (const run of runs) { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=?").run(now(), run.id); runner.cancel(run.id); }
+    }
+    return { ...store.db.prepare(`SELECT ${threadFields} FROM threads WHERE id=?`).get(thread.id) as object, archived: Boolean(body.archived ?? thread.archived) };
+  });
+  app.delete<{ Params: { id: string } }>('/api/v1/threads/:id', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const user = requireAuth(request, reply); if (!user) return;
+    const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    if (runner.isThreadActive(thread.id) || store.db.prepare("SELECT 1 FROM runs WHERE thread_id=? AND status IN ('queued','running','waiting_user')").get(thread.id)) return bad(reply, 409, 'thread_busy');
+    store.transaction(() => { store.db.prepare('DELETE FROM approvals WHERE thread_id=?').run(thread.id); store.db.prepare('DELETE FROM threads WHERE id=?').run(thread.id); });
+    return { deleted: true };
   });
   app.post<{ Params: { id: string }; Body: { agentId?: string } }>('/api/v1/threads/:id/participants', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     const thread = ownedThread(user.id, request.params.id); if (!thread || thread.mode !== 'bot') return bad(reply, 404, 'thread_not_found');
+    if (thread.project_id) return bad(reply, 409, 'project_thread_single_agent');
     const agent = store.db.prepare('SELECT * FROM agent_profiles WHERE id=? AND owner_id=? AND enabled=1').get(request.body?.agentId, user.id) as any;
     if (!agent) return bad(reply, 404, 'agent_not_found');
     if ((store.db.prepare('SELECT COUNT(*) AS count FROM thread_participants WHERE thread_id=?').get(thread.id) as { count: number }).count >= 8) return bad(reply, 409, 'participant_limit_reached');
@@ -387,6 +435,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    if (thread.project_id) return bad(reply, 409, 'project_thread_single_agent');
     const agent = store.db.prepare('SELECT id,name FROM agent_profiles WHERE id=? AND owner_id=?').get(request.params.agentId, user.id) as { id: string; name: string } | undefined;
     if (!agent) return bad(reply, 404, 'agent_not_found');
     const removed = store.db.prepare('DELETE FROM thread_participants WHERE thread_id=? AND agent_id=?').run(thread.id, agent.id);
@@ -449,7 +498,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
     const participants = (store.db.prepare('SELECT a.* FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? ORDER BY p.joined_at').all(thread.id) as any[]).map(agentDto);
     const approvals = store.db.prepare('SELECT id,message_id AS messageId,run_id AS runId,status,created_at AS createdAt,resolved_at AS resolvedAt,resolution FROM approvals WHERE thread_id=? ORDER BY created_at').all(thread.id);
-    return { id: thread.id, mode: thread.mode, title: thread.title, createdAt: thread.created_at, updatedAt: thread.updated_at, participants, approvals, messages: store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? ORDER BY seq').all(thread.id) };
+    return { id: thread.id, mode: thread.mode, title: thread.title, projectId: thread.project_id, agentId: thread.agent_id, archived: Boolean(thread.archived), createdAt: thread.created_at, updatedAt: thread.updated_at, participants, approvals, messages: store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? ORDER BY seq').all(thread.id) };
   });
   app.post<{ Params: { id: string } }>('/api/v1/threads/:id/stop', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -471,6 +520,8 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
+    if (thread.archived) return bad(reply, 409, 'thread_archived');
+    if (thread.project_id) projects.authorize(user.id, thread.project_id, thread.agent_id);
     const b = request.body ?? {};
     const nonce = b.clientNonce;
     const kind = b.kind ?? 'text';
@@ -478,7 +529,17 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (typeof nonce !== 'string' || nonce.length < 1 || nonce.length > 200 ||
         (b.role !== undefined && b.role !== 'user') || !messageKinds.has(kind) ||
         typeof b.content !== 'string' || b.content.length > 100000 ||
-        (kind === 'attachment' && (() => { try { const value = JSON.parse(b.content); return typeof value?.fileId !== 'string' || !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(value.fileId, user.id); } catch { return true; } })())) return bad(reply, 400, 'invalid_message');
+        (kind === 'attachment' && (() => {
+          try {
+            const value = JSON.parse(b.content);
+            if (thread.project_id) {
+              if (value.projectId !== thread.project_id || typeof value.projectPath !== 'string') return true;
+              if (process.platform !== 'linux') projects.assertIdle(thread.project_id);
+              const file = projects.files.open(thread.project_id, value.projectPath); fs.closeSync(file.fd); return false;
+            }
+            return typeof value?.fileId !== 'string' || !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(value.fileId, user.id);
+          } catch { return true; }
+        })())) return bad(reply, 400, 'invalid_message');
     if (b.replyTo && !store.db.prepare('SELECT 1 FROM messages WHERE id=? AND thread_id=?').get(b.replyTo, thread.id)) return bad(reply, 400, 'invalid_reply_to');
     const makeDto = (row: any, deduplicated = false) => ({ id: row.id, threadId: row.thread_id, clientNonce: row.client_nonce, seq: row.seq, role: row.role, kind: row.kind, content: row.content, replyTo: row.reply_to, createdAt: row.created_at, ...(deduplicated ? { deduplicated: true } : {}) });
     const existing = store.db.prepare('SELECT * FROM messages WHERE thread_id=? AND client_nonce=?').get(thread.id, nonce) as any;
@@ -601,7 +662,18 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     reply.raw.end();
   });
 
-  app.post<{ Body: { threadId?: string; mode?: ConversationMode } }>('/api/v1/runs', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const thread = ownedThread(user.id, request.body?.threadId ?? ''); if (!thread || (request.body?.mode && request.body.mode !== thread.mode)) return bad(reply, 404, 'thread_not_found'); const id = crypto.randomUUID(); const timestamp = now(); store.transaction(() => store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,?,?,?)').run(id, thread.id, thread.mode, 'queued', timestamp)); if (thread.mode === 'bot') runner.enqueue(id); return reply.code(201).send({ id, threadId: thread.id, mode: thread.mode, status: 'queued', createdAt: timestamp, completedAt: null }); });
+  app.post<{ Body: { threadId?: string; mode?: ConversationMode } }>('/api/v1/runs', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const user = requireAuth(request, reply); if (!user) return;
+    const thread = ownedThread(user.id, request.body?.threadId ?? '');
+    if (!thread || (request.body?.mode && request.body.mode !== thread.mode)) return bad(reply, 404, 'thread_not_found');
+    if (thread.archived) return bad(reply, 409, 'thread_archived');
+    if (thread.project_id) projects.authorize(user.id, thread.project_id, thread.agent_id);
+    const id = crypto.randomUUID(); const timestamp = now();
+    store.db.prepare('INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,?,?,?)').run(id, thread.id, thread.mode, 'queued', timestamp);
+    if (thread.mode === 'bot') runner.enqueue(id);
+    return reply.code(201).send({ id, threadId: thread.id, mode: thread.mode, status: 'queued', createdAt: timestamp, completedAt: null });
+  });
   app.get<{ Params: { id: string } }>('/api/v1/runs/:id', async (request, reply) => { const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); return { id: run.id, threadId: run.thread_id, mode: run.mode, status: run.status, createdAt: run.created_at, startedAt: run.started_at ?? null, completedAt: run.completed_at ?? null, errorCode: run.error_code ?? null }; });
   app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); if (!['completed', 'failed', 'cancelled'].includes(run.status)) store.transaction(() => { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=? WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), run.id); }); runner.cancel(run.id); const updated = store.db.prepare('SELECT * FROM runs WHERE id=?').get(run.id) as any; return { id: updated.id, threadId: updated.thread_id, mode: updated.mode, status: updated.status, createdAt: updated.created_at, startedAt: updated.started_at ?? null, completedAt: updated.completed_at ?? null, errorCode: updated.error_code ?? null }; });
 
