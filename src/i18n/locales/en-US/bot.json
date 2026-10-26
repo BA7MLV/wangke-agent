@@ -38,7 +38,7 @@
   "kind": "Memory type",
   "preference": "Learning preference",
   "courseFact": "Course fact",
-  "sourceRevision": "Source revision (for record references)",
+  "sourceRevision": "Source revision (resolved by server, read-only)",
   "new": "New",
   "deleted": "Deleted (source tombstone retained)",
   "edit": "Edit",

@@ -28,7 +28,7 @@ const factories = { feishu: () => ({ manifest: { id: 'feishu', version: 1, capab
 let gateway = new GatewayCore(store, config, service, factories, files);
 const study = new StudyTools(store, config, files, async () => { throw new Error('network_forbidden'); });
 const envelope = (text, messageId = crypto.randomUUID()) => ({ messageId, tenant: '', peer: 'me', chat: 'chat', topic: '', direct: true, human: true, text });
-const tool = (name, args) => Response.json({ choices: [{ message: { tool_calls: [{ function: { name, arguments: JSON.stringify(args) } }] } }] });
+const tool = (name, args) => Response.json({ choices: [{ message: { tool_calls: [{ function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 50 } });
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
 async function until(fn) { for (let n = 0; n < 500; n++) { if (fn()) return; await sleep(10); } throw new Error('review_timeout'); }
 const status = id => store.db.prepare('SELECT status FROM runs WHERE id=?').get(id)?.status;
@@ -68,20 +68,21 @@ try {
 
   const defaults = config.get(owner, true);
   config.save(owner, { ...defaults, providers: [{ id: 'mock', name: 'mock', baseUrl: 'https://model.invalid/v1', protocol: 'openai-chat', apiKey: 'test', serves: ['chat'] }], llmModel: { providerId: 'mock', model: 'mock' }, policy: { ...defaults.policy, read: 'allow', write: 'allow', remove: 'ask' } });
-  records.apply(owner, [{ id: 'edit-seed', table: 'videos', key: 'editable', before: null, after: { id: 'editable', name: 'Original' } }]);
-  records.apply(other, [{ id: 'other-seed', table: 'videos', key: 'editable', before: null, after: { id: 'editable', name: 'Other owner' } }]);
+  const editable = { id: 'editable', name: 'Original', size: 0, mimeType: 'video/mp4', duration: 10, createdAt: 1, status: 'transcribed' };
+  records.apply(owner, [{ id: 'edit-seed', table: 'videos', key: 'editable', before: null, after: editable }]);
+  records.apply(other, [{ id: 'other-seed', table: 'videos', key: 'editable', before: null, after: { ...editable, name: 'Other owner' } }]);
   const c = { owner, thread: b.thread_id, run: '', step: '', signal: new AbortController().signal, checkActive() {}, append() {} };
   let turn = 0, oldValue, updatedValue;
   const editThread = service.create(owner, 'bot', 'read update remove', 'agent').id;
   const editRun = await runIn(editThread, async (_url, init) => {
     const body = JSON.parse(init.body), last = body.messages.at(-1); turn++;
     if (turn === 1) return tool('study_read', { table: 'videos', courseId: 'editable' });
-    if (turn === 2) { const item = JSON.parse(last.content).records[0]; oldValue = item.value; assert.deepEqual(oldValue, { id: 'editable', name: 'Original' }); return tool('study_manage', { table: 'videos', key: item.key, before: item.value, after: { ...item.value, name: 'Updated' } }); }
+    if (turn === 2) { const item = JSON.parse(last.content).records[0]; oldValue = item.value; assert.deepEqual(oldValue, editable); return tool('study_manage', { table: 'videos', key: item.key, before: item.value, after: { ...item.value, name: 'Updated' } }); }
     if (turn === 3) {
       await assert.rejects(() => study.plugins.get('study_manage').execute({ table: 'videos', key: 'editable', before: oldValue, after: { ...oldValue, name: 'Concurrent stale change' } }, { ...c, step: 'stale-existing-update' }), /sync_conflict/);
       return tool('study_read', { table: 'videos', courseId: 'editable' });
     }
-    if (turn === 4) { const item = JSON.parse(last.content).records[0]; updatedValue = item.value; assert.deepEqual(updatedValue, { id: 'editable', name: 'Updated' }); return tool('study_manage', { table: 'videos', key: item.key, before: item.value, after: null }); }
+    if (turn === 4) { const item = JSON.parse(last.content).records[0]; updatedValue = item.value; assert.deepEqual(updatedValue, { ...editable, name: 'Updated' }); return tool('study_manage', { table: 'videos', key: item.key, before: item.value, after: null }); }
     return tool('send_message', { kind: 'text', text: 'done' });
   });
   await until(() => status(editRun) === 'waiting_user');
@@ -95,8 +96,9 @@ try {
 
   // Old matching records must survive >1000 newer records from unrelated courses.
   const mutations = [];
-  for (let i = 0; i < 35; i++) mutations.push({ id: `old-${i}`, table: 'materialBlocks', key: i, before: null, after: { id: i, materialId: 'old/course', text: 'Rare Target' } });
-  for (let i = 35; i < 1140; i++) mutations.push({ id: `noise-${i}`, table: 'materialBlocks', key: i, before: null, after: { id: i, materialId: 'noise', text: 'Other course' } });
+  for (const id of ['old/course', 'noise', 'large']) records.apply(owner, [{ id: `seed-${id}`, table: 'videos', key: id, before: null, after: { ...editable, id, name: id, kind: 'material', materialFormat: 'md', duration: 0 } }]);
+  for (let i = 1; i <= 35; i++) mutations.push({ id: `old-${i}`, table: 'materialBlocks', key: i, before: null, after: { id: i, materialId: 'old/course', idx: i - 1, unit: i, unitLabel: `p${i}`, text: 'Rare Target', kind: 'body' } });
+  for (let i = 36; i <= 1140; i++) mutations.push({ id: `noise-${i}`, table: 'materialBlocks', key: i, before: null, after: { id: i, materialId: 'noise', idx: i - 36, unit: i - 35, unitLabel: `p${i}`, text: 'Other course', kind: 'body' } });
   records.apply(owner, mutations);
   const savedOrigin = process.env.PUBLIC_ORIGIN; process.env.PUBLIC_ORIGIN = 'https://study.example.com';
   const readArgs = { table: 'materialBlocks', courseId: 'old/course', query: 'Rare Target' };
@@ -108,7 +110,7 @@ try {
   assert.equal((await study.plugins.get('study_read').execute(readArgs, c)).citation, '#/player/old%2Fcourse');
   if (savedOrigin !== undefined) process.env.PUBLIC_ORIGIN = savedOrigin;
   assert.equal((await study.plugins.get('study_read').execute(readArgs, { ...c, owner: other })).records.length, 0);
-  records.apply(owner, [{ id: 'large-record', table: 'materialBlocks', key: 1141, before: null, after: { id: 1141, materialId: 'large', text: 'x'.repeat(20000) } }]);
+  records.apply(owner, [{ id: 'large-record', table: 'materialBlocks', key: 1141, before: null, after: { id: 1141, materialId: 'large', idx: 0, unit: 1, unitLabel: 'p1', kind: 'body', text: 'x'.repeat(20000) } }]);
   const bounded = await study.plugins.get('study_read').execute({ table: 'materialBlocks', courseId: 'large' }, c);
   assert.equal(bounded.records[0].omitted, true); assert.equal(bounded.records[0].value, undefined);
   assert.equal(bounded.truncated, true); assert.ok(JSON.stringify(bounded).length < 16000);

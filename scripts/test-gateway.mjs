@@ -40,7 +40,7 @@ let gateway = new GatewayCore(store, cfg, bot, factories, files), runner, cloudR
 const envelope = (id, text = 'hello', patch = {}) => ({ messageId: id, tenant: 'tenant', peer: 'me', chat: 'chat', topic: '', direct: true, human: true, text, context: 'private-context', ...patch });
 const countRuns = () => store.db.prepare('SELECT COUNT(*) n FROM runs').get().n;
 async function until(fn) { for (let i = 0; i < 500; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 10)); } throw new Error('timeout'); }
-const response = (name, args) => new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { name, arguments: JSON.stringify(args) } }] } }] }));
+const response = (name, args) => new Response(JSON.stringify({ choices: [{ message: { tool_calls: [{ function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 100, completion_tokens: 50 } }));
 try {
   gateway.start(false);
   const { id: account } = await gateway.save(owner, { channel: 'feishu', agentId: 'agent', enabled: true, preset: 'autonomous', config: { appSecret: 'SUPER-SECRET' } });
@@ -160,7 +160,7 @@ try {
   assert.equal(store.db.prepare('SELECT revoked FROM gateway_bindings WHERE id=?').get(binding.id).revoked, 1);
 
   // Actual Bot tool loop -> persistent CloudTaskRunner -> executor commit -> status/result.
-  const records = new CloudRecords(store), course = { id: 'course', name: 'Biology' };
+  const records = new CloudRecords(store), course = { id: 'course', name: 'Biology', size: 0, mimeType: 'video/mp4', duration: 60, createdAt: 1, status: 'transcribed' };
   records.apply(owner, [{ id: 'seed-course', table: 'videos', key: 'course', before: null, after: course }]);
   for (let i = 1; i <= 3; i++) records.apply(owner, [{ id: `seed-segment-${i}`, table: 'segments', key: i, before: null, after: { id: i, videoId: 'course', idx: i - 1, start: (i - 1) * 20, end: i * 20, text: 'A cell is the basic unit of life.', status: 1 } }]);
   const defaults = cfg.get(owner, true);
@@ -171,7 +171,7 @@ try {
     if (turns === 1) return response('study_task', { action: 'create', kind: 'cards', courseId: 'course' });
     if (!taskId) taskId = store.db.prepare('SELECT id FROM cloud_tasks WHERE parent_run_id IS NOT NULL ORDER BY created_at DESC LIMIT 1').get().id;
     const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=?').get(taskId);
-    if (task.status !== 'completed') { await new Promise(r => setTimeout(r, 50)); return response('study_task', { action: 'status', taskId }); }
+    if (task.status !== 'completed') return response('wait', { seconds: 1, reason: 'Wait for durable child result' });
     assert.ok(body.tools.some(t => t.function.name === 'study_file'));
     return response('send_message', { kind: 'text', text: 'cards verified' });
   } });
@@ -181,7 +181,9 @@ try {
     return Response.json({ choices: [{ message: { role: 'assistant', content: handout ? '# Biology\nA cell is the basic unit of life.\n## Review\nWhat is a cell?' : '[{"time":"00:00","q":"Cell?","a":"Unit of life"}]' } }] });
   } });
   cloudRunner.start('http://127.0.0.1:1'); runner.start();
-  await until(() => store.db.prepare('SELECT status FROM runs WHERE trigger_message_id=?').get(msg.id)?.status === 'completed');
+  await until(() => ['completed', 'failed', 'paused'].includes(store.db.prepare('SELECT status FROM runs WHERE trigger_message_id=?').get(msg.id)?.status));
+  const learningState = store.db.prepare('SELECT status,error_code FROM runs WHERE trigger_message_id=?').get(msg.id);
+  assert.equal(learningState.status, 'completed', learningState.error_code);
   const generatedCards = store.db.prepare("SELECT value FROM cloud_records WHERE owner_id=? AND table_name='cards' AND value IS NOT NULL").all(owner).map(r => JSON.parse(r.value));
   assert.equal(generatedCards[0].a, 'Unit of life');
   const parent = store.db.prepare('SELECT * FROM cloud_tasks WHERE id=?').get(taskId); assert.ok(parent.parent_run_id && parent.parent_step_id);
@@ -204,14 +206,16 @@ try {
   const pdfRead = await study.plugins.get('study_file').execute({ fileId: pdf.id }, ctx);
   assert.ok(pdfRead.text.trim().length > 10);
   const image = await receiveFile(store, files, owner, Readable.from([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')]), 'diagram.png', 'image/png', 1024);
+  store.db.prepare("INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES('vision-fixture',?,'bot','running',?)").run(binding.thread_id, at);
   for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) {
     cfg.save(owner, { ...cfg.get(owner, true), providers: [{ ...cfg.get(owner, true).providers[0], protocol }], visionModel: { providerId: 'mock', model: 'vision' } });
     const vision = new StudyTools(store, cfg, files, async (_url, init) => {
       const body = JSON.parse(init.body); assert.equal(body.model, 'vision'); assert.match(init.body, /iVBOR/);
       return Response.json(protocol === 'anthropic-messages' ? { content: [{ type: 'text', text: 'Cell diagram' }] } : protocol === 'openai-responses' ? { output: [{ content: [{ type: 'output_text', text: 'Cell diagram' }] }] } : { choices: [{ message: { content: 'Cell diagram' } }] });
     });
-    assert.equal((await vision.plugins.get('study_file').execute({ fileId: image.id, question: 'Read this diagram' }, ctx)).description, 'Cell diagram');
+    assert.equal((await vision.plugins.get('study_file').execute({ fileId: image.id, question: 'Read this diagram' }, { ...ctx, run: 'vision-fixture' })).description, 'Cell diagram');
   }
+  store.db.prepare("UPDATE runs SET status='completed' WHERE id='vision-fixture'").run();
   cfg.save(owner, { ...cfg.get(owner, true), providers: [{ ...cfg.get(owner, true).providers[0], protocol: 'openai-chat' }] });
   await assert.rejects(() => study.file(other, handoutResult.fileId), /file_not_found/);
   await assert.rejects(() => study.plugins.get('study_task').execute({ action: 'create', kind: 'cards', courseId: 'course' }, { ...ctx, owner: other }), /course_not_found/);

@@ -38,7 +38,7 @@
   "kind": "记忆类型",
   "preference": "学习偏好",
   "courseFact": "课程事实",
-  "sourceRevision": "来源版本（记录引用时填写）",
+  "sourceRevision": "来源版本（服务端读取，只读）",
   "new": "新建",
   "deleted": "已删除（保留来源墓碑）",
   "edit": "编辑",

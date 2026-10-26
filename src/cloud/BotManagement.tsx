@@ -102,8 +102,8 @@ export default function BotManagement() {
       <label>{t('scopeId')}<input className="input w-full" value={form.scopeId} onChange={e => setForm({ ...form, scopeId: e.target.value })} /></label>
       <label>{t('kind')}<select className="input w-full" value={form.kind} onChange={e => setForm({ ...form, kind: e.target.value })}><option value="preference">{t('preference')}</option><option value="course_fact">{t('courseFact')}</option></select></label>
       <label htmlFor="bot-memory-content">{t('content')}</label><textarea id="bot-memory-content" className="input w-full" rows={3} value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} />
-      <label>{t('source')}<input className="input w-full" value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} /></label>
-      <label>{t('sourceRevision')}<input className="input w-full" value={form.sourceRevision} onChange={e => setForm({ ...form, sourceRevision: e.target.value })} /></label>
+      <label>{t('source')}<input className="input w-full" placeholder={'record:videos:"course-id"'} value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} /></label>
+      <label>{t('sourceRevision')}<input className="input w-full" readOnly value={form.sourceRevision} /></label>
       <Button isDisabled={busy || !form.content.trim()} onPress={() => void act(async () => { await post('/memories', { ...form, id: form.id || undefined, revision: form.revision || undefined }); setForm(emptyMemory); setVersions([]); })}>{t('save')}</Button><Button variant="secondary" onPress={() => { setForm(emptyMemory); setVersions([]); }}>{t('new')}</Button>
     </fieldset>
     {!memories.length ? <p>{t('empty')}</p> : null}
