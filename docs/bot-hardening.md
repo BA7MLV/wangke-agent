@@ -37,8 +37,11 @@ Tool schemas use a bounded draft-07 validator: no coercion, extra built-in
 arguments, remote references, regex or silently ignored unknown keywords.
 Unsupported MCP schemas are visibly unavailable, not treated as unrestricted.
 MCP's own current owner/revision/enabled/scope checks remain authoritative.
-Learning mutations validate changed business fields and owner-scoped course,
-folder and comment associations; optimistic concurrency remains unchanged.
+Learning mutations validate complete table-specific business records, nested
+values and owner-scoped course/folder/comment/file associations, including
+handout blobs. Required fields cannot be removed. Unknown legacy fields must
+match actual storage, never a model-supplied `before`; the optimistic merged
+record is validated again inside the write transaction.
 Step-linked messages and result records carry stable operation identities.
 
 `scripts/test-bot-hardening.mjs`, migration matrix, Bot, Gateway and MCP tests
@@ -96,8 +99,27 @@ best-effort observers; permission and budget gates are not.
 
 ## Context, artifacts and skills
 
-Context estimates use UTF-16 length/2 plus a 4,096-token output reserve, not a
-tokenizer. Configure capacity no larger than the deployed model supports.
+Context estimates use the **final protocol payload**, including metadata and
+tool definitions: UTF-8 bytes × 1.1 plus 1,024 protocol-headroom tokens and the
+explicit output cap (normally 4,096; vision 3,000). This is a conservative
+byte-fallback text estimate, not a model tokenizer; no reliable model-specific
+tokenizer is configured. The same estimator is used for compaction, physical
+requests, child proxies and memory. Configure capacity no larger than the
+deployed model supports. Every Bot request transmits a protocol-appropriate
+`max_tokens`, `max_completion_tokens` or `max_output_tokens`; an omitted or
+oversized child limit is bounded before dispatch. Ordinary non-Bot traffic is
+unchanged.
+
+Vision accepts at most four inline PNG/JPEG/GIF/WebP raster images, each at most
+2048×2048 and 28 MiB base64. It reserves 16,384 input tokens per image, excluding
+base64 from text counting; OpenAI payloads force low detail. Unknown dimensions,
+remote URLs, oversized images and unsupported modalities fail closed. This is
+an explicit policy envelope, **not a universal vendor billing upper bound**.
+Provider usage remains authoritative: an over-reservation response is fully
+recorded and blocks subsequent tools/requests, without discarding the overage.
+A provider ignoring its transmitted cap or billing above the image envelope
+cannot have an already-incurred charge undone; these limits are not an invoice
+guarantee for arbitrary compatible providers.
 Compaction changes only the model view, preserves complete tool-call/result
 pairs and writes an atomic source-range checkpoint with the original history.
 Summaries are explicitly **extractive-v1:no-model**: deterministic evidence
@@ -117,7 +139,11 @@ not replaced by its preview.
 
 Bot skills reuse the existing scope intersection and Markdown parser. Builtin
 Markdown/references are included in the Node build; user skills come from
-owner-scoped synchronized records. Catalog metadata precedes on-demand body or
+owner-scoped synchronized records. Synced JSON is whitelist-parsed and never
+carries filesystem capabilities. Trusted builtin paths are held only in an
+internal map; reference reads require realpath containment and reject symlink
+components. Malformed synced skills/references do not break other skills.
+Catalog metadata precedes on-demand body or
 reference loading, with revision/source. `null` inherits enabled skills, `[]`
 disables all, an ID list intersects with enabled skills. Handout and question
 bank guidance cover handouts, cards and review; no parallel skill store or
@@ -132,8 +158,13 @@ revision, revision history, origin and active/stale/deleted status. Course facts
 are explicitly retrieved, not guessed into unrelated conversations. Model
 injection filters owner and participating Bot before limiting to 20 records
 and 8,000 serialized characters. Memory is untrusted data, never permissions.
-`record:<table>:<JSON-key>` sources become stale on revision change/deletion;
-provide the source record revision when saving such a reference.
+Course facts require course scope plus a locatable, owned
+`record:<table>:<JSON-key>` or `file:<file-id>` source associated with that course.
+The server resolves source revision; caller-supplied versions are not trusted.
+Record revision changes/deletion, source file/message/run disappearance and
+course invalidation mark memories stale before retrieval or injection. The UI
+uses the same validator and shows a read-only source revision. Restoring an old
+course fact cannot relabel it as a fact about a changed source.
 
 Management supports search, paged lists/history, create/edit/delete and restoring
 as a **new** revision. Optimistic revision checks prevent lost updates. Deletion
@@ -261,3 +292,54 @@ remain non-fatal. Dependency audit previously reported 15 vulnerabilities;
 unrelated dependency upgrades were not attempted. Final permission/recovery
 review remains with the main reviewer; the final external-plan checkbox is
 intentionally left unchecked.
+
+## Independent-review fixes (2026-10-26)
+
+The independent reviewer found real defects after the original suites passed:
+synced `builtinPath` host reads, incomplete domain records, paused runs surviving
+stop, late tools after external pause, approval step-count loss, non-conservative
+text estimates/unbounded vision and proxy outputs, and unlocatable course facts.
+The fixes are in the actual tool/model/record paths, not only API wrappers.
+
+- `e9bd12d`: isolated skill filesystem capability, full domain/merged-record
+  validation, owned source revisions and shared bounded wire estimation.
+- `60d9aeb`: DB/signal active guards and cancellation monitor, common registry
+  executor for builtin/MCP/study calls, persistent admission counting, approval
+  recovery without double charging and interrupted batch sibling states.
+- `7e73198`: sourced-memory UI, read-only server revision and realistic Gateway
+  learning fixtures (including complete course snapshots and durable waits).
+
+Paused thread stop now cancels paused runs; terminal cancelled runs cannot
+resume. Model/vision requests require a running run; memory consolidation may
+use a completed source run, and owned active child tasks explicitly permit
+running/queued/waiting/completed parents but reject paused/cancelled/failed ones.
+Every serial call checks DB status and signal before/after execution and at
+commit gates. A 25 ms monitor also aborts pending I/O on external state changes;
+late uncooperative tool results cannot publish or start the next call. External
+shell/MCP effects already performed remain uncertain, not exactly-once.
+
+New regressions included in `test:bot:hardening`:
+
+- `scripts/test-bot-domain.mjs`: isolated host-file forgery and symlink rejection,
+  valid builtin/synced refs and disabled scope; all editable table CRUD and
+  malformed nested values with zero writes; legacy/disjoint optimistic merging;
+  actual memory-tool record/file/message source freshness and owner rejection.
+- `scripts/test-bot-lifecycle.mjs`: pause/cancel while awaiting model/tool,
+  same-microtask serial batch exclusion, repeated approval/maxSteps, missing and
+  queued crash evidence; real BotRunner read → sourced fact → edit → stale list.
+- `scripts/test-bot-request-budget.mjs`: three-protocol vision wire caps,
+  repeated physical accounting, Chinese final-payload compaction at unchanged
+  32k capacity, child proxy caps, unknown SSE reservation retention, and fully
+  persisted usage overruns blocking subsequent admission.
+
+This round passed `build`, `test:api`, `test:bot:hardening`, `test:bot`,
+`test:cloud`, `test:tasks`, `test:gateway`, `test:mcp`, `test:i18n`, and
+`test:bot:management`. The management browser test actually exercised source
+rejection, server revision, stale-on-source-delete and paused stop at 390/1440px;
+both screenshots were visually inspected. Evidence directory:
+`/private/var/folders/2r/zv45t_9d6ljfqfj6l1r0yvtr0000gn/T/opencode/bot-review-ui/`.
+Offline evaluation after fixing complete domain fixtures passed **20/20 scripted**;
+latest report:
+`/var/folders/2r/zv45t_9d6ljfqfj6l1r0yvtr0000gn/T/bot-evaluation-IMM7qT/results.json`.
+It is still not model-quality acceptance. No real IM or paid model was contacted.
+The final external-plan item remains unchecked for the independent reviewer.
