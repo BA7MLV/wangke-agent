@@ -55,9 +55,9 @@ export class BotApplicationService {
   }
   stop(owner: string, threadId: string) {
     this.thread(owner, threadId);
-    const runs = this.store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND (status IN ('queued','running','waiting_user') OR id IN (SELECT parent_run_id FROM cloud_tasks WHERE status IN ('queued','running','waiting_user')))").all(threadId) as any[];
+    const runs = this.store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND (status IN ('queued','running','waiting_user','paused') OR id IN (SELECT parent_run_id FROM cloud_tasks WHERE status IN ('queued','running','waiting_user')))").all(threadId) as any[];
     this.store.transaction(() => {
-      this.store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE thread_id=? AND status IN ('queued','running','waiting_user')").run(now(), threadId);
+      this.store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE thread_id=? AND status IN ('queued','running','waiting_user','paused')").run(now(), threadId);
       if (runs.length) this.append(threadId, 'assistant', 'progress', '任务已停止。');
     });
     for (const run of runs) this.runner.cancel(run.id);
