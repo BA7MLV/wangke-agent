@@ -1,49 +1,166 @@
-import { lazy, Suspense, useState } from 'react';
-import { Button } from '@heroui/react';
+import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
+import { Button, Input, Label, Spinner, TextField } from '@heroui/react';
 import { startAuthentication } from '@simplewebauthn/browser';
-import { serverClient } from '../api/serverClient';
+import { useTranslation } from 'react-i18next';
+import { serverClient, ServerApiError } from '../api/serverClient';
 import { startCloud } from './sync';
 import CloudSettings from './Settings';
-import { FeedbackHost } from '../ui';
+import { FeedbackHost, Sym } from '../ui';
 import LanguageSelect from '../components/LanguageSelect';
+import OnboardingFigure, { loadFigures } from './onboarding/OnboardingFigure';
+import { errorKey, initialStep, previousStep, SETUP_STEPS, STEP_FIGURE, stepForError, stepIndex, type OnboardingStep } from './onboarding/flow';
+import './onboarding/onboarding.css';
 
 const App = lazy(() => import('../App'));
+
+const TITLE = {
+  welcome: 'onboarding.welcomeTitle',
+  key: 'onboarding.keyTitle',
+  account: 'onboarding.accountTitle',
+  login: 'onboarding.loginTitle',
+  configure: 'onboarding.configureTitle',
+} as const satisfies Record<OnboardingStep, string>;
+
+const ACTION = {
+  welcome: 'onboarding.start',
+  key: 'onboarding.continue',
+  account: 'onboarding.create',
+  login: 'onboarding.login',
+} as const;
+
+/**
+ * 云端入口：首次部署走四步引导（欢迎 → 密钥 → 管理员 → 配置），之后是单页登录。
+ * 每一步只有一个标题、一张 2.5D 线稿和必要的输入框；说明交给布局和图形。
+ */
 export default function CloudGate({ initialized, authenticated, error: initialError = '' }: { initialized: boolean; authenticated: boolean; error?: string }) {
+  const { t } = useTranslation('common');
   const [ready, setReady] = useState(authenticated);
   const [setup, setSetup] = useState(!initialized || location.hash.startsWith('#/setup'));
+  const [step, setStep] = useState<OnboardingStep>(() => initialStep({ initialized, authenticated }));
+  const [direction, setDirection] = useState<'forward' | 'back'>('forward');
   const [name, setName] = useState('Administrator');
   const [password, setPassword] = useState('');
   const [secret, setSecret] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(initialError);
-  const [created, setCreated] = useState(initialized);
-  async function authenticate(passkey = false) {
+  const [attempt, setAttempt] = useState(0);
+  const secretFile = useRef<HTMLInputElement>(null);
+
+  // 欢迎页一出现就开始拉图形 chunk，下一步不用等。
+  useEffect(() => { void loadFigures(); }, []);
+
+  const go = (next: OnboardingStep, dir: 'forward' | 'back' = 'forward') => {
+    setDirection(dir);
+    setError('');
+    setStep(next);
+  };
+
+  const fail = (code: string) => {
+    const key = errorKey(code);
+    setError(key ? t(`onboarding.errors.${key}`) : code);
+    setAttempt((n) => n + 1);
+  };
+
+  async function signIn(passkey = false) {
     setBusy(true); setError('');
     try {
-      if (!created) { await serverClient.bootstrapInitialize(password, secret, name); setCreated(true); }
+      if (step === 'account') await serverClient.bootstrapInitialize(password, secret, name);
       const response = passkey
         ? await serverClient.passkeyLoginVerify(await startAuthentication({ optionsJSON: await serverClient.passkeyLoginOptions() }))
         : await serverClient.login(name, password);
       await startCloud(response.user!.id);
       setPassword(''); setSecret(''); setReady(true);
-    } catch (e) { setError((e as Error).message); }
-    finally { setBusy(false); }
+      if (setup) go('configure');
+    } catch (e) {
+      const code = e instanceof ServerApiError ? (e.code === 'webauthn_not_configured' ? 'passkey_unavailable' : e.code)
+        : passkey && (e as Error).name === 'NotAllowedError' ? 'passkey_cancelled'
+          : (e as Error).message;
+      const target = stepForError(step, code);
+      if (target !== step) go(target, 'back');
+      fail(code);
+    } finally { setBusy(false); }
   }
-  if (ready && !setup) return <Suspense fallback={<p role="status">正在载入课程…</p>}><App /></Suspense>;
-  return <main className="min-h-dvh overflow-auto bg-background p-6 text-foreground">
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (busy) return;
+    if (step === 'welcome') go('key');
+    else if (step === 'key') go('account');
+    else void signIn();
+  };
+
+  const readSecret = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file) setSecret((await file.text()).trim());
+    event.target.value = '';
+  };
+
+  if (ready && !setup) return <Suspense fallback={<div className="ob-loading" role="status"><Spinner aria-label={t('onboarding.loading')} /></div>}><App /></Suspense>;
+
+  const back = previousStep(step);
+  const index = stepIndex(step);
+  const configure = step === 'configure';
+  const title = t(TITLE[step]);
+  const figure = STEP_FIGURE[step];
+
+  return <main className="ob" data-step={step}>
     <FeedbackHost />
-    <section className="mx-auto flex max-w-2xl flex-col gap-5 rounded-2xl bg-surface p-6 shadow-surface">
-      <div className="flex justify-end"><LanguageSelect /></div>
-      <h1 className="text-2xl font-semibold">{ready ? '配置个人云端' : created ? '登录网课云端' : '初始化个人云端'}</h1>
-      {ready ? <><CloudSettings /><Button onPress={() => { location.hash = '/'; setSetup(false); }}>进入课程</Button></> :
-        <form className="flex flex-col gap-4" onSubmit={e => { e.preventDefault(); void authenticate(); }}>
-          {!created && <label className="flex flex-col gap-2">一次性初始化密钥<input aria-label="一次性初始化密钥" className="input" type="password" value={secret} onChange={e => setSecret(e.target.value)} required autoComplete="off" /><span className="text-sm text-muted">从安装输出的 bootstrap-secret 文件读取。</span></label>}
-          <label className="flex flex-col gap-2">账号<input className="input" value={name} onChange={e => setName(e.target.value)} required autoComplete="username" /></label>
-          <label className="flex flex-col gap-2">密码<input className="input" type="password" value={password} onChange={e => setPassword(e.target.value)} required minLength={created ? 1 : 12} autoComplete={created ? 'current-password' : 'new-password'} /></label>
-          <Button type="submit" isDisabled={busy}>{busy ? '正在连接…' : created ? '登录' : '创建管理员'}</Button>
-          {created && <Button variant="secondary" isDisabled={busy} onPress={() => void authenticate(true)}>使用 Passkey 登录</Button>}
+    <header className="ob__bar">
+      <div className="ob__bar-start">
+        {back && <Button isIconOnly variant="ghost" aria-label={t('onboarding.back')} isDisabled={busy} onPress={() => go(back, 'back')}><Sym name="chevron_left" /></Button>}
+      </div>
+      {index > 0 && <div className="ob__dots" role="img" aria-label={t('onboarding.progress', { current: index, total: SETUP_STEPS.length })}>
+        {SETUP_STEPS.map((s, i) => <span key={s} className="ob__dot" data-active={i + 1 === index || undefined} data-done={i + 1 < index || undefined} />)}
+      </div>}
+      <div className="ob__bar-end"><LanguageSelect /></div>
+    </header>
+
+    <div className="ob__scene" key={step} data-direction={direction}>
+      <div className="ob__figure" data-compact={configure || undefined}>
+        <div className="ob__floor" aria-hidden="true" />
+        <OnboardingFigure name={figure} label={t(`onboarding.figure.${figure}`)} intensity={busy ? 0.9 : 0.5} />
+      </div>
+      <h1 className="ob__title">{title}</h1>
+
+      {configure ? <section className="ob__configure">
+        <CloudSettings />
+        <Button className="ob__primary" size="lg" onPress={() => { location.hash = '/'; setSetup(false); }}>{t('onboarding.enter')}</Button>
+      </section> :
+        <form className="ob__form" onSubmit={submit} noValidate={step === 'welcome'}>
+          {step === 'key' && <div className="ob__group" data-shake={attempt || undefined} key={`key-${attempt}`}>
+            <TextField fullWidth isRequired>
+              <Label className="sr-only">{t('onboarding.keyLabel')}</Label>
+              <div className="ob__field-row">
+                <Input className="ob__input" type="password" placeholder="bootstrap-secret" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" autoFocus spellCheck={false} />
+                <Button type="button" isIconOnly size="sm" variant="ghost" aria-label={t('onboarding.keyFromFile')} onPress={() => secretFile.current?.click()}>
+                  <Sym name={secret ? 'check' : 'upload'} />
+                </Button>
+              </div>
+            </TextField>
+            <input ref={secretFile} hidden type="file" accept=".txt,.env,text/plain" tabIndex={-1} aria-hidden="true" onChange={readSecret} />
+          </div>}
+
+          {(step === 'account' || step === 'login') && <div className="ob__group" data-shake={attempt || undefined} key={`${step}-${attempt}`}>
+            <TextField fullWidth isRequired>
+              <Label className="sr-only">{t('onboarding.username')}</Label>
+              <Input className="ob__input" placeholder={t('onboarding.username')} value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} />
+            </TextField>
+            <TextField fullWidth isRequired>
+              <Label className="sr-only">{t('onboarding.password')}</Label>
+              <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus={step === 'account' || !!name} />
+            </TextField>
+          </div>}
+
+          <p className="ob__error" role="alert">{error}</p>
+
+          <div className="ob__actions">
+            <Button className="ob__primary" type="submit" size="lg" isDisabled={busy || (step === 'key' && !secret.trim()) || (step === 'account' && password.length < 12) || (step === 'login' && (!name || !password))}>
+              {busy ? <><Spinner size="sm" color="current" />{t(step === 'account' ? 'onboarding.creating' : 'onboarding.signingIn')}</>
+                : t(ACTION[step as keyof typeof ACTION])}
+            </Button>
+            {step === 'login' && <Button className="ob__secondary" variant="ghost" size="lg" isDisabled={busy} onPress={() => void signIn(true)}>{t('onboarding.passkey')}</Button>}
+          </div>
         </form>}
-      {error && <p role="alert" className="text-danger">{error}</p>}
-    </section>
+    </div>
   </main>;
 }

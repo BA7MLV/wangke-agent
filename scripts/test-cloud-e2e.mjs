@@ -34,8 +34,8 @@ try {
   await app.listen({ host: '127.0.0.1', port });
   const origin = process.env.PUBLIC_ORIGIN;
   browser = await chromium.launch();
-  const a = await browser.newContext({ serviceWorkers: 'block' });
-  const b = await browser.newContext({ serviceWorkers: 'block' });
+  const a = await browser.newContext({ serviceWorkers: 'block', locale: 'zh-CN' });
+  const b = await browser.newContext({ serviceWorkers: 'block', locale: 'zh-CN' });
   let page = await a.newPage();
   const authenticator = async page => {
     const client = await page.context().newCDPSession(page);
@@ -66,7 +66,9 @@ try {
       };
     });
   }, legacySettings);
+  await page.getByRole('button', { name: '开始', exact: true }).click();
   await page.getByLabel('一次性初始化密钥', { exact: true }).fill(fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim());
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByLabel('账号', { exact: true }).fill('CloudTest');
   await page.getByLabel('密码', { exact: true }).fill('test-password-12345');
   await page.getByRole('button', { name: '创建管理员', exact: true }).click();

@@ -10,5 +10,43 @@
     "zh-CN": "简体中文",
     "en-US": "English",
     "hint": "Changes the interface only, not AI responses, course content, or speech recognition. Other sections are being translated in stages."
+  },
+  "onboarding": {
+    "welcomeTitle": "Your cloud",
+    "start": "Get started",
+    "keyTitle": "Setup key",
+    "keyLabel": "One-time setup key",
+    "keyFromFile": "Read key from file",
+    "continue": "Continue",
+    "accountTitle": "Admin account",
+    "username": "Username",
+    "password": "Password",
+    "newPasswordPlaceholder": "Password (12+ characters)",
+    "create": "Create admin",
+    "creating": "Creating…",
+    "loginTitle": "Sign in",
+    "login": "Sign in",
+    "signingIn": "Signing in…",
+    "passkey": "Sign in with Passkey",
+    "configureTitle": "Set up your cloud",
+    "enter": "Open courses",
+    "back": "Back",
+    "loading": "Loading courses…",
+    "progress": "Step {{current}} of {{total}}",
+    "figure": {
+      "settle": "Scattered tiles settling into a tree",
+      "vault": "A vault door",
+      "padlock": "A padlock",
+      "hub": "Connected nodes"
+    },
+    "errors": {
+      "invalid_credentials": "Wrong username or password",
+      "invalid_or_expired_bootstrap_secret": "That key is wrong or has expired",
+      "admin_password_must_be_12_to_256_characters": "Use at least 12 characters",
+      "bootstrap_closed": "Already set up. Sign in instead.",
+      "passkey_verification_failed": "Passkey check failed",
+      "passkey_unavailable": "Passkey isn't available right now",
+      "passkey_cancelled": "Passkey sign-in cancelled"
+    }
   }
 }
