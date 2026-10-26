@@ -18,7 +18,9 @@ export class GatewayCore {
   private inbound = new Map<number, { binding: string; controller: AbortController }>();
   private logins = new Map<string, AbortController>();
   private restartAfter = new Map<string, number>();
-  private busy = false;
+  // A pass owns only scheduling/projection/delivery, not attachment workers.
+  // Identity prevents an older tick's finally from releasing a newer pass.
+  private busy?: symbol;
   private processingAccounts = new Set<string>();
   private cleanupAt = 0;
   private stopped = false;
@@ -108,6 +110,12 @@ export class GatewayCore {
     try { this.store.db.prepare("UPDATE gateway_accounts SET health='runtime_failed' WHERE enabled=1").run(); }
     catch { console.error('gateway_runtime_failed'); }
   }
+  private inboxFailure(account: string) {
+    // Attach this boundary when starting the worker, before awaiting any send.
+    // Even failure reporting must be non-rejecting and must not poison peers.
+    try { this.store.db.prepare("UPDATE gateway_accounts SET health='inbound_failed' WHERE id=?").run(account); }
+    catch { console.error('gateway_inbox_worker_failed'); }
+  }
   private launch(id: string) {
     if (this.stopped || this.live.has(id)) return;
     const a = this.store.db.prepare('SELECT * FROM gateway_accounts WHERE id=?').get(id) as any;
@@ -152,8 +160,11 @@ export class GatewayCore {
   async close() {
     this.stopped = true; clearInterval(this.timer);
     for (const controller of this.logins.values()) controller.abort();
-    await Promise.all([...this.live.keys()].map(id => this.stop(id)));
-    await Promise.allSettled([...this.work]);
+    for (const active of this.inbound.values()) active.controller.abort();
+    await Promise.allSettled([...this.live.keys()].map(id => this.stop(id)));
+    // Workers are tracked independently of the pass that launched them, even
+    // when projection/delivery fails before that pass can await its workers.
+    while (this.work.size) await Promise.allSettled([...this.work]);
   }
   async login(owner: string, id: string, action: Record<string, string>) {
     const a = this.account(owner, id), live = this.live.get(id);
@@ -213,10 +224,10 @@ export class GatewayCore {
   }
   async tick() {
     if (this.stopped || this.busy) return;
-    this.busy = true;
-    const task = this.process().catch(() => this.runtimeFailure()).finally(() => { this.busy = false; }); this.track(task); await task;
+    const gate = Symbol('gateway-pass'); this.busy = gate;
+    const task = this.process(gate).catch(() => this.runtimeFailure()).finally(() => { if (this.busy === gate) this.busy = undefined; }); this.track(task); await task;
   }
-  private async process() {
+  private async process(gate: symbol) {
     if (Date.now() >= this.cleanupAt) { cleanupGateway(this.store); this.cleanupAt = Date.now() + 60000; }
     for (const a of this.store.db.prepare('SELECT id FROM gateway_accounts WHERE enabled=1').all() as any[]) {
       if (!this.live.has(a.id) && (this.restartAfter.get(a.id) ?? 0) <= Date.now()) this.launch(a.id);
@@ -230,14 +241,20 @@ export class GatewayCore {
     for (const [account, group] of groups) {
       if (this.processingAccounts.size >= 4) break;
       this.processingAccounts.add(account);
-      tasks.push(this.processInbox(group).finally(() => this.processingAccounts.delete(account)));
+      const worker = this.processInbox(group).catch(() => this.inboxFailure(account)).finally(() => this.processingAccounts.delete(account));
+      this.track(worker);
+      tasks.push(worker);
     }
     this.project();
     await this.deliver();
     // Network attachment I/O owns only its account, not the scheduler. Another
     // tick may admit other accounts while these bounded workers are awaiting.
-    this.busy = false;
+    if (this.busy === gate) this.busy = undefined;
     await Promise.all(tasks);
+    // Reacquire the pass gate for the post-worker flush. Another tick may own
+    // it now; that pass (or the next timer pass) projects our durable messages.
+    if (this.stopped || this.busy) return;
+    this.busy = gate;
     this.project();
     await this.deliver();
   }

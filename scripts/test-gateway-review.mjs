@@ -226,3 +226,5 @@ try {
   assert.deepEqual(unhandled, []);
   console.log('Review extra: Feishu octet-stream and iLink JPEG-labelled PNG sniffing, 3 vision MIME payloads, invalid image/unsafe numeric ID rejection');
 } finally { process.off('unhandledRejection', rejectUnhandled); await runner?.close(); await gateway.close(); store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
+
+await import('./test-gateway-workers.mjs');
