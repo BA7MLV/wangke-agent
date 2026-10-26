@@ -452,7 +452,7 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
         .equals(courseId)
         .filter((r) => r.kind === 'slide')
         .sortBy('ts');
-      return formatFrameList(rows);
+      return formatFrameList(rows, courseId);
     }
     if (name === 'use_skill' || name === 'read_skill_reference') {
       const skillName = String(args.name ?? '');

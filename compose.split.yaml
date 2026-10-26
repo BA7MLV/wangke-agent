@@ -14,7 +14,6 @@ services:
     image: "${WANGKE_IMAGE:-wangke-agent:0.1.0}"
     restart: unless-stopped
     init: true
-    shm_size: 1gb
     environment:
       APP_VERSION: "${APP_VERSION:-0.1.0}"
       PORT: "3000"
@@ -37,7 +36,6 @@ services:
       MODEL_TIMEOUT_MS: "${MODEL_TIMEOUT_MS:-30000}"
       MAX_FILE_BYTES: "${MAX_FILE_BYTES:-536870912}"
       CLOUD_CONCURRENCY: "${CLOUD_CONCURRENCY:-2}"
-      CLOUD_BROWSER_DISABLED: "${CLOUD_BROWSER_DISABLED:-0}"
     # 原生壳层要直连 API 时才需要对外暴露；只用浏览器的话可以删掉这段，只经 web 访问。
     ports:
       - "${API_BIND_HOST:-127.0.0.1}:${API_PORT:-3000}:3000"

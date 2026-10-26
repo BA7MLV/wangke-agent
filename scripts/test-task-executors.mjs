@@ -14,7 +14,6 @@ import { receiveFile } from '../apps/api/src/cloud/files.ts';
 import { runMediaProcess } from '../apps/api/src/cloud/media.ts';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-task-executors-'));
-process.env.CLOUD_BROWSER_DISABLED = '1';
 const store = new DatabaseStore(path.join(directory, 'db.sqlite'));
 const owner = crypto.randomUUID(), other = crypto.randomUUID(), timestamp = new Date().toISOString();
 for (const id of [owner, other]) store.db.prepare('INSERT INTO users(id,name,created_at) VALUES(?,?,?)').run(id, id, timestamp);
@@ -71,12 +70,15 @@ async function upload(data, name, mime = 'application/octet-stream', account = o
 
 try {
   assert.equal(typeof globalThis.window, 'undefined');
-  for (const kind of ['chat', 'qa', 'transcribe', 'handout', 'artifactEdit']) {
+  for (const kind of ['transcribe', 'handout']) {
     assert.equal(executorFor({ kind, input: {} }, null), 'browser');
+  }
+  for (const kind of ['chat', 'qa', 'artifactEdit']) {
+    assert.equal(executorFor({ kind, input: {} }, null), 'node');
   }
   assert.equal(executorFor({ kind: 'cover', input: {} }, { kind: 'material' }), 'browser');
   assert.equal(executorFor({ kind: 'material', input: { format: 'pdf' } }, null), 'browser');
-  runner.start('http://127.0.0.1:1'); // No HTTP listener, browser or frontend build is available.
+  runner.start('http://127.0.0.1:1'); // Browser tasks remain queued; no server browser is available.
 
   for (let i = 0; i < providers.length; i++) {
     const id = enqueue('modelOnce', { providerId: `p${i}`, model: 'native-model', options: { messages: [{ role: 'user', content: 'hello' }] }, baseUrl: 'https://untrusted.example', apiKey: 'untrusted' });
@@ -102,6 +104,17 @@ try {
   const videoId = 'course';
   put('videos', videoId, { id: videoId, name: 'Test course', duration: 60 });
   for (let i = 0; i < 3; i++) put('segments', i + 1, { id: i + 1, videoId, idx: i, start: i * 10, end: (i + 1) * 10, text: `字幕内容 ${i}`, status: 1 });
+  put('chatSessions', 10, { id: 10, videoId: '__library_assistant__', title: '新会话', createdAt: Date.now() });
+  reply = '这是由 Node 服务器返回的回答。';
+  const chatTask = await completed(enqueue('chat', { sessionId: 10, text: '你好' }, 'session:10'));
+  assert.equal(chatTask.executor, 'node');
+  assert.equal(chatTask.result.content, reply);
+  assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM cloud_records WHERE owner_id=? AND table_name='chats' AND value IS NOT NULL").get(owner).count, 2);
+  reply = '字幕里提到了测试内容。';
+  const qaTask = await completed(enqueue('qa', { videoId, sessionId: 10, text: '课程提到了什么？' }, 'session:10:qa'));
+  assert.equal(qaTask.executor, 'node');
+  assert.equal(qaTask.result.content, reply);
+  assert.ok(qaTask.result.rowId);
   put('cards', 100, { id: 100, videoId, q: 'old', a: 'old' });
   put('cards', 100, { id: 100, videoId, q: 'other account', a: 'untouched' }, other);
   reply = '[{"time":"00:10","q":"什么是测试课程？","a":"用于测试的课程。"}]';
@@ -235,9 +248,9 @@ try {
 
   const fallback = enqueue('qa', { sessionId: 1 });
   await until(() => get(fallback).status === 'failed');
-  assert.equal(get(fallback).executor, 'browser');
-  assert.ok(get(fallback).error.includes('浏览器兼容执行器'));
-  console.log('Native protocols/text/materials, durable routing/cancellation/restart, real FFmpeg and browser fallback checks passed');
+  assert.equal(get(fallback).executor, 'node');
+  assert.equal(get(fallback).error, '问答上下文不存在');
+  console.log('Native protocols/text/materials, durable routing/cancellation/restart, real FFmpeg and external browser queue checks passed');
 } finally {
   await runner.close(); store.close(); fs.rmSync(directory, { recursive: true, force: true });
 }

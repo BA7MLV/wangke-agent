@@ -28,6 +28,10 @@ import './handout-doc.css';
 // 自带样式之后：它给 .x-markdown 定的 --td-th-padding 是同等权重，靠顺序取胜。
 import './md-table.css';
 import { apiUrl } from './api/base';
+import { consumeBootstrapLink } from './cloud/bootstrapLink';
+
+// Consume once, outside React rendering (including StrictMode), before API calls.
+const bootstrapSecret = consumeBootstrapLink(location, history);
 
 // 申请持久化存储，防止浏览器在空间紧张时清除 IndexedDB 中的视频/字幕数据
 navigator.storage?.persist?.().catch(() => {});
@@ -98,10 +102,10 @@ async function boot() {
       if (session.authenticated && session.user) {
         const worker = new URLSearchParams(location.search).has('cloud-worker');
         await startCloud(session.user.id, worker);
-        if (worker) { await import('./cloud/worker'); return; }
+        if (worker) { await import('./cloud/worker'); await (await import('./cloud/workerClient')).startBrowserWorker(); return; }
       }
       window.addEventListener('cloud-session-expired', stopCloud);
-      bootView = <CloudGate initialized={bootstrap.initialized} authenticated={session.authenticated} />;
+      bootView = <CloudGate initialized={bootstrap.initialized} authenticated={session.authenticated} initialSecret={bootstrap.initialized ? '' : bootstrapSecret} />;
     }
   } catch (error) {
     bootView = <CloudGate initialized authenticated={false} error={(error as Error).message} />;

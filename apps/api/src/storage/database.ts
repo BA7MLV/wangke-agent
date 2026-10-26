@@ -275,6 +275,11 @@ const MIGRATIONS: Array<[number, string]> = [
       WHEN NOT EXISTS(SELECT 1 FROM projects p JOIN agent_profiles a ON a.owner_id=p.owner_id WHERE p.id=NEW.project_id AND a.id=NEW.agent_id)
       BEGIN SELECT RAISE(ABORT, 'project_owner_mismatch'); END;
   `],
+  [15, `
+    ALTER TABLE cloud_tasks ADD COLUMN worker_id TEXT;
+    ALTER TABLE cloud_tasks ADD COLUMN lease_expires_at TEXT;
+    CREATE INDEX cloud_tasks_browser_lease ON cloud_tasks(executor,status,lease_expires_at);
+  `],
 ];
 
 export class DatabaseStore {

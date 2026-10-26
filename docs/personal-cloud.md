@@ -8,16 +8,16 @@
 ```
 
 1. 预先把 HTTPS 域名代理到服务器的 3000 端口，允许 512 MiB 上传（例如 nginx 的 `client_max_body_size 512m;`）。
-2. 打开安装输出的 `/#/setup`，输入 bootstrap-secret 文件内的一次性密钥，创建管理员。
+2. 打开安装输出的完整一次性初始化链接（`/#/setup?secret=…`），密钥会自动填入，只需设置账号和密码创建管理员。密钥放在 URL 的 `#` 后，不发送给服务器日志，页面读取后会从地址栏清除。请勿分享完整链接；默认有效期 15 分钟，成功创建管理员后失效。手动访问 `/#/setup` 时仍可输入 bootstrap-secret 文件内的密钥。
 3. 添加模型服务，选择 API 协议，填写 API Key 和对话/视觉/转写模型 ID，保存。无 Key 的本地模型也可用。
 4. 添加 Passkey。HTTPS 公网域名必须与 `PUBLIC_ORIGIN`、`WEBAUTHN_RP_ID` 一致；只有 localhost 允许 HTTP。默认密码登录仍可使用。
 5. 其他设备访问同一 URL，用密码或 Passkey 登录。后续管理在“设置 → 模型 / 数据”，或直接访问 `/#/setup`。
 
 ## 运行资源
 
-镜像包含 FFmpeg、Playwright Chromium 及系统依赖。任务调度按类型分流：已迁移的文本/模型任务直接在 Node 执行，视频封面使用 FFmpeg 子进程；其他任务暂用浏览器兼容执行器。默认同时计算 2 个任务（`CLOUD_CONCURRENCY=1..4`），等待审批也占用内存。完整功能仍建议至少 4 GiB 内存。Compose 提供 1 GiB `/dev/shm` 与 2 GiB 临时目录；原文件与产物保存在 `/data`。分流清单与迁移边界见 [任务执行架构](task-execution.md)。
+镜像包含 FFmpeg，但不包含 Chromium。任务调度按类型分流：模型、聊天、问答和文本任务直接在 Node 执行，视频封面使用 FFmpeg 子进程；视频/音频解码、PDF 预览和 UI 依赖任务由已认证的外部浏览器 Worker 执行。默认同时计算 2 个任务（`CLOUD_CONCURRENCY=1..4`），等待审批也占用内存。原文件与产物保存在 `/data`。分流清单与 Worker 认证方式见 [任务执行架构](task-execution.md) 和 [外部浏览器 Worker](browser-worker.md)。
 
-非 Docker 启动时先安装系统 FFmpeg（可用 `FFMPEG_PATH` 指定路径），运行 `npx playwright install --with-deps chromium`，然后 `npm run build && npm start`。浏览器兼容执行器读取生产 `dist`；Node/媒体执行器不依赖前端构建。开发 API 前先运行 `npm run build:api`，使用兼容任务前仍需构建前端。
+非 Docker 启动时先安装系统 FFmpeg（可用 `FFMPEG_PATH` 指定路径），然后 `npm run build && npm start`。需要浏览器任务时，在外部已登录浏览器打开 `/?cloud-worker=1`；开发/E2E 仍可单独安装 Playwright。开发 API 前先运行 `npm run build:api`。
 
 ## 同步与任务
 

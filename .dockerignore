@@ -5,6 +5,7 @@ dist-ssr
 data
 .git
 .gitignore
+.key
 .env
 .env.*
 *.log

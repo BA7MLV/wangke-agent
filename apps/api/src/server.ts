@@ -193,7 +193,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (worker && request.url.startsWith('/api/')) {
       const url = request.url.split('?')[0];
       const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status'].includes(url) || /^\/api\/v1\/files\/[^/]+$/.test(url));
-      const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+      const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/complete`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });

@@ -1,11 +1,13 @@
 import { db, type VideoRow } from '../store/db';
 import { getMaterialFile } from '../store/fileStore';
-import { imageSourceKind, materialImageHref, materialSourceHref, parseMaterialImageHref, pdfRegionKey, validPdfRegion, type PdfRegion } from './imageRefs';
+import { imageSourceKind, materialImageHref, materialSourceHref, parseMaterialImageHref, pdfRegionKey, validPdfRegion, videoFrameKey, type PdfRegion } from './imageRefs';
 
 export interface MaterialImage {
   key: string;
   label: string;
   unit?: number;
+  /** Video time, not a material page/paragraph anchor. */
+  ts?: number;
   src?: string;
   /** Word ZIP entry, resolved only when needed. */
   entry?: string;
@@ -175,6 +177,14 @@ export async function readPdfQuestionCrops(course: VideoRow, range: { start: num
 
 export async function loadMaterialImage(courseId: string, key: string): Promise<LoadedMaterialImage> {
   const course = await db.videos.get(courseId);
+  if (key.startsWith('frame-')) {
+    if (!parseMaterialImageHref(materialImageHref(courseId, key))) throw new Error('无效的视频画面引用');
+    if (!course || course.kind === 'material') throw new Error('来源视频已删除或不存在');
+    const frame = await db.frames.where('videoId').equals(courseId)
+      .filter((r) => r.kind === 'slide' && videoFrameKey(r.ts) === key).first();
+    if (!frame) throw new Error('已保存的课程画面不存在，请重新读取画面目录或打开来源视频');
+    return { blob: frame.blob, image: { key, label: frame.caption || '课程画面', ts: frame.ts }, courseName: course.name };
+  }
   if (!course || course.kind !== 'material') throw new Error('来源材料已删除或不存在');
   const file = await getMaterialFile(courseId);
   if (!file) throw new Error('此设备没有材料原文件，请重新导入后重试');

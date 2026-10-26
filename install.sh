@@ -111,12 +111,7 @@ fi
 if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
   printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
 fi
-if [ ! -f "$DATA_DIR/data/config/bootstrap-secret" ]; then
-  umask 077
-  openssl rand -base64 32 > "$DATA_DIR/data/config/bootstrap-secret"
-  chmod 600 "$DATA_DIR/data/config/bootstrap-secret"
-  echo "Bootstrap secret written to $DATA_DIR/data/config/bootstrap-secret (display it separately; it is one-time)."
-fi
+# The API creates the one-time secret on first startup, not before a long build.
 mkdir -p "$DATA_DIR/bin"
 sed "s|__DEFAULT_COMPOSE_FILE__|$SCRIPT_DIR/compose.yaml|" "$SCRIPT_DIR/scripts/wangke-agent" > "$DATA_DIR/bin/wangke-agent"
 chmod 700 "$DATA_DIR/bin/wangke-agent"
@@ -136,7 +131,23 @@ if [ "$NO_START" -eq 0 ]; then
   WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" \
     docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} up -d --build --wait --wait-timeout 180
   url="$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DATA_DIR/.env" | tail -1)"
-  echo "Setup URL: ${url:-http://localhost:$PORT}/#/setup"
+  docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} exec -T app node -e '
+    const fs = require("node:fs");
+    (async () => {
+      const status = await (await fetch("http://127.0.0.1:3000/api/v1/bootstrap/status")).json();
+      const url = new URL(process.argv[1]);
+      url.hash = "/setup";
+      if (!status.initialized && status.bootstrapAvailable) {
+        const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE || "/data/config/bootstrap-secret", "utf8").trim();
+        url.hash += "?" + new URLSearchParams({ secret });
+        console.log("One-time setup URL (keep private): " + url.href);
+        console.log("Setup link expires at: " + status.expiresAt);
+      } else {
+        console.log("Setup URL: " + url.href);
+        if (!status.initialized) console.log("Bootstrap secret expired. Stop app, remove data/config/bootstrap-secret, then start app to renew it.");
+      }
+    })().catch(error => { console.error("Cannot read setup link: " + error.message); process.exitCode = 1; });
+  ' "${url:-http://localhost:$PORT}"
   echo "Create your administrator, configure models and add Passkeys at this URL."
   echo "Course files, learning data, credentials and tasks persist in $DATA_DIR/data."
 fi

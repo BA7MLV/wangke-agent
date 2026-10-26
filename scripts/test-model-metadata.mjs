@@ -1,8 +1,9 @@
 import assert from 'node:assert/strict';
-import { parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../src/api/modelMeta.ts';
+import { modelProviderMeta, parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../src/api/modelMeta.ts';
 import { parseDiscoveredModel } from '../src/api/modelDiscoveryData.ts';
 import { readModelList, writeModelList, __resetModelListCacheForTest } from '../src/api/modelListCache.ts';
 import { modelKind, capabilityLabel } from '../src/api/modelPresentation.ts';
+import { getProviderPresets } from '../src/store/providerPresets.ts';
 
 const storage = new Map();
 globalThis.localStorage = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };
@@ -26,10 +27,14 @@ assert.equal(parseModelMeta({}).declaredContext, undefined);
 assert.equal(parseModelMeta({ limit: { context: -1, output: NaN } }).declaredContext, undefined);
 
 globalThis.fetch = async () => new Response(JSON.stringify({
-  first: { models: { same: entry(['text']), noContext: entry(['audio']), free: { ...entry(['text']), cost: { input: 0 } } } },
+  first: { name: 'First provider', api: 'https://first.example/v1', npm: '@ai-sdk/openai-compatible', models: { same: entry(['text']), noContext: entry(['audio']), free: { ...entry(['text']), cost: { input: 0 } } } },
   second: { models: { same: entry(['text', 'image']) } },
 }));
 await refreshModelMeta();
+assert.deepEqual(modelProviderMeta('first'), {
+  id: 'first', name: 'First provider', baseUrl: 'https://first.example/v1', npm: '@ai-sdk/openai-compatible', env: undefined, doc: undefined,
+}, 'provider metadata comes from models.dev');
+assert.equal(getProviderPresets().find((preset) => preset.id === 'first')?.baseUrl, 'https://first.example/v1', 'provider presets use the live models.dev provider catalog');
 assert.equal(modelKind(getModelMeta('first', 'noContext')), 'audio', 'models without context remain discoverable');
 assert.equal(isModelMetaStale(['first']), false);
 assert.equal(isModelMetaStale(['second']), false, 'the full capability catalog is fetched without provider registration');

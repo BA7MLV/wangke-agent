@@ -5,6 +5,7 @@ export const cloud = {
   userId: '',
   worker: false,
   taskId: '',
+  workerToken: '' as string,
   permissionId: undefined as string | undefined,
   maxSteps: 100,
 };
@@ -13,7 +14,7 @@ export const remoteTasks = () => cloud.enabled && !cloud.worker;
 export async function cloudRequest<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(apiUrl(`/api/v1/cloud${path}`), {
     credentials: 'include', ...init,
-    headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...init.headers },
+    headers: { ...(init.body ? { 'content-type': 'application/json' } : {}), ...(cloud.workerToken ? { authorization: `Bearer ${cloud.workerToken}` } : {}), ...init.headers },
   });
   const body = await response.json().catch(() => ({}));
   if (!response.ok) {

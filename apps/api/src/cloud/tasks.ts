@@ -3,7 +3,6 @@ import type { DatabaseStore } from '../storage/database.js';
 import type { CloudTask, CloudTaskKind } from '../../../../packages/contracts/src/cloud.js';
 import { CloudConfiguration } from './config.js';
 import { CloudRecords } from './records.js';
-import { executeBrowserTask } from './browser.js';
 import { executeMediaTask } from './media.js';
 import { executorFor, type TaskContext, type TaskExecutor } from './execution.js';
 export { workerIdentity } from './workerAuth.js';
@@ -45,7 +44,7 @@ export class CloudTaskRunner {
   }
 
   start(origin: string) {
-    this.store.db.prepare("UPDATE cloud_tasks SET status='interrupted',error='服务器重启，任务已中断，可重试' WHERE status IN ('running','waiting_user')").run();
+    this.store.db.prepare("UPDATE cloud_tasks SET status=CASE WHEN executor='browser' THEN 'queued' ELSE 'interrupted' END,worker_id=NULL,lease_expires_at=NULL,error=CASE WHEN executor='browser' THEN NULL ELSE '服务器重启，任务已中断，可重试' END WHERE status IN ('running','waiting_user')").run();
     this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE status IN ('pending','approved','consumed') AND task_id IN (SELECT id FROM cloud_tasks WHERE status NOT IN ('running','waiting_user'))").run();
     this.timer = setInterval(() => void this.drain(origin), 1000);
     this.timer.unref();
@@ -62,9 +61,18 @@ export class CloudTaskRunner {
     if (this.stopped || this.draining) return;
     this.draining = true;
     try {
+      this.store.db.prepare("UPDATE cloud_tasks SET status='queued',worker_id=NULL,lease_expires_at=NULL,updated_at=? WHERE executor='browser' AND status IN ('running','waiting_user') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")
+        .run(new Date().toISOString(), new Date().toISOString());
       const limit = Math.max(1, Math.min(4, Number(process.env.CLOUD_CONCURRENCY) || 2));
       const rows = this.store.db.prepare("SELECT * FROM cloud_tasks WHERE status='queued' ORDER BY created_at LIMIT 50").all() as any[];
       for (const row of rows) {
+        const task = taskDto(row);
+        const video = typeof task.input.videoId === 'string' ? this.records.get(row.owner_id, 'videos', task.input.videoId) : null;
+        const selected = executorFor(task, video);
+        if (selected === 'browser') {
+          this.store.db.prepare("UPDATE cloud_tasks SET executor='browser',updated_at=? WHERE id=? AND status='queued'").run(new Date().toISOString(), row.id);
+          continue;
+        }
         const computing = this.store.db.prepare("SELECT COUNT(*) AS count FROM cloud_tasks WHERE status='running'").get() as { count: number };
         if (computing.count >= limit || this.active.size >= 8) break;
         const busy = this.store.db.prepare("SELECT 1 FROM cloud_tasks WHERE owner_id=? AND resource=? AND status IN ('running','waiting_user') AND id!=?").get(row.owner_id, row.resource, row.id);
@@ -104,8 +112,8 @@ export class CloudTaskRunner {
             .run(JSON.stringify(progress), new Date().toISOString(), row.id);
         },
       };
-      const execute = this.options.executors?.[executor] ?? (executor === 'node' ? executeNodeTask
-        : executor === 'media' ? executeMediaTask : (ctx: TaskContext) => executeBrowserTask(ctx, origin));
+      if (executor === 'browser') throw new Error('browser_task_requires_external_worker');
+      const execute = this.options.executors?.[executor] ?? (executor === 'node' ? executeNodeTask : executeMediaTask);
       const result = await execute(context);
       signal.throwIfAborted();
       this.store.db.prepare("UPDATE cloud_tasks SET status='completed',result=?,error=NULL,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")

@@ -1,10 +1,16 @@
 import { Button } from '@heroui/react';
 import type { Provider } from '../../store/settings';
-import { matchesProviderPreset, PROVIDER_PRESETS, type ProviderPreset } from '../../store/providerPresets';
+import { getProviderPresets, matchesProviderPreset, type ProviderPreset } from '../../store/providerPresets';
+import { useModelMetaRevision } from '../../utils/useModelMeta';
 import { Sym } from '../../ui';
 
 /** 本地单色标识，跟随深浅主题，不依赖打开设置时的外网请求。 */
+const BUNDLED_PROVIDER_LOGOS = new Set(['typesafe', 'openai', 'deepseek', 'openrouter', 'anthropic', 'siliconflow-cn', 'google', 'vercel']);
+
 export function ProviderLogo({ id }: { id: string }) {
+  // models.dev 会动态带来远多于项目内置 SVG 的供应商；动态项用稳定的本地图标兜底，
+  // 不让一个缺失的 mask 图片把整块供应商卡片渲染成空白。
+  if (!BUNDLED_PROVIDER_LOGOS.has(id)) return <Sym name="dns" />;
   const image = `url(/provider-logos/${id}.svg)`;
   return <span
     aria-hidden="true"
@@ -19,6 +25,8 @@ export default function ProviderPresets({ providers, onSelect, onCustom, onBack 
   onCustom: () => void;
   onBack: () => void;
 }) {
+  useModelMetaRevision();
+  const presets = getProviderPresets();
   return (
     <div className="flex flex-col gap-5" data-testid="provider-presets">
       <Button variant="tertiary" className="self-start" data-testid="provider-presets-back" onPress={onBack}>
@@ -29,7 +37,7 @@ export default function ProviderPresets({ providers, onSelect, onCustom, onBack 
         <span className="text-xs text-muted">预填地址与协议，填写密钥即可</span>
       </div>
       <div className="grid grid-cols-2 gap-3 min-[1100px]:grid-cols-3 max-[360px]:grid-cols-1">
-        {PROVIDER_PRESETS.map((preset) => {
+        {presets.map((preset) => {
           const existing = providers.some((p) => matchesProviderPreset(p, preset));
           return (
             <Button

@@ -5,6 +5,7 @@ import type { DatabaseStore } from '../storage/database.js';
 import { CloudRecords, CloudConflict } from './records.js';
 import { CloudConfiguration } from './config.js';
 import { CloudTaskRunner, taskDto, TASK_KINDS, workerIdentity } from './tasks.js';
+import { workerTokens, workerTokenHash, renewWorker } from './workerAuth.js';
 import type { CloudConfig, CloudMutation } from '../../../../packages/contracts/src/cloud.js';
 
 interface Dependencies {
@@ -61,6 +62,8 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     const worker = workerIdentity(request);
     if (worker) {
       const task = ownedTask(user.id, worker.taskId);
+      const token = request.headers.authorization?.slice(7);
+      if (!task || task.worker_id !== workerTokenHash(token ?? '') || !['running', 'waiting_user'].includes(task.status) || (task.lease_expires_at && Date.parse(task.lease_expires_at) <= Date.now())) return fail(reply, 409, 'worker_lease_expired');
       const policy = configuration.get(user.id).policy;
       const automatic: Record<string, string[]> = {
         chat: ['chats', 'chatSessions'], qa: ['chats', 'chatSessions'],
@@ -130,6 +133,23 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     const user = authorize(request, reply); if (!user) return;
     return { tasks: (store.db.prepare("SELECT * FROM cloud_tasks WHERE owner_id=? ORDER BY CASE WHEN status IN ('queued','running','waiting_user') THEN 0 ELSE 1 END, created_at DESC LIMIT 200").all(user.id) as any[]).map(taskDto) };
   });
+  const leaseMs = 30_000;
+  app.post('/api/v1/cloud/worker/claim', async (request, reply) => {
+    const user = authorize(request, reply); if (!user) return;
+    const now = new Date();
+    const expires = new Date(now.getTime() + leaseMs).toISOString();
+    const token = crypto.randomBytes(32).toString('base64url');
+    const claimed = store.transaction(() => {
+      const row = store.db.prepare("SELECT * FROM cloud_tasks WHERE owner_id=? AND executor='browser' AND status='queued' ORDER BY created_at LIMIT 1").get(user.id) as any;
+      if (!row) return null;
+      const changed = store.db.prepare("UPDATE cloud_tasks SET status='running',worker_id=?,lease_expires_at=?,updated_at=? WHERE id=? AND status='queued'").run(workerTokenHash(token), expires, now.toISOString(), row.id);
+      return changed.changes ? row.id : null;
+    });
+    if (!claimed) return reply.code(204).send();
+    workerTokens.set(token, { id: user.id, taskId: claimed, expiresAt: now.getTime() + leaseMs });
+    const row = ownedTask(user.id, claimed);
+    return { token, leaseExpiresAt: expires, task: taskDto(row) };
+  });
   app.post<{ Body: { nonce: string; kind: string; resource: string; input: Record<string, unknown> } }>('/api/v1/cloud/tasks', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
     const b = request.body;
@@ -174,6 +194,10 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     if (!worker || worker.taskId !== request.params.id) return fail(reply, 403, 'worker_scope_denied');
     const task = ownedTask(worker.id, worker.taskId);
     if (!task || !['running', 'waiting_user'].includes(task.status)) return fail(reply, 409, 'task_not_running');
+    if (task.worker_id !== workerTokenHash(request.headers.authorization?.slice(7) ?? '') || (task.lease_expires_at && Date.parse(task.lease_expires_at) <= Date.now())) return fail(reply, 409, 'worker_lease_expired');
+    const lease = new Date(Date.now() + leaseMs).toISOString();
+    store.db.prepare('UPDATE cloud_tasks SET lease_expires_at=?,updated_at=? WHERE id=?').run(lease, new Date().toISOString(), worker.taskId);
+    renewWorker(request, Date.now() + leaseMs);
     if (request.body.event) store.db.prepare('INSERT INTO cloud_task_events(task_id,event) VALUES(?,?)').run(worker.taskId, JSON.stringify(request.body.event));
     if (request.body.progress) store.db.prepare('UPDATE cloud_tasks SET progress=?,updated_at=? WHERE id=?').run(JSON.stringify(request.body.progress), new Date().toISOString(), worker.taskId);
     const view = (request.body.progress as any)?.view;
@@ -181,6 +205,19 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       const approval = store.db.prepare("SELECT 1 FROM cloud_permissions WHERE task_id=? AND status='pending'").get(worker.taskId);
       store.db.prepare("UPDATE cloud_tasks SET status=? WHERE id=? AND status IN ('running','waiting_user')").run(view.pendingAsk || view.pendingPlan || approval ? 'waiting_user' : 'running', worker.taskId);
     }
+    return { ok: true };
+  });
+  app.post<{ Params: { id: string }; Body: { result?: unknown; error?: string } }>('/api/v1/cloud/tasks/:id/complete', async (request, reply) => {
+    const worker = workerIdentity(request);
+    if (!worker || worker.taskId !== request.params.id) return fail(reply, 403, 'worker_scope_denied');
+    const task = ownedTask(worker.id, worker.taskId);
+    const token = request.headers.authorization?.slice(7);
+    if (!task || task.worker_id !== workerTokenHash(token ?? '') || !['running', 'waiting_user'].includes(task.status) || (task.lease_expires_at && Date.parse(task.lease_expires_at) <= Date.now())) return fail(reply, 409, 'worker_lease_expired');
+    const error = typeof request.body?.error === 'string' ? request.body.error.slice(0, 1000) : '';
+    store.db.prepare("UPDATE cloud_tasks SET status=?,result=?,error=?,lease_expires_at=NULL,worker_id=NULL,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
+      .run(error ? 'failed' : 'completed', error ? null : JSON.stringify(request.body?.result ?? null), error || null, new Date().toISOString(), task.id);
+    store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE task_id=? AND status IN ('pending','approved','consumed')").run(task.id);
+    workerTokens.delete(token!);
     return { ok: true };
   });
 
@@ -221,6 +258,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     if (!worker || worker.taskId !== request.params.id) return fail(reply, 403, 'worker_scope_denied');
     const task = ownedTask(worker.id, worker.taskId);
     if (!task || !['running', 'waiting_user'].includes(task.status)) return fail(reply, 409, 'task_not_running');
+    if (task.worker_id !== workerTokenHash(request.headers.authorization?.slice(7) ?? '') || (task.lease_expires_at && Date.parse(task.lease_expires_at) <= Date.now())) return fail(reply, 409, 'worker_lease_expired');
     const capability = request.body.capability;
     if (!['read', 'write', 'remove', 'shell'].includes(capability)) return fail(reply, 400, 'invalid_capability');
     const policy = configuration.get(worker.id).policy[capability];
