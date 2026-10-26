@@ -10,6 +10,7 @@ import { CloudRecords } from '../cloud/records.js';
 import { receiveFile } from '../cloud/files.js';
 import { taskDto } from '../cloud/tasks.js';
 import { mediaMime } from '../cloud/image.js';
+import { validateStudyMutation } from './tools/study-validation.js';
 
 export interface StudyContext {
   owner: string; thread: string; run: string; step: string; signal: AbortSignal;
@@ -56,6 +57,8 @@ export class StudyTools {
     } });
     this.register({ name: 'study_manage', description: 'Create/update/delete owned learning records. Pass study_read.records[i].key as key and .value unchanged as before (not the envelope). Supply complete after value or null for deletion. Optimistic concurrency is enforced. Cannot manage settings/accounts/credentials. Deletions require existing remove policy approval.', properties: { table: { type: 'string' }, key: { type: ['string','number'] }, before: { type: ['object','null'] }, after: { type: ['object','null'] } }, required: ['table','key','before','after'], capability: a => a.after === null ? 'remove' : 'write', execute: async (a, c) => {
       if (!learningTables.has(a.table)) throw new Error('table_not_available');
+      validateStudyMutation(records, c.owner, a.table, a.key, a.before, a.after);
+      c.checkActive();
       if (a.after && a.table === 'courseFiles' && !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(a.after.fileId, c.owner)) throw new Error('file_not_found');
       if (a.after && a.table === 'files' && !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(a.after.blob?.$file, c.owner)) throw new Error('file_not_found');
       return records.apply(c.owner, [{ id: c.step, table: a.table, key: a.key, before: a.before, after: a.after }]);

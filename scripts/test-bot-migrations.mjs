@@ -32,7 +32,7 @@ try {
       const store = new DatabaseStore(filename);
       assert.ok(store.db.prepare("SELECT name FROM sqlite_master WHERE name='mcp_servers'").get());
       assert.ok(store.db.prepare("SELECT name FROM sqlite_master WHERE name='gateway_projection_failures'").get());
-      assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 15);
+      assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 16);
       if (ref) assert.equal(store.db.prepare('SELECT owner_id FROM threads WHERE id=?').get('thread').owner_id, 'owner');
       if (name === 'mcp13') assert.equal(store.db.prepare('SELECT credentials FROM mcp_servers').get().credentials, 'encrypted-fixture');
       if (name.startsWith('gateway')) {

@@ -283,6 +283,50 @@ const MIGRATIONS: Array<[number, string]> = [
     CREATE INDEX mcp_servers_owner ON mcp_servers(owner_id);
     ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
   `],
+  [16, `
+    ALTER TABLE threads ADD COLUMN skill_ids TEXT;
+    ALTER TABLE runs ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE runs ADD COLUMN budget_json TEXT;
+    CREATE TABLE bot_requests (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), run_id TEXT REFERENCES runs(id),
+      step_id TEXT, task_id TEXT, purpose TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+      attempt INTEGER NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL,
+      reserved_tokens INTEGER NOT NULL, input_tokens INTEGER, output_tokens INTEGER, cache_tokens INTEGER,
+      cost REAL, pricing_source TEXT, usage_source TEXT NOT NULL DEFAULT 'unknown'
+    );
+    CREATE INDEX bot_requests_owner_day ON bot_requests(owner_id,started_at);
+    CREATE INDEX bot_requests_run ON bot_requests(run_id);
+    CREATE TABLE bot_artifacts (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), run_id TEXT REFERENCES runs(id),
+      step_id TEXT, content TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX bot_artifacts_owner ON bot_artifacts(owner_id,created_at);
+    CREATE TABLE bot_summaries (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), source_start INTEGER NOT NULL,
+      source_end INTEGER NOT NULL, version INTEGER NOT NULL, model TEXT NOT NULL, content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE bot_operations (
+      step_id TEXT PRIMARY KEY REFERENCES run_steps(id), owner_id TEXT NOT NULL REFERENCES users(id),
+      result TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE bot_memories (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), scope TEXT NOT NULL,
+      scope_id TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL,
+      source_revision TEXT, revision INTEGER NOT NULL, status TEXT NOT NULL, origin TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX bot_memories_owner ON bot_memories(owner_id,status,updated_at);
+    CREATE TABLE bot_memory_versions (
+      memory_id TEXT NOT NULL REFERENCES bot_memories(id), revision INTEGER NOT NULL, value TEXT NOT NULL,
+      created_at TEXT NOT NULL, PRIMARY KEY(memory_id,revision)
+    );
+    CREATE TABLE bot_memory_jobs (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 0,
+      cursor TEXT, token_budget INTEGER NOT NULL DEFAULT 10000, interval_seconds INTEGER NOT NULL DEFAULT 86400,
+      next_at INTEGER NOT NULL DEFAULT 0
+    );
+  `],
 ];
 
 export class DatabaseStore {
@@ -340,7 +384,7 @@ export class DatabaseStore {
         const validLegacy = current.version <= 12 ? present.every(v => !v)
           : current.version === 13 ? (!present[1] && present[0] !== present[2])
           : current.version === 14 ? (present[0] && present[1] && !present[2])
-          : current.version === 15 ? present.every(Boolean) : false;
+          : current.version >= 15 && current.version <= MIGRATIONS.at(-1)![0] ? present.every(Boolean) : false;
         if (!validLegacy) throw new Error('schema_layout_unknown: do not edit migration numbers; restore a consistent backup');
         for (const [index, group] of groups.entries()) {
           if (!present[index]) this.db.exec(MIGRATIONS.find(([v]) => v === group.version)![1]);
@@ -348,6 +392,13 @@ export class DatabaseStore {
         }
       } finally { expected.close(); }
     })();
+    for (const [version, sql] of MIGRATIONS) {
+      if (version <= Math.max(15, current.version)) continue;
+      this.db.transaction(() => {
+        this.db.exec(sql);
+        this.db.prepare('INSERT INTO schema_migrations(version,applied_at) VALUES(?,?)').run(version, new Date().toISOString());
+      })();
+    }
   }
 
   transaction<T>(fn: () => T): T {

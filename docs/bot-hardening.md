@@ -25,3 +25,22 @@ Verification on macOS Node 26.3.0:
 
 No real IM account or paid model was contacted. Linux/Docker and real-model
 quality acceptance are separate from deterministic software tests.
+
+## Runtime/tool foundation
+
+Scheduler failures have a rejection boundary and bounded 1–30 second retry
+delay, including when error persistence is unavailable. Recovery excludes
+currently active runs. Close prevents further scheduling. Interrupted side
+effects are reported rather than replayed.
+
+Tool schemas use a bounded draft-07 validator: no coercion, extra built-in
+arguments, remote references, regex or silently ignored unknown keywords.
+Unsupported MCP schemas are visibly unavailable, not treated as unrestricted.
+MCP's own current owner/revision/enabled/scope checks remain authoritative.
+Learning mutations validate changed business fields and owner-scoped course,
+folder and comment associations; optimistic concurrency remains unchanged.
+Step-linked messages and result records carry stable operation identities.
+
+`scripts/test-bot-hardening.mjs`, migration matrix, Bot, Gateway and MCP tests
+pass. This foundation does not claim external exactly-once execution: a crash
+between a remote side effect and local settlement remains uncertain.

@@ -55,6 +55,7 @@
     "@tailwindcss/vite": "^4.3.3",
     "@tanstack/react-virtual": "^3.14.21",
     "@vidstack/react": "^1.15.6",
+    "ajv": "8.17.1",
     "argon2": "^0.44.0",
     "better-sqlite3": "^12.11.1",
     "chart.js": "^4.5.1",

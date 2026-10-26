@@ -7,6 +7,7 @@ import { botRequest, botCalls, type ModelMessage as Message, type ModelCall as C
 import type { StudyTools } from './study.js';
 import { McpManager, mcpError } from '../mcp/manager.js';
 import { mcpToolDefinition } from '../../../../packages/contracts/src/mcp.js';
+import { ToolRegistry } from './tools/registry.js';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
 const now = () => new Date().toISOString();
@@ -23,6 +24,10 @@ export class BotRunner {
   private timer?: ReturnType<typeof setInterval>;
   private stopped = false;
   private draining = false;
+  private scheduled = false;
+  private recoverNeeded = true;
+  private retryAt = 0;
+  private failures = 0;
   private readonly fetcher: typeof fetch;
   private readonly sandbox: SandboxExecutor;
   private readonly configuration?: CloudConfiguration;
@@ -35,18 +40,41 @@ export class BotRunner {
   }
 
   start() {
+    if (this.timer || this.stopped) return;
     // One runtime owns this database. Recover all interrupted runs immediately.
     // A command interrupted by process death has uncertain side effects: do not replay it.
-    this.store.transaction(() => {
-      this.store.db.prepare("UPDATE runs SET status='queued',started_at=NULL WHERE mode='bot' AND status='running'").run();
-      this.store.db.prepare("UPDATE run_steps SET status='interrupted',result=?,completed_at=? WHERE status='running'").run('Execution interrupted. Side effects may have happened; inspect the workspace before retrying.', now());
-    });
+    try { this.recover(); } catch { this.schedulerFailure(); }
     this.timer = setInterval(() => this.enqueue(), 1000);
     this.timer.unref();
     this.enqueue();
   }
 
-  enqueue(_runId?: string) { if (!this.stopped) queueMicrotask(() => void this.drain()); }
+  enqueue(_runId?: string) {
+    if (this.stopped || this.scheduled || Date.now() < this.retryAt) return;
+    this.scheduled = true;
+    queueMicrotask(() => {
+      this.scheduled = false;
+      void this.drain().catch(() => this.schedulerFailure());
+    });
+  }
+  private schedulerFailure() {
+    this.recoverNeeded = true;
+    this.retryAt = Date.now() + Math.min(30000, 1000 * 2 ** Math.min(5, this.failures++));
+    // Never log upstream exception text, arguments or credentials. Even error
+    // persistence may be unavailable, so this boundary must not use SQLite.
+    console.error('bot_scheduler_unavailable');
+  }
+  private recover() {
+    this.store.transaction(() => {
+      const interrupted = this.store.db.prepare("SELECT id FROM runs WHERE mode='bot' AND status='running'").all() as Array<{ id: string }>;
+      for (const { id } of interrupted) {
+        if (this.active.has(id)) continue;
+        this.store.db.prepare("UPDATE run_steps SET status='interrupted',result=?,completed_at=? WHERE run_id=? AND status='running'").run('Execution interrupted. Side effects may have happened; inspect evidence before retrying.', now(), id);
+        this.store.db.prepare("UPDATE runs SET status='queued',started_at=NULL WHERE id=?").run(id);
+      }
+    });
+    this.recoverNeeded = false;
+  }
   cancel(id: string) {
     this.active.get(id)?.controller.abort();
     this.store.db.prepare("UPDATE cloud_tasks SET status='cancelled',updated_at=? WHERE parent_run_id=? AND status IN ('queued','running','waiting_user')").run(now(), id);
@@ -64,6 +92,7 @@ export class BotRunner {
     if (this.stopped || this.draining) return;
     this.draining = true;
     try {
+      if (this.recoverNeeded) this.recover();
       this.syncChildren();
       const concurrency = Math.max(1, Math.min(8, Number(process.env.BOT_CONCURRENCY) || 1));
       const rows = this.store.db.prepare("SELECT * FROM runs WHERE mode='bot' AND status='queued' AND (wake_at IS NULL OR wake_at<=?) ORDER BY created_at").all(now()) as Run[];
@@ -74,11 +103,12 @@ export class BotRunner {
         if (!claimed.changes) continue;
         const controller = new AbortController();
         this.active.set(run.id, { threadId: run.thread_id, controller });
-        const task = this.execute(run, controller.signal).finally(() => {
+        const task = this.execute(run, controller.signal).catch(() => this.schedulerFailure()).finally(() => {
           this.active.delete(run.id); this.tasks.delete(task); this.enqueue();
         });
         this.tasks.add(task);
       }
+      this.failures = 0; this.retryAt = 0;
     } finally { this.draining = false; }
   }
 
@@ -142,7 +172,13 @@ export class BotRunner {
         const mcpScope = scopeRow.mcp_server_ids === null ? undefined : JSON.parse(scopeRow.mcp_server_ids) as string[];
         const catalog = await this.mcp?.catalog(owner, mcpScope);
         if (catalog?.warnings.length) this.append(run.thread_id, 'progress', `MCP: ${catalog.warnings.join('; ')}`);
-        const request = botRequest(selected, model, context, [...tools, ...(this.options.study?.definitions() ?? []), ...(catalog?.tools.map(mcpToolDefinition) ?? [])]);
+        const registry = new ToolRegistry();
+        for (const definition of [...tools, ...(this.options.study?.definitions() ?? [])]) registry.register(definition, definition.function.name === 'study_read' ? 'read' : 'uncertain');
+        for (const definition of catalog?.tools.map(mcpToolDefinition) ?? []) {
+          try { registry.register(definition, 'uncertain'); }
+          catch { this.append(run.thread_id, 'progress', `MCP tool unavailable: ${definition.function.name} (unsupported input schema)`); }
+        }
+        const request = botRequest(selected, model, context, registry.definitions());
         const response = await this.fetcher(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
           method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(Math.max(1000, Number(process.env.MODEL_TIMEOUT_MS) || 30000))]),
           headers: request.headers,
@@ -168,8 +204,10 @@ export class BotRunner {
         let result = 'Unknown tool or invalid arguments.';
         let state: 'completed' | 'waiting_user' | 'queued' | undefined;
         let wake: string | null = null;
+        const validation = registry.validate(call.function.name, args);
         const studyPlugin = this.options.study?.plugins.get(call.function.name);
-        if (studyPlugin) {
+        if (!validation.ok) result = JSON.stringify(validation);
+        else if (studyPlugin) {
           const capability = studyPlugin.capability(args);
           const policy = this.configuration?.policy(owner, run.thread_id) ?? DEFAULT_AGENT_POLICY;
           const capabilities = studyPlugin.permissions?.(args) ?? [capability];
@@ -220,7 +258,7 @@ export class BotRunner {
           if (args.kind === 'attachment') { try { fileAttachment = Boolean(JSON.parse(args.text)?.fileId); } catch { /* historical plain-text attachments remain supported */ } }
           if (fileAttachment) result = 'File attachments must use study_send_file with the owned fileId; send_message cannot bypass read policy or approval.';
           else {
-          const message = this.append(run.thread_id, args.kind, args.text);
+          const message = this.append(run.thread_id, args.kind, args.text, `bot:${call.id}:message`);
           result = 'Message delivered.';
           if (args.kind === 'approval') {
             this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,status,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, 'pending', now());
@@ -264,8 +302,17 @@ export class BotRunner {
         if ((plugin.permissions?.(args) ?? [plugin.capability(args)]).some(k => policy[k] === 'deny' || (policy[k] === 'ask' && !approved))) throw new Error('learning_permission_changed');
       };
       checkActive();
-      const value = await plugin.execute(args, { owner, thread: run.thread_id, run: run.id, step, signal, checkActive, append: (kind, text) => { checkActive(); return this.append(run.thread_id, kind, text); } });
+      const saved = this.store.db.prepare('SELECT result FROM bot_operations WHERE step_id=? AND owner_id=?').get(step, owner) as { result: string } | undefined;
+      if (saved) return saved.result;
+      const registry = new ToolRegistry();
+      registry.register(this.options.study!.definitions().find(d => d.function.name === name)!, name === 'study_read' ? 'read' : 'uncertain');
+      const outcome = await registry.execute(name, args, { owner, thread: run.thread_id, run: run.id, step, signal, checkActive }, async scoped => {
+        return plugin.execute(args, { ...scoped, append: (kind, text) => { scoped.checkActive(); return this.append(run.thread_id, kind, text, `bot:${step}:attachment`); } });
+      });
+      if (!outcome.ok) return JSON.stringify(outcome);
+      const value = outcome.value;
       checkActive();
+      this.store.db.prepare('INSERT OR IGNORE INTO bot_operations(step_id,owner_id,result,created_at) VALUES(?,?,?,?)').run(step, owner, JSON.stringify(value), now());
       this.configuration?.audit(owner, 'bot.study_tool', { run: run.id, step, name, capability: plugin.capability(args) });
       return JSON.stringify(value);
     } catch (error) {
@@ -292,12 +339,16 @@ export class BotRunner {
   private finish(id: string, status: string) {
     this.store.db.prepare("UPDATE runs SET status=?,completed_at=? WHERE id=? AND status='running'").run(status, now(), id);
   }
-  private append(threadId: string, kind: string, content: string) {
+  private append(threadId: string, kind: string, content: string, nonce?: string) {
     return this.store.transaction(() => {
+      if (nonce) {
+        const existing = this.store.db.prepare('SELECT id FROM messages WHERE thread_id=? AND client_nonce=?').get(threadId, nonce) as { id: string } | undefined;
+        if (existing) return existing;
+      }
       const seq = (this.store.db.prepare('SELECT COALESCE(MAX(seq),0)+1 AS seq FROM messages WHERE thread_id=?').get(threadId) as { seq: number }).seq;
       const timestamp = now(); const id = crypto.randomUUID();
       const dto = { id, threadId, clientNonce: null, seq, role: 'assistant', kind, content, replyTo: null, createdAt: timestamp };
-      this.store.db.prepare('INSERT INTO messages(id,thread_id,seq,role,kind,content,created_at) VALUES(?,?,?,?,?,?,?)').run(id, threadId, seq, 'assistant', kind, content, timestamp);
+      this.store.db.prepare('INSERT INTO messages(id,thread_id,seq,role,kind,content,created_at,client_nonce) VALUES(?,?,?,?,?,?,?,?)').run(id, threadId, seq, 'assistant', kind, content, timestamp, nonce ?? null);
       this.store.db.prepare('INSERT INTO message_events(id,thread_id,seq,type,payload,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), threadId, seq, 'message.accepted', JSON.stringify(dto), timestamp);
       this.store.db.prepare('UPDATE threads SET updated_at=? WHERE id=?').run(timestamp, threadId);
       return dto;
