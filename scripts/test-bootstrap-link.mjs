@@ -28,7 +28,7 @@ assert.equal(consumeBootstrapLink(location, history), '', 'StrictMode and later 
 const install = fs.readFileSync(new URL('../install.sh', import.meta.url), 'utf8');
 const snippet = install.match(/exec -T app node -e '([\s\S]*?)\n  ' "\$\{url/)[1];
 for (const status of [
-  { initialized: false, bootstrapAvailable: true, expiresAt: '2026-01-01T00:15:00Z' },
+  { initialized: false, bootstrapAvailable: true, expiresAt: '2026-01-02T00:00:00Z' },
   { initialized: false, bootstrapAvailable: false },
   { initialized: true, bootstrapAvailable: false },
 ]) {

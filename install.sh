@@ -56,7 +56,7 @@ WANGKE_BIND_HOST=0.0.0.0
 DATA_DIR=/data
 DB_PATH=/data/db/wangke.sqlite
 BOOTSTRAP_SECRET_FILE=/data/config/bootstrap-secret
-BOOTSTRAP_TTL_MS=900000
+BOOTSTRAP_TTL_MS=86400000
 # Set these to an HTTPS origin and its host before enabling Passkey.
 PUBLIC_ORIGIN=http://localhost:$PORT
 WEBAUTHN_RP_ID=localhost

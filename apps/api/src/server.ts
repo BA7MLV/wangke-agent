@@ -68,7 +68,7 @@ function webauthnChallengeFromResponse(body: unknown): string | null {
 export function buildServer(options: { dbPath?: string; staticDir?: string; fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxCleanup?: SandboxCleanup } = {}) {
   const secretFile = process.env.BOOTSTRAP_SECRET_FILE ?? path.join(defaultDataDir, 'config/bootstrap-secret');
   const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(defaultDataDir, 'db/wangke.sqlite');
-  const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 15 * 60 * 1000);
+  const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 24 * 60 * 60 * 1000);
   const sessionTtlMs = Number(process.env.SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
   const filesDir = process.env.FILES_DIR ?? path.join(defaultDataDir, 'files');
   const configuredMaxFileBytes = Number(process.env.MAX_FILE_BYTES ?? 512 * 1024 * 1024);

@@ -121,7 +121,7 @@ cd wangke-agent
 ./install.sh --data-dir "$HOME/.wangke-agent" --port 3000
 ```
 
-脚本会检查 Docker、创建数据目录、构建并启动服务。服务首次启动时生成一次性 Bootstrap Secret，安装完成后打印带密钥的 **Setup URL**（形如 `http://localhost:3000/#/setup?secret=…`）及过期时间。打开完整链接会自动填入密钥，只需设置账号和密码，再配置模型服务、Agent 权限与 Passkey。密钥默认有效期 15 分钟，页面读取后从地址栏清除，创建管理员后失效；请勿分享完整链接。也可手动输入 `bootstrap-secret` 文件里的密钥。
+脚本会检查 Docker、创建数据目录、构建并启动服务。服务首次启动时生成一次性 Bootstrap Secret，安装完成后打印带密钥的 **Setup URL**（形如 `http://localhost:3000/#/setup?secret=…`）及过期时间。打开完整链接会自动填入密钥，只需设置账号和密码，再配置模型服务、Agent 权限与 Passkey。密钥默认有效期 24 小时，页面读取后从地址栏清除，创建管理员后失效；请勿分享完整链接。也可手动输入 `bootstrap-secret` 文件里的密钥。
 
 公网部署先配置 HTTPS 反向代理，再运行 `./install.sh --public-url https://learn.example.com`；脚本自动写入公开 origin 和 Passkey RP ID。代理需允许至少 `512m` 的请求体及较长的上传超时。Passkey 需要 HTTPS 域名或 localhost，注册后保持域名不变。详见 [个人云端部署](docs/personal-cloud.md)。
 

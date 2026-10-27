@@ -9,6 +9,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-api-'));
 process.env.DATA_DIR = dir;
 process.env.BOOTSTRAP_SECRET_FILE = path.join(dir, 'config/bootstrap-secret');
 process.env.NODE_ENV = 'test';
+delete process.env.BOOTSTRAP_TTL_MS;
 delete process.env.MODEL_API_KEY;
 const { buildServer } = await import('../apps/api/src/server.ts');
 const app = buildServer({ dbPath: path.join(dir, 'db/wangke.sqlite'), staticDir: path.join(dir, 'empty') });
@@ -17,7 +18,23 @@ try {
   assert.equal(health.statusCode, 200);
   const status = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
   assert.equal(status.json().initialized, false);
+  assert.equal(status.json().bootstrapAvailable, true);
+  const expiresAt = Date.parse(status.json().expiresAt);
+  const remainingMs = expiresAt - Date.now();
+  assert.ok(remainingMs > 24 * 60 * 60 * 1000 - 60_000 && remainingMs <= 24 * 60 * 60 * 1000, 'bootstrap secret defaults to 24 hours');
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
+  const realNow = Date.now;
+  try {
+    Date.now = () => expiresAt;
+    const expired = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
+    assert.equal(expired.json().bootstrapAvailable, false);
+    assert.equal(expired.json().expiresAt, null);
+    const rejected = await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'a-secure-test-password' } });
+    assert.equal(rejected.statusCode, 403);
+    assert.equal(rejected.json().error, 'invalid_or_expired_bootstrap_secret');
+  } finally {
+    Date.now = realNow;
+  }
   const initialized = await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'a-secure-test-password' } });
   assert.equal(initialized.statusCode, 201);
   const repeatedInitialize = await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'a-secure-test-password' } });
@@ -30,6 +47,8 @@ try {
   assert.equal(fs.existsSync(process.env.BOOTSTRAP_SECRET_FILE), false);
   const closed = await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' });
   assert.equal(closed.json().initialized, true);
+  assert.equal(closed.json().bootstrapAvailable, false);
+  assert.equal(closed.json().expiresAt, null);
   const unauthorized = await app.inject({ method: 'GET', url: '/api/v1/threads' });
   assert.equal(unauthorized.statusCode, 401);
   const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { name: 'Administrator', password: 'a-secure-test-password' } });

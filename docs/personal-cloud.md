@@ -8,7 +8,7 @@
 ```
 
 1. 预先把 HTTPS 域名代理到服务器的 3000 端口，允许 512 MiB 上传（例如 nginx 的 `client_max_body_size 512m;`）。
-2. 打开安装输出的完整一次性初始化链接（`/#/setup?secret=…`），密钥会自动填入，只需设置账号和密码创建管理员。密钥放在 URL 的 `#` 后，不发送给服务器日志，页面读取后会从地址栏清除。请勿分享完整链接；默认有效期 15 分钟，成功创建管理员后失效。手动访问 `/#/setup` 时仍可输入 bootstrap-secret 文件内的密钥。
+2. 打开安装输出的完整一次性初始化链接（`/#/setup?secret=…`），密钥会自动填入，只需设置账号和密码创建管理员。密钥放在 URL 的 `#` 后，不发送给服务器日志，页面读取后会从地址栏清除。请勿分享完整链接；默认有效期 24 小时，成功创建管理员后失效。手动访问 `/#/setup` 时仍可输入 bootstrap-secret 文件内的密钥。
 3. 添加模型服务，选择 API 协议，填写 API Key 和对话/视觉/转写模型 ID，保存。无 Key 的本地模型也可用。
 4. 添加 Passkey。HTTPS 公网域名必须与 `PUBLIC_ORIGIN`、`WEBAUTHN_RP_ID` 一致；只有 localhost 允许 HTTP。默认密码登录仍可使用。
 5. 其他设备访问同一 URL，用密码或 Passkey 登录。后续管理在“设置 → 模型 / 数据”，或直接访问 `/#/setup`。
@@ -41,6 +41,8 @@ scripts/restore.sh --data-dir "$HOME/.wangke-agent" \
 必须一起保留 `data/db`、`data/files`、`data/config/credentials.key` 与 `.env`。缺少加密密钥无法解密已保存的模型配置。备份会暂停服务以获得一致快照，执行中的任务会中断。沙盒的 `wangke-workspace-*` Docker volumes 不在应用备份中，需要另行备份（见 [Agent Runtime](agent-runtime.md)）。
 
 初始化密钥过期且尚未创建账号时，停止服务，删除 `data/config/bootstrap-secret`，再启动会生成新密钥。已经初始化的实例不会重新打开初始化入口。
+
+有效期可通过部署目录 `.env` 中的 `BOOTSTRAP_TTL_MS` 配置，单位为毫秒，默认 `86400000`（24 小时）。旧部署若仍配置为 `900000`（15 分钟），需手动修改后重新创建应用容器；更新安装脚本不会覆盖已有配置。有效期从密钥生成时算起，重启不会重新计时。
 
 ## 验证
 
