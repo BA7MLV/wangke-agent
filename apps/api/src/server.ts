@@ -378,8 +378,10 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const { projectId, agentId } = request.query;
     if (projectId) projects.get(user.id, projectId);
     if (agentId) projects.agent(user.id, agentId);
-    const rows = store.db.prepare(`SELECT ${threadFields} FROM threads WHERE owner_id=?${projectId ? ' AND project_id=?' : ''}${agentId ? ' AND agent_id=?' : ''} ORDER BY updated_at DESC,id`).all(user.id, ...(projectId ? [projectId] : []), ...(agentId ? [agentId] : [])) as Array<Record<string, unknown>>;
-    return { threads: rows.map(row => ({ ...row, archived: Boolean(row.archived) })) };
+    // preview：最近一条文本消息，给会话列表显示「最后一句话」。走 messages(thread_id, seq) 唯一索引，每行一次索引查找。
+    const preview = "(SELECT content FROM messages WHERE thread_id=threads.id AND kind='text' ORDER BY seq DESC LIMIT 1) AS preview";
+    const rows = store.db.prepare(`SELECT ${threadFields},${preview} FROM threads WHERE owner_id=?${projectId ? ' AND project_id=?' : ''}${agentId ? ' AND agent_id=?' : ''} ORDER BY updated_at DESC,id`).all(user.id, ...(projectId ? [projectId] : []), ...(agentId ? [agentId] : [])) as Array<Record<string, unknown>>;
+    return { threads: rows.map(row => ({ ...row, archived: Boolean(row.archived), preview: typeof row.preview === 'string' ? row.preview.slice(0, 160) : null })) };
   });
   app.post<{ Body: { mode?: ConversationMode; title?: string; projectId?: string; agentId?: string } }>('/api/v1/threads', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
@@ -498,7 +500,9 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     const thread = ownedThread(user.id, request.params.id); if (!thread) return bad(reply, 404, 'thread_not_found');
     const participants = (store.db.prepare('SELECT a.* FROM agent_profiles a JOIN thread_participants p ON p.agent_id=a.id WHERE p.thread_id=? ORDER BY p.joined_at').all(thread.id) as any[]).map(agentDto);
     const approvals = store.db.prepare('SELECT id,message_id AS messageId,run_id AS runId,status,created_at AS createdAt,resolved_at AS resolvedAt,resolution FROM approvals WHERE thread_id=? ORDER BY created_at').all(thread.id);
-    return { id: thread.id, mode: thread.mode, title: thread.title, projectId: thread.project_id, agentId: thread.agent_id, archived: Boolean(thread.archived), createdAt: thread.created_at, updatedAt: thread.updated_at, participants, approvals, messages: store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? ORDER BY seq').all(thread.id) };
+    // running：有没有排队或正在跑的任务，前端据此显示「正在输入」和已读。
+    const running = Boolean(store.db.prepare("SELECT 1 FROM runs WHERE thread_id=? AND status IN ('queued','running') LIMIT 1").get(thread.id));
+    return { id: thread.id, mode: thread.mode, title: thread.title, projectId: thread.project_id, agentId: thread.agent_id, archived: Boolean(thread.archived), createdAt: thread.created_at, updatedAt: thread.updated_at, participants, approvals, running, messages: store.db.prepare('SELECT id,thread_id AS threadId,client_nonce AS clientNonce,seq,role,kind,content,reply_to AS replyTo,created_at AS createdAt FROM messages WHERE thread_id=? ORDER BY seq').all(thread.id) };
   });
   app.post<{ Params: { id: string } }>('/api/v1/threads/:id/stop', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;

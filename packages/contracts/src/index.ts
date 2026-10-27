@@ -10,6 +10,8 @@ export interface ThreadDto {
   projectId?: string | null;
   agentId?: string | null;
   archived?: boolean;
+  /** 列表接口附带：最近一条文本消息（截断到 160 字）。 */
+  preview?: string | null;
 }
 
 export type { ProjectDto, ProjectDetailDto, ProjectPolicy, ProjectRole, ProjectGrantDto, ProjectFileDto, ProjectTextDto } from './projects.js';

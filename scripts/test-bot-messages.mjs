@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupMessages } from '../src/pages/botMessages.ts';
+import { groupMessages, formatListTime } from '../src/pages/botMessages.ts';
 
 const at = (minutes) => new Date(Date.UTC(2026, 9, 24, 8, 0) + minutes * 60_000).toISOString();
 const msg = (id, role, minutes) => ({ id, threadId: 't', clientNonce: id, seq: 0, role, kind: 'text', content: id, replyTo: null, createdAt: at(minutes) });
@@ -10,12 +10,32 @@ test('consecutive messages from one sender form a group; only the last has a tai
   assert.deepEqual(rows.map((r) => [r.first, r.last]), [[true, false], [false, true], [true, true]]);
 });
 
-test('a time stamp appears on the first message and after a 15 minute gap', () => {
-  const rows = groupMessages([msg('a', 'user', 0), msg('b', 'user', 5), msg('c', 'user', 30)]);
+test('a date pill appears on the first message and when the day changes, not for a gap within a day', () => {
+  const rows = groupMessages([msg('a', 'user', 0), msg('b', 'user', 30), msg('c', 'user', 24 * 60)]);
   assert.ok(rows[0].stamp);
   assert.equal(rows[1].stamp, null);
   assert.ok(rows[2].stamp);
-  // A stamp breaks the group even for the same sender.
-  assert.equal(rows[1].last, true);
+  // A 30 minute gap still breaks the group, and a new day always does.
+  assert.equal(rows[0].last, true);
   assert.equal(rows[2].first, true);
+  assert.ok(rows.every((r) => /\d{2}:\d{2}/.test(r.time)));
+});
+
+test('user messages read as sending, delivered, then read once the agent answers or is working', () => {
+  const pending = { ...msg('pending-x', 'user', 3) };
+  let rows = groupMessages([msg('a', 'user', 0), msg('b', 'assistant', 1), msg('c', 'user', 2), pending]);
+  assert.deepEqual(rows.map((r) => r.status), ['read', undefined, 'sent', 'sending']);
+  assert.equal(rows.findIndex((r) => r.lastMine), 3);
+  rows = groupMessages([msg('a', 'user', 0)], 'zh-CN', { running: true });
+  assert.equal(rows[0].status, 'read');
+});
+
+test('list times read like Messages: time today, "yesterday", weekday, then a date', () => {
+  const now = new Date(2026, 9, 27, 12, 0);
+  const ago = (hours) => new Date(now.getTime() - hours * 3_600_000).toISOString();
+  assert.match(formatListTime(ago(1), 'zh-CN', now), /11:00/);
+  assert.equal(formatListTime(ago(24), 'zh-CN', now), '昨天');
+  assert.equal(formatListTime(ago(24), 'en-US', now), 'yesterday');
+  assert.equal(formatListTime(ago(72), 'zh-CN', now), '星期六');
+  assert.equal(formatListTime('not a date', 'zh-CN', now), '');
 });
