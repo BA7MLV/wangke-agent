@@ -194,6 +194,8 @@ try {
   const siblingMessages = (await json('GET', `/threads/${sibling.id}`)).messages;
   assert.ok(siblingMessages.at(-1).content.includes('persistent bot result'));
   assert.ok(!siblingMessages.some(m => m.content === 'write-note'));
+  const projectAttachment = await json('POST', `/threads/${sibling.id}/messages`, { clientNonce: crypto.randomUUID(), kind: 'attachment', content: JSON.stringify({ projectId: first.id, projectPath: 'bot-note.md' }) }, 201);
+  await finish(db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(projectAttachment.id).id);
   for (const command of ['cross-project', 'forge-scope']) {
     const id = await send(sibling.id, command); await finish(id);
     assert.match(db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool!='send_message'").get(id).result, /denied|invalid_project_tool_arguments/);
@@ -246,7 +248,10 @@ try {
   await json('POST', `/threads/${thread.id}/messages`, { clientNonce: 'archived', content: 'blocked' }, 409);
   await json('PATCH', `/threads/${thread.id}`, { archived: false });
   await until(() => !activeProjects.size);
+  const usageBeforeDelete = db.prepare('SELECT id,reserved_tokens FROM bot_requests WHERE run_id IN (SELECT id FROM runs WHERE thread_id=?) ORDER BY id').all(thread.id);
+  assert.ok(usageBeforeDelete.length);
   await json('DELETE', `/threads/${thread.id}`);
+  for (const usage of usageBeforeDelete) assert.deepEqual(db.prepare('SELECT id,reserved_tokens,run_id,step_id FROM bot_requests WHERE id=?').get(usage.id), { ...usage, run_id: null, step_id: null }, 'conversation deletion preserves owner usage accounting');
   assert.ok(fs.existsSync(path.join(workspace, 'bot-note.md')));
   await json('PATCH', `/projects/${first.id}`, { archived: true });
   await json('POST', '/threads', { mode: 'bot', projectId: first.id, agentId }, 409);

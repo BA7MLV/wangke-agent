@@ -105,9 +105,10 @@ try {
   assert.equal(botRun.status, 'failed');
   assert.equal(botRun.error_code, 'model_not_configured');
   const botMessages = botDb.prepare("SELECT role,kind,content FROM messages WHERE thread_id=? ORDER BY seq").all(botThread.id);
-  assert.equal(botMessages.at(-1).role, 'assistant');
-  assert.equal(botMessages.at(-1).kind, 'progress');
-  assert.doesNotMatch(botMessages.at(-1).content, /MODEL_API_KEY|Bearer/);
+  assert.deepEqual(botMessages, [{ role: 'user', kind: 'text', content: 'hello bot' }], 'model failures stay in run diagnostics, not conversation history');
+  const runDiagnostics = await app.inject({ method: 'GET', url: `/api/v1/threads/${botThread.id}/runs`, headers: { cookie } });
+  assert.equal(runDiagnostics.statusCode, 200);
+  assert.equal(runDiagnostics.json().runs[0].errorCode, 'model_not_configured');
   botDb.close();
   const agents = await app.inject({ method: 'GET', url: '/api/v1/agents', headers: { cookie } });
   assert.equal(agents.statusCode, 200);

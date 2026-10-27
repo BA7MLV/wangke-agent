@@ -46,6 +46,10 @@ export interface CloudProvider {
   serves: Array<'chat' | 'vision' | 'asr' | 'decision'>;
 }
 export interface CloudConfig {
+  botBudget?: {
+    runTokens: number; dayTokens: number; activeMs: number; contextTokens: number; runCost?: number;
+    prices: Array<{ provider: string; model: string; inputPerMillion: number; outputPerMillion: number; source: string }>;
+  };
   providers: CloudProvider[];
   llmModel: { providerId: string; model: string };
   visionModel: { providerId: string; model: string };

@@ -17,5 +17,5 @@
     "strict": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "packages/contracts/src/cloud.ts", "packages/contracts/src/mcp.ts"]
+  "include": ["src", "packages/contracts/src/cloud.ts", "packages/contracts/src/mcp.ts", "packages/contracts/src/gateway.ts"]
 }

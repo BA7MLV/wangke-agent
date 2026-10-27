@@ -7,6 +7,8 @@ import { CloudConfiguration } from './config.js';
 import { CloudTaskRunner, taskDto, TASK_KINDS, workerIdentity } from './tasks.js';
 import { workerTokens, workerTokenHash, renewWorker } from './workerAuth.js';
 import type { CloudConfig, CloudMutation } from '../../../../packages/contracts/src/cloud.js';
+import { accountedFetch } from '../agent/accounted-fetch.js';
+import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 
 interface Dependencies {
   store: DatabaseStore; records: CloudRecords; configuration: CloudConfiguration;
@@ -73,6 +75,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       for (const mutation of mutations) {
         if (!mutation) return fail(reply, 400, 'invalid_mutation');
         if (store.db.prepare('SELECT 1 FROM cloud_operations WHERE owner_id=? AND id=?').get(user.id, mutation.id)) continue;
+        if (task.parent_run_id && configuration.taskPolicy(user.id, task.id).write !== 'allow') return fail(reply, 403, 'bot_child_write_permission_required');
         if (automatic[task.kind]?.includes(mutation.table)) {
           const input = JSON.parse(task.input);
           const rows = [mutation.before, mutation.after].filter(Boolean);
@@ -114,7 +117,10 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       }
       if (provider.protocol === 'anthropic-messages') headers['anthropic-version'] = '2023-06-01';
       if (request.headers['content-type']) headers['content-type'] = request.headers['content-type'];
-      const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, redirect: 'error', signal: AbortSignal.timeout(300000) };
+      const disconnected = new AbortController();
+      request.raw.once('aborted', () => disconnected.abort());
+      reply.raw.once('close', () => { if (!reply.raw.writableEnded) disconnected.abort(); });
+      const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(300000), disconnected.signal]) };
       if (request.method === 'POST') {
         if (request.body instanceof Readable) { init.body = request.body as any; init.duplex = 'half'; }
         else init.body = JSON.stringify(request.body);
@@ -128,12 +134,22 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
             if (value !== null) pagination.set(key, value);
           }
         }
-        const response = await (deps.fetch ?? fetch)(`${provider.baseUrl}/${endpoint}${pagination.size ? `?${pagination}` : ''}`, init);
+        const worker = workerIdentity(request);
+        const task = worker ? ownedTask(user.id, worker.taskId) : undefined;
+        const fetcher = task?.parent_run_id ? accountedFetch(new UsageLedger(store, configuration), { owner: user.id, run: task.parent_run_id, step: task.parent_step_id, task: task.id, purpose: `study:${task.kind}` }, [provider], deps.fetch ?? fetch) : deps.fetch ?? fetch;
+        const response = await fetcher(`${provider.baseUrl}/${endpoint}${pagination.size ? `?${pagination}` : ''}`, init);
         if (!response.ok) return fail(reply, response.status, `model_http_${response.status}`);
         reply.header('content-type', response.headers.get('content-type') ?? 'application/json');
         reply.header('cache-control', 'no-store');
         return response.body ? reply.send(Readable.fromWeb(response.body as any)) : reply.send('');
-      } catch { return fail(reply, 502, 'model_connection_failed'); }
+      } catch (error) {
+        if (error instanceof BudgetBlocked) {
+          const worker = workerIdentity(request);
+          if (worker) store.db.prepare("UPDATE runs SET status='paused',error_code=? WHERE id=(SELECT parent_run_id FROM cloud_tasks WHERE id=? AND owner_id=?) AND status NOT IN ('completed','cancelled','failed')").run(error.code, worker.taskId, user.id);
+          return fail(reply, 429, error.code);
+        }
+        return fail(reply, 502, 'model_connection_failed');
+      }
     },
   });
 
@@ -269,7 +285,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     if (task.worker_id !== workerTokenHash(request.headers.authorization?.slice(7) ?? '') || (task.lease_expires_at && Date.parse(task.lease_expires_at) <= Date.now())) return fail(reply, 409, 'worker_lease_expired');
     const capability = request.body.capability;
     if (!['read', 'write', 'remove', 'shell'].includes(capability)) return fail(reply, 400, 'invalid_capability');
-    const policy = configuration.get(worker.id).policy[capability];
+    const policy = configuration.taskPolicy(worker.id, worker.taskId)[capability];
     if (policy === 'deny') return { status: 'rejected' };
     if (request.body.permissionId) {
       const permission = store.db.prepare('SELECT * FROM cloud_permissions WHERE id=? AND owner_id=? AND task_id=? AND capability=? AND arguments=?')

@@ -1,0 +1,96 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { Readable } from 'node:stream';
+import { DatabaseStore } from '../apps/api/src/storage/database.ts';
+import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';
+import { BotApplicationService } from '../apps/api/src/agent/service.ts';
+import { UsageLedger, DEFAULT_BOT_BUDGET } from '../apps/api/src/agent/budget.ts';
+import { ModelClient } from '../apps/api/src/agent/model-client.ts';
+import { botRequest } from '../apps/api/src/agent/model.ts';
+import { boundedRequest, textTokens } from '../apps/api/src/agent/request-budget.ts';
+import { accountedFetch } from '../apps/api/src/agent/accounted-fetch.ts';
+import { StudyTools } from '../apps/api/src/agent/study.ts';
+import { ContextGovernor } from '../apps/api/src/agent/context-governor.ts';
+import { receiveFile } from '../apps/api/src/cloud/files.ts';
+
+const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-wire-budget-')), store = new DatabaseStore(path.join(root, 'db.sqlite'));
+try {
+  const owner = 'wire-owner', at = new Date().toISOString();
+  store.db.prepare('INSERT INTO users VALUES(?,?,?)').run(owner, owner, at);
+  const config = new CloudConfiguration(store, path.join(root, 'config')), defaults = config.get(owner, true);
+  const configure = (protocol, budget = {}) => { const p = { id: 'fake', name: 'Fake', baseUrl: 'https://fake.invalid/v1', protocol, apiKey: 'fake', catalogId: '', serves: ['chat', 'vision'] }; config.save(owner, { ...defaults, providers: [p], llmModel: { providerId: p.id, model: 'fake' }, visionModel: { providerId: p.id, model: 'fake' }, botBudget: { ...DEFAULT_BOT_BUDGET, ...budget } }); return p; };
+  const service = new BotApplicationService(store, { enqueue() {} }), thread = service.create(owner, 'bot', 'Wire');
+  const m = service.send(owner, thread.id, { clientNonce: 'wire', content: '保留中文约束' });
+  const run = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(m.id).id;
+  store.db.prepare("UPDATE runs SET status='running' WHERE id=?").run(run);
+  const a = { owner, run, purpose: 'bot', provider: 'fake', model: 'fake' }, ledger = new UsageLedger(store, config);
+  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=', 'base64');
+  fs.mkdirSync(path.join(root, 'files'));
+  const file = await receiveFile(store, path.join(root, 'files'), owner, Readable.from([png]), 'tiny.png', 'image/png', 1000);
+  const chinese = '中文随机字符𠮷🧪'.repeat(5000);
+  assert.ok(textTokens(chinese) >= Buffer.byteLength(chinese));
+  const requests = () => store.db.prepare('SELECT * FROM bot_requests ORDER BY rowid').all();
+  for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) {
+    const provider = configure(protocol);
+    let physical = 0;
+    const tools = new StudyTools(store, config, path.join(root, 'files'), async (url, init) => {
+      physical++;
+      const body = JSON.parse(init.body), field = protocol === 'openai-responses' ? 'max_output_tokens' : 'max_tokens';
+      assert.equal(body[field], 3000, `${protocol}: vision wire output is bounded to its reservation`);
+      const record = requests().at(-1); assert.equal(record.status, 'inflight');
+      const estimate = boundedRequest(body, String(url));
+      assert.equal(record.reserved_tokens, estimate.total); assert.ok(estimate.total < DEFAULT_BOT_BUDGET.contextTokens, 'small image is not treated as unbounded base64 text');
+      return Response.json(protocol === 'anthropic-messages' ? { content: [{ type: 'text', text: 'image' }] } : protocol === 'openai-responses' ? { output: [{ content: [{ type: 'output_text', text: 'image' }] }] } : { choices: [{ message: { content: 'image' } }] });
+    });
+    const context = { owner, thread: thread.id, run, step: `vision-${protocol}`, signal: new AbortController().signal, checkActive() {}, append() {} };
+    for (let i = 0; i < 2; i++) assert.equal((await tools.plugins.get('study_file').execute({ fileId: file.id, question: '这张图片是什么？' }, context)).description, 'image');
+    assert.equal(physical, 2); const rows = requests().slice(-2);
+    assert.ok(rows.every(r => r.purpose === 'vision' && r.usage_source === 'unknown_reserved' && r.reserved_tokens > 3000));
+    const body = botRequest(provider, 'fake', [{ role: 'user', content: chinese }], tools.definitions()); let fetched = 0;
+    await assert.rejects(new ModelClient(ledger, async () => { fetched++; return Response.json({}); }).request(`${provider.baseUrl}/${body.path}`, { body: JSON.stringify(body.body) }, a, 1), /context_capacity/);
+    assert.equal(fetched, 0, 'Chinese wire envelope is rejected before provider dispatch');
+
+    const history = [{ role: 'system', content: 'system' }, { role: 'user', content: '必须保留：用中文解释。' }];
+    for (let i = 0; i < 30; i++) history.push({ role: 'assistant', content: null, tool_calls: [{ id: `cn-${i}`, type: 'function', function: { name: 'study_read', arguments: '{}' } }] }, { role: 'tool', tool_call_id: `cn-${i}`, content: `中文教材${i}：` + '真实证据与知识'.repeat(1000) });
+    const withMeta = messages => [{ ...messages[0], content: messages[0].content + '\nMetadata: enabled skills and untrusted memory.' }, ...messages.slice(1)];
+    const estimate = messages => { const wire = botRequest(provider, 'fake', withMeta(messages), tools.definitions()); return boundedRequest(wire.body, wire.path).total; };
+    const view = new ContextGovernor(store).view(owner, run, history, tools.definitions(), DEFAULT_BOT_BUDGET.contextTokens, estimate);
+    assert.ok(estimate(view) <= DEFAULT_BOT_BUDGET.contextTokens);
+    assert.ok(JSON.stringify(view).includes('必须保留')); assert.ok(JSON.stringify(view).includes('artifact'));
+    assert.deepEqual(JSON.parse(store.db.prepare('SELECT context_json FROM runs WHERE id=?').get(run).context_json), history);
+  }
+  configure('openai-chat');
+  let seen;
+  const wrapped = accountedFetch(ledger, a, config.get(owner, true).providers, async (_url, init) => { seen = JSON.parse(init.body); return Response.json({}); });
+  await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","messages":[]}' });
+  assert.equal(seen.max_tokens, 4096);
+  await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","max_tokens":1000000}' });
+  assert.equal(seen.max_tokens, 4096);
+  await wrapped('https://fake.invalid/v1/responses', { body: '{"model":"fake","max_output_tokens":123}' });
+  assert.equal(seen.max_output_tokens, 123);
+  await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"o3","max_tokens":20}' });
+  assert.equal(seen.max_completion_tokens, 20); assert.equal(seen.max_tokens, undefined);
+  let untouched;
+  const plain = accountedFetch(ledger, { owner, purpose: 'ordinary' }, config.get(owner, true).providers, async (_url, init) => { untouched = init.body; return Response.json({}); });
+  const original = '{"model":"fake","max_tokens":1000000}'; const n = requests().length;
+  await plain('https://fake.invalid/v1/chat/completions', { body: original }); assert.equal(untouched, original); assert.equal(requests().length, n);
+  const remoteImage = { model: 'fake', messages: [{ role: 'user', content: [{ type: 'image_url', image_url: { url: 'https://private.invalid/img' } }] }] };
+  assert.throws(() => boundedRequest(remoteImage, 'chat/completions'), /unsupported_budgeted_image/);
+  const huge = Buffer.from(png); huge.writeUInt32BE(9999, 16);
+  assert.throws(() => boundedRequest({ model: 'fake', input: [{ type: 'input_image', image_url: `data:image/png;base64,${huge.toString('base64')}` }] }, 'responses'), /unsupported_budgeted_image/);
+  // No budget release on missing SSE usage; each physical call has a record.
+  const stream = accountedFetch(ledger, a, config.get(owner, true).providers, async () => new Response('data: [DONE]\n', { headers: { 'content-type': 'text/event-stream' } }));
+  await (await stream('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake"}' })).text();
+  assert.equal(requests().at(-1).usage_source, 'unknown_reserved');
+  configure('openai-chat', { runTokens: 100 }); let fetched = 0;
+  await assert.rejects(wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake"}' }), /run_token_budget/);
+  configure('openai-chat');
+  await assert.rejects(new ModelClient(ledger, async () => { fetched++; return Response.json({ usage: { prompt_tokens: 50000, completion_tokens: 10000 } }); }).request('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","messages":[]}' }, a, 1), /exceeded_reservation/);
+  assert.equal(fetched, 1); assert.equal(requests().at(-1).input_tokens, 50000);
+  assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(run).status, 'paused');
+  assert.equal(store.db.prepare('SELECT error_code FROM runs WHERE id=?').get(run).error_code, 'model_usage_exceeded_reservation');
+  assert.throws(() => ledger.reserve(a, 1, 1), /not_active/);
+  console.log('Bot request budget: three-protocol wire caps, Chinese compaction, bounded vision, child proxy accounting, unknown SSE and authoritative usage overrun passed');
+} finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }

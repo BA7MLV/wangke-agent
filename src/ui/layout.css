@@ -596,26 +596,97 @@
 /* Telegram Web A Chat.tsx/Chat.scss: avatar + title/time + preview/status.
    Source study and application-specific adaptations: docs/telegram-chat-source-study.md. */
 .app-rail--chats {
-  width: clamp(280px, 26vw, 344px);
+  position: relative;
+  width: clamp(300px, 28vw, 380px);
+  padding: 0;
+  gap: 0;
   background: var(--background);
   border-inline-end: 1px solid var(--border);
 }
 
-.recent-heading {
+.chat-sidebar__header {
   display: flex;
-  justify-content: space-between;
-  padding: 0 12px 10px;
-  color: var(--muted);
-  font-size: 0.8125rem;
+  align-items: center;
+  flex: none;
+  gap: 8px;
+  min-height: 64px;
+  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
 }
+.chat-sidebar__header-button {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+.chat-sidebar__header-button:hover,
+.chat-sidebar__header-button[aria-expanded='true'] { background: var(--background-secondary); color: var(--foreground); }
+.chat-sidebar__menu { min-width: 240px; }
+.chat-sidebar__current { margin-inline-start: auto; color: var(--accent); font-size: 0.625rem; }
+.chat-sidebar__filters {
+  display: flex;
+  flex: none;
+  justify-content: space-around;
+  gap: 8px;
+  padding-inline: 12px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-sidebar__filters > button {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+  min-height: 48px;
+  padding: 10px 4px;
+  border: 0;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+.chat-sidebar__filters > button:hover { background: var(--background-secondary); }
+.chat-sidebar__filters > button[aria-pressed='true'] { color: var(--accent); }
+.chat-sidebar__filters > button[aria-pressed='true']::after {
+  content: '';
+  position: absolute;
+  inset: auto 12px 0;
+  height: 3px;
+  border-radius: 3px 3px 0 0;
+  background: currentColor;
+}
+.chat-sidebar__count { min-width: 20px; padding: 1px 5px; border-radius: 12px; background: var(--background-tertiary); color: var(--foreground); font-size: 0.6875rem; line-height: 1.5; }
+.chat-sidebar__filters [aria-pressed='true'] .chat-sidebar__count { background: var(--accent); color: var(--accent-foreground); }
+.chat-sidebar__results { flex: none; min-height: 48px; padding: 14px 20px; color: var(--muted); font-size: 0.8125rem; }
+.chat-sidebar__scroll { padding: 6px 6px max(88px, calc(env(safe-area-inset-bottom) + 72px)); }
+.chat-sidebar__empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px 20px; color: var(--muted); text-align: center; font-size: 0.8125rem; }
+.chat-sidebar__empty > svg { width: 40px; height: 40px; margin-bottom: 8px; stroke-width: 1.25; }
+.chat-sidebar__empty strong { color: var(--foreground); font-size: 0.9375rem; font-weight: 500; }
+.chat-sidebar__compose { position: absolute; z-index: 2; right: 20px; bottom: max(20px, env(safe-area-inset-bottom)); display: flex; gap: 8px; }
+.chat-sidebar__compose > button { width: 56px; min-width: 56px; height: 56px; border-radius: 50%; box-shadow: 0 3px 12px rgb(0 0 0 / 0.2); }
+.chat-sidebar__compose > button svg { width: 24px; height: 24px; }
 
 .recent-search {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin: 0 4px 10px;
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   padding: 0 12px;
-  min-height: 42px;
+  min-height: 44px;
   border-radius: 24px;
   color: var(--muted);
   background: var(--background-secondary);
@@ -633,7 +704,6 @@
   font-size: 0.875rem;
 }
 .recent-search input:focus-visible { outline: none; }
-.recent-empty { padding: 12px; color: var(--muted); font-size: 0.875rem; }
 .recent-list .recent-item {
   position: relative;
   display: flex;
@@ -650,8 +720,8 @@
   display: grid;
   place-items: center;
   flex: none;
-  width: 48px;
-  height: 48px;
+  width: 54px;
+  height: 54px;
   border-radius: 50%;
   background: #4476b4;
   color: #fff;
@@ -664,7 +734,7 @@
 .recent-avatar[data-color='4'] { background: #aa5479; }
 .recent-info { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
 .recent-info__top, .recent-info__bottom { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.recent-info__top { font-size: 0.9375rem; font-weight: 600; }
+.recent-info__top { font-size: 1rem; font-weight: 600; }
 .recent-info__top .recent-title { flex: 1; }
 .recent-time { flex: none; font-size: 0.6875rem; font-weight: 400; color: var(--muted); }
 .recent-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; color: var(--muted); }
@@ -699,6 +769,15 @@
   --drawer-enter-ease: var(--ease-smooth-out);
   --drawer-exit-ease: var(--ease-smooth-out);
 }
+
+.app-nav-drawer.app-nav-drawer--chats[data-placement='left'] {
+  width: min(420px, 100vw);
+  max-width: 100vw;
+  padding: 0;
+  border-radius: 0;
+  background: var(--background);
+}
+.app-nav-drawer--chats nav { gap: 0; }
 
 /* 路由懒加载时的占位：占满视口、无内容，避免下载页面代码的那一瞬间布局塌掉。 */
 .route-fallback {

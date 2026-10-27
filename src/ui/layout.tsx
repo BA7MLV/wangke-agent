@@ -8,7 +8,6 @@ import {
   EmptyState as HeroEmptyState,
   ListBox,
   ScrollShadow,
-  Separator,
   Typography,
 } from '@heroui/react';
 import { Sym } from './icons';
@@ -19,6 +18,7 @@ import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
 import { observeBrowserChrome } from './browserChrome';
 import { messageTime } from '../utils/messageTime';
+import { ChatSidebarHeader } from './ChatSidebarHeader';
 import './layout.css';
 
 /**
@@ -195,6 +195,8 @@ function Sidebar({
   railFooter,
   navigationId,
   onNavigate,
+  onCollapse,
+  onDismiss,
 }: {
   rail: NavConfig;
   recent?: { label: string; items: RecentItem[]; loading?: boolean };
@@ -202,6 +204,8 @@ function Sidebar({
   navigationId: string;
   /** 窄屏点完就该收起抽屉，否则菜单盖住刚打开的页面 */
   onNavigate?: () => void;
+  onCollapse?: () => void;
+  onDismiss?: () => void;
 }) {
   /**
    * 键盘当前停在 Recent 的哪一行。
@@ -226,12 +230,22 @@ function Sidebar({
    */
   const [menuId, setMenuId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [filter, setFilter] = useState<'all' | 'unread' | 'pinned'>('all');
   const query = search.trim().toLocaleLowerCase();
-  const visibleRecent = recent?.items.filter((item) => !query
-    || `${item.label} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query)) ?? [];
+  const unread = new Set(unreadIds);
+  const visibleRecent = recent?.items.filter((item) => query
+    ? `${item.label} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query)
+    : filter === 'unread' ? unread.has(Number(item.id)) : filter === 'pinned' ? item.pinned : true) ?? [];
+  const filters = [
+    { id: 'all', label: '全部', count: recent?.items.length ?? 0 },
+    { id: 'unread', label: '未读', count: recent?.items.filter((item) => unread.has(Number(item.id))).length ?? 0 },
+    { id: 'pinned', label: '置顶', count: recent?.items.filter((item) => item.pinned).length ?? 0 },
+  ] as const;
   return (
     <>
-      {rail.items.filter((it) => it.isAction).map((it) => (
+      {recent && <ChatSidebarHeader rail={rail} search={search} onSearch={setSearch}
+        onNavigate={onNavigate} onCollapse={onCollapse} onDismiss={onDismiss} withSettings={!!railFooter} />}
+      {!recent && rail.items.filter((it) => it.isAction).map((it) => (
         <Button key={it.value} variant="secondary" data-testid={it.testId}
           className="mb-3 min-h-11 w-full justify-start gap-3 rounded-xl border border-border bg-background px-3 text-sm font-medium shadow-sm"
           onPress={() => { it.onClick(); onNavigate?.(); }}>
@@ -253,7 +267,7 @@ function Sidebar({
 
           点「已经选中的那一项」时 keys 会是空的（RAC 把它当成取消选中），
           此时 hit 为 undefined，但抽屉仍然要收起，所以 onNavigate 放在条件之外。 */}
-      <ListBox
+      {!recent && <ListBox
         id={navigationId}
         aria-label="主导航"
         selectionMode="single"
@@ -288,29 +302,30 @@ function Sidebar({
             <span className="min-w-0 truncate">{it.label}</span>
           </ListBox.Item>
         ))}
-      </ListBox>
+      </ListBox>}
 
-      {recent && !recent.loading && recent.items.length === 0 && (
-        <div className="mt-4 px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
-      )}
-
-      {recent && recent.items.length > 0 && (
+      {recent && (
         <>
-          <Separator className="my-3" />
-          <div className="flex min-h-0 flex-1 flex-col">
-            <div className="recent-heading"><span>{recent.label}</span><span>{recent.items.length}</span></div>
-            <label className="recent-search">
-              <Sym name="search" aria-hidden="true" />
-              <input type="search" value={search} aria-label="搜索会话" placeholder="搜索会话"
-                data-testid="chat-search" onChange={(event) => setSearch(event.target.value)}
-                onKeyDown={(event) => { if (event.key === 'Escape' && search) { event.preventDefault(); event.stopPropagation(); setSearch(''); } }} />
-            </label>
-            {visibleRecent.length === 0 && <p className="recent-empty" role="status">没有匹配的会话</p>}
+          <div className="chat-sidebar__content flex min-h-0 flex-1 flex-col">
+            {query ? <div className="chat-sidebar__results" role="status">找到 {visibleRecent.length} 个会话</div>
+              : <div className="chat-sidebar__filters" role="group" aria-label="会话筛选">
+                {filters.map((item) => <button key={item.id} type="button" aria-pressed={filter === item.id}
+                  aria-controls={`${navigationId}-recent`} data-testid={`chat-filter-${item.id}`}
+                  onClick={() => { setFilter(item.id); setMenuId(null); }}>
+                  <span>{item.label}</span>{item.count > 0 && <span className="chat-sidebar__count">{item.count}</span>}
+                </button>)}
+              </div>}
+            {recent.loading && recent.items.length === 0 ? <div className="chat-sidebar__empty" role="status">正在加载会话…</div>
+              : visibleRecent.length === 0 && <div className="chat-sidebar__empty" role="status">
+                <Sym name={query ? 'search' : 'chat_bubble'} aria-hidden="true" />
+                <strong>{query ? '没有匹配的会话' : filter === 'unread' ? '没有未读会话' : filter === 'pinned' ? '还没有置顶会话' : '开始一段新对话'}</strong>
+                <span>{query ? '试试其他标题或消息关键词' : filter === 'pinned' ? '在会话菜单中选择「置顶」' : filter === 'unread' ? '新的已完成回复会显示在这里' : '点击右下角按钮，聊聊正在学的知识'}</span>
+              </div>}
             {/* ScrollShadow：会话多起来时滚动区上下缘浮出阴影，比给整块侧栏加边框轻。
                 min-h-0 必需 —— 否则 flex 子项的默认 min-height:auto 会让它按内容撑开，
                 flex-1 形同虚设。 */}
             <ScrollShadow
-              className="min-h-0 flex-1 overflow-y-auto"
+              className="chat-sidebar__scroll min-h-0 flex-1 overflow-y-auto"
               size={28}
               offset={2}
               hideScrollBar
@@ -345,7 +360,7 @@ function Sidebar({
                  * 没停在任何一行、或那一行不可删时**不吞**这个键。
                  */
                 onKeyDown={(event) => {
-                  const target = recent.items.find((item) => item.id === focusedRecentId);
+                  const target = visibleRecent.find((item) => item.id === focusedRecentId);
                   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
                     if (!target?.menu) return;
                     event.preventDefault();
@@ -359,6 +374,7 @@ function Sidebar({
                 }}
               >
                 <ListBox
+                  id={`${navigationId}-recent`}
                   aria-label={recent.label}
                   selectionMode="single"
                   disallowEmptySelection
@@ -516,7 +532,12 @@ function Sidebar({
         </>
       )}
 
-      {railFooter && (
+      {recent && <div className="chat-sidebar__compose">
+        {rail.items.filter((item) => item.isAction).map((item) => <Button key={item.value} isIconOnly
+          variant="primary" aria-label={item.label} data-testid={item.testId}
+          onPress={() => { item.onClick(); onNavigate?.(); }}>{item.icon}</Button>)}
+      </div>}
+      {!recent && railFooter && (
         <div className="mt-auto shrink-0 border-t border-border pt-2">
           {/* 导航项由 ListBox 自带的 `p-1`（`.list-box { padding: var(--spacing) }`）
               往内缩了 4px，底部的设置项也在同一列里，得跟着缩同样的距离，
@@ -660,14 +681,15 @@ export function PageShell({
             data-testid="nav-rail"
             aria-label="主导航"
           >
-            <div className="mb-2 flex shrink-0 justify-end">
+            {!recent && <div className="mb-2 flex shrink-0 justify-end">
               {railToggle}
-            </div>
+            </div>}
             <Sidebar
               rail={rail}
               recent={recent}
               railFooter={railFooter}
               navigationId={navigationId}
+              onCollapse={toggleRail}
             />
           </nav>
         )}
@@ -788,18 +810,19 @@ export function PageShell({
         <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
           <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
           <Drawer.Content placement="left">
-            <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent">
-              <Drawer.Header className="mb-4 flex items-center justify-between p-0">
+            <Drawer.Dialog className={`app-nav-drawer${recent ? ' app-nav-drawer--chats' : ''}`} aria-label="DeepStudent">
+              <Drawer.Header className={recent ? 'sr-only' : 'mb-4 flex items-center justify-between p-0'}>
                 <Drawer.Heading className="text-sm text-muted">DeepStudent</Drawer.Heading>
-                <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
+                {!recent && <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>}
               </Drawer.Header>
-              <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">
+              <nav className="relative flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">
                 <Sidebar
                   rail={rail}
                   recent={recent}
                   railFooter={railFooter}
                   navigationId={navigationId}
                   onNavigate={() => setDrawerOpen(false)}
+                  onDismiss={() => setDrawerOpen(false)}
                 />
               </nav>
             </Drawer.Dialog>

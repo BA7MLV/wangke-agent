@@ -27,7 +27,7 @@ export class ServerApiError extends Error {
   }
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+export async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const response = await fetch(`${API_ROOT}${path}`, {
     credentials: 'include',
     ...init,

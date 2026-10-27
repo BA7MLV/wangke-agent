@@ -11,6 +11,7 @@ export class CloudConflict extends Error {
 
 export class CloudRecords {
   constructor(private store: DatabaseStore) {}
+  ownedFile(owner: string, id: string) { return !!this.store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(id, owner); }
 
   get(owner: string, table: string, key: string | number): Record<string, any> | null {
     const row = this.store.db.prepare('SELECT value FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?')
@@ -24,7 +25,7 @@ export class CloudRecords {
     return rows.map(r => ({ revision: r.revision, table: r.table_name, key: JSON.parse(r.record_key), value: r.value ? JSON.parse(r.value) : null }));
   }
 
-  apply(owner: string, mutations: CloudMutation[]) {
+  apply(owner: string, mutations: CloudMutation[], validate?: (table: string, key: string | number, current: Record<string, unknown> | null, value: Record<string, unknown> | null) => void) {
     return this.store.transaction(() => {
       const deletedHere = new Set<string>();
       for (const op of mutations) {
@@ -74,6 +75,8 @@ export class CloudRecords {
             }
           }
         }
+        // Validate the actual optimistic merge inside the write transaction.
+        validate?.(op.table, op.key, current, value);
         // INSERT after DELETE allocates a monotonic revision, including tombstones.
         this.store.db.prepare('DELETE FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?').run(owner, op.table, JSON.stringify(op.key));
         this.store.db.prepare('INSERT INTO cloud_records(owner_id,table_name,record_key,value) VALUES(?,?,?,?)')

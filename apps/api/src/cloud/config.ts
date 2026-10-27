@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { DatabaseStore } from '../storage/database.js';
 import { DEFAULT_AGENT_POLICY, type CloudConfig, type CloudProvider } from '../../../../packages/contracts/src/cloud.js';
+import { validateBudget } from '../agent/budget.js';
 
 export class CloudConfiguration {
   private key: Buffer;
@@ -66,6 +67,7 @@ export class CloudConfiguration {
         !['allow', 'deny'].includes(policy.network) || !Number.isInteger(policy.maxSteps) || policy.maxSteps < 1 || policy.maxSteps > 1000) throw new Error('invalid_policy');
     const clean: CloudConfig = { providers, llmModel: value.llmModel, visionModel: value.visionModel, asrModel: value.asrModel,
       decisionModel: { providerId: decisionModel.providerId, model: decisionModel.model },
+      ...(value.botBudget ? { botBudget: validateBudget(value.botBudget) } : {}),
       policy: { read: policy.read, write: policy.write, remove: policy.remove, shell: policy.shell, network: policy.network, maxSteps: policy.maxSteps },
       trustedAgentIds: Array.isArray(value.trustedAgentIds) ? value.trustedAgentIds.filter(id => typeof id === 'string' && Boolean(this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=?').get(id, owner))).slice(0, 100) : [] };
     this.store.db.prepare('INSERT INTO cloud_config(owner_id,value,updated_at) VALUES(?,?,?) ON CONFLICT(owner_id) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at')
@@ -79,12 +81,21 @@ export class CloudConfiguration {
     const trusted = agents.length > 0 && agents.every(a => config.trustedAgentIds?.includes(a.agent_id));
     // Trust removes routine write/command prompts, not deletion or sensitive configuration approval.
     // Explicit prohibitions and the independent network switch still apply.
-    return { ...config.policy,
+    const autonomous = Boolean(this.store.db.prepare(`SELECT 1 FROM gateway_bindings b JOIN gateway_accounts a ON a.id=b.account_id WHERE b.thread_id=? AND b.revoked=0 AND a.enabled=1 AND a.owner_id=? AND a.preset='autonomous'`).get(threadId, owner));
+    const policy = { ...config.policy,
       write: trusted && config.policy.write === 'ask' ? 'allow' as const : config.policy.write,
       shell: trusted && config.policy.shell === 'ask' ? 'allow' as const : config.policy.shell };
+    if (autonomous) for (const key of ['read', 'write', 'shell'] as const) if (policy[key] === 'ask') policy[key] = 'allow';
+    return policy;
+  }
+  taskPolicy(owner: string, taskId: string) {
+    const task = this.store.db.prepare('SELECT t.parent_step_id,r.thread_id FROM cloud_tasks t LEFT JOIN runs r ON r.id=t.parent_run_id WHERE t.id=? AND t.owner_id=?').get(taskId, owner) as any;
+    const policy = task?.thread_id ? this.policy(owner, task.thread_id) : this.get(owner).policy;
+    if (task?.parent_step_id && this.store.db.prepare("SELECT 1 FROM approvals WHERE step_id=? AND status='approved'").get(task.parent_step_id)) return { ...policy, read: policy.read === 'ask' ? 'allow' as const : policy.read, write: policy.write === 'ask' ? 'allow' as const : policy.write };
+    return policy;
   }
   audit(owner: string, action: string, detail: unknown) {
-    this.store.db.prepare('INSERT INTO cloud_audit(owner_id,action,detail,created_at) VALUES(?,?,?,?)')
-      .run(owner, action, JSON.stringify(detail), new Date().toISOString());
+    appendAudit(this.store, owner, action, detail);
   }
 }
+import { appendAudit } from '../storage/audit.js';

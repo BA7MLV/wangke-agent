@@ -27,6 +27,6 @@ try {
   assert.equal(badRange.status, 416);
   const oversized = await app.inject({ method: 'POST', url: '/api/v1/files', headers: { cookie, 'content-type': 'application/octet-stream', 'content-length': String(file.sizeBytes + 1) }, payload: Buffer.alloc(1) });
   assert.equal(oversized.statusCode, 413);
-  assert.equal(fs.readdirSync(process.env.FILES_DIR).length, 1);
+  assert.deepEqual(fs.readdirSync(process.env.FILES_DIR, { withFileTypes: true }).filter(entry => entry.isFile()).map(entry => entry.name), [`${file.id}.bin`], 'no rejected upload files remain; project workspace directories are independent');
   console.log('Cloud files: real HTTP 512 MiB chunked upload, Range boundary, oversized rejection and cleanup passed');
 } finally { await app.close(); fs.rmSync(dir, { recursive: true, force: true }); }

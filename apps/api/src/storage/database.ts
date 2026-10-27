@@ -229,6 +229,53 @@ const MIGRATIONS: Array<[number, string]> = [
   `],
   [12, `ALTER TABLE cloud_tasks ADD COLUMN executor TEXT CHECK(executor IN ('node','media','browser'));`],
   [13, `
+    CREATE TABLE gateway_accounts (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      channel TEXT NOT NULL, agent_id TEXT NOT NULL REFERENCES agent_profiles(id),
+      enabled INTEGER NOT NULL DEFAULT 0, preset TEXT NOT NULL DEFAULT 'inherit',
+      config TEXT NOT NULL, cursor TEXT, health TEXT NOT NULL DEFAULT 'stopped', created_at TEXT NOT NULL
+    );
+    CREATE TABLE gateway_pairings (
+      account_id TEXT PRIMARY KEY REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      code_hash TEXT NOT NULL, expires_at TEXT NOT NULL
+    );
+    CREATE TABLE gateway_bindings (
+      id TEXT PRIMARY KEY, account_id TEXT NOT NULL REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      tenant TEXT NOT NULL, peer TEXT NOT NULL, chat TEXT NOT NULL, topic TEXT NOT NULL,
+      thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      context TEXT, revoked INTEGER NOT NULL DEFAULT 0, checkpoint INTEGER NOT NULL DEFAULT 0,
+      UNIQUE(account_id,tenant,peer,chat,topic)
+    );
+    CREATE TABLE gateway_inbox (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, account_id TEXT NOT NULL REFERENCES gateway_accounts(id) ON DELETE CASCADE,
+      external_id TEXT NOT NULL, envelope TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', error TEXT,
+      UNIQUE(account_id,external_id)
+    );
+    CREATE TABLE gateway_outbox (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+      binding_id TEXT NOT NULL REFERENCES gateway_bindings(id) ON DELETE CASCADE,
+      payload TEXT NOT NULL, status TEXT NOT NULL DEFAULT 'pending', attempts INTEGER NOT NULL DEFAULT 0,
+      next_at INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL, platform_id TEXT, error TEXT
+    );
+    CREATE INDEX gateway_outbox_queue ON gateway_outbox(status,next_at,seq);
+    CREATE TABLE bot_reminders (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      thread_id TEXT NOT NULL REFERENCES threads(id) ON DELETE CASCADE,
+      text TEXT NOT NULL, timezone TEXT NOT NULL, next_at INTEGER NOT NULL,
+      interval_seconds INTEGER, status TEXT NOT NULL DEFAULT 'active', created_at TEXT NOT NULL
+    );
+    ALTER TABLE cloud_tasks ADD COLUMN parent_run_id TEXT REFERENCES runs(id);
+    ALTER TABLE cloud_tasks ADD COLUMN parent_step_id TEXT REFERENCES run_steps(id);
+    ALTER TABLE approvals ADD COLUMN cloud_permission_id TEXT REFERENCES cloud_permissions(id);
+  `],
+  [14, `
+    CREATE TABLE gateway_projection_failures (
+      binding_id TEXT NOT NULL REFERENCES gateway_bindings(id) ON DELETE CASCADE,
+      event_id INTEGER NOT NULL, error TEXT NOT NULL, next_at INTEGER NOT NULL,
+      PRIMARY KEY(binding_id,event_id)
+    );
+  `],
+  [15, `
     CREATE TABLE mcp_servers (
       id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
       config TEXT NOT NULL, credentials TEXT NOT NULL, revision TEXT NOT NULL
@@ -236,7 +283,61 @@ const MIGRATIONS: Array<[number, string]> = [
     CREATE INDEX mcp_servers_owner ON mcp_servers(owner_id);
     ALTER TABLE threads ADD COLUMN mcp_server_ids TEXT;
   `],
-  [14, `
+  [16, `
+    CREATE INDEX cloud_audit_owner_id ON cloud_audit(owner_id,id);
+    ALTER TABLE threads ADD COLUMN skill_ids TEXT;
+    ALTER TABLE runs ADD COLUMN active_ms INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE runs ADD COLUMN budget_json TEXT;
+    CREATE TABLE bot_requests (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), run_id TEXT REFERENCES runs(id),
+      step_id TEXT, task_id TEXT, purpose TEXT NOT NULL, provider TEXT NOT NULL, model TEXT NOT NULL,
+      attempt INTEGER NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL,
+      reserved_tokens INTEGER NOT NULL, input_tokens INTEGER, output_tokens INTEGER, cache_tokens INTEGER,
+      cost REAL, pricing_source TEXT, price_json TEXT, usage_source TEXT NOT NULL DEFAULT 'unknown'
+    );
+    CREATE INDEX bot_requests_owner_day ON bot_requests(owner_id,started_at);
+    CREATE INDEX bot_requests_run ON bot_requests(run_id);
+    CREATE TABLE bot_artifacts (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), run_id TEXT REFERENCES runs(id),
+      step_id TEXT, content TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE INDEX bot_artifacts_owner ON bot_artifacts(owner_id,created_at);
+    CREATE TABLE bot_summaries (
+      id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id), source_start INTEGER NOT NULL,
+      source_end INTEGER NOT NULL, version INTEGER NOT NULL, model TEXT NOT NULL, content TEXT NOT NULL,
+      created_at TEXT NOT NULL
+    );
+    CREATE TABLE bot_operations (
+      step_id TEXT PRIMARY KEY REFERENCES run_steps(id), owner_id TEXT NOT NULL REFERENCES users(id),
+      result TEXT NOT NULL, created_at TEXT NOT NULL
+    );
+    CREATE TABLE bot_memories (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id), scope TEXT NOT NULL,
+      scope_id TEXT NOT NULL, kind TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL,
+      source_revision TEXT, revision INTEGER NOT NULL, status TEXT NOT NULL, origin TEXT NOT NULL,
+      created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+    CREATE INDEX bot_memories_owner ON bot_memories(owner_id,status,updated_at);
+    CREATE TABLE bot_memory_versions (
+      memory_id TEXT NOT NULL REFERENCES bot_memories(id), revision INTEGER NOT NULL, value TEXT NOT NULL,
+      created_at TEXT NOT NULL, PRIMARY KEY(memory_id,revision)
+    );
+    CREATE TABLE bot_memory_jobs (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 0,
+      cursor TEXT, token_budget INTEGER NOT NULL DEFAULT 10000, interval_seconds INTEGER NOT NULL DEFAULT 86400,
+      next_at INTEGER NOT NULL DEFAULT 0
+    );
+  `],
+  [17, `
+    ALTER TABLE gateway_inbox ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0;
+    UPDATE gateway_inbox SET received_at=CAST(strftime('%s','now') AS INTEGER)*1000;
+  `],
+];
+
+// These two migrations were already numbered 14 and 15 on the main branch.
+// Keep the public migration watermark at 17 while applying them by schema
+// detection so existing main and gateway volumes can be upgraded safely.
+const PROJECT_MIGRATION = `
     CREATE TABLE projects (
       id TEXT PRIMARY KEY,
       owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -274,13 +375,12 @@ const MIGRATIONS: Array<[number, string]> = [
     CREATE TRIGGER project_grant_owner BEFORE INSERT ON project_agents
       WHEN NOT EXISTS(SELECT 1 FROM projects p JOIN agent_profiles a ON a.owner_id=p.owner_id WHERE p.id=NEW.project_id AND a.id=NEW.agent_id)
       BEGIN SELECT RAISE(ABORT, 'project_owner_mismatch'); END;
-  `],
-  [15, `
+`;
+const LEASE_MIGRATION = `
     ALTER TABLE cloud_tasks ADD COLUMN worker_id TEXT;
     ALTER TABLE cloud_tasks ADD COLUMN lease_expires_at TEXT;
     CREATE INDEX cloud_tasks_browser_lease ON cloud_tasks(executor,status,lease_expires_at);
-  `],
-];
+`;
 
 export class DatabaseStore {
   readonly db: Database.Database;
@@ -291,19 +391,75 @@ export class DatabaseStore {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
-    this.migrate();
+    try { this.migrate(); } catch (error) { this.db.close(); throw error; }
   }
 
   private migrate() {
     this.db.exec('CREATE TABLE IF NOT EXISTS schema_migrations (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)');
     const current = this.db.prepare('SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations').get() as { version: number };
     for (const [version, sql] of MIGRATIONS) {
+      if (version > 12) break;
       if (version <= current.version) continue;
       this.db.transaction(() => {
         this.db.exec(sql);
         this.db.prepare('INSERT INTO schema_migrations(version, applied_at) VALUES (?, ?)').run(version, new Date().toISOString());
       })();
     }
+    // Versions 13-15 were assigned different meanings by the main and gateway
+    // branches. Reconcile by schema shape instead of replaying ALTERs blindly.
+    this.db.transaction(() => {
+      const columns = (db: Database.Database, table: string) => db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string; type: string; notnull: number; pk: number }>;
+      const expected = new Database(':memory:');
+      try {
+        for (const [, sql] of MIGRATIONS) expected.exec(sql);
+        expected.exec(PROJECT_MIGRATION);
+        expected.exec(LEASE_MIGRATION);
+        const groups = [
+          { version: 13, tables: ['gateway_accounts', 'gateway_pairings', 'gateway_bindings', 'gateway_inbox', 'gateway_outbox', 'bot_reminders'], extra: [['cloud_tasks', 'parent_run_id'], ['cloud_tasks', 'parent_step_id'], ['approvals', 'cloud_permission_id']], sql: MIGRATIONS.find(([v]) => v === 13)![1] },
+          { version: 14, tables: ['gateway_projection_failures'], extra: [], sql: MIGRATIONS.find(([v]) => v === 14)![1] },
+          { version: 15, tables: ['mcp_servers'], extra: [['threads', 'mcp_server_ids']], sql: MIGRATIONS.find(([v]) => v === 15)![1] },
+          { version: 16, tables: ['bot_requests', 'bot_artifacts', 'bot_summaries', 'bot_operations', 'bot_memories', 'bot_memory_versions', 'bot_memory_jobs'], extra: [['threads', 'skill_ids'], ['runs', 'active_ms'], ['runs', 'budget_json']], sql: MIGRATIONS.find(([v]) => v === 16)![1] },
+          { version: 18, tables: ['projects', 'project_executions', 'project_agents'], extra: [['threads', 'project_id'], ['threads', 'agent_id'], ['threads', 'archived']], sql: PROJECT_MIGRATION },
+          { version: 19, tables: [], extra: [['cloud_tasks', 'worker_id'], ['cloud_tasks', 'lease_expires_at']], sql: LEASE_MIGRATION },
+        ];
+        const present = groups.map(group => {
+          const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
+          if (markers.some(Boolean) && !markers.every(Boolean)) throw new Error(`schema_layout_partial_v${group.version}: restore a consistent backup before upgrading`);
+          if (markers.every(Boolean)) {
+            for (const table of group.tables) {
+              const actual = columns(this.db, table).filter(c => !(table === 'gateway_inbox' && c.name === 'received_at'));
+              const trusted = columns(expected, table).filter(c => !(table === 'gateway_inbox' && c.name === 'received_at'));
+              if (JSON.stringify(actual) !== JSON.stringify(trusted)) throw new Error(`schema_layout_untrusted_${table}`);
+              if (JSON.stringify(this.db.prepare(`PRAGMA foreign_key_list(${table})`).all()) !== JSON.stringify(expected.prepare(`PRAGMA foreign_key_list(${table})`).all())) throw new Error(`schema_foreign_keys_untrusted_${table}`);
+            }
+            for (const [table, name] of group.extra) {
+              const actual = columns(this.db, table).find(c => c.name === name);
+              const trusted = columns(expected, table).find(c => c.name === name);
+              // The two branches added columns in different orders. Compare
+              // declarations, not SQLite's physical column ordinal (cid).
+              const declaration = (column: unknown) => JSON.stringify(column, (key, value) => key === 'cid' ? undefined : value);
+              if (declaration(actual) !== declaration(trusted)) throw new Error(`schema_layout_untrusted_${table}_${name}`);
+            }
+          }
+          return markers.every(Boolean);
+        });
+        const apply = (version: number, group: (typeof groups)[number], index: number) => {
+          if (!present[index]) this.db.exec(group.sql);
+          this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(?,?)').run(version, new Date().toISOString());
+        };
+        apply(13, groups[0], 0);
+        apply(14, groups[1], 1);
+        apply(15, groups[2], 2);
+        apply(16, groups[3], 3);
+        if (!columns(this.db, 'gateway_inbox').some(c => c.name === 'received_at')) this.db.exec(MIGRATIONS.find(([v]) => v === 17)![1]);
+        this.db.prepare('INSERT OR IGNORE INTO schema_migrations(version,applied_at) VALUES(17,?)').run(new Date().toISOString());
+        // Main had already shipped projects and browser leases as versions 14
+        // and 15. They are schema components rather than new public versions
+        // in the gateway line, so add them without advancing the watermark.
+        if (!present[4]) this.db.exec(groups[4].sql);
+        if (!present[5]) this.db.exec(groups[5].sql);
+      } finally { expected.close(); }
+    })();
   }
 
   transaction<T>(fn: () => T): T {

@@ -182,7 +182,7 @@ try {
   assert.match(store.db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool LIKE 'mcp_%'").get(runId).result, /fixture:bot-loop/);
   await bot.close();
   // Pending approvals never survive rejection, a server edit, or scope revocation.
-  for (const scenario of ['reject', 'server-edit', 'scope-revoked']) {
+  for (const scenario of ['reject', 'server-edit', 'scope-revoked', 'policy-denied']) {
     const pendingRun = crypto.randomUUID();
     let turns = 0;
     store.db.prepare("UPDATE threads SET mcp_server_ids=NULL WHERE id=?").run(threadId);
@@ -205,6 +205,7 @@ try {
       await manager.invalidate(owner, second.id);
     }
     if (scenario === 'scope-revoked') store.db.prepare("UPDATE threads SET mcp_server_ids='[]' WHERE id=?").run(threadId);
+    if (scenario === 'policy-denied') config.save(owner, { ...config.get(owner), policy: { ...config.get(owner).policy, write: 'deny' } });
     store.db.prepare('UPDATE approvals SET status=? WHERE run_id=?').run(scenario === 'reject' ? 'rejected' : 'approved', pendingRun);
     store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(pendingRun);
     bot.enqueue();

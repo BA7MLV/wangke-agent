@@ -37,9 +37,9 @@ const looksRich = (text: string) => /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|
 
 function parseAttachment(content: string, fallback: string): { name: string; size?: number; uploading?: boolean } {
   try {
-    const value = JSON.parse(content) as { originalName?: unknown; sizeBytes?: unknown; uploading?: unknown };
+    const value = JSON.parse(content) as { originalName?: unknown; name?: unknown; fileId?: unknown; sizeBytes?: unknown; uploading?: unknown };
     return {
-      name: typeof value.originalName === 'string' ? value.originalName : fallback,
+      name: typeof value.originalName === 'string' ? value.originalName : typeof value.name === 'string' ? value.name : fallback,
       size: typeof value.sizeBytes === 'number' ? value.sizeBytes : undefined,
       uploading: value.uploading === true,
     };
