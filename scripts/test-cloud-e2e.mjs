@@ -33,9 +33,9 @@ let browser;
 try {
   await app.listen({ host: '127.0.0.1', port });
   const origin = process.env.PUBLIC_ORIGIN;
-  browser = await chromium.launch();
-  const a = await browser.newContext({ serviceWorkers: 'block' });
-  const b = await browser.newContext({ serviceWorkers: 'block' });
+  browser = await chromium.launch(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {});
+  const a = await browser.newContext({ serviceWorkers: 'block', locale: 'zh-CN' });
+  const b = await browser.newContext({ serviceWorkers: 'block', locale: 'zh-CN' });
   let page = await a.newPage();
   const authenticator = async page => {
     const client = await page.context().newCDPSession(page);
@@ -66,11 +66,20 @@ try {
       };
     });
   }, legacySettings);
+  await page.getByRole('button', { name: '开始', exact: true }).click();
   await page.getByLabel('一次性初始化密钥', { exact: true }).fill(fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim());
+  await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByLabel('账号', { exact: true }).fill('CloudTest');
   await page.getByLabel('密码', { exact: true }).fill('test-password-12345');
   await page.getByRole('button', { name: '创建管理员', exact: true }).click();
-  await page.getByRole('heading', { name: '配置个人云端' }).waitFor({ timeout: 30000 });
+  await page.getByLabel('你的称呼', { exact: true }).fill('小测');
+  await page.getByRole('button', { name: '继续', exact: true }).click();
+  await page.getByRole('heading', { name: '选择模型' }).waitFor({ timeout: 30000 });
+  await page.getByText('主模型', { exact: true }).waitFor();
+  await page.getByRole('button', { name: '稍后再说', exact: true }).click();
+  // 详细的服务器配置在设置里（选模型页可以跳过）。
+  await page.goto(`${origin}/#/settings/models`);
+  await page.getByRole('heading', { name: '云端模型与账号' }).waitFor({ timeout: 30000 });
   await page.getByRole('button', { name: '添加模型服务', exact: true }).click();
   await page.getByLabel('API 地址', { exact: true }).fill('https://model.example/v1');
   await page.getByLabel('API Key', { exact: true }).fill('test-secret');
@@ -89,7 +98,7 @@ try {
   await page.getByText('Passkey 已添加', { exact: true }).waitFor();
   const credentials = (await passkeyA.client.send('WebAuthn.getCredentials', { authenticatorId: passkeyA.authenticatorId })).credentials;
   assert.equal(credentials.length, 1);
-  await page.getByRole('button', { name: '进入课程', exact: true }).click();
+  assert.equal((await (await a.request.get(`${origin}/api/v1/cloud/record?table=preferences&key=%22userName%22`)).json()).value?.value, '小测', 'nickname saved as an account preference');
   await page.goto(`${origin}/#/library`);
   await page.getByTestId('import-input').setInputFiles({ name: '云端课程.md', mimeType: 'text/markdown', buffer: Buffer.from('# 云端课程\n\n跨设备学习记录与字幕讲义。') });
   const until = async (fn, description) => {

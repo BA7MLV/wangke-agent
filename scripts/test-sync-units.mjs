@@ -155,6 +155,7 @@ test('设置白名单与排除项逐项吻合', () => {
   // 它连同下面的「无交集」「必排除项」一起，把「谁能跟着数据走」钉成可审阅的清单。
   assert.deepEqual([...SYNC_SETTINGS_KEYS].sort(), [
     'accentColor',
+    'agentInstructions',
     'agentRounds',
     'asrConcurrency',
     'asrModel',
@@ -176,6 +177,7 @@ test('设置白名单与排除项逐项吻合', () => {
     'thinkingEffort',
     'thinkingEnabled',
     'uiLanguage',
+    'userName',
     'visionModel',
   ]);
   assert.deepEqual([...NON_SYNC_SETTINGS_KEYS].sort(), [

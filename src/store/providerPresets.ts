@@ -105,7 +105,7 @@ function endpointKey(baseUrl: string): string {
   }
 }
 
-export function matchesProviderPreset(provider: Provider, preset: ProviderPreset): boolean {
+export function matchesProviderPreset(provider: Pick<Provider, 'baseUrl'>, preset: Pick<ProviderPreset, 'baseUrl'>): boolean {
   return endpointKey(provider.baseUrl) === endpointKey(preset.baseUrl);
 }
 

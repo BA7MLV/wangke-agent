@@ -260,6 +260,7 @@ export const SYNC_SETTINGS_KEYS = [
   'captionScale',
   'agentRounds',
   'agentInstructions',
+  'userName',
   'danmakuEnabled',
   'customRates',
   'theme',

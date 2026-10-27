@@ -11,6 +11,83 @@
     "en-US": "English",
     "hint": "Changes the interface only, not AI responses, course content, or speech recognition. Other sections are being translated in stages."
   },
+  "onboarding": {
+    "welcomeTitle": "Your cloud",
+    "start": "Get started",
+    "keyTitle": "Setup key",
+    "keyLabel": "One-time setup key",
+    "keyFromFile": "Read key from file",
+    "continue": "Continue",
+    "accountTitle": "Admin account",
+    "username": "Username",
+    "password": "Password",
+    "newPasswordPlaceholder": "Password (12+ characters)",
+    "create": "Create admin",
+    "creating": "Creating…",
+    "loginTitle": "Sign in",
+    "login": "Sign in",
+    "signingIn": "Signing in…",
+    "passkey": "Sign in with Passkey",
+    "back": "Back",
+    "loading": "Loading courses…",
+    "progress": "Step {{current}} of {{total}}",
+    "figure": {
+      "settle": "Scattered tiles settling into a tree",
+      "vault": "A vault door",
+      "padlock": "A padlock",
+      "hub": "Connected nodes",
+      "phone": "Phone"
+    },
+    "errors": {
+      "invalid_credentials": "Wrong username or password",
+      "invalid_or_expired_bootstrap_secret": "That key is wrong or has expired",
+      "admin_password_must_be_12_to_256_characters": "Use at least 12 characters",
+      "bootstrap_closed": "Already set up. Sign in instead.",
+      "passkey_verification_failed": "Passkey check failed",
+      "passkey_unavailable": "Passkey isn't available right now",
+      "passkey_cancelled": "Passkey sign-in cancelled"
+    },
+    "nameTitle": "What should we call you?",
+    "nameLabel": "Your name",
+    "namePlaceholder": "Name or nickname",
+    "models": {
+      "title": "Choose models",
+      "done": "Done",
+      "saving": "Saving…",
+      "skip": "Not now",
+      "none": "Not set",
+      "followChat": "Same as main",
+      "clear": "Remove",
+      "use": "Use",
+      "provider": "Provider",
+      "model": "Model",
+      "searchProvider": "Search providers",
+      "searchModel": "Search models",
+      "custom": "Custom",
+      "baseUrl": "API URL",
+      "apiKey": "API key",
+      "apiKeySaved": "API key saved",
+      "modelId": "Model ID",
+      "slot": {
+        "chat": "Main model",
+        "vision": "Image understanding",
+        "asr": "Speech recognition",
+        "decision": "Decision model"
+      },
+      "hint": {
+        "chat": "Writes handouts and answers course questions; reads images too when it supports vision",
+        "vision": "Reuses the main model when it can read images, otherwise an added vision model; can also be set on its own",
+        "asr": "Turns video audio into subtitles; can be from a different provider",
+        "decision": "Optional: routes skills and filters history without writing answers; turn its features on separately"
+      },
+      "cap": {
+        "vision": "Vision",
+        "audio": "Audio",
+        "reasoning": "Reasoning",
+        "tools": "Tools"
+      }
+    }
+  },
   "botHome": {
     "typingShort": "Typing…",
     "nav": {

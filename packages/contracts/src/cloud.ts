@@ -43,13 +43,15 @@ export interface CloudProvider {
   apiKey?: string;
   configured?: boolean;
   catalogId: string;
-  serves: Array<'chat' | 'vision' | 'asr'>;
+  serves: Array<'chat' | 'vision' | 'asr' | 'decision'>;
 }
 export interface CloudConfig {
   providers: CloudProvider[];
   llmModel: { providerId: string; model: string };
   visionModel: { providerId: string; model: string };
   asrModel: { providerId: string; model: string };
+  /** Optional TypeSafe /systemone decision model; features using it stay off until enabled. */
+  decisionModel?: { providerId: string; model: string };
   policy: AgentPolicy;
   trustedAgentIds?: string[];
 }

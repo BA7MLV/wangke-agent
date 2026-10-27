@@ -1,5 +1,5 @@
 import { db } from '../store/db';
-import { useSettings, type Settings } from '../store/settings';
+import { normalizeUserName, useSettings, type Settings } from '../store/settings';
 import { cloud } from './state';
 import { normalizeUiLanguage } from '../i18n/locale';
 import { normalizeAgentInstructions } from '../harness/agentInstructions';
@@ -8,7 +8,7 @@ import { normalizeAgentInstructions } from '../harness/agentInstructions';
 // are deliberately absent from the data protocol.
 const keys = ['contextWindow', 'asrConcurrency', 'thinkingEnabled', 'thinkingEffort', 'captionScale',
   'agentRounds', 'agentInstructions', 'danmakuEnabled', 'customRates', 'shortcuts', 'theme', 'uiLanguage', 'accentColor', 'fontScale',
-  'dynamicColor', 'studyTrackingEnabled', 'studyIdleMinutes', 'htmlRemoteAssets', 'favorites', 'savedModels'] as const;
+  'dynamicColor', 'studyTrackingEnabled', 'studyIdleMinutes', 'htmlRemoteAssets', 'favorites', 'savedModels', 'userName'] as const;
 let applying = false;
 let unsubscribe: (() => void) | undefined;
 let writing: Promise<unknown> = Promise.resolve();
@@ -18,6 +18,7 @@ export async function loadPreferences() {
   const values = Object.fromEntries(rows.filter(r => keys.includes(r.id)).map(r => [r.id, r.value]));
   // 云偏好直接 setState，不经过 Settings.update 的输入校验。
   if (Object.hasOwn(values, 'uiLanguage')) values.uiLanguage = normalizeUiLanguage(values.uiLanguage);
+  if (Object.hasOwn(values, 'userName')) values.userName = normalizeUserName(values.userName);
   if (Object.hasOwn(values, 'agentInstructions')) values.agentInstructions = normalizeAgentInstructions(values.agentInstructions);
   applying = true;
   try { useSettings.setState(values); } finally { applying = false; }
