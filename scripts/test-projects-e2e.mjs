@@ -34,6 +34,8 @@ try {
   await context.route('https://models.dev/**', route => route.fulfill({ json: {} }));
   const page = await context.newPage();
   const errors = []; page.on('pageerror', error => errors.push(error.message));
+  // 只在对话区里找 Bot 说的话：会话列表也会把最后一句显示成预览。
+  const said = (text) => page.locator('.bot-messages').getByText(text, { exact: true });
   await page.goto('/#/projects');
   await page.getByRole('button', { name: '新建项目', exact: true }).first().click();
   await page.getByTestId('prompt-dialog').getByRole('textbox').fill('学习研究');
@@ -59,20 +61,20 @@ try {
   await page.getByRole('button', { name: '保存', exact: true }).click();
   await page.getByRole('button', { name: '查看 / 编辑文本 · notes.md', exact: true }).waitFor();
   assert.equal(fs.readFileSync(path.join(workspace, 'notes.md'), 'utf8'), '# 共享笔记');
-  await page.getByRole('button', { name: '聊天', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Bot 任务内容' }).fill('生成学习成果');
-  await page.getByRole('textbox', { name: 'Bot 任务内容' }).press('Enter');
+  await page.getByTestId('nav-rail').getByRole('button', { name: '聊天', exact: true }).click();
+  await page.getByRole('textbox', { name: '消息', exact: true }).fill('生成学习成果');
+  await page.getByRole('textbox', { name: '消息', exact: true }).press('Enter');
   await page.getByRole('button', { name: '批准', exact: true }).click();
-  await page.getByText('项目文件已保存。', { exact: true }).waitFor();
+  await said('项目文件已保存。').waitFor();
   assert.equal(fs.readFileSync(path.join(workspace, 'bot-result.md'), 'utf8'), '# 项目成果\n持久化测试');
   const firstThread = new URLSearchParams(page.url().split('?')[1]).get('thread');
   assert.ok(firstThread);
   await page.getByRole('button', { name: '新建会话', exact: true }).click();
-  assert.equal(await page.getByText('项目文件已保存。', { exact: true }).count(), 0);
+  assert.equal(await said('项目文件已保存。').count(), 0);
   await page.getByTestId(`nav-rail`).getByText('生成学习成果', { exact: true }).click();
-  await page.getByText('项目文件已保存。', { exact: true }).waitFor();
+  await said('项目文件已保存。').waitFor();
   await page.reload();
-  await page.getByText('项目文件已保存。', { exact: true }).waitFor();
+  await said('项目文件已保存。').waitFor();
 
   // The library folder is a view of the same workspace, not a second copy.
   await page.goto('/#/library');
@@ -86,19 +88,15 @@ try {
   assert.equal(download.suggestedFilename(), 'bot-result.md');
 
   await page.goto('/#/chat');
-  await page.getByRole('textbox', { name: 'Bot 任务内容' }).fill('独立 BOT 聊天');
-  await page.getByRole('textbox', { name: 'Bot 任务内容' }).press('Enter');
-  await page.getByText('BOT 独立对话已完成。', { exact: true }).waitFor();
-  await page.getByRole('button', { name: '新建 BOT', exact: true }).click();
-  await page.getByTestId('prompt-dialog').getByRole('textbox').fill('研究助手');
-  await page.getByTestId('prompt-dialog-confirm').click();
-  await page.getByRole('option', { name: '研究助手', exact: true }).waitFor({ state: 'attached' });
-  assert.equal(await page.getByText('BOT 独立对话已完成。', { exact: true }).count(), 0);
-  assert.equal(await page.getByTestId('nav-rail').getByText('独立 BOT 聊天', { exact: true }).count(), 0);
-  const agents = (await (await context.request.get('/api/v1/agents')).json()).agents;
-  await page.getByLabel('BOT', { exact: true }).selectOption(agents.find(a => a.name === 'Wangke Bot').id);
-  await page.getByTestId('nav-rail').getByText('独立 BOT 聊天', { exact: true }).click();
-  await page.getByText('BOT 独立对话已完成。', { exact: true }).waitFor();
+  await page.getByRole('textbox', { name: '消息', exact: true }).fill('独立 BOT 聊天');
+  await page.getByRole('textbox', { name: '消息', exact: true }).press('Enter');
+  await said('BOT 独立对话已完成。').waitFor();
+  // 聊天模式只有一条连续的对话：刷新之后还是同一条，自己的消息显示已读。
+  await page.reload();
+  await said('BOT 独立对话已完成。').waitFor();
+  await page.locator('.bot-messages').getByText('独立 BOT 聊天', { exact: true }).waitFor();
+  await page.locator('.imsg-receipt', { hasText: '已读' }).waitFor();
+  assert.equal(await page.getByTestId('nav-rail').count(), 0, 'chat mode has no conversation list');
 
   const shots = process.env.PROJECT_SCREENSHOT_DIR;
   for (const width of [1440, 390]) {
@@ -107,15 +105,15 @@ try {
     await page.getByRole('button', { name: '查看 / 编辑文本 · bot-result.md', exact: true }).waitFor();
     const geometry = await page.evaluate(() => ({
       viewport: innerWidth, document: document.documentElement.scrollWidth,
-      barBottom: document.querySelector('[data-testid=top-app-bar]').getBoundingClientRect().bottom,
-      scopeTop: document.querySelector('.bot-scope-bar').getBoundingClientRect().top,
+      barBottom: document.querySelector('.bh-chat__bar').getBoundingClientRect().bottom,
+      scopeTop: document.querySelector('.bh-files').getBoundingClientRect().top,
     }));
     assert.ok(geometry.document <= geometry.viewport, `No horizontal overflow at ${width}`);
     assert.ok(geometry.scopeTop >= geometry.barBottom - 1, `Project controls clear the app bar at ${width}`);
     if (shots) { fs.mkdirSync(shots, { recursive: true }); await page.screenshot({ path: path.join(shots, `projects-${width}.png`) }); }
   }
   assert.deepEqual(errors, []);
-  console.log('Project browser E2E: create/rename, same workspace in library, upload/edit/download, live approval, session restore, BOT grouping, desktop/mobile layout passed');
+  console.log('Project browser E2E: create/rename, same workspace in library, upload/edit/download, live approval, session restore, continuous chat with read receipt, desktop/mobile layout passed');
 } finally {
   await browser?.close();
   await app.close();

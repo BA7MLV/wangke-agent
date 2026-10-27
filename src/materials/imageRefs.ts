@@ -10,10 +10,12 @@ export function validPdfRegion(r: unknown): r is PdfRegion {
 export const pdfRegionKey = (page: number, r: PdfRegion) => `page-${page}-region-${r.x}-${r.y}-${r.width}-${r.height}`;
 export const materialImageHref = (courseId: string, key: string) =>
   `#source-image/${encodeURIComponent(courseId)}/${key}`;
+/** Millisecond timestamps survive frame row replacement and keep the source course explicit. */
+export const videoFrameKey = (ts: number) => `frame-${Math.round(ts * 1000)}`;
 
 export function parseMaterialImageHref(value: unknown): MaterialImageRef | undefined {
   if (typeof value !== 'string') return;
-  const m = /^#source-image\/([^/]+)\/((?:page-[1-9]\d*(?:-region-\d+-\d+-\d+-\d+)?|image-[1-9]\d*(?:-[a-f0-9]{16})?))$/.exec(value);
+  const m = /^#source-image\/([^/]+)\/((?:page-[1-9]\d*(?:-region-\d+-\d+-\d+-\d+)?|image-[1-9]\d*(?:-[a-f0-9]{16})?|frame-(?:0|[1-9]\d*)))$/.exec(value);
   if (!m) return;
   try {
     const courseId = decodeURIComponent(m[1]);

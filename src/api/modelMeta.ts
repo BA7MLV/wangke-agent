@@ -1,5 +1,6 @@
 /**
- * models.dev 只补全模型能力，不决定可用模型列表或连接配置。
+ * models.dev 提供供应商目录和模型能力；它不决定用户实际可用的连接凭据或
+ * `/models` 返回的可用模型列表。
  * 保留供应商作用域以避免串用；未指定供应商时仅自动采用全目录唯一的精确 ID。
  * 未知模型默认文本输入/输出、开启工具调用（与 OpenChamber 接入行为一致）。
  */
@@ -14,11 +15,23 @@ const TTL_MS = 10 * 60 * 1000;
  * v2 → v3：键从裸模型 id 变成 `catalogId \0 modelId`。不升版本的话老缓存里那批无前缀的键
  * 会被当成「catalog 为空的数据」，命中不上任何查询（表现为「能力数据凭空失效」）。
  * v5：缓存全目录能力投影，不再要求登记供应商；未知模态/工具采用接入默认值，移除定价。
+ * v7：同时缓存 models.dev 的供应商目录，用于设置页动态显示供应商。
  *
  * 导出它是因为**手写缓存夹具的测试要跟着它走**（scripts/e2e-agent-guard.mjs、
  * scripts/test-thinking-depth.mjs）：版本写错的话那份夹具会被当成过期缓存丢掉。
  */
-export const MODEL_META_CACHE_VERSION = 6;
+export const MODEL_META_CACHE_VERSION = 7;
+
+/** models.dev 的供应商描述。凭据永远不在这里，也不会进入缓存。 */
+export interface ModelProviderMeta {
+  id: string;
+  name: string;
+  /** models.dev 的 API 地址；可能包含供应商要求用户替换的占位符。 */
+  baseUrl?: string;
+  npm?: string;
+  env?: string[];
+  doc?: string;
+}
 
 export interface ModelMeta {
   type?: string;
@@ -84,6 +97,7 @@ interface MetaCache {
   complete?: boolean;
   updatedAt: number;
   catalogs?: Record<string, number>;
+  providers?: Record<string, ModelProviderMeta>;
   /** 键 = `${catalogId}\0${modelId}` */
   models: Record<string, ModelMeta>;
 }
@@ -106,9 +120,34 @@ interface ModelsDevEntry {
   structured_output?: boolean;
   limit?: { context?: number; output?: number };
   modalities?: { input?: string[]; output?: string[] };
-  reasoning?: boolean;
+  /** Current API responses expose these at the top level; accept the nested form too. */
+  input?: string[];
+  output?: string[];
+  contextWindow?: number;
+  maxTokens?: number;
+  reasoning?: boolean | { supported?: boolean; effort?: unknown; options?: ReasoningOption[] };
   reasoning_options?: ReasoningOption[];
   tool_call?: boolean;
+  capabilities?: {
+    input?: string[];
+    output?: string[];
+    tools?: boolean;
+    tool_call?: boolean;
+    reasoning?: boolean | { supported?: boolean; effort?: unknown; options?: ReasoningOption[] };
+    reasoning_options?: ReasoningOption[];
+    structured_output?: boolean;
+  };
+}
+
+interface ModelsDevProvider {
+  name?: string;
+  api?: string;
+  base_url?: string;
+  baseUrl?: string;
+  npm?: string;
+  env?: unknown;
+  doc?: string;
+  models?: Record<string, ModelsDevEntry>;
 }
 
 /** 缓存键。分隔符用 `\0`：模型 id 里不可能出现 NUL，撞键因此不可能发生 */
@@ -133,9 +172,35 @@ const EFFORT_LANES: readonly string[] = ['minimal', 'low', 'medium', 'high', 'xh
  * `[]` / 字段缺失但 `reasoning: true`：知道它会思考，却没说旋钮怎么调 →
  * 只当开关用，**不替它编档位**。
  */
+function reasoningSupported(m: ModelsDevEntry): boolean {
+  const value = m.reasoning ?? m.capabilities?.reasoning;
+  return typeof value === 'boolean' ? value : value?.supported === true;
+}
+
+function reasoningOptionsOf(m: ModelsDevEntry): ReasoningOption[] {
+  if (Array.isArray(m.reasoning_options)) return m.reasoning_options;
+  if (Array.isArray(m.capabilities?.reasoning_options)) return m.capabilities.reasoning_options;
+  const reasoning = m.reasoning ?? m.capabilities?.reasoning;
+  if (reasoning && typeof reasoning === 'object') {
+    if (Array.isArray(reasoning.options)) return reasoning.options;
+    if (reasoning.effort !== undefined) return [{ type: 'effort', values: reasoning.effort }];
+  }
+  return [];
+}
+
+function defaultModalities(type?: string): { input: string[]; output: string[] } {
+  switch (type) {
+    case 'image': return { input: ['text'], output: ['image'] };
+    case 'video': return { input: ['text'], output: ['video'] };
+    case 'audio': return { input: ['audio'], output: ['text'] };
+    case 'embedding': return { input: ['text'], output: ['embedding'] };
+    default: return { input: ['text'], output: ['text'] };
+  }
+}
+
 function parseThinking(m: ModelsDevEntry): ThinkingControl | null {
-  if (!m.reasoning) return null;
-  const options = Array.isArray(m.reasoning_options) ? m.reasoning_options : [];
+  if (!reasoningSupported(m)) return null;
+  const options = reasoningOptionsOf(m);
   const control: ThinkingControl = { toggle: false };
   for (const option of options) {
     if (option?.type === 'toggle') {
@@ -242,6 +307,19 @@ export function modelMetaInfo(): { updatedAt: number; count: number } | null {
   return c ? { updatedAt: c.updatedAt, count: Object.keys(c.models).length } : null;
 }
 
+/** 当前 models.dev 供应商目录的快照；返回新数组，调用方不能改缓存。 */
+export function modelProviderMeta(id: string): ModelProviderMeta | null {
+  const provider = load()?.providers?.[id];
+  return provider ? { ...provider, env: provider.env ? [...provider.env] : undefined } : null;
+}
+
+export function modelProvidersMeta(): ModelProviderMeta[] {
+  return Object.values(load()?.providers ?? {}).map((provider) => ({
+    ...provider,
+    env: provider.env ? [...provider.env] : undefined,
+  }));
+}
+
 export function isModelMetaStale(_catalogs?: readonly string[]): boolean {
   const c = load();
   if (!c?.complete) return true;
@@ -258,25 +336,32 @@ const modalities = (value: unknown): string[] | undefined =>
   Array.isArray(value) ? [...new Set(value.filter((m): m is string => typeof m === 'string'))] : undefined;
 
 export function parseModelMeta(m: ModelsDevEntry): ModelMeta {
-  const context = finiteNumber(m.limit?.context);
-  const output = finiteNumber(m.limit?.output);
-  const input = modalities(m.modalities?.input);
+  const typeDefaults = defaultModalities(m.type);
+  const context = finiteNumber(m.limit?.context ?? m.contextWindow);
+  const output = finiteNumber(m.limit?.output ?? m.maxTokens);
+  const input = modalities(m.modalities?.input ?? m.input ?? m.capabilities?.input) ?? typeDefaults.input;
+  const outputModalities = modalities(m.modalities?.output ?? m.output ?? m.capabilities?.output) ?? typeDefaults.output;
+  const reasoning = reasoningSupported(m);
+  const toolCall = typeof m.tool_call === 'boolean' ? m.tool_call
+    : typeof m.capabilities?.tool_call === 'boolean' ? m.capabilities.tool_call
+      : typeof m.capabilities?.tools === 'boolean' ? m.capabilities.tools : undefined;
+  const structuredOutput = typeof m.structured_output === 'boolean' ? m.structured_output : m.capabilities?.structured_output;
   return {
     type: typeof m.type === 'string' ? m.type : undefined,
     name: typeof m.name === 'string' ? m.name : undefined,
-    inputModalities: input ?? ['text'],
-    outputModalities: modalities(m.modalities?.output) ?? ['text'],
+    inputModalities: input,
+    outputModalities: outputModalities ?? ['text'],
     declaredContext: context,
     declaredOutput: output,
-    declaredReasoning: typeof m.reasoning === 'boolean' ? m.reasoning : undefined,
-    declaredToolCall: typeof m.tool_call === 'boolean' ? m.tool_call : undefined,
-    structuredOutput: typeof m.structured_output === 'boolean' ? m.structured_output : undefined,
+    declaredReasoning: reasoningSupported(m) || typeof m.reasoning === 'boolean' || m.capabilities?.reasoning !== undefined ? reasoning : undefined,
+    declaredToolCall: toolCall,
+    structuredOutput,
     lastUpdated: typeof m.last_updated === 'string' ? m.last_updated : undefined,
     context: context || 131072,
     output: output ?? 8192,
     vision: !!input?.includes('image'),
-    reasoning: m.reasoning === true,
-    toolCall: m.tool_call !== false,
+    reasoning,
+    toolCall: toolCall !== false,
     thinking: parseThinking(m),
   };
 }
@@ -293,11 +378,27 @@ export function refreshModelMeta(_catalogs?: readonly string[]): Promise<{ count
 async function fetchModelMeta(): Promise<{ count: number }> {
   const res = await fetch(API_URL, { signal: AbortSignal.timeout(20000) });
   if (!res.ok) throw new Error(`models.dev HTTP ${res.status}`);
-  const json = (await res.json()) as Record<string, { models?: Record<string, ModelsDevEntry> }>;
+  const json = (await res.json()) as Record<string, ModelsDevProvider>;
 
   const models: Record<string, ModelMeta> = {};
+  const providers: Record<string, ModelProviderMeta> = {};
   const refreshed: string[] = [];
   for (const [catalog, provider] of Object.entries(json ?? {})) {
+    if (!provider || typeof provider !== 'object' || Array.isArray(provider)) continue;
+    const env = Array.isArray(provider.env)
+      ? [...new Set(provider.env.filter((value): value is string => typeof value === 'string' && value.trim().length > 0))]
+      : undefined;
+    const rawBaseUrl = typeof provider.api === 'string' ? provider.api
+      : typeof provider.base_url === 'string' ? provider.base_url
+        : typeof provider.baseUrl === 'string' ? provider.baseUrl : undefined;
+    providers[catalog] = {
+      id: catalog,
+      name: typeof provider.name === 'string' && provider.name.trim() ? provider.name.trim() : catalog,
+      baseUrl: rawBaseUrl?.trim() || undefined,
+      npm: typeof provider.npm === 'string' ? provider.npm : undefined,
+      env,
+      doc: typeof provider.doc === 'string' ? provider.doc : undefined,
+    };
     const src = provider?.models;
     if (!src || typeof src !== 'object' || Array.isArray(src)) continue;
     refreshed.push(catalog);
@@ -310,7 +411,7 @@ async function fetchModelMeta(): Promise<{ count: number }> {
     throw new Error('models.dev 未返回有效模型能力数据');
   }
   const updatedAt = Date.now();
-  mem = { version: MODEL_META_CACHE_VERSION, complete: true, updatedAt, models,
+  mem = { version: MODEL_META_CACHE_VERSION, complete: true, updatedAt, models, providers,
     catalogs: Object.fromEntries(refreshed.map((id) => [id, updatedAt])) };
   try {
     localStorage.setItem(CACHE_KEY, JSON.stringify(mem));

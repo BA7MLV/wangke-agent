@@ -7,7 +7,7 @@ export async function prepareHandoutPrompt(skillIds?: number[]) {
   if (!skill) throw new Error('请先在「设置 → 写作技能」中启用「课程讲义」');
   return {
     skillIds: skillIds === undefined || skillIds.includes(skill.id) ? skillIds : [...skillIds, skill.id],
-    prompt: `请先 read /skills/${encodeURIComponent(HANDOUT_SKILL)} 加载「${HANDOUT_SKILL}」技能，再根据当前课程或已选资料整理学习讲义。先确认来源和范围，分段读取原文，按章节写清核心概念、方法步骤、原文例题和易错点，并标注出处。用现有 read / edit 将讲义保存为来源课程同目录的 Markdown 资料，以讲义.md 文件为唯一真相源。先 read 课程详情给出的 handout.md 路径，已存在则基于最新原文修改，不覆盖用户笔记；未存在才 create。每章保存后核对文件，并在对话展示正文或摘要及文件链接，方便实时查看；长内容可分章继续，明确已覆盖与尚未读取的范围。没有明确来源时先询问。`,
+    prompt: `请先 read /skills/${encodeURIComponent(HANDOUT_SKILL)} 加载「${HANDOUT_SKILL}」技能，再根据当前课程或已选资料整理学习讲义。先确认来源和范围，分段读取原文。开头分别给出「核心要点」和「内容大纲」，再按章节写清核心概念、方法步骤、原文例题和易错点，并标注出处。读取可用的 images / frames 目录，把相关原图或课程画面用工具返回的 Markdown 图片引用内嵌到正文并保存进文件；没有真实图片时说明，不编造、不强制抽帧。用现有 read / edit 将讲义保存为来源课程同目录的 Markdown 资料，以讲义.md 文件为唯一真相源。先 read 课程详情给出的 handout.md 路径，已存在则基于最新原文修改，不覆盖用户笔记；未存在才 create。每章保存后核对文件中的要点、大纲、正文与图片引用，并在对话展示正文或摘要及文件链接，方便实时查看；长内容可分章继续，明确已覆盖与尚未读取的范围。没有明确来源时先询问。`,
   };
 }
 

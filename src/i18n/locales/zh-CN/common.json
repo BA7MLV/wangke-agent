@@ -87,5 +87,50 @@
         "tools": "工具"
       }
     }
+  },
+  "botHome": {
+    "typingShort": "正在输入…",
+    "nav": {
+      "label": "导航",
+      "chat": "聊天",
+      "projects": "项目",
+      "course": "课程问答",
+      "library": "资料"
+    },
+    "listLabel": "会话",
+    "compose": "新建会话",
+    "more": "更多",
+    "back": "返回",
+    "contacts": "Bot",
+    "showArchived": "显示已归档",
+    "hideArchived": "隐藏已归档",
+    "archived": "已归档",
+    "conversation": "与 {{name}} 的对话",
+    "composer": "消息",
+    "attach": "添加附件",
+    "attachment": "附件",
+    "settings": "设置",
+    "stop": "停止当前任务",
+    "stopped": "已停止",
+    "notRunning": "没有正在运行的任务",
+    "stopFailed": "停止失败",
+    "approve": "批准",
+    "reject": "拒绝",
+    "approved": "已批准",
+    "rejected": "已拒绝",
+    "approvalFailed": "审批没有提交成功",
+    "reactFailed": "没能点赞",
+    "passkey": "添加 Passkey",
+    "passkeyAdded": "Passkey 已添加",
+    "passkeyUnsupported": "这个浏览器不支持 Passkey",
+    "passkeyUnavailable": "Passkey 当前不可用",
+    "passkeyCancelled": "Passkey 注册已取消",
+    "passkeyFailed": "Passkey 注册失败，请稍后重试",
+    "logout": "退出登录",
+    "logoutFailed": "退出失败",
+    "offline": "连不上 Bot 服务",
+    "read": "已读",
+    "delivered": "已送达",
+    "sending": "发送中"
   }
 }

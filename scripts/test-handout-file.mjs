@@ -22,7 +22,7 @@ try {
   assert.match(await local('edit', { path, create: true }), /需提供 content/);
   assert.equal(await db.files.count(), 0);
   assert.match(await local('read', { path: '/courses/current/info' }), /\/courses\/source\/handout.md/);
-  const first = '# 测试课程讲义\n\n覆盖：00:00–01:00\n\n## 定义\n\n原始定义。\n';
+  const first = '# 测试课程讲义\n\n覆盖：00:00–01:00\n\n## 核心要点\n\n- 定义须结合适用条件。[00:00]\n\n## 内容大纲\n\n- 定义\n\n## 定义\n\n原始定义。\n\n![课程画面 0:25](#source-image/source/frame-25125)\n';
   const created = await local('edit', { path, create: true, content: first });
   assert.match(created, /已创建/);
   assert.match(created, /唯一真相源/);
@@ -32,6 +32,10 @@ try {
   assert.equal(row.materialFormat, 'md');
   assert.equal(row.folderId, folderId, 'created beside source, not at library root');
   assert.equal(await (await getMaterialFile(file.id)).text(), first);
+  const saved = await local('read', { path });
+  assert.match(saved, /## 核心要点/);
+  assert.match(saved, /## 内容大纲/);
+  assert.match(saved, /!\[课程画面 0:25\]\(#source-image\/source\/frame-25125\)/, 'inline images live in the saved file, not only in chat');
   assert.equal(await db.handouts.count(), 0, 'no duplicate handout-specific body');
   assert.match(await library('read', { path: `/courses/${file.id}/material`, raw: true }), /原始定义/);
   assert.match(await library('grep', { path: file.path, query: '^## 定义$', regex: true }), /## 定义/);

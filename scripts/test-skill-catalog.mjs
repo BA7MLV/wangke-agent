@@ -34,6 +34,7 @@ try {
   const { ensureBuiltinSkills, loadEnabledSkillMeta, loadSessionSkillMeta } = await server.ssrLoadModule('/src/skills/store.ts');
   const { createResourceExecutor, skillPath } = await server.ssrLoadModule('/src/harness/resources.ts');
   const { routeHandoutSkills } = await server.ssrLoadModule('/src/skills/router.ts');
+  const { prepareHandoutPrompt } = await server.ssrLoadModule('/src/skills/handout.ts');
   const { useSettings } = await server.ssrLoadModule('/src/store/settings.ts');
   const specs = [...LEGACY_HANDOUT_SKILLS, ...BUILTIN_SKILLS];
   const expectedRefs = ['writing', 'math-writing', 'coding-writing', 'gongkao-xingce', 'gongkao-shenlun'].map((s) => `references/${s}.md`).sort();
@@ -91,6 +92,19 @@ try {
   // Later groups are independently useful even when an earlier assertion fails.
   await ensureBuiltinSkills();
   const handout = await db.skills.filter((s) => !!s.builtin && s.name === COURSE_HANDOUT_SKILL).first();
+  await check('handout defaults distinguish key takeaways, outline and persisted inline images', async () => {
+    const { prompt } = await prepareHandoutPrompt();
+    for (const text of [handoutSpec.body, handoutSpec.refs.find((r) => r.path === 'references/writing.md').body, prompt]) {
+      assert.match(text, /核心要点/);
+      assert.match(text, /内容大纲/);
+      assert.match(text, /正文/);
+      assert.match(text, /图片引用|Markdown 图片/);
+    }
+    assert.match(handoutSpec.body, /!\[说明\]\(#source-image\/\.\.\.\)/);
+    assert.match(handoutSpec.body, /不能只在聊天展示图片/);
+    assert.match(handoutSpec.body, /单独下载 Markdown 不等于已打包图片/);
+    assert.match(handoutSpec.body, /不自动启动旧抽帧流水线/);
+  });
   await check('chat/legacy discovery and /skills expose the same enabled boundary', async () => {
     const chat = await loadEnabledSkillMeta();
     const legacy = await loadEnabledSkillMeta('legacy-handout');

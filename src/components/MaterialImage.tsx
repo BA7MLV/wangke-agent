@@ -3,6 +3,7 @@ import { Button } from '@heroui/react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { imageSourceKind, materialSourceHref, parseMaterialImageHref } from '../materials/imageRefs';
 import type { LoadedMaterialImage } from '../materials/images';
+import { fmtTime } from '../utils/vtt';
 import ImagePreview from './ImagePreview';
 import './material-image.css';
 
@@ -67,7 +68,8 @@ export function MaterialImage({ href, label, linkOnly = false, onSource }: {
   if (!ref) return <span>无效的原图引用</span>;
   const src = current?.url || (remoteAllowed ? current?.data?.remoteUrl : undefined);
   const sourceHref = materialSourceHref(ref.courseId, current?.data?.image.unit);
-  const source = <a href={sourceHref} onClick={onSource && current?.data?.image.unit ? (e) => { e.preventDefault(); setOpen(false); onSource(current.data!.image.unit); } : undefined}>打开原文{current?.data?.image.unit ? ` · 第 ${current.data.image.unit} ${ref.key.startsWith('page-') ? '页' : '段'}` : ''}</a>;
+  const image = current?.data?.image;
+  const source = <a href={sourceHref} onClick={onSource && image?.unit ? (e) => { e.preventDefault(); setOpen(false); onSource(image.unit); } : undefined}>{ref.key.startsWith('frame-') ? '打开来源视频' : '打开原文'}{image?.ts !== undefined ? ` · ${fmtTime(image.ts)}` : image?.unit ? ` · 第 ${image.unit} ${ref.key.startsWith('page-') ? '页' : '段'}` : ''}</a>;
   const status = current?.error ? <span className="material-image__status" role="status">{current.error}<Button size="sm" variant="tertiary" onPress={() => setAttempt((n) => n + 1)}>重试</Button></span>
     : current?.data?.remoteUrl && !remoteAllowed ? <span className="material-image__status">此图片来自 {new URL(current.data.remoteUrl).hostname}，加载会向该网站发送请求。<Button size="sm" variant="secondary" onPress={() => setRemoteAllowed(true)}>加载外链图片</Button></span>
       : !src ? <span className="material-image__placeholder" role="status" aria-label="正在读取原图">正在读取原图…</span> : null;

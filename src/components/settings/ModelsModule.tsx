@@ -43,7 +43,7 @@ import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibra
 import { ModelCapabilities } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
 import { formatModelTokens } from '../../api/modelPresentation';
-import { createPresetProvider, matchesProviderPreset, providerCatalogId, PROVIDER_PRESETS, type ProviderPreset } from '../../store/providerPresets';
+import { createPresetProvider, getProviderPresets, matchesProviderPreset, providerCatalogId, type ProviderPreset } from '../../store/providerPresets';
 import ProviderPresets, { ProviderLogo } from './ProviderPresets';
 import { useSettingsDialog } from '../settingsDialogStore';
 
@@ -676,7 +676,7 @@ function ProviderRow({
     unconfigured: '未配置',
   };
 
-  const preset = PROVIDER_PRESETS.find((p) => matchesProviderPreset(provider, p));
+  const preset = getProviderPresets().find((p) => matchesProviderPreset(provider, p));
   const showEndpoint = customConnection || !preset;
 
   const statusColor =

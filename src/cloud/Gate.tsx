@@ -7,6 +7,7 @@ import { startCloud } from './sync';
 import { useSettings } from '../store/settings';
 import { FeedbackHost, Sym } from '../ui';
 import LanguageSelect from '../components/LanguageSelect';
+import { consumeBootstrapLink } from './bootstrapLink';
 import OnboardingFigure, { loadFigures } from './onboarding/OnboardingFigure';
 const ModelSetup = lazy(() => import('./onboarding/ModelSetup'));
 import { errorKey, initialStep, previousStep, SETUP_STEPS, STEP_FIGURE, stepForError, stepIndex, type OnboardingStep } from './onboarding/flow';
@@ -35,7 +36,7 @@ const ACTION = {
  * 云端入口：首次部署走五步引导（欢迎 → 密钥 → 管理员 → 称呼 → 选模型），之后是单页登录。
  * 每一步只有一个标题、一张 2.5D 线稿和必要的输入框；说明交给布局和图形。
  */
-export default function CloudGate({ initialized, authenticated, error: initialError = '' }: { initialized: boolean; authenticated: boolean; error?: string }) {
+export default function CloudGate({ initialized, authenticated, initialSecret = '', error: initialError = '' }: { initialized: boolean; authenticated: boolean; initialSecret?: string; error?: string }) {
   const { t } = useTranslation('common');
   const [ready, setReady] = useState(authenticated);
   const [setup, setSetup] = useState(!initialized || location.hash.startsWith('#/setup'));
@@ -44,14 +45,26 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
   const [name, setName] = useState('Administrator');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState(() => useSettings.getState().userName);
-  const [secret, setSecret] = useState('');
+  const [secret, setSecret] = useState(initialSecret);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState(initialError);
   const [attempt, setAttempt] = useState(0);
+  const [created, setCreated] = useState(initialized);
   const secretFile = useRef<HTMLInputElement>(null);
 
   // 欢迎页一出现就开始拉图形 chunk，下一步不用等。
   useEffect(() => { void loadFigures(); }, []);
+
+  useEffect(() => {
+    // Opening a fresh setup link in the same tab can be a hash-only navigation.
+    const consume = () => {
+      const nextSecret = consumeBootstrapLink(location, history);
+      if (!created && nextSecret) { setSecret(nextSecret); setError(''); }
+    };
+    consume();
+    window.addEventListener('hashchange', consume);
+    return () => window.removeEventListener('hashchange', consume);
+  }, [created]);
 
   const go = (next: OnboardingStep, dir: 'forward' | 'back' = 'forward') => {
     setDirection(dir);
@@ -68,7 +81,10 @@ export default function CloudGate({ initialized, authenticated, error: initialEr
   async function signIn(passkey = false) {
     setBusy(true); setError('');
     try {
-      if (step === 'account') await serverClient.bootstrapInitialize(password, secret, name);
+      if (step === 'account') {
+        await serverClient.bootstrapInitialize(password, secret, name);
+        setCreated(true);
+      }
       const response = passkey
         ? await serverClient.passkeyLoginVerify(await startAuthentication({ optionsJSON: await serverClient.passkeyLoginOptions() }))
         : await serverClient.login(name, password);

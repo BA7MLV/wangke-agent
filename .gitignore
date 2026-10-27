@@ -32,3 +32,4 @@ vite.config.ts.timestamp-*
 /tmp-repro-*.mjs
 
 .worktrees/
+.key/

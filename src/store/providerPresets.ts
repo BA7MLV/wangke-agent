@@ -1,4 +1,5 @@
 import type { Provider } from './settings';
+import { modelProvidersMeta, type ModelProviderMeta } from '../api/modelMeta';
 
 export interface ProviderPreset extends Omit<Provider, 'id' | 'apiKey'> {
   id: string;
@@ -7,7 +8,11 @@ export interface ProviderPreset extends Omit<Provider, 'id' | 'apiKey'> {
 }
 
 /** 只展示当前协议层可直接接入的 API Key 端点，不暗示支持订阅账号登录。 */
-export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
+/**
+ * 离线/旧缓存回退项。在线时同 ID 的条目由 models.dev 覆盖，避免这里的地址和
+ * provider 目录长期漂移；保留回退是为了首次启动、离线和已有端到端夹具仍可用。
+ */
+const FALLBACK_PROVIDER_PRESETS: readonly ProviderPreset[] = [
   {
     id: 'typesafe', name: 'TypeSafe', description: 'Jev 决策模型，用于技能路由与上下文筛选',
     baseUrl: 'https://api.typesafe.ai/v1', protocol: 'openai-chat',
@@ -50,6 +55,45 @@ export const PROVIDER_PRESETS: readonly ProviderPreset[] = [
   },
 ];
 
+/** 兼容旧调用方；新 UI 应使用 getProviderPresets()。 */
+export const PROVIDER_PRESETS = FALLBACK_PROVIDER_PRESETS;
+
+function protocolOf(provider: ModelProviderMeta): Provider['protocol'] {
+  const packageName = provider.npm?.toLowerCase() ?? '';
+  return packageName.includes('anthropic') ? 'anthropic-messages' : 'openai-chat';
+}
+
+function presetFromModelProvider(provider: ModelProviderMeta): ProviderPreset | null {
+  const baseUrl = provider.baseUrl?.trim();
+  // 占位地址（例如 ${ACCOUNT_ID}）不能直接作为“常用端点”保存；用户应走自定义连接。
+  if (!baseUrl || !/^https?:\/\//i.test(baseUrl) || baseUrl.includes('${')) return null;
+  return {
+    id: provider.id,
+    name: provider.name || provider.id,
+    description: provider.doc ? `models.dev 目录 · ${provider.doc}` : '来自 models.dev 的 API 端点',
+    baseUrl,
+    protocol: protocolOf(provider),
+    serves: ['chat'],
+    catalogId: provider.id,
+  };
+}
+
+/**
+ * models.dev 供应商优先，静态项只在目录尚未加载或某项没有可用 API 地址时兜底。
+ * 这样新增供应商不需要发版，旧用户也不会因为离线而失去已有入口。
+ */
+export function getProviderPresets(): readonly ProviderPreset[] {
+  const dynamic = modelProvidersMeta().flatMap((provider) => {
+    const preset = presetFromModelProvider(provider);
+    return preset ? [preset] : [];
+  });
+  const byId = new Map(dynamic.map((preset) => [preset.id, preset]));
+  for (const preset of FALLBACK_PROVIDER_PRESETS) {
+    if (!byId.has(preset.id) && !dynamic.some((item) => matchesProviderPreset(item, preset))) byId.set(preset.id, preset);
+  }
+  return [...byId.values()];
+}
+
 function endpointKey(baseUrl: string): string {
   try {
     const url = new URL(baseUrl.trim());
@@ -61,13 +105,13 @@ function endpointKey(baseUrl: string): string {
   }
 }
 
-export function matchesProviderPreset(provider: Provider, preset: ProviderPreset): boolean {
+export function matchesProviderPreset(provider: Pick<Provider, 'baseUrl'>, preset: Pick<ProviderPreset, 'baseUrl'>): boolean {
   return endpointKey(provider.baseUrl) === endpointKey(preset.baseUrl);
 }
 
 /** 常用端点的目录由地址确定；自定义连接保留兼容的历史提示，歧义可在模型上确认。 */
 export function providerCatalogId(provider: Provider): string {
-  return PROVIDER_PRESETS.find((preset) => matchesProviderPreset(provider, preset))?.catalogId ?? provider.catalogId ?? '';
+  return getProviderPresets().find((preset) => matchesProviderPreset(provider, preset))?.catalogId ?? provider.catalogId ?? '';
 }
 
 export function createPresetProvider(preset: ProviderPreset, id: string): Provider {
