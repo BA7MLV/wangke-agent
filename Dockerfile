@@ -21,6 +21,7 @@ RUN sed -i "s|http://deb.debian.org|http://${DEBIAN_MIRROR}|g; s|https://deb.deb
   && npm_config_build_from_source=true npm ci --omit=dev && npm cache clean --force
 COPY --from=build /app/dist ./dist
 COPY --from=build /app/dist-api ./dist-api
+COPY --from=build /app/scripts/reset-password.mjs ./scripts/reset-password.mjs
 RUN groupadd --system wangke && useradd --system --gid wangke --home-dir /app wangke \
   && mkdir -p /data/db /data/files /data/config \
   && chown -R wangke:wangke /app /data

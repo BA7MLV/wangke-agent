@@ -1,0 +1,15 @@
+# Optional IP HTTPS entry, in addition to the original domain:
+# docker compose --env-file .env -f compose.yaml -f compose.prod.yaml -f compose.ip.yaml up -d --no-build --wait
+services:
+  app:
+    environment:
+      # Keep PUBLIC_ORIGIN / the domain's Passkeys intact. Only allow the exact
+      # additional HTTPS origin; do not disable CSRF checks or secure cookies.
+      CORS_ORIGINS: "https://${PUBLIC_IP:?Set PUBLIC_IP to the server public IPv4 address}${CORS_ORIGINS:+,}${CORS_ORIGINS:-}"
+  proxy:
+    environment:
+      PUBLIC_IP: "${PUBLIC_IP:?Set PUBLIC_IP to the server public IPv4 address}"
+      IP_ACME_CA: "${IP_ACME_CA:-https://acme-v02.api.letsencrypt.org/directory}"
+    volumes:
+      - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile.domain:ro
+      - ./infra/docker/Caddyfile.ip:/etc/caddy/Caddyfile:ro

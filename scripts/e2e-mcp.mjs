@@ -65,7 +65,7 @@ try {
   const base = `http://127.0.0.1:${app.server.address().port}`;
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'test-password-long-enough' } });
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { name: 'Administrator', password: 'test-password-long-enough' } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { password: 'test-password-long-enough' } });
   const cookie = login.headers['set-cookie'].split(';')[0];
   const api = async (method, suffix, body) => {
     const r = await app.inject({ method, url: '/api/v1/cloud' + suffix, headers: { cookie }, payload: body });

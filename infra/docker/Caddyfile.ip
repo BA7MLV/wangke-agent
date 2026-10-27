@@ -1,0 +1,18 @@
+{
+	# Browsers connecting to an IP normally omit TLS SNI.
+	default_sni {$PUBLIC_IP}
+}
+
+import /etc/caddy/Caddyfile.domain
+
+https://{$PUBLIC_IP} {
+	tls {
+		issuer acme {
+			dir {$IP_ACME_CA:https://acme-v02.api.letsencrypt.org/directory}
+			profile shortlived
+			# Caddy 2.10 supports IPv4 HTTP-01; its IP TLS-ALPN path is older.
+			disable_tlsalpn_challenge
+		}
+	}
+	import app_backend
+}

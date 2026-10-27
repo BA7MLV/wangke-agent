@@ -37,16 +37,16 @@ try {
   assert.equal(denied.headers['access-control-allow-origin'], undefined);
 
   // 跨域浏览器登录：放行 origin 的写请求通过 Origin 校验。
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', headers: { origin: 'https://app.example.com' }, payload: { username: 'Administrator', password } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', headers: { origin: 'https://app.example.com' }, payload: { password } });
   assert.equal(login.statusCode, 200);
   assert.equal(login.headers['access-control-allow-origin'], 'https://app.example.com');
   const evilLogin = await app.inject({ method: 'POST', url: '/api/v1/threads', headers: { origin: 'https://evil.example', cookie: login.headers['set-cookie'].split(';')[0] }, payload: { mode: 'bot' } });
   assert.equal(evilLogin.statusCode, 403);
 
   // 原生壳层：密码换 token。
-  const wrong = await app.inject({ method: 'POST', url: '/api/v1/auth/token', payload: { username: 'Administrator', password: 'nope' } });
+  const wrong = await app.inject({ method: 'POST', url: '/api/v1/auth/token', payload: { password: 'nope' } });
   assert.equal(wrong.statusCode, 401);
-  const issued = await app.inject({ method: 'POST', url: '/api/v1/auth/token', payload: { username: 'Administrator', password, deviceName: 'iPhone' } });
+  const issued = await app.inject({ method: 'POST', url: '/api/v1/auth/token', payload: { password, deviceName: 'iPhone' } });
   assert.equal(issued.statusCode, 201);
   const { token, tokenType, user } = issued.json();
   assert.equal(tokenType, 'Bearer');

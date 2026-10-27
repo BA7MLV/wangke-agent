@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { modelProviderMeta, parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../src/api/modelMeta.ts';
+import { catalogModels, modelProviderMeta, parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../src/api/modelMeta.ts';
 import { parseDiscoveredModel } from '../src/api/modelDiscoveryData.ts';
 import { readModelList, writeModelList, __resetModelListCacheForTest } from '../src/api/modelListCache.ts';
 import { modelKind, capabilityLabel } from '../src/api/modelPresentation.ts';
@@ -29,12 +29,21 @@ assert.equal(parseModelMeta({ limit: { context: -1, output: NaN } }).declaredCon
 globalThis.fetch = async () => new Response(JSON.stringify({
   first: { name: 'First provider', api: 'https://first.example/v1', npm: '@ai-sdk/openai-compatible', models: { same: entry(['text']), noContext: entry(['audio']), free: { ...entry(['text']), cost: { input: 0 } } } },
   second: { models: { same: entry(['text', 'image']) } },
+  google: { name: 'Google', api: 'https://generativelanguage.googleapis.com/v1beta', npm: '@ai-sdk/google', models: {} },
+  bedrock: { api: 'https://bedrock.example', npm: '@ai-sdk/amazon-bedrock', models: {} },
 }));
 await refreshModelMeta();
 assert.deepEqual(modelProviderMeta('first'), {
   id: 'first', name: 'First provider', baseUrl: 'https://first.example/v1', npm: '@ai-sdk/openai-compatible', env: undefined, doc: undefined,
 }, 'provider metadata comes from models.dev');
 assert.equal(getProviderPresets().find((preset) => preset.id === 'first')?.baseUrl, 'https://first.example/v1', 'provider presets use the live models.dev provider catalog');
+assert.equal(getProviderPresets().find((preset) => preset.id === 'google')?.baseUrl, 'https://generativelanguage.googleapis.com/v1beta/openai', 'native Google catalog uses its supported OpenAI-compatible endpoint');
+assert.equal(getProviderPresets().some((preset) => preset.id === 'bedrock'), false, 'native protocols are not advertised as Chat Completions');
+assert.deepEqual(catalogModels('first').map(m => m.id), ['same', 'noContext', 'free']);
+assert.deepEqual(catalogModels('second').map(m => m.id), ['same'], 'catalog suggestions stay provider-scoped');
+assert.deepEqual(catalogModels(''), [], 'custom endpoints do not inherit arbitrary catalog model lists');
+const suggestions = catalogModels('first'); suggestions[0].id = 'changed';
+assert.equal(catalogModels('first')[0].id, 'same', 'suggestion edits cannot corrupt metadata');
 assert.equal(modelKind(getModelMeta('first', 'noContext')), 'audio', 'models without context remain discoverable');
 assert.equal(isModelMetaStale(['first']), false);
 assert.equal(isModelMetaStale(['second']), false, 'the full capability catalog is fetched without provider registration');

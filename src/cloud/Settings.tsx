@@ -41,28 +41,9 @@ export default function CloudSettings() {
   }
   if (!cloud.enabled) return <p>云端管理需要通过部署后的服务器 URL 访问。</p>;
   if (!config) return <p role="status">正在读取服务器配置…{error}</p>;
-  const updateProvider = (index: number, patch: Partial<CloudConfig['providers'][number]>) => setConfig({ ...config, providers: config.providers.map((p, i) => i === index ? { ...p, ...patch } : p) });
   return <div className="flex flex-col gap-5">
-    <h2 className="text-xl font-semibold">云端模型与账号</h2>
-    <p className="text-sm text-muted">课程和学习记录按登录账号同步。模型密钥加密保存在服务器，留空表示保留已保存的密钥。</p>
-    {config.providers.map((p, i) => <fieldset key={p.id} className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4">
-      <legend>{p.name || '模型服务'}</legend>
-      <label>名称<input className="input w-full" value={p.name} onChange={e => updateProvider(i, { name: e.target.value })} /></label>
-      <label>API 地址<input className="input w-full" type="url" value={p.baseUrl} onChange={e => updateProvider(i, { baseUrl: e.target.value })} /></label>
-      <label>协议<select className="input w-full" value={p.protocol} onChange={e => updateProvider(i, { protocol: e.target.value as typeof p.protocol })}>
-        <option value="openai-chat">OpenAI Chat Completions</option><option value="openai-responses">OpenAI Responses</option><option value="anthropic-messages">Anthropic Messages</option>
-      </select></label>
-      <label>API Key{p.configured ? '（已配置）' : ''}<input className="input w-full" type="password" autoComplete="new-password" value={p.apiKey ?? ''} onChange={e => updateProvider(i, { apiKey: e.target.value || undefined })} /></label>
-      <Button variant="secondary" onPress={() => setConfig({ ...config, providers: config.providers.filter((_, j) => j !== i) })}>移除服务</Button>
-    </fieldset>)}
-    <Button variant="secondary" onPress={() => setConfig({ ...config, providers: [...config.providers, { id: crypto.randomUUID(), name: '模型服务', baseUrl: 'https://api.openai.com/v1', protocol: 'openai-chat', catalogId: '', serves: ['chat', 'vision', 'asr'] }] })}>添加模型服务</Button>
-    {(['llmModel', 'visionModel', 'asrModel'] as const).map((slot, i) => <fieldset key={slot} className="flex min-w-0 flex-col gap-2">
-      <legend>{['对话模型', '视觉模型', '语音转写模型'][i]}</legend>
-      <select aria-label={`${slot} 服务`} className="input w-full min-w-0" value={config[slot].providerId} onChange={e => setConfig({ ...config, [slot]: { ...config[slot], providerId: e.target.value } })}>
-        <option value="">请选择</option>{config.providers.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-      </select>
-      <input aria-label={`${slot} 模型 ID`} className="input w-full min-w-0" placeholder="模型 ID" value={config[slot].model} onChange={e => setConfig({ ...config, [slot]: { ...config[slot], model: e.target.value } })} />
-    </fieldset>)}
+    <h2 className="text-xl font-semibold">云端账号与权限</h2>
+    <p className="text-sm text-muted">课程和学习记录按登录账号同步。Provider 与模型能力在「模型」设置中管理。</p>
     <h3 className="text-lg font-semibold">Agent 权限</h3>
     {(['read', 'write', 'remove', 'shell'] as const).map((capability, i) => <label key={capability} className="flex items-center justify-between gap-3">
       {['读取资料', '修改资料', '删除资料', '沙盒命令'][i]}<select className="input" value={config.policy[capability]} onChange={e => setConfig({ ...config, policy: { ...config.policy, [capability]: e.target.value } })}>
@@ -75,7 +56,11 @@ export default function CloudSettings() {
       <p className="text-sm text-muted">仅当线程中所有 Bot 都受信任时，命令可跳过逐次审批；“禁止”和联网开关仍然生效。</p>
       {agents.map(agent => <label key={agent.id} className="flex items-center gap-2"><input type="checkbox" checked={config.trustedAgentIds?.includes(agent.id) ?? false} onChange={e => setConfig({ ...config, trustedAgentIds: e.target.checked ? [...(config.trustedAgentIds ?? []), agent.id] : config.trustedAgentIds?.filter(id => id !== agent.id) })} />{agent.name}</label>)}
     </fieldset>
-    <Button isDisabled={busy} onPress={() => void act(async () => { const saved = await cloudRequest<CloudConfig>('/config', { method: 'PUT', body: JSON.stringify(config) }); setConfig(saved); applyCloudConfig(saved); }, '服务器配置已保存')}>保存服务器配置</Button>
+    <Button isDisabled={busy} onPress={() => void act(async () => {
+      const latest = await cloudRequest<CloudConfig>('/config');
+      const saved = await cloudRequest<CloudConfig>('/config', { method: 'PUT', body: JSON.stringify({ ...latest, policy: config.policy, trustedAgentIds: config.trustedAgentIds }) });
+      setConfig(saved); applyCloudConfig(saved);
+    }, '服务器配置已保存')}>保存服务器配置</Button>
     <h3 className="text-lg font-semibold">Passkey</h3>
     <p className="text-sm text-muted">使用 HTTPS 域名或 localhost 访问，并在安装时配置公开 URL。</p>
     <Button variant="secondary" isDisabled={busy} onPress={() => void act(async () => serverClient.passkeyRegisterVerify(await startRegistration({ optionsJSON: await serverClient.passkeyRegisterOptions() })), 'Passkey 已添加')}>添加当前设备 Passkey</Button>

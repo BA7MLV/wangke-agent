@@ -3,6 +3,7 @@ import { createDsmlRecoverer, recoverDsmlText, type DsmlPart } from './dsml';
 import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } from './messageHygiene';
 import { getModelMeta } from './modelMeta';
 import { parseDiscoveredModel, type DiscoveredModel } from './modelDiscoveryData';
+import type { ModelListConnection } from './modelListCache';
 
 /**
  * OpenAI 兼容 API 客户端（浏览器直调）。
@@ -107,7 +108,7 @@ async function request(
 
 /** 拉某家供应商在架的模型 id 列表（用于设置页的候选与「检查模型可用性」） */
 export async function listModelDetails(
-  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
+  s: ModelListConnection,
   signal?: AbortSignal,
 ): Promise<DiscoveredModel[]> {
   const connection = { ...s, baseUrl: s.baseUrl.trim().replace(/\/+$/, ''), apiKey: s.apiKey.trim() };
@@ -115,7 +116,7 @@ export async function listModelDetails(
   const cursors = new Set<string>();
   let path = '/models';
   for (let page = 0; page < 100; page++) {
-    const res = await request(connection, path, { method: 'GET', signal, cache: 'no-store', credentials: 'omit', redirect: 'error' });
+    const res = await request(connection, path, { method: 'GET', signal, cache: 'no-store', credentials: s.credentials ?? 'omit', redirect: 'error' });
     const data: unknown = await res.json();
     if (!data || typeof data !== 'object') throw new Error('模型列表响应格式无效');
     const body = data as { data?: unknown; models?: unknown; has_more?: unknown; last_id?: unknown };
@@ -138,7 +139,7 @@ export async function listModelDetails(
 
 /** 兼容仅消费 ID 的调用方。 */
 export async function listModels(
-  s: Pick<ModelTarget, 'apiKey' | 'baseUrl'> & Partial<Pick<ModelTarget, 'protocol'>>,
+  s: ModelListConnection,
   signal?: AbortSignal,
 ): Promise<string[]> {
   return (await listModelDetails(s, signal)).map((m) => m.id);

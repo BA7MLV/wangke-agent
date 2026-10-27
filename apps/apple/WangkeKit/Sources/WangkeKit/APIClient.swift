@@ -9,7 +9,7 @@ public struct APIError: Error, LocalizedError, Equatable, Sendable {
 
     public var errorDescription: String? {
         switch code {
-        case "invalid_credentials": return "用户名或密码不对"
+        case "invalid_credentials": return "密码不正确，请重试或查看忘记密码帮助"
         case "unauthorized": return "登录已过期，请重新登录"
         case "token_login_unsupported": return "这个服务端版本还不支持 App 登录，请先升级服务端"
         case "network": return "连不上服务器"
@@ -75,14 +75,14 @@ public final class APIClient: @unchecked Sendable {
         try await send(makeRequest("/health"))
     }
 
-    /// 用户名 + 密码换 token。成功后自动带在后续请求上。
-    public func login(username: String, password: String, deviceName: String) async throws -> TokenGrant {
+    /// 访问密码换 token。成功后自动带在后续请求上。
+    public func login(password: String, deviceName: String) async throws -> TokenGrant {
         let health = try await health()
         if let auth = health.auth, !auth.contains("token") {
             throw APIError(status: 0, code: "token_login_unsupported")
         }
         let grant: TokenGrant = try await send(makeRequest("/auth/token", method: "POST", body: [
-            "username": username, "password": password, "deviceName": deviceName,
+            "password": password, "deviceName": deviceName,
         ]))
         token = grant.token
         return grant

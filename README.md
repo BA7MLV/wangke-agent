@@ -178,6 +178,7 @@ curl http://localhost:3000/api/v1/health
 - `/bot` 是独立的 Bot 工作空间：线程、消息气泡、结构化进度/附件/提问/审批消息、SSE 断线恢复和后端持久运行。
 - Bot API 支持 Agent profile、线程参与者、`@提及`、消息反应和可恢复审批；审批结果会恢复对应的 Agent run。
 - 普通聊天与 Bot 共用云端模型设置，支持 OpenAI Chat、Responses 和 Anthropic Messages。旧版 `MODEL_BASE_URL`、`MODEL_API_KEY`、`MODEL_NAME` 仅作为尚未保存网页配置时的初始值。
+- 云端与本地复用同一套供应商卡片、模型库、能力编辑器和默认模型选择器。Provider 与能力直接拉取 models.dev，可从目录添加模型或通过服务端查找账号的可用模型；云端编辑完成后点击「保存模型设置」，API Key 只加密存于服务器，留空保留原密钥。账号、权限和同步在「数据」设置中管理。
 - 默认读取允许，资料修改、删除和沙盒命令需要审批，联网单独控制。可长期信任指定 Bot，或在设置中撤销信任。
 
 ### 聊天中的课程与附件

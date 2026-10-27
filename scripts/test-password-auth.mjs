@@ -1,0 +1,95 @@
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { spawn } from 'node:child_process';
+import Database from 'better-sqlite3';
+
+const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-password-auth-'));
+const dbPath = path.join(directory, 'db/wangke.sqlite');
+Object.assign(process.env, { NODE_ENV: 'test', DATA_DIR: directory, DB_PATH: dbPath, BOOTSTRAP_SECRET_FILE: path.join(directory, 'config/bootstrap-secret'), FILES_DIR: path.join(directory, 'files'), PUBLIC_ORIGIN: 'https://learn.example.com' });
+delete process.env.ALLOW_INSECURE_CSRF;
+const { buildServer } = await import('../apps/api/src/server.ts');
+let app = buildServer({ dbPath, staticDir: path.join(directory, 'no-web') });
+let db;
+const oldPassword = 'old-custom-admin-password';
+const newPassword = '新的安全访问密码-password-2026';
+const login = payload => app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload });
+const reset = (input, target = dbPath) => new Promise((resolve, reject) => {
+  const child = spawn(process.execPath, ['scripts/reset-password.mjs', '--stdin'], { env: { ...process.env, DB_PATH: target }, stdio: ['pipe', 'pipe', 'pipe'] });
+  let output = '';
+  child.stdout.on('data', chunk => { output += chunk; });
+  child.stderr.on('data', chunk => { output += chunk; });
+  child.on('error', reject);
+  child.on('close', code => {
+    assert.ok(!output.includes(newPassword) && !output.includes(oldPassword), 'passwords must never appear in output');
+    resolve({ code, output });
+  });
+  child.stdin.end(input);
+});
+try {
+  assert.equal((await login({ password: oldPassword })).statusCode, 401);
+  assert.equal((await reset(`${newPassword}\n${newPassword}\n`)).code, 1, 'uninitialized instances must use bootstrap instead of recovery');
+  const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
+  assert.equal((await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: oldPassword } })).statusCode, 201);
+  const response = await login({ password: oldPassword });
+  assert.equal(response.statusCode, 200, 'login only requires a password');
+  const userId = response.json().user.id;
+  const cookie = response.headers['set-cookie'].split(';')[0];
+  assert.equal((await login({ password: 'wrong' })).statusCode, 401);
+  assert.equal((await login({ password: 'unusable-login-dummy' })).statusCode, 401);
+  const denied = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', headers: { origin: 'https://evil.example' }, payload: { password: oldPassword } });
+  assert.equal(denied.statusCode, 403);
+  const token = (await app.inject({ method: 'POST', url: '/api/v1/auth/token', payload: { password: oldPassword } })).json().token;
+  assert.ok(token, 'native clients can also omit the account name');
+  const pairing = (await app.inject({ method: 'POST', url: '/api/v1/pairing/create', headers: { cookie }, payload: {} })).json();
+  await app.inject({ method: 'POST', url: `/api/v1/pairing/${pairing.code}/approve`, headers: { cookie }, payload: {} });
+  const thread = (await app.inject({ method: 'POST', url: '/api/v1/threads', headers: { cookie }, payload: { title: 'Recovery must preserve this', mode: 'chat' } })).json();
+  const marker = path.join(directory, 'files/preserved.txt');
+  fs.writeFileSync(marker, 'keep original files');
+  db = new Database(dbPath);
+  const timestamp = new Date().toISOString();
+  db.prepare('INSERT INTO passkey_credentials(id,user_id,public_key,counter,created_at) VALUES(?,?,?,?,?)').run('preserved-passkey', userId, Buffer.from('fixture'), 0, timestamp);
+  db.prepare('INSERT INTO webauthn_challenges(id,kind,challenge,created_at,expires_at) VALUES(?,?,?,?,?)').run('pending-login', 'authentication', 'pending-challenge', timestamp, '2099-01-01T00:00:00.000Z');
+  const originalHash = db.prepare('SELECT password_hash FROM password_credentials').get().password_hash;
+  for (const input of [`${newPassword}\nmismatch\n`, 'too-short\ntoo-short\n', `${'x'.repeat(257)}\n${'x'.repeat(257)}\n`, `${newPassword}\n`]) {
+    assert.equal((await reset(input)).code, 1);
+    assert.equal(db.prepare('SELECT password_hash FROM password_credentials').get().password_hash, originalHash);
+  }
+  const missingPath = path.join(directory, 'missing.sqlite');
+  assert.equal((await reset(`${newPassword}\n${newPassword}\n`, missingPath)).code, 1);
+  assert.equal(fs.existsSync(missingPath), false, 'recovery never creates a database');
+  const result = await reset(`${newPassword}\n${newPassword}\n`);
+  assert.equal(result.code, 0, result.output);
+  const hash = db.prepare('SELECT password_hash FROM password_credentials').get().password_hash;
+  assert.match(hash, /^\$argon2id\$/);
+  assert.notEqual(hash, originalHash);
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/auth/session', headers: { cookie } })).json().authenticated, false, 'old browser session revoked');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/auth/session', headers: { authorization: `Bearer ${token}` } })).json().authenticated, false, 'old native token revoked');
+  assert.equal((await app.inject({ method: 'POST', url: `/api/v1/pairing/${pairing.code}/exchange`, payload: {} })).statusCode, 403, 'old approved pairing revoked');
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM webauthn_challenges').get().count, 0);
+  assert.equal(db.prepare('SELECT COUNT(*) AS count FROM passkey_credentials').get().count, 1);
+  assert.equal(fs.readFileSync(marker, 'utf8'), 'keep original files');
+  assert.equal((await login({ password: oldPassword })).statusCode, 401, 'old password no longer works');
+  const newLogin = await login({ password: newPassword });
+  assert.equal(newLogin.statusCode, 200);
+  assert.equal(newLogin.json().user.id, userId, 'same account retains ownership');
+  assert.equal((await app.inject({ method: 'GET', url: `/api/v1/threads/${thread.id}`, headers: { cookie: newLogin.headers['set-cookie'].split(';')[0] } })).json().title, thread.title);
+  db.prepare('INSERT INTO users(id,name,created_at) VALUES(?,?,?)').run('second', 'Second', timestamp);
+  db.prepare('INSERT INTO password_credentials(user_id,password_hash,created_at) VALUES(?,?,?)').run('second', hash, timestamp);
+  assert.equal((await login({ password: newPassword })).statusCode, 401, 'ambiguous accounts never guessed');
+  assert.equal((await reset(`${oldPassword}\n${oldPassword}\n`)).code, 1, 'recovery also fails closed for ambiguous accounts');
+  assert.equal(db.prepare('SELECT password_hash FROM password_credentials WHERE user_id=?').get(userId).password_hash, hash);
+  db.prepare('DELETE FROM password_credentials WHERE user_id=?').run('second');
+  db.prepare('DELETE FROM users WHERE id=?').run('second');
+  await app.close();
+  app = buildServer({ dbPath, staticDir: path.join(directory, 'no-web') });
+  assert.equal((await login({ password: newPassword })).statusCode, 200, 'new password persists after restart');
+  assert.equal(fs.existsSync(process.env.BOOTSTRAP_SECRET_FILE), false, 'recovery never reopens bootstrap');
+  assert.equal((await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' })).json().initialized, true);
+  console.log('Password-only login, CSRF, safe CLI reset, credential revocation, data preservation and restart passed');
+} finally {
+  db?.close();
+  await app.close();
+  fs.rmSync(directory, { recursive: true, force: true });
+}

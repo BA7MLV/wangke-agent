@@ -77,7 +77,7 @@ try {
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   await page.evaluate(async (secret) => {
     await fetch('/api/v1/bootstrap/initialize', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Bootstrap-Secret': secret }, body: JSON.stringify({ adminPassword: 'attachment-test-password' }) });
-    const login = await fetch('/api/v1/auth/password/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Administrator', password: 'attachment-test-password' }) });
+    const login = await fetch('/api/v1/auth/password/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'attachment-test-password' }) });
     if (!login.ok) throw new Error('login failed');
   }, secret);
   await page.getByRole('button', { name: '重试', exact: true }).click();

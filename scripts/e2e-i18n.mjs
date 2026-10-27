@@ -108,18 +108,17 @@ try {
   console.log('OK: narrow and tablet layouts, extra-large English labels, mobile language picker');
   await mobile.close();
 
-  // 门禁无需登录即可访问切换器，切换后不丢账号/密码输入。
+  // 门禁无需登录即可访问切换器，切换后不丢密码输入。
   const gate = await context({}, true);
   await gate.route('**/api/v1/bootstrap/status', route => route.fulfill({ json: { initialized: true } }));
   await gate.route('**/api/v1/auth/session', route => route.fulfill({ json: { authenticated: false, user: null } }));
   const gatePage = await gate.newPage();
   await gatePage.goto(BASE);
   await gatePage.getByTestId('ui-language-select').waitFor();
-  await gatePage.locator('input[autocomplete="username"]').fill('keep-my-name');
   await gatePage.locator('input[type="password"]').fill('keep-my-password');
   await selectLanguage(gatePage, '简体中文');
   await localeIs(gatePage, 'zh-CN');
-  assert.equal(await gatePage.locator('input[autocomplete="username"]').inputValue(), 'keep-my-name');
+  assert.equal(await gatePage.locator('input[autocomplete="username"]').count(), 0);
   assert.equal(await gatePage.locator('input[type="password"]').inputValue(), 'keep-my-password');
   console.log('OK: pre-login language picker preserves form input');
   await gate.close();

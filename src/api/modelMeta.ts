@@ -320,6 +320,14 @@ export function modelProvidersMeta(): ModelProviderMeta[] {
   }));
 }
 
+/** Provider-scoped catalog suggestions, not a claim that an account can call them. */
+export function catalogModels(catalogId: string): { id: string; name?: string }[] {
+  if (!catalogId) return [];
+  const prefix = `${catalogId}\0`;
+  return Object.entries(load()?.models ?? {}).flatMap(([key, meta]) =>
+    key.startsWith(prefix) ? [{ id: key.slice(prefix.length), name: meta.name }] : []);
+}
+
 export function isModelMetaStale(_catalogs?: readonly string[]): boolean {
   const c = load();
   if (!c?.complete) return true;

@@ -115,7 +115,7 @@ try {
   app = buildServer(options);
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   await json('POST', '/bootstrap/initialize', { adminPassword: 'project-test-password' }, 201, { 'x-bootstrap-secret': secret });
-  const login = await call('POST', '/auth/password/login', { name: 'Administrator', password: 'project-test-password' });
+  const login = await call('POST', '/auth/password/login', { password: 'project-test-password' });
   cookie = login.headers['set-cookie'].split(';')[0];
   db = new Database(options.dbPath);
   const { agents } = await json('GET', '/agents');

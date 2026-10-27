@@ -23,23 +23,23 @@ try {
   const requests = [];
   page.on('request', request => requests.push(request));
   await page.goto(`${origin}/#/setup?secret=invalid-test-key`);
-  await page.getByLabel('一次性初始化密钥', { exact: true }).waitFor();
-  assert.equal(await page.getByLabel('一次性初始化密钥', { exact: true }).inputValue(), 'invalid-test-key');
+  await page.getByRole('heading', { name: '设置访问密码' }).waitFor();
+  assert.equal(await page.getByLabel('一次性初始化密钥', { exact: true }).count(), 0, 'link secret is handled without a second input');
   assert.equal(new URL(page.url()).hash, '#/setup');
   await page.getByLabel('密码', { exact: true }).fill('test-password-only-12345');
-  await page.getByRole('button', { name: '创建管理员', exact: true }).click();
+  await page.getByRole('button', { name: '设置密码并继续', exact: true }).click();
   await page.getByRole('alert').filter({ hasText: '初始化密钥无效或已过期' }).waitFor();
+  assert.equal(await page.getByLabel('一次性初始化密钥', { exact: true }).inputValue(), 'invalid-test-key', 'invalid links reveal the manual secret input');
   assert.equal((await (await context.request.get(`${origin}/api/v1/bootstrap/status`)).json()).initialized, false);
 
   const link = `${origin}/#/setup?${new URLSearchParams({ secret })}`;
   await page.goto(link);
-  await page.waitForFunction(secret => document.querySelector('input[aria-label="一次性初始化密钥"]')?.value === secret, secret);
-  assert.equal(await page.getByLabel('一次性初始化密钥', { exact: true }).inputValue(), secret);
+  await page.waitForFunction(() => !document.querySelector('input[aria-label="一次性初始化密钥"]'));
   assert.equal(new URL(page.url()).hash, '#/setup', 'credential removed from browser history');
   assert.equal(await page.evaluate(secret => JSON.stringify([localStorage, sessionStorage]).includes(secret), secret), false);
-  await page.getByLabel('账号', { exact: true }).fill('BootstrapTest');
+  assert.equal(await page.getByLabel('账号', { exact: true }).count(), 0);
   await page.getByLabel('密码', { exact: true }).fill('test-password-only-12345');
-  await page.getByRole('button', { name: '创建管理员', exact: true }).click();
+  await page.getByRole('button', { name: '设置密码并继续', exact: true }).click();
   await page.getByRole('heading', { name: '配置个人云端', exact: true }).waitFor({ timeout: 30000 });
   assert.equal(fs.existsSync(secretFile), false, 'one-time secret deleted after successful initialization');
   const initialize = requests.find(request => request.url().endsWith('/bootstrap/initialize') && request.headers()['x-bootstrap-secret'] === secret);
@@ -49,7 +49,32 @@ try {
     headers: { 'x-bootstrap-secret': secret }, data: { adminPassword: 'test-password-only-12345' },
   });
   assert.equal(repeated.status(), 410, 'used setup link cannot create another administrator');
-  console.log('Bootstrap browser autofill, URL cleanup, readable errors and one-time administrator creation passed');
+  await context.request.post(`${origin}/api/v1/auth/logout`);
+  await page.goto(`${origin}/#/setup`);
+  await page.getByRole('heading', { name: '连接网课云端', exact: true }).waitFor();
+  assert.equal(await page.getByLabel('账号', { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel('一次性初始化密钥', { exact: true }).count(), 0);
+  await page.getByLabel('密码', { exact: true }).fill('wrong-password');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('alert').filter({ hasText: '密码不正确' }).waitFor();
+  assert.equal(await page.getByLabel('密码', { exact: true }).inputValue(), 'wrong-password', 'errors do not remount the form');
+  await page.getByRole('button', { name: '显示密码', exact: true }).click();
+  assert.equal(await page.getByLabel('密码', { exact: true }).getAttribute('type'), 'text');
+  await page.getByRole('button', { name: '隐藏密码', exact: true }).click();
+  assert.equal(await page.getByLabel('密码', { exact: true }).getAttribute('type'), 'password');
+  await page.locator('summary').filter({ hasText: '忘记密码？' }).click();
+  await page.getByText('docker compose exec app node scripts/reset-password.mjs', { exact: true }).waitFor();
+  for (const width of [1280, 360]) {
+    await page.setViewportSize({ width, height: 900 });
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), 'recovery help must not overflow on mobile');
+  }
+  await page.emulateMedia({ colorScheme: 'dark' });
+  assert.ok(await page.locator('.password-recovery__body').isVisible());
+  await page.getByLabel('密码', { exact: true }).fill('test-password-only-12345');
+  await page.getByRole('button', { name: '登录', exact: true }).click();
+  await page.getByRole('heading', { name: '配置个人云端', exact: true }).waitFor({ timeout: 30000 });
+  assert.equal((await (await context.request.get(`${origin}/api/v1/auth/session`)).json()).authenticated, true);
+  console.log('Bootstrap URL cleanup, secret handling, password-only login, readable errors, visibility toggle and responsive recovery help passed');
 } finally {
   await browser?.close();
   await app.close();

@@ -29,12 +29,12 @@ public final class AppModel {
 
     // MARK: - 登录
 
-    public func signIn(server: String, username: String, password: String, deviceName: String) async throws {
+    public func signIn(server: String, password: String, deviceName: String) async throws {
         guard let url = Self.normalizedServerURL(server) else {
             throw APIError(status: 0, code: "服务器地址不对")
         }
         let client = APIClient(baseURL: url)
-        let grant = try await client.login(username: username, password: password, deviceName: deviceName)
+        let grant = try await client.login(password: password, deviceName: deviceName)
         let credential = StoredCredential(serverURL: url, token: grant.token, user: grant.user)
         store.save(credential)
         self.client = client

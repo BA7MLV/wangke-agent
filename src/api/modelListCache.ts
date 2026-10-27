@@ -24,11 +24,16 @@ export interface ModelListConnection {
   baseUrl: string;
   apiKey: string;
   protocol?: 'openai-chat' | 'openai-responses' | 'anthropic-messages';
+  /** Cloud discovery authenticates to our gateway with the user's session cookie. */
+  credentials?: RequestCredentials;
+  /** Separate cloud accounts/endpoints without exposing the server's API key. */
+  cacheScope?: string;
 }
 
 /** 仅内存使用；不要将此值写入日志或持久化。 */
 export function modelListIdentity(connection: ModelListConnection): string {
-  return JSON.stringify([keyOf(connection.baseUrl), connection.protocol ?? 'openai-chat', connection.apiKey.trim()]);
+  return JSON.stringify([keyOf(connection.baseUrl), connection.protocol ?? 'openai-chat', connection.apiKey.trim(),
+    ...(connection.cacheScope ? [connection.cacheScope] : [])]);
 }
 
 export async function modelListCacheKey(connection: ModelListConnection): Promise<string> {

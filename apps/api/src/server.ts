@@ -211,35 +211,36 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (!checkOrigin(request, reply)) return;
     if (repo.isInitialized()) return bad(reply, 410, 'bootstrap_closed');
      if (Date.now() >= bootstrap.createdAt + bootstrapTtlMs || request.headers['x-bootstrap-secret'] !== bootstrap.secret) return bad(reply, 403, 'invalid_or_expired_bootstrap_secret');
-    const { adminPassword, adminName = 'Administrator' } = request.body ?? {};
+    const { adminPassword } = request.body ?? {};
     if (typeof adminPassword !== 'string' || adminPassword.length < 12 || adminPassword.length > 256) return bad(reply, 400, 'admin_password_must_be_12_to_256_characters');
-    const initialized = repo.initializeAdmin(adminName.trim().slice(0, 100) || 'Administrator', await argon2.hash(adminPassword, { type: argon2.argon2id }));
+    const initialized = repo.initializeAdmin('Administrator', await argon2.hash(adminPassword, { type: argon2.argon2id }));
     if (!initialized) return bad(reply, 410, 'bootstrap_closed');
     fs.rmSync(secretFile, { force: true });
     return reply.code(201).send({ initialized: true });
   });
 
   /** 密码校验 + 按 IP 退避。浏览器登录（发 Cookie）和原生壳层登录（发 token）共用。 */
-  async function verifyPassword(request: FastifyRequest<{ Body: { name?: string; username?: string; password?: string } }>) {
+  async function verifyPassword(request: FastifyRequest<{ Body: { password?: string } }>) {
     pruneAttempts(); const key = request.ip; const attempt = attempts.get(key); const wait = attempt && attempt.until > Date.now() ? attempt.until - Date.now() : 0;
     if (wait) await new Promise((resolve) => setTimeout(resolve, Math.min(wait, 1500)));
-    const identifier = String(request.body?.username ?? request.body?.name ?? '');
-    const record = store.db.prepare('SELECT u.id,u.name,p.password_hash FROM users u JOIN password_credentials p ON p.user_id=u.id WHERE u.name=?').get(identifier) as any;
-    const valid = typeof request.body?.password === 'string' && await argon2.verify(record?.password_hash ?? await dummyHash, request.body.password);
+    // Each personal deployment has one administrator; fail closed if ambiguous.
+    const records = store.db.prepare('SELECT u.id,u.name,p.password_hash FROM users u JOIN password_credentials p ON p.user_id=u.id LIMIT 2').all() as any[];
+    const record = records.length === 1 ? records[0] : undefined;
+    const valid = typeof request.body?.password === 'string' && request.body.password.length <= 256 && await argon2.verify(record?.password_hash ?? await dummyHash, request.body.password) && Boolean(record);
     if (!valid) { const seen = Date.now(); attempts.set(key, { count: (attempt?.count ?? 0) + 1, until: seen + Math.min(1000 * 2 ** Math.min(attempt?.count ?? 0, 4), 10000), seen }); return null; }
     attempts.delete(key); return record as { id: string; name: string };
   }
-  app.post<{ Body: { name?: string; username?: string; password?: string } }>('/api/v1/auth/password/login', async (request, reply) => {
+  app.post<{ Body: { password?: string } }>('/api/v1/auth/password/login', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const record = await verifyPassword(request);
     if (!record) return bad(reply, 401, 'invalid_credentials');
     issueSession(record.id, reply); return { user: publicUser(record) };
   });
   /**
-   * 原生壳层（iOS / macOS）和脚本的登录：用户名 + 密码换一个 Bearer token。
+   * 原生壳层（iOS / macOS）和脚本的登录：密码换一个 Bearer token。
    * token 只在这次响应里出现一次，库里只存哈希；`POST /auth/logout` 带上它即可吊销。
    */
-  app.post<{ Body: { name?: string; username?: string; password?: string; deviceName?: string } }>('/api/v1/auth/token', async (request, reply) => {
+  app.post<{ Body: { password?: string; deviceName?: string } }>('/api/v1/auth/token', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const record = await verifyPassword(request);
     if (!record) return bad(reply, 401, 'invalid_credentials');

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { Provider } from '../store/settings';
-import { modelListCacheKey, modelListIdentity, pruneModelLists, readModelList } from '../api/modelListCache';
+import { modelListCacheKey, modelListIdentity, pruneModelLists, readModelList, type ModelListConnection } from '../api/modelListCache';
 import { discoverModels } from '../api/modelDiscovery';
 import type { DiscoveredModel } from '../api/modelDiscoveryData';
 
@@ -10,9 +10,10 @@ interface DiscoveryState {
   note?: string;
   loading: boolean;
 }
+export type DiscoveryProvider = Provider & ModelListConnection;
 
 /** 仅手动查找时请求接口；本地缓存和发现结果都不自动覆盖已保存的模型。 */
-export function useProviderModels(providers: Provider[], selectedProviderId: string | null) {
+export function useProviderModels(providers: DiscoveryProvider[], selectedProviderId: string | null) {
   const [states, setStates] = useState<Record<string, DiscoveryState>>({});
   const lifecycle = useRef<AbortController | null>(null);
   const sequences = useRef(new Map<string, number>());
@@ -20,7 +21,7 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
   providersRef.current = providers;
   const providersKey = JSON.stringify(providers.map((p) => [p.id, modelListIdentity(p)]));
 
-  const refresh = useCallback(async (provider: Provider, signal = lifecycle.current?.signal) => {
+  const refresh = useCallback(async (provider: DiscoveryProvider, signal = lifecycle.current?.signal) => {
     if (!signal || signal.aborted) return null;
     const identity = modelListIdentity(provider);
     const sequence = (sequences.current.get(identity) ?? 0) + 1;
@@ -48,7 +49,7 @@ export function useProviderModels(providers: Provider[], selectedProviderId: str
   useEffect(() => {
     const controller = new AbortController();
     lifecycle.current = controller;
-    const configured = providersRef.current.filter((p) => p.baseUrl.trim() && p.apiKey.trim());
+    const configured = providersRef.current.filter((p) => p.baseUrl.trim() && (p.apiKey.trim() || p.credentials === 'include'));
     void (async () => {
       const keys = await Promise.all(configured.map(modelListCacheKey));
       if (controller.signal.aborted) return;

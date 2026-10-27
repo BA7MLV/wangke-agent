@@ -80,5 +80,21 @@ try {
   runner.cancel(cancelled); await until(() => aborted); await runner.close();
   assert.equal(state(cancelled).status, 'cancelled');
   assert.equal(store.db.prepare('SELECT status FROM run_steps WHERE run_id=?').get(cancelled).status, 'interrupted');
-  console.log('Bot runtime: multi-step, persistent wake, crash recovery and cancellation passed');
+  // Model failures retain diagnostics without creating conversation messages or events.
+  for (const [fetcher, code] of [
+    [async () => new Response('', { status: 503 }), 'model_request_failed'],
+    [async () => { throw new Error('network unavailable'); }, 'model_request_failed'],
+    [async () => new Response(JSON.stringify({ choices: [] })), 'invalid_structured_response'],
+  ]) {
+    const failed = createRun();
+    const messagesBefore = store.db.prepare('SELECT COUNT(*) n FROM messages WHERE thread_id=?').get(thread).n;
+    const eventsBefore = store.db.prepare('SELECT COUNT(*) n FROM message_events WHERE thread_id=?').get(thread).n;
+    runner = new BotRunner(store, { fetch: fetcher });
+    runner.start(); await until(() => state(failed).status === 'failed'); await runner.close();
+    assert.equal(state(failed).error_code, code);
+    assert.ok(state(failed).completed_at);
+    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM messages WHERE thread_id=?').get(thread).n, messagesBefore);
+    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM message_events WHERE thread_id=?').get(thread).n, eventsBefore);
+  }
+  console.log('Bot runtime: multi-step, persistent wake, crash recovery, cancellation and silent model failures passed');
 } finally { await runner?.close(); store.close(); fs.rmSync(dir, { recursive: true, force: true }); }

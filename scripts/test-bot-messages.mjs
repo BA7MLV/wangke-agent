@@ -39,3 +39,17 @@ test('list times read like Messages: time today, "yesterday", weekday, then a da
   assert.equal(formatListTime(ago(72), 'zh-CN', now), '星期六');
   assert.equal(formatListTime('not a date', 'zh-CN', now), '');
 });
+
+test('legacy model failure notices are hidden before grouping', () => {
+  const notice = { ...msg('error', 'assistant', 1), kind: 'progress', content: '模型暂时不可用，请稍后重试。' };
+  const rows = groupMessages([msg('a', 'user', 0), notice, msg('b', 'user', 1)]);
+  assert.deepEqual(rows.map((r) => r.key), ['a', 'b']);
+  assert.deepEqual(rows.map((r) => [r.first, r.last]), [[true, false], [false, true]]);
+  assert.deepEqual(groupMessages([notice]), []);
+});
+
+test('ordinary progress and user-authored failure text remain visible', () => {
+  const progress = { ...msg('progress', 'assistant', 0), kind: 'progress', content: '正在整理资料' };
+  const user = { ...msg('user', 'user', 1), content: '模型暂时不可用，请稍后重试。' };
+  assert.deepEqual(groupMessages([progress, user]).map((r) => r.key), ['progress', 'user']);
+});

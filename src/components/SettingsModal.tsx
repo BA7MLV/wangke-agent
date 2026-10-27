@@ -36,6 +36,7 @@ const MODULES: Module[] = [
   { key: 'data', icon: 'folder', tint: '#64d2ff', Component: lazy(() => import('./settings/DataModule')) },
 ];
 const CloudSettings = lazy(() => import('../cloud/Settings'));
+const CloudModels = lazy(() => import('../cloud/Models'));
 
 function ModuleFallback() {
   return <div className="settings-module-fallback"><Spinner size="sm" color="current" /></div>;
@@ -94,7 +95,8 @@ export default function SettingsModal() {
   }, [open, module, explicit]);
 
   const active = MODULES.find((m) => m.key === localModule) ?? MODULES[0];
-  const ActiveContent = cloud.enabled && (localModule === 'models' || localModule === 'data') ? CloudSettings : active.Component;
+  const ActiveContent = cloud.enabled && localModule === 'models' ? CloudModels
+    : cloud.enabled && localModule === 'data' ? CloudSettings : active.Component;
 
   if (mobile) {
     const title = pushed ? t(`modules.${active.key}`) : common('settings');

@@ -1,25 +1,28 @@
 import { useState } from 'react';
 import { Button, Checkbox, Input, ListBox, SearchField, Select } from '@heroui/react';
-import { catalogOf, SLOT_LABEL, useSettings, type ModelSlot, type SavedModel } from '../../store/settings';
+import { catalogOf, SLOT_LABEL, type ModelSlot, type SavedModel } from '../../store/settings';
 import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
 import { Field, LoadingButton, SectionCard, toast } from '../../ui';
-import { getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
+import { catalogModels, getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
 import type { DiscoveredModel } from '../../api/modelDiscoveryData';
 import { ModelMetadataDetails } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
+import { useModelSettings, useModelSettingsStore } from './modelSettingsContext';
 
 const slots: ModelSlot[] = ['chat', 'vision', 'asr', 'decision'];
 const capabilities = ['text', 'image', 'audio', 'video', 'pdf'];
 type Draft = SavedModel & { contextWindowText: string; maxOutputTokensText: string };
 
-export default function ModelLibrary({ providerId, discovered = [], checking, onRefresh, note }: {
+export default function ModelLibrary({ providerId, discovered = [], checking, onRefresh, note, allowDecision = true }: {
   providerId: string;
   discovered?: DiscoveredModel[];
   checking: boolean;
   onRefresh: () => void;
   note?: string;
+  allowDecision?: boolean;
 }) {
-  const settings = useSettings();
+  const settings = useModelSettings();
+  const settingsStore = useModelSettingsStore();
   useModelMetaRevision();
   const catalogId = catalogOf(settings, providerId);
   const saved = savedModelsOf(settings).filter((m) => m.providerId === providerId);
@@ -30,7 +33,8 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
   const [error, setError] = useState('');
   const filtered = saved.filter((m) => `${m.model} ${m.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const savedIds = new Set(saved.map((m) => m.model));
-  const available = discovered.filter((m) => !savedIds.has(m.id));
+  const discoveredIds = new Set(discovered.map((m) => m.id));
+  const available = [...discovered, ...catalogModels(catalogId).filter((m) => !discoveredIds.has(m.id))].filter((m) => !savedIds.has(m.id));
   const discoveryNeedle = discoveryQuery.trim().toLowerCase();
   const discoveryResults = available.filter((m) => `${m.id} ${m.name ?? ''}`.toLowerCase().includes(discoveryNeedle));
   const active = (m: SavedModel) => [settings.llmModel, settings.visionModel, settings.asrModel, settings.decisionModel].some((r) => modelKey(r) === modelKey(m));
@@ -52,9 +56,9 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
 
   const catalogMeta = editor ? getModelMeta(editor.draft.metadataCatalogId ?? catalogId, editor.draft.model) : null;
   const match = editor ? matchModelMeta(catalogId, editor.draft.model) : null;
-  const selectedSlots = editor && !editor.original && !editor.slotsEdited
+  const selectedSlots = (editor && !editor.original && !editor.slotsEdited
     ? suggestedModelSlots(catalogId, editor.draft.model, editor.draft)
-    : editor?.draft.slots ?? [];
+    : editor?.draft.slots ?? []).filter((slot) => allowDecision || slot !== 'decision');
 
   return <SectionCard title="模型" testId="card-model-library"
     actions={<div className="flex flex-wrap gap-2">
@@ -67,7 +71,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
         event.preventDefault();
         try {
           const { contextWindowText, maxOutputTokensText, ...draft } = editor.draft;
-          settings.update(editModelPatch(useSettings.getState(), editor.original, {
+          settings.update(editModelPatch(settingsStore.getState(), editor.original, {
             ...draft,
             slots: selectedSlots,
             contextWindow: contextWindowText ? Number(contextWindowText) : undefined,
@@ -109,7 +113,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
           for (const field of MODEL_OVERRIDE_FIELDS) delete draft[field];
           setEditor({ ...editor, draft });
         }}>恢复 models.dev 默认能力</Button>
-        <Field label="使用用途" hint="新模型按输入/输出能力预选用途，可按实际接口支持情况调整；不受供应商层限制。"><div className="flex flex-wrap gap-4">{slots.map((slot) => <Checkbox key={slot} isSelected={selectedSlots.includes(slot)} onChange={(on) => setEditor({ ...editor, slotsEdited: true, draft: { ...editor.draft, slots: on ? [...new Set([...selectedSlots, slot])] : selectedSlots.filter((s) => s !== slot) } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>{SLOT_LABEL[slot]}</Checkbox.Content></Checkbox>)}</div></Field>
+        <Field label="使用用途" hint="新模型按输入/输出能力预选用途，可按实际接口支持情况调整；不受供应商层限制。"><div className="flex flex-wrap gap-4">{slots.filter((slot) => allowDecision || slot !== 'decision').map((slot) => <Checkbox key={slot} isSelected={selectedSlots.includes(slot)} onChange={(on) => setEditor({ ...editor, slotsEdited: true, draft: { ...editor.draft, slots: on ? [...new Set([...selectedSlots, slot])] : selectedSlots.filter((s) => s !== slot) } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>{SLOT_LABEL[slot]}</Checkbox.Content></Checkbox>)}</div></Field>
         {selectedSlots.includes('decision') && <>
           <Field label="决策接口协议" hint="目录分类不代表接口兼容；请核实供应商支持此端点，不能使用普通聊天协议。">
             <Select aria-label="决策接口协议" placeholder="请选择已确认的协议" selectedKey={editor.draft.decisionProtocol ?? null} onSelectionChange={(key) => setEditor({ ...editor, draft: { ...editor.draft, decisionProtocol: key === 'typesafe-systemone' ? key : undefined } })}>
@@ -138,13 +142,13 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
         setDiscoveryOpen(event.currentTarget.open);
         if (!event.currentTarget.open) setDiscoveryQuery('');
       }}>
-        <summary className="cursor-pointer px-3 py-3 text-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-focus" data-testid="discovered-model-select">接口发现的模型 · {available.length}</summary>
+        <summary className="cursor-pointer px-3 py-3 text-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-focus" data-testid="discovered-model-select">可添加模型 · {available.length}</summary>
         {discoveryOpen && <div className="flex flex-col gap-3 border-t border-border p-3">
-          <p className="text-xs text-pretty text-muted">添加时带入接口声明的能力；你可以修改。重新查找不会覆盖已保存的模型。</p>
+          <p className="text-xs text-pretty text-muted">供应商与能力目录直接来自 models.dev；目录模型不代表账号已获授权。接口声明优先补充，手动配置始终优先。</p>
           <SearchField aria-label="搜索接口模型" value={discoveryQuery} onChange={setDiscoveryQuery}><SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索模型名称或 ID" /><SearchField.ClearButton /></SearchField.Group></SearchField>
           <ul className="m-0 max-h-64 list-none divide-y divide-border overflow-y-auto p-0" aria-label="接口模型结果">
             {discoveryResults.map((m) => <li key={m.id} className="flex items-center gap-3 py-2">
-              <div className="min-w-0 flex-1"><div className="truncate text-sm" title={m.name || m.id}>{m.name || m.id}</div>{m.name && m.name !== m.id && <div className="truncate text-xs text-muted" title={m.id}>{m.id}</div>}</div>
+              <div className="min-w-0 flex-1"><div className="truncate text-sm" title={m.name || m.id}>{m.name || m.id}</div>{m.name && m.name !== m.id && <div className="truncate text-xs text-muted" title={m.id}>{m.id}</div>}<span className="text-xs text-muted">{discoveredIds.has(m.id) ? '供应商接口' : 'models.dev'}</span></div>
               <Button size="sm" variant="secondary" aria-label={`添加 ${m.id}`} onPress={() => {
                 setDiscoveryOpen(false);
                 openEditor(null, m);

@@ -314,7 +314,9 @@ export class BotRunner {
       }
       const code = error instanceof ProjectError ? error.code : error instanceof Error && ['model_not_configured', 'sandbox_unavailable', 'invalid_structured_response'].includes(error.message) ? error.message : 'model_request_failed';
       this.store.db.prepare("UPDATE run_steps SET status='failed',result=?,completed_at=? WHERE run_id=? AND status='running'").run(code, now(), run.id);
-      this.append(run.thread_id, 'progress', error instanceof ProjectError ? `项目任务已停止：${code}` : code === 'sandbox_unavailable' ? '沙盒服务不可用，任务已停止。请检查后端沙盒配置。' : '模型暂时不可用，请稍后重试。');
+      // Model failures belong to run diagnostics, not the conversation history.
+      if (error instanceof ProjectError) this.append(run.thread_id, 'progress', `项目任务已停止：${code}`);
+      else if (code === 'sandbox_unavailable') this.append(run.thread_id, 'progress', '沙盒服务不可用，任务已停止。请检查后端沙盒配置。');
       this.store.db.prepare("UPDATE runs SET status='failed',completed_at=?,error_code=? WHERE id=? AND status='running'").run(now(), code, run.id);
     }
   }

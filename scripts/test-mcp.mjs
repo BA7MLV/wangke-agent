@@ -114,7 +114,7 @@ try {
   // Authenticated API + real worker identities. Scope is read from server records, not client input.
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'test-password-long-enough' } });
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { name: 'Administrator', password: 'test-password-long-enough' } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { password: 'test-password-long-enough' } });
   assert.equal(login.statusCode, 200);
   const cookie = login.headers['set-cookie'].split(';')[0];
   const request = (method, url, payload, headers = { cookie }) => app.inject({ method, url: `/api/v1/cloud${url}`, payload, headers });

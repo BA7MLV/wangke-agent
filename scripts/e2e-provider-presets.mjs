@@ -13,7 +13,7 @@ const presets = [
   ['vercel', 'https://ai-gateway.vercel.sh/v1', 'openai-chat'],
 ];
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce' });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', locale: 'zh-CN' });
 const errors = [];
 const modelRequests = [];
 page.on('pageerror', (error) => errors.push(error.message));
@@ -213,6 +213,7 @@ try {
     assert.match(await response.text(), /<svg/);
   }
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.goto(`${BASE}/#/settings/models`);
   await page.getByTestId('provider-add-card').click(); // 响应式 Modal → Drawer 会重新挂载模块。
   await page.getByTestId('provider-presets').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);

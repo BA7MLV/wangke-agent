@@ -51,7 +51,7 @@ try {
   assert.equal(closed.json().expiresAt, null);
   const unauthorized = await app.inject({ method: 'GET', url: '/api/v1/threads' });
   assert.equal(unauthorized.statusCode, 401);
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { name: 'Administrator', password: 'a-secure-test-password' } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { password: 'a-secure-test-password' } });
   assert.equal(login.statusCode, 200);
   const cookie = login.headers['set-cookie'].split(';')[0];
   const session = await app.inject({ method: 'GET', url: '/api/v1/auth/session', headers: { cookie } });

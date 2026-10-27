@@ -12,7 +12,7 @@ const app = buildServer({ dbPath: path.join(dir, 'db.sqlite'), staticDir: path.j
 try {
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim() }, payload: { adminPassword: 'streaming-test-password' } });
-  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { name: 'Administrator', password: 'streaming-test-password' } });
+  const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { password: 'streaming-test-password' } });
   const cookie = login.headers['set-cookie'].split(';')[0];
   const chunk = Buffer.alloc(1024 * 1024, 97);
   const upload = await fetch(`${origin}/api/v1/files`, { method: 'POST', duplex: 'half', headers: { cookie, 'content-type': 'application/octet-stream', 'x-file-name': 'boundary.bin' }, body: Readable.from((function* () { for (let i = 0; i < 512; i++) yield chunk; })()) });

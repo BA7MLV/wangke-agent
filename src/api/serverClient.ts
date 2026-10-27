@@ -45,10 +45,10 @@ export interface ApprovalDto { id: string; messageId: string; threadId: string; 
 
 export const serverClient = {
   bootstrapStatus: () => request<BootstrapStatusDto>('/bootstrap/status'),
-  bootstrapInitialize: (adminPassword: string, secret: string, adminName?: string) => request<{ initialized: true }>('/bootstrap/initialize', {
-    method: 'POST', headers: { 'X-Bootstrap-Secret': secret }, body: JSON.stringify({ adminPassword, adminName }),
+  bootstrapInitialize: (adminPassword: string, secret: string) => request<{ initialized: true }>('/bootstrap/initialize', {
+    method: 'POST', headers: { 'X-Bootstrap-Secret': secret }, body: JSON.stringify({ adminPassword }),
   }),
-  login: (username: string, password: string) => request<{ user: Session['user'] }>('/auth/password/login', { method: 'POST', body: JSON.stringify({ username, password }) }),
+  login: (password: string) => request<{ user: Session['user'] }>('/auth/password/login', { method: 'POST', body: JSON.stringify({ password }) }),
   passkeyLoginOptions: () => request<PublicKeyCredentialRequestOptionsJSON>('/auth/passkey/login/options', { method: 'POST' }),
   passkeyLoginVerify: (response: AuthenticationResponseJSON) => request<{ verified: true; user: Session['user'] }>('/auth/passkey/login/verify', { method: 'POST', body: JSON.stringify(response) }),
   passkeyRegisterOptions: () => request<PublicKeyCredentialCreationOptionsJSON>('/auth/passkey/register/options', { method: 'POST' }),

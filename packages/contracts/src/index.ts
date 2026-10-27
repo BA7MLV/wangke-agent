@@ -66,5 +66,4 @@ export interface BootstrapStatusDto {
 
 export interface BootstrapInitializeRequest {
   adminPassword: string;
-  adminName?: string;
 }

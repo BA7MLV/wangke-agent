@@ -120,7 +120,15 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
         else init.body = JSON.stringify(request.body);
       }
       try {
-        const response = await (deps.fetch ?? fetch)(`${provider.baseUrl}/${endpoint}`, init);
+        const pagination = new URLSearchParams();
+        if (endpoint === 'models') {
+          const query = new URL(request.url, 'http://localhost').searchParams;
+          for (const key of ['after_id', 'limit']) {
+            const value = query.get(key);
+            if (value !== null) pagination.set(key, value);
+          }
+        }
+        const response = await (deps.fetch ?? fetch)(`${provider.baseUrl}/${endpoint}${pagination.size ? `?${pagination}` : ''}`, init);
         if (!response.ok) return fail(reply, response.status, `model_http_${response.status}`);
         reply.header('content-type', response.headers.get('content-type') ?? 'application/json');
         reply.header('cache-control', 'no-store');

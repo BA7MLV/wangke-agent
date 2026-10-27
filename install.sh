@@ -26,6 +26,36 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+INSTALL_STEP=0
+INSTALL_COMPLETED=0
+INSTALL_TOTAL=7
+if [ "$NO_START" -eq 1 ]; then INSTALL_TOTAL=4; fi
+INSTALL_STAGE="准备安装"
+INSTALL_STARTED=$SECONDS
+STEP_STARTED=$SECONDS
+step() {
+  INSTALL_STEP=$((INSTALL_STEP + 1))
+  INSTALL_STAGE="$1"
+  STEP_STARTED=$SECONDS
+  printf '\n[%s] [%s%%] [%s/%s] %s…\n' "$(date '+%H:%M:%S')" "$((INSTALL_COMPLETED * 100 / INSTALL_TOTAL))" "$INSTALL_STEP" "$INSTALL_TOTAL" "$INSTALL_STAGE"
+}
+step_done() {
+  INSTALL_COMPLETED=$INSTALL_STEP
+  printf '[%s] [%s%%] [%s/%s] 完成：%s（耗时 %ss）\n' "$(date '+%H:%M:%S')" "$((INSTALL_COMPLETED * 100 / INSTALL_TOTAL))" "$INSTALL_STEP" "$INSTALL_TOTAL" "$INSTALL_STAGE" "$((SECONDS - STEP_STARTED))"
+}
+install_exit() {
+  local status=$1
+  if [ "$status" -ne 0 ]; then
+    printf '\n[%s] [%s%%] 安装未完成：停在 [%s/%s] %s（退出码 %s，累计 %ss）。\n请先处理上方错误，再重新运行安装命令。\n' "$(date '+%H:%M:%S')" "$((INSTALL_COMPLETED * 100 / INSTALL_TOTAL))" "$INSTALL_STEP" "$INSTALL_TOTAL" "$INSTALL_STAGE" "$status" "$((SECONDS - INSTALL_STARTED))" >&2
+  fi
+}
+trap 'install_exit $?' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+
+echo "进度按已完成步骤计算，不代表耗时比例；构建期间请查看 Docker 实时日志。"
+if [ "$NO_START" -eq 1 ]; then echo "--no-start：百分比仅表示安装准备进度，不包含构建与启动。"; fi
+step "检查安装参数与运行环境"
 if [ -n "$DOMAIN" ]; then
   # --domain 等于「用 Caddy 自动 HTTPS 对外服务」：公网地址固定为 https://域名，
   # 应用端口只绑本机，避免绕过 HTTPS 直接访问 3000。
@@ -43,10 +73,18 @@ command -v docker >/dev/null || { echo "Docker Engine is required" >&2; exit 1; 
 docker compose version >/dev/null || { echo "Docker Compose plugin is required" >&2; exit 1; }
 docker info >/dev/null 2>&1 || { echo "Docker daemon is not running" >&2; exit 1; }
 command -v openssl >/dev/null || { echo "OpenSSL is required to create the bootstrap secret" >&2; exit 1; }
+step_done
+
+step "准备数据目录"
 mkdir -p "$DATA_DIR"/data/{db,files,config} "$DATA_DIR"/backups
 DATA_DIR="$(cd -- "$DATA_DIR" && pwd)"
 chmod 700 "$DATA_DIR" "$DATA_DIR/data" "$DATA_DIR/backups"
+printf '数据目录：%s\n' "$DATA_DIR"
+step_done
+
+step "生成或更新安装配置"
 if [ ! -f "$DATA_DIR/.env" ]; then
+  echo "首次安装，生成配置文件。"
   umask 077
   cat > "$DATA_DIR/.env" <<EOF
 APP_VERSION=$VERSION
@@ -70,6 +108,7 @@ MAX_FILE_BYTES=536870912
 CLOUD_CONCURRENCY=2
 EOF
 elif [ "$VERSION_SET" -eq 1 ]; then
+  echo "检测到已有配置，仅更新指定版本及本次显式传入的选项。"
   # An explicit --version changes only the two release-controlled keys.
   tmp="$(mktemp "$DATA_DIR/.env.XXXXXX")"
   awk -v version="$VERSION" '
@@ -81,6 +120,8 @@ elif [ "$VERSION_SET" -eq 1 ]; then
   ' "$DATA_DIR/.env" > "$tmp"
   chmod 600 "$tmp"
   mv -f "$tmp" "$DATA_DIR/.env"
+else
+  echo "检测到已有配置，保留现有设置，仅应用本次显式传入的选项。"
 fi
 chmod 600 "$DATA_DIR/.env"
 if [ -n "$MAX_FILE_MB" ]; then
@@ -111,6 +152,9 @@ fi
 if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
   printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
 fi
+step_done
+
+step "安装管理与备份命令"
 # The API creates the one-time secret on first startup, not before a long build.
 mkdir -p "$DATA_DIR/bin"
 sed "s|__DEFAULT_COMPOSE_FILE__|$SCRIPT_DIR/compose.yaml|" "$SCRIPT_DIR/scripts/wangke-agent" > "$DATA_DIR/bin/wangke-agent"
@@ -119,6 +163,7 @@ cp -f "$SCRIPT_DIR/scripts/backup.sh" "$DATA_DIR/bin/backup.sh"
 cp -f "$SCRIPT_DIR/scripts/restore.sh" "$DATA_DIR/bin/restore.sh"
 chmod 700 "$DATA_DIR/bin/backup.sh" "$DATA_DIR/bin/restore.sh"
 echo "Management command: $DATA_DIR/bin/wangke-agent {status|logs|stop|start|restart|update|backup}"
+step_done
 if [ "$NO_START" -eq 0 ]; then
   EXTRA=()
   if grep -q '^DOMAIN=.' "$DATA_DIR/.env"; then
@@ -126,12 +171,30 @@ if [ "$NO_START" -eq 0 ]; then
   fi
   if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
     EXTRA+=(-f "$SCRIPT_DIR/compose.agent.yaml")
-    docker build -t wangke-sandbox:0.1.0 -f "$SCRIPT_DIR/infra/sandbox/Dockerfile" "$SCRIPT_DIR"
   fi
-  WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" \
-    docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} up -d --build --wait --wait-timeout 180
+  compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} "$@"; }
+
+  step "构建服务镜像"
+  echo "首次构建可能耗时较长，以下为 Docker 实时输出（下载依赖、编译与打包）。"
+  if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
+    echo "正在构建 Agent 沙盒镜像…"
+    docker build -t wangke-sandbox:0.1.0 -f "$SCRIPT_DIR/infra/sandbox/Dockerfile" "$SCRIPT_DIR"
+    echo "Agent 沙盒镜像构建完成。"
+  else
+    echo "未启用 Agent 沙盒，跳过沙盒镜像。"
+  fi
+  echo "正在构建应用镜像…"
+  compose build
+  step_done
+
+  step "启动服务并等待健康检查"
+  echo "必要时会拉取代理等服务镜像；容器启动后最多等待 180 秒通过健康检查。"
+  compose up -d --no-build --wait --wait-timeout 180
+  step_done
+
+  step "读取初始化入口"
   url="$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DATA_DIR/.env" | tail -1)"
-  docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} exec -T app node -e '
+  compose exec -T app node -e '
     const fs = require("node:fs");
     (async () => {
       const status = await (await fetch("http://127.0.0.1:3000/api/v1/bootstrap/status")).json();
@@ -148,6 +211,9 @@ if [ "$NO_START" -eq 0 ]; then
       }
     })().catch(error => { console.error("Cannot read setup link: " + error.message); process.exitCode = 1; });
   ' "${url:-http://localhost:$PORT}"
-  echo "Create your administrator, configure models and add Passkeys at this URL."
-  echo "Course files, learning data, credentials and tasks persist in $DATA_DIR/data."
+  step_done
+  printf '\n安装完成（总耗时 %ss）。请打开上方链接设置访问密码、配置模型并添加 Passkey。\n' "$((SECONDS - INSTALL_STARTED))"
+  printf '课程文件、学习数据、凭据和任务保存在 %s/data。\n' "$DATA_DIR"
+else
+  printf '\n安装准备完成（总耗时 %ss）；已按 --no-start 跳过镜像构建、服务启动及健康检查。\n' "$((SECONDS - INSTALL_STARTED))"
 fi

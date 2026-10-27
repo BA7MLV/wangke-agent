@@ -12,12 +12,12 @@ final class LiveServerTests: XCTestCase {
         }
         let client = APIClient(baseURL: url)
         do {
-            _ = try await client.login(username: "Administrator", password: "wrong-password", deviceName: "tests")
+            _ = try await client.login(password: "wrong-password", deviceName: "tests")
             XCTFail("wrong password should fail")
         } catch let error as APIError {
             XCTAssertEqual(error.code, "invalid_credentials")
         }
-        let grant = try await client.login(username: env["WANGKE_E2E_USER"] ?? "Administrator", password: password, deviceName: "WangkeKit tests")
+        let grant = try await client.login(password: password, deviceName: "WangkeKit tests")
         XCTAssertFalse(grant.token.isEmpty)
         let me = try await client.currentUser()
         XCTAssertEqual(me?.id, grant.user.id)

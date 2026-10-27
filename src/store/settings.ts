@@ -78,6 +78,8 @@ export interface Provider {
   protocol: ApiProtocol;
   /** 凭据。**永不参与同步**（见 `sync/units.ts`），也不参与迁移包导出 */
   apiKey: string;
+  /** 云端编辑器只接收凭据是否存在，不接收服务器保存的明文。 */
+  configured?: boolean;
   /** 旧版供应商用途，仅保留用于兼容持久化/同步，不再限制模型用途。 */
   serves: ModelSlot[];
   /**
@@ -304,7 +306,7 @@ function initialSettings(): Settings {
   };
 }
 
-interface SettingsStore extends Settings {
+export interface SettingsStore extends Settings {
   update: (patch: Partial<Settings>) => void;
 }
 

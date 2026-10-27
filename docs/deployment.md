@@ -4,8 +4,8 @@
 
 | 壳 | 怎么登录 | 怎么连 API |
 |---|---|---|
-| 浏览器 | 用户名 + 密码或 Passkey，拿到 HttpOnly Cookie | 同源（默认）或跨域（`API_BASE_URL` + `CORS_ORIGINS`） |
-| iOS | 用户名 + 密码，`POST /api/v1/auth/token` 换 Bearer token，存在钥匙串 | 直接请求 API 地址 |
+| 浏览器 | 密码或 Passkey，拿到 HttpOnly Cookie | 同源（默认）或跨域（`API_BASE_URL` + `CORS_ORIGINS`） |
+| iOS | 密码，`POST /api/v1/auth/token` 换 Bearer token，存在钥匙串 | 直接请求 API 地址 |
 | macOS（预留） | 同 iOS，共用 `apps/apple/WangkeKit` | 同 iOS |
 
 ## 三种部署形态
@@ -78,7 +78,7 @@ window.__WANGKE_CONFIG__ = { apiBaseUrl: "https://api.example.com" };
 POST /api/v1/auth/token
 Content-Type: application/json
 
-{ "username": "Administrator", "password": "…", "deviceName": "Mirai 的 iPhone" }
+{ "password": "…", "deviceName": "Mirai 的 iPhone" }
 ```
 
 ```json

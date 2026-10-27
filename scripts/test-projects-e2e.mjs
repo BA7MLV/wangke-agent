@@ -29,7 +29,7 @@ try {
   const base = await app.listen({ host: '127.0.0.1', port: 0 });
   browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || 'chrome', headless: true });
   const context = await browser.newContext({ baseURL: base, locale: 'zh-CN', viewport: { width: 1440, height: 1000 } });
-  const login = await context.request.post('/api/v1/auth/password/login', { data: { name: 'Administrator', password: 'e2e-project-password' } });
+  const login = await context.request.post('/api/v1/auth/password/login', { data: { password: 'e2e-project-password' } });
   assert.equal(login.status(), 200);
   await context.route('https://models.dev/**', route => route.fulfill({ json: {} }));
   const page = await context.newPage();

@@ -2,18 +2,17 @@
 import SwiftUI
 import WangkeKit
 
-/// 登录：图标、标题、一张分组表单、一个按钮。没有说明文字。
+/// 单管理员密码登录，恢复帮助按需展开。
 public struct LoginView: View {
     @Environment(AppModel.self) private var model
     @AppStorage("wangke.server") private var server = ""
-    @AppStorage("wangke.username") private var username = "Administrator"
     @State private var password = ""
     @State private var busy = false
     @State private var error: String?
     @State private var shake = 0
     @FocusState private var field: Field?
 
-    enum Field { case server, username, password }
+    enum Field { case server, password }
 
     public init() {}
 
@@ -36,17 +35,6 @@ public struct LoginView: View {
                     #endif
                     .autocorrectionDisabled()
                     .focused($field, equals: .server)
-                    .submitLabel(.next)
-                    .onSubmit { field = .username }
-                    .padding(14)
-                Divider().padding(.leading, 14)
-                TextField("用户名", text: $username)
-                    .textContentType(.username)
-                    #if os(iOS)
-                    .textInputAutocapitalization(.never)
-                    #endif
-                    .autocorrectionDisabled()
-                    .focused($field, equals: .username)
                     .submitLabel(.next)
                     .onSubmit { field = .password }
                     .padding(14)
@@ -75,7 +63,15 @@ public struct LoginView: View {
             }
             .buttonStyle(.borderedProminent)
             .controlSize(.large)
-            .disabled(busy || server.isEmpty || username.isEmpty || password.isEmpty)
+            .disabled(busy || server.isEmpty || password.isEmpty)
+
+            DisclosureGroup("忘记密码？") {
+                Text("可在浏览器打开服务器地址，使用已绑定的 Passkey 登录。没有可用的 Passkey 时，请联系服务器管理员，按照网页登录页的恢复说明在服务器终端重设密码。课程和文件会保留，旧设备登录会失效。")
+                    .font(.footnote)
+                    .foregroundStyle(.secondary)
+                    .padding(.top, 8)
+            }
+            .font(.footnote)
 
             Spacer()
         }
@@ -91,7 +87,7 @@ public struct LoginView: View {
         error = nil
         Task {
             do {
-                try await model.signIn(server: server, username: username, password: password, deviceName: Self.deviceName)
+                try await model.signIn(server: server, password: password, deviceName: Self.deviceName)
                 password = ""
             } catch {
                 withAnimation { self.error = error.localizedDescription }

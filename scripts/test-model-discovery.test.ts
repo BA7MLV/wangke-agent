@@ -40,6 +40,17 @@ test('validates, deduplicates, sorts, normalizes endpoint and supports Anthropic
   assert.deepEqual(urls, ['https://models.test/v1/models', 'https://models.test/v1/models?after_id=cursor%2F1']);
 });
 
+test('cloud discovery uses session cookies and isolates account caches without provider keys', async () => {
+  const cloud = { baseUrl: '/api/v1/cloud/models/p1', apiKey: '', credentials: 'include' as const, cacheScope: 'account-a' };
+  globalThis.fetch = async (_url, init) => {
+    assert.equal(init?.credentials, 'include');
+    assert.equal((init?.headers as Record<string, string>).Authorization, undefined);
+    return json({ data: [{ id: 'cloud-model' }] });
+  };
+  assert.deepEqual(await listModels(cloud), ['cloud-model']);
+  assert.notEqual(await modelListCacheKey(cloud), await modelListCacheKey({ ...cloud, cacheScope: 'account-b' }));
+});
+
 test('corrupt cache timestamps and non-string IDs are rejected', async () => {
   const key = await modelListCacheKey(connection);
   for (const entry of [

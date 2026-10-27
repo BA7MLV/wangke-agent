@@ -20,13 +20,12 @@ import {
   modelOverridesOf,
   providersForSlot,
   sameRef,
-  useSettings,
   type ApiProtocol,
   type ModelSlot,
   type Provider,
   type Settings,
 } from '../../store/settings';
-import { useProviderModels } from '../../utils/useProviderModels';
+import { useProviderModels, type DiscoveryProvider } from '../../utils/useProviderModels';
 import {
   guessContextWindow,
   isVisionModel,
@@ -46,6 +45,7 @@ import { formatModelTokens } from '../../api/modelPresentation';
 import { createPresetProvider, getProviderPresets, matchesProviderPreset, providerCatalogId, type ProviderPreset } from '../../store/providerPresets';
 import ProviderPresets, { ProviderLogo } from './ProviderPresets';
 import { useSettingsDialog } from '../settingsDialogStore';
+import { useModelSettings, useModelSettingsStore } from './modelSettingsContext';
 
 const ASR_MODEL_RE = /asr|whisper|sensevoice|xingchen/i;
 
@@ -128,7 +128,7 @@ function ModelOptionRow({
   idPrefix?: string;
 }) {
   const favTestId = `fav-${slot}-${providerName}-${model}`;
-  const overrides = useSettings((s) => modelOverridesOf(s, { providerId, model }));
+  const overrides = useModelSettings((s) => modelOverridesOf(s, { providerId, model }));
   // 星标放在 ListBox.Item **内部**：Item 是 React Aria collection 的成员，
   // 在外面另起一个 <div> 会让 collection 遍历到非collection 节点，行为不可预期。
   return (
@@ -239,7 +239,7 @@ function SlotModelSelect({
   options: Record<string, string[]>;
 }) {
   const ref = settings[name];
-  const update = useSettings((s) => s.update);
+  const update = useModelSettings((s) => s.update);
   const provider = settings.providers.find((p) => p.id === ref.providerId);
   const [kw, setKw] = useState('');
   const [open, setOpen] = useState(false);
@@ -626,6 +626,7 @@ function ProviderRow({
   removable,
   shaking,
   customConnection = false,
+  serverManaged = false,
   children,
 }: {
   provider: Provider;
@@ -640,6 +641,7 @@ function ProviderRow({
   removable: boolean;
   shaking: boolean;
   customConnection?: boolean;
+  serverManaged?: boolean;
   children: ReactNode;
 }) {
   const inputRef = useRef<HTMLDivElement>(null);
@@ -787,7 +789,7 @@ function ProviderRow({
           </>}
           <Field
             label="API Key"
-            hint={status === 'draft' ? '点击保存后仅存于本机浏览器；不参与云同步与迁移导出' : '仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它'}
+            hint={serverManaged ? '密钥加密保存在服务器；留空保留已保存的密钥，修改后请保存模型设置' : status === 'draft' ? '点击保存后仅存于本机浏览器；不参与云同步与迁移导出' : '仅保存在本机浏览器 localStorage 中；云同步与迁移包都不含它'}
             testId={`field-api-key-${provider.id}`}
           >
             <div>
@@ -802,7 +804,8 @@ function ProviderRow({
                     aria-label={`${provider.name} 的 API Key`}
                     aria-invalid={shaking || undefined}
                     type={showKey ? 'text' : 'password'}
-                    placeholder="sk-..."
+                    placeholder={serverManaged && provider.configured ? '已配置，留空保留' : 'sk-...'}
+                    autoComplete="new-password"
                     value={provider.apiKey}
                     onChange={(e) => onChange({ apiKey: e.target.value.trim() })}
                     className="flex-1 border-0 shadow-none focus-visible:ring-0"
@@ -845,8 +848,13 @@ function ProviderRow({
  *
  * 供应商优先：展开一家后管理连接及其模型，再设置各用途的默认模型和运行参数。
  */
-export default function ModelsModule() {
-  const settings = useSettings();
+export default function ModelsModule({ serverManaged = false, discoveryProviders, standalone = false }: {
+  serverManaged?: boolean;
+  discoveryProviders?: DiscoveryProvider[];
+  standalone?: boolean;
+} = {}) {
+  const settings = useModelSettings();
+  const settingsStore = useModelSettingsStore();
   useModelMetaRevision();
   /** 哪一家的 key 缺失（provider id）。null = 都没问题 */
   const [keyError, setKeyError] = useState<string | null>(null);
@@ -857,7 +865,7 @@ export default function ModelsModule() {
   const [draftProvider, setDraftProvider] = useState<Provider | null>(null);
   const [draftError, setDraftError] = useState('');
   const { open: settingsOpen } = useSettingsDialog();
-  const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(settings.providers, selectedProviderId);
+  const { modelOptions, discoveredModels, providerNotes, checking, refresh: refreshProviderModels } = useProviderModels(discoveryProviders ?? settings.providers, selectedProviderId);
   const [metaInfo, setMetaInfo] = useState(modelMetaInfo);
   const [metaRefreshing, setMetaRefreshing] = useState(false);
   const [metaError, setMetaError] = useState('');
@@ -865,11 +873,11 @@ export default function ModelsModule() {
 
   // 关闭动画可能暂时保留子树；立即清空草稿，快速重新打开也不能带回未保存的密钥。
   useEffect(() => {
-    if (settingsOpen) return;
+    if (settingsOpen || standalone) return;
     setDraftProvider(null);
     setDraftError('');
     setConnectingProvider(false);
-  }, [settingsOpen]);
+  }, [settingsOpen, standalone]);
 
   /** 供应商 key 仅用于消除同名歧义；未填写也能刷新和使用能力目录。 */
   const catalogs = useMemo(
@@ -926,9 +934,9 @@ export default function ModelsModule() {
    * 手动刷新只请求当前供应商的 `/models`，不检查或修改其他连接。
    */
   const handleCheck = async (providerId: string) => {
-    const provider = settings.providers.find((p) => p.id === providerId);
-    if (!provider) return;
-    if (!provider.apiKey.trim() || !provider.baseUrl.trim()) {
+    const provider = (discoveryProviders ?? settings.providers).find((p) => p.id === providerId);
+    if (!provider) { toast.warning('请先保存模型设置，再查找模型'); return; }
+    if ((!serverManaged && !provider.apiKey.trim()) || !provider.baseUrl.trim()) {
       triggerKeyError(providerId);
       toast.warning('请先填写当前供应商的 API 地址与 Key');
       return;
@@ -942,8 +950,9 @@ export default function ModelsModule() {
   };
 
   /** 一家的连通状态：优先看上次检查的结论，其次看配置是否完整 */
-  const statusOf = (p: Provider): 'ready' | 'unconfigured' | 'failed' | 'unchecked' => {
-    if (!p.apiKey.trim() || !p.baseUrl.trim()) return 'unconfigured';
+  const statusOf = (p: Provider): 'ready' | 'unconfigured' | 'failed' | 'unchecked' | 'draft' => {
+    if (serverManaged && !discoveryProviders?.some((saved) => saved.id === p.id)) return 'draft';
+    if ((!serverManaged && !p.apiKey.trim()) || !p.baseUrl.trim()) return 'unconfigured';
     const note = providerNotes[p.id];
     if (note?.startsWith('拉取失败')) return 'failed';
     if (note) return 'ready';
@@ -988,9 +997,9 @@ export default function ModelsModule() {
       setDraftError('请填写有效的 HTTP 或 HTTPS API 地址');
       return;
     }
-    if (!draftProvider.apiKey.trim()) { setDraftError('请填写 API Key 后再保存'); return; }
+    if (!serverManaged && !draftProvider.apiKey.trim()) { setDraftError('请填写 API Key 后再保存'); return; }
     // 保存时才分配正式 id，并基于最新设置追加，不覆盖同时发生的设置变更。
-    const current = useSettings.getState();
+    const current = settingsStore.getState();
     const provider = { ...draftProvider, id: nextProviderId(current), name: draftProvider.name.trim() };
     current.update({ providers: [...current.providers, provider] });
     setDraftProvider(null);
@@ -1001,9 +1010,9 @@ export default function ModelsModule() {
   const removeProvider = (p: Provider) => {
     // 删掉一家之后，指向它的槽位与收藏项必须一起处理，否则界面上留着
     // 一个解析不出端点的引用，表现为「所有请求都报供应商已被删除」。
-    // 槽位改指第一家（id 必然存在：至少剩一家）；收藏项直接丢。
+    // 槽位改指剩余供应商；云端允许删空，届时清空引用。
     const rest = settings.providers.filter((x) => x.id !== p.id);
-    const fallback = rest[0].id;
+    const fallback = rest[0]?.id ?? '';
     const patch: Partial<Settings> = { providers: rest, savedModels: savedModelsOf(settings).filter((m) => m.providerId !== p.id) };
     for (const name of ['asrModel', 'llmModel', 'visionModel', 'decisionModel'] as ModelFieldName[]) {
       if (settings[name].providerId === p.id) {
@@ -1021,7 +1030,7 @@ export default function ModelsModule() {
     patch.favorites = favs;
     settings.update(patch);
     if (selectedProviderId === p.id) setSelectedProviderId(null);
-    toast.info(`已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」`);
+    toast.info(rest.length ? `已删除「${p.name || p.id}」，相关槽位改指「${rest[0].name || rest[0].id}」` : `已删除「${p.name || p.id}」，相关默认模型已清空`);
   };
 
   const selectedProvider = selectedProviderId
@@ -1045,6 +1054,7 @@ export default function ModelsModule() {
             <ProviderRow
               key={draftProvider.id}
               provider={draftProvider}
+              serverManaged={serverManaged}
               others={settings.providers}
               status="draft"
               modelCount={null}
@@ -1059,7 +1069,7 @@ export default function ModelsModule() {
                 setDraftError('');
               }}
             >
-              <p className="text-xs text-pretty text-muted">保存后才会添加供应商；模型列表需点击“查找模型”获取。</p>
+              <p className="text-xs text-pretty text-muted">{serverManaged ? '添加后请保存模型设置，再从服务器查找模型；也可直接从 models.dev 目录添加。' : '保存后才会添加供应商；模型列表需点击“查找模型”获取。'}</p>
               {draftError && <p role="alert" className="text-sm text-pretty text-danger">{draftError}</p>}
               <div className="flex gap-2">
                 <Button type="submit" data-testid="provider-draft-save">保存供应商</Button>
@@ -1080,12 +1090,13 @@ export default function ModelsModule() {
             <ProviderRow
               key={selectedProvider.id}
               provider={selectedProvider}
+              serverManaged={serverManaged}
               others={settings.providers.filter((x) => x.id !== selectedProvider.id)}
               status={statusOf(selectedProvider)}
-              modelCount={modelOptions[selectedProvider.id]?.length ?? null}
+              modelCount={modelOptions[selectedProvider.id]?.length ?? savedModelsOf(settings).filter((m) => m.providerId === selectedProvider.id).length}
               open
               shaking={keyError === selectedProvider.id}
-              removable={settings.providers.length > 1}
+              removable={serverManaged || settings.providers.length > 1}
               onToggle={() => undefined}
               onChange={(patch) => {
                 settings.update({ providers: settings.providers.map((x) => (x.id === selectedProvider.id ? { ...x, ...patch } : x)) });
@@ -1097,6 +1108,7 @@ export default function ModelsModule() {
               <ModelLibrary
                 key={selectedProvider.id}
                 providerId={selectedProvider.id}
+                allowDecision={!serverManaged}
                 discovered={discoveredModels[selectedProvider.id]}
                 checking={checking}
                 onRefresh={() => void handleCheck(selectedProvider.id)}
@@ -1130,13 +1142,14 @@ export default function ModelsModule() {
               <ProviderRow
                 key={p.id}
                 provider={p}
+                serverManaged={serverManaged}
                 others={settings.providers.filter((x) => x.id !== p.id)}
                 note={providerNotes[p.id]}
                 status={statusOf(p)}
-                modelCount={modelOptions[p.id]?.length ?? null}
+                modelCount={modelOptions[p.id]?.length ?? savedModelsOf(settings).filter((m) => m.providerId === p.id).length}
                 open={false}
                 shaking={keyError === p.id}
-                removable={settings.providers.length > 1 || i > 0}
+                removable={serverManaged || settings.providers.length > 1 || i > 0}
                 onToggle={() => setSelectedProviderId(p.id)}
                 onChange={(patch) => {
                   settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
@@ -1145,7 +1158,7 @@ export default function ModelsModule() {
                   if (await confirmDialog({ headline: '删除供应商？', description: `删除「${p.name || p.id}」及其已添加模型，相关默认模型将切换到其他供应商。`, danger: true, confirmText: '删除' })) removeProvider(p);
                 }}
               >
-                <ModelLibrary key={p.id} providerId={p.id} checking={checking} onRefresh={() => void handleCheck(p.id)} />
+                <ModelLibrary key={p.id} providerId={p.id} allowDecision={!serverManaged} checking={checking} onRefresh={() => void handleCheck(p.id)} />
               </ProviderRow>
             ))}
           </div>
@@ -1174,7 +1187,7 @@ export default function ModelsModule() {
         testId="card-models"
       >
         <div className="flex flex-col gap-2.5">
-          {SLOT_ORDER.map((slot) => {
+          {SLOT_ORDER.filter((slot) => !serverManaged || slot !== 'decision').map((slot) => {
             const name = (
               { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel', decision: 'decisionModel' } as const
             )[slot];
@@ -1246,7 +1259,7 @@ export default function ModelsModule() {
         </Field>
       </SectionCard>
 
-      <JevCard />
+      {!serverManaged && <JevCard />}
       </>}
     </>
   );

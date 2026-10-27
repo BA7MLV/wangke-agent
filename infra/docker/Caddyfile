@@ -1,4 +1,4 @@
-{$DOMAIN} {
+(app_backend) {
 	# 只压缩静态资源和 JSON。text/event-stream 一旦进了压缩器就会被攒着不发，
 	# Bot 页的事件流会卡到连接结束才一次性到达。
 	encode {
@@ -16,4 +16,8 @@
 	reverse_proxy app:3000 {
 		flush_interval -1
 	}
+}
+
+{$DOMAIN} {
+	import app_backend
 }
