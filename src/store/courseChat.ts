@@ -706,8 +706,45 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
   for (const task of active) {
     const id = Number(task.input.sessionId);
     const view = task.progress?.view as Partial<SessionView> | undefined;
-    if (view) writeView(id, { ...view, loaded: true, loading: true });
-    else writeView(id, { loading: true });
+    if (view) {
+      // Browser workers publish the complete view because they already run the
+      // normal course-chat loop locally.
+      writeView(id, { ...view, loaded: true, loading: true });
+    } else if (task.kind === 'chat' && task.progress) {
+      /**
+       * Node tasks stream through the durable task row instead of owning a
+       * browser Zustand store.  Reconcile only the synthetic turn here; the
+       * completed records are still downloaded and replace it below.
+       */
+      const current = readView(id);
+      const userKey = `cloud-user-${task.id}`;
+      const answerKey = `cloud-answer-${task.id}`;
+      const text = typeof task.input.text === 'string' ? task.input.text.trim() : '';
+      const progress = task.progress as Record<string, unknown>;
+      const content = typeof progress.content === 'string' ? progress.content : '';
+      const reasoning = typeof progress.reasoning === 'string' ? progress.reasoning : '';
+      const tools = Array.isArray(progress.tools) ? progress.tools as ChatToolCall[] : undefined;
+      const phase: ProcessPhase = progress.phase === 'thinking' || progress.phase === 'tool' || progress.phase === 'answer'
+        ? (progress.phase === 'answer' ? 'answering' : progress.phase) : 'preparing';
+      const messages = [...current.messages];
+      if (text && !messages.some((message) => message.key === userKey)) {
+        messages.push({ key: userKey, role: 'user', content: text, createdAt: Date.parse(task.createdAt) || Date.now() });
+      }
+      const answer = {
+        key: answerKey,
+        role: 'ai' as const,
+        content,
+        reasoning,
+        tools,
+        streaming: true,
+        processPhase: phase,
+        processStartedAt: Date.parse(task.createdAt) || Date.now(),
+      };
+      const answerIndex = messages.findIndex((message) => message.key === answerKey);
+      if (answerIndex < 0) messages.push(answer);
+      else messages[answerIndex] = { ...messages[answerIndex], ...answer };
+      writeView(id, { messages, loaded: true, loading: true });
+    } else writeView(id, { loading: true });
   }
   const id = useCourseChat.getState().activeId;
   if (id != null && !runningIds.includes(id) && (dataChanged || useCourseChat.getState().loading)) {
@@ -1152,10 +1189,26 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           set(s => ({ sessions: [...s.sessions, row], activeId: id, loaded: true }));
         }
         if ((mode ?? state.sendMode) === 'steer') await cancelResourceTasks(`session:${id}`);
-        await submitCloudTask('chat', `session:${id}`, { sessionId: id, text, mode, resume, attachments, modelRef: getSettings().llmModel });
+        const task = await submitCloudTask('chat', `session:${id}`, { sessionId: id, text, mode, resume, attachments, modelRef: getSettings().llmModel });
         consumeAttachments();
         if (isActive) set({ draft: '' });
-        writeView(id, { loading: true }); markRunning(id, true);
+        /**
+         * Server tasks stream through task progress, so show the turn before
+         * the first one-second activity poll arrives.  The synthetic rows use
+         * the same keys as `reflectCloudTasks`; the final cloud records then
+         * replace them on the next reconciliation.
+         */
+        const current = readView(id);
+        const userKey = `cloud-user-${task.id}`;
+        const answerKey = `cloud-answer-${task.id}`;
+        const messages = [...current.messages];
+        if (!resume && text && !messages.some((message) => message.key === userKey)) {
+          messages.push({ key: userKey, role: 'user', content: text, attachments, createdAt: Date.now() });
+        }
+        if (!messages.some((message) => message.key === answerKey)) {
+          messages.push({ key: answerKey, role: 'ai', content: '', streaming: true, processPhase: 'preparing', processStartedAt: Date.now() });
+        }
+        writeView(id, { messages, loading: true }); markRunning(id, true);
       } catch (e) {
         writeView(id ?? 0, { loading: false, historyError: (e as Error).message });
       }

@@ -89,7 +89,9 @@ export function getProviderPresets(): readonly ProviderPreset[] {
   });
   const byId = new Map(dynamic.map((preset) => [preset.id, preset]));
   for (const preset of FALLBACK_PROVIDER_PRESETS) {
-    if (!byId.has(preset.id) && !dynamic.some((item) => matchesProviderPreset(item, preset))) byId.set(preset.id, preset);
+    const current = byId.get(preset.id);
+    if (current) byId.set(preset.id, { ...current, description: preset.description, recommended: preset.recommended });
+    else if (!dynamic.some((item) => matchesProviderPreset(item, preset))) byId.set(preset.id, preset);
   }
   return [...byId.values()];
 }

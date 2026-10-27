@@ -7,8 +7,8 @@ const workspaceTool = tool('workspace', 'Access ONLY this project workspace. lis
   action: { type: 'string', enum: ['list', 'read', 'write', 'mkdir', 'remove'] }, path: { type: 'string' },
   text: { type: 'string' }, expectedRevision: { type: ['string', 'null'] }, offset: { type: 'integer', minimum: 0 },
 }, ['action', 'path']);
-const projectsTool = tool('projects', 'List projects this Bot is explicitly authorized to access, or rename a project with a manage grant. Renaming never changes its ID or workspace path. To work with project files, the user opens a session in that project.', {
-  action: { type: 'string', enum: ['list', 'rename'] }, projectId: { type: 'string' }, name: { type: 'string' },
+const projectsTool = tool('projects', 'List authorized projects, create a project (name required), or rename a project with a manage grant. A created project grants this Bot manage access and returns a link for the user to open its workspace. Renaming never changes its ID or workspace path. To work with project files, the user opens a session in that project.', {
+  action: { type: 'string', enum: ['list', 'create', 'rename'] }, projectId: { type: 'string' }, name: { type: 'string' },
 }, ['action']);
 
 export class ProjectTools {
@@ -24,8 +24,10 @@ export class ProjectTools {
       if (args.offset !== undefined && (!Number.isSafeInteger(args.offset) || Number(args.offset) < 0)) throw new ProjectError('invalid_project_tool_arguments');
       return args.action === 'remove' ? 'remove' : ['write', 'mkdir'].includes(String(args.action)) ? 'write' : 'read';
     }
-    if (!['list', 'rename'].includes(String(args.action))) throw new ProjectError('invalid_project_tool_arguments');
-    return args.action === 'rename' ? 'write' : 'read';
+    if (!['list', 'create', 'rename'].includes(String(args.action))) throw new ProjectError('invalid_project_tool_arguments');
+    if (args.action !== 'list' && (typeof args.name !== 'string' || !args.name.trim() || args.name.trim().length > 100)) throw new ProjectError('invalid_project_name');
+    if (args.action !== 'rename' && args.projectId !== undefined) throw new ProjectError('invalid_project_tool_arguments');
+    return args.action === 'list' ? 'read' : 'write';
   }
 
   permission(name: string, args: Record<string, unknown>, thread: ProjectThread, policy: AgentPolicy) {
@@ -41,11 +43,15 @@ export class ProjectTools {
         this.projects.authorize(thread.owner_id, args.projectId, thread.agent_id, 'manage');
       }
     }
-    return policy[capability];
+    return capability === 'remove' && policy.remove === 'allow' ? 'ask' : policy[capability];
   }
 
   execute(name: string, args: Record<string, unknown>, thread: ProjectThread): string {
     if (name === 'projects') {
+      if (args.action === 'create') {
+        const project = this.projects.create(thread.owner_id, args.name, thread.agent_id!, 'manage');
+        return JSON.stringify({ ...project, url: `#/projects/${project.id}` });
+      }
       if (args.action === 'rename') return JSON.stringify(this.projects.update(thread.owner_id, String(args.projectId), { name: args.name }));
       return JSON.stringify(this.projects.list(thread.owner_id).filter(p => !p.archived && this.projects.get(thread.owner_id, p.id).grants.some(g => g.agentId === thread.agent_id)).map(({ id, name, workspacePath }) => ({ id, name, workspacePath })));
     }

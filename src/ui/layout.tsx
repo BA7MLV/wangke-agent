@@ -18,6 +18,7 @@ import { DotBadge, IconSwap, MatrixDots } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
 import { observeBrowserChrome } from './browserChrome';
+import { messageTime } from '../utils/messageTime';
 import './layout.css';
 
 /**
@@ -112,6 +113,8 @@ export interface RecentAction {
 export interface RecentItem {
   id: string;
   label: string;
+  preview?: string;
+  updatedAt?: number;
   onClick: () => void;
   testId?: string;
   /** 当前正在看的那一条。为 true 时渲染成高亮 pill（见 Sidebar 里 Recent 的说明） */
@@ -222,6 +225,10 @@ function Sidebar({
    * 于是自己收一个 id：右键时 `setMenuId(item.id)`，菜单照样锚在那颗「更多」上。
    */
   const [menuId, setMenuId] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const query = search.trim().toLocaleLowerCase();
+  const visibleRecent = recent?.items.filter((item) => !query
+    || `${item.label} ${item.preview ?? ''}`.toLocaleLowerCase().includes(query)) ?? [];
   return (
     <>
       {rail.items.filter((it) => it.isAction).map((it) => (
@@ -291,7 +298,14 @@ function Sidebar({
         <>
           <Separator className="my-3" />
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="shrink-0 px-2.5 pb-2 text-[0.8125rem] text-muted">{recent.label}</div>
+            <div className="recent-heading"><span>{recent.label}</span><span>{recent.items.length}</span></div>
+            <label className="recent-search">
+              <Sym name="search" aria-hidden="true" />
+              <input type="search" value={search} aria-label="搜索会话" placeholder="搜索会话"
+                data-testid="chat-search" onChange={(event) => setSearch(event.target.value)}
+                onKeyDown={(event) => { if (event.key === 'Escape' && search) { event.preventDefault(); event.stopPropagation(); setSearch(''); } }} />
+            </label>
+            {visibleRecent.length === 0 && <p className="recent-empty" role="status">没有匹配的会话</p>}
             {/* ScrollShadow：会话多起来时滚动区上下缘浮出阴影，比给整块侧栏加边框轻。
                 min-h-0 必需 —— 否则 flex 子项的默认 min-height:auto 会让它按内容撑开，
                 flex-1 形同虚设。 */}
@@ -310,15 +324,8 @@ function Sidebar({
                   `disallowEmptySelection` 必需：RAC 把「再点一次已选中项」当成取消选中，
                   不设它的话点当前会话会把高亮弄没，而页面并没有切走。
 
-                  选中态用 `bg-surface` 而不是主导航的 `bg-accent-soft`：
-                  导航项是「目的地」，会话项是「同一目的地下的一个实例」，两处都用主色
-                  会让人以为侧栏里同时选中了两处。
-
-                  ⚠️ 也不能用看起来更对味的 `bg-default`（中性灰）：浅色主题下
-                  `--default` 与侧栏底色是**同一个值**（实测两处都是 oklch(0.94) / #ebebeb），
-                  高亮会彻底看不见 —— 同一个坑在用户气泡上踩过一次（见 course-chat.css
-                  的 `.course-chat__bubble--user`）。`--surface` 浅色是纯白、深色是
-                  oklch(0.21)，两套主题下都与侧栏分得开。 */}
+                   Telegram 风格的当前会话使用主色整行高亮，时间与摘要同步使用
+                   对应前景色；实际配色集中在 layout.css 的 .recent-item 规则中。 */}
               <div
                 /**
                  * Delete / Backspace = 删掉键盘当前停着的这一行。
@@ -362,9 +369,9 @@ function Sidebar({
                     recent.items.find((item) => item.id === String(next))?.onClick();
                     onNavigate?.();
                   }}
-                  className="gap-px pr-1"
+                  className="recent-list gap-px"
                 >
-                  {recent.items.map((item) => (
+                  {visibleRecent.map((item) => (
                     <ListBox.Item
                       key={item.id}
                       id={item.id}
@@ -381,15 +388,26 @@ function Sidebar({
                             }
                           : undefined
                       }
-                      className="recent-item group min-h-9 gap-2.5 rounded-full px-2.5 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+                      className="recent-item group"
                     >
+                      <span className="recent-avatar" data-color={Number(item.id) % 5} aria-hidden="true">
+                        {Array.from(item.label.trim())[0] || '聊'}
+                      </span>
+                      <span className="recent-info">
+                        <span className="recent-info__top">
+                          <span className="recent-title min-w-0"><span>{item.label}</span></span>
+                          {item.updatedAt != null && <time className="recent-time" dateTime={new Date(item.updatedAt).toISOString()}
+                            title={messageTime(item.updatedAt)}>{messageTime(item.updatedAt).replace(/^今天 /, '').replace(/^(昨天|.*日) .*/, '$1')}</time>}
+                        </span>
+                        <span className="recent-info__bottom">
+                          <span className="recent-preview" data-pending={item.pendingReply || undefined}>{item.preview ?? '打开会话'}</span>
                       {item.pendingReply ? (
-                        <span className="grid size-6 shrink-0 place-items-center text-sm"
+                        <span className="recent-status"
                           role="status" aria-label="正在等待回复…">
                           <MatrixDots />
                         </span>
                       ) : item.pinned && item.onUnpin ? (
-                        <span className="shrink-0" title="取消置顶"
+                        <span className="recent-pin shrink-0" title="取消置顶"
                           onPointerDown={(event) => event.stopPropagation()}
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => event.stopPropagation()}>
@@ -401,18 +419,14 @@ function Sidebar({
                             <Sym name="pin" />
                           </Button>
                         </span>
-                      ) : <span className="grid size-6 shrink-0 place-items-center text-sm" aria-hidden="true">
-                        <Sym name="chat_bubble" />
-                      </span>}
-                      {/* 长标题始终用省略号收尾，完整内容可在重命名对话框中查看。 */}
-                      <span className="recent-title min-w-0">
-                        <span>{item.label}</span>
-                      </span>
+                      ) : null}
                       {unreadIds.includes(Number(item.id)) && (
-                        <span className="size-2 shrink-0 rounded-full bg-accent"
+                        <span className="recent-unread size-2 shrink-0 rounded-full bg-accent"
                           role="img" aria-label="会话已完成，未查看"
                           data-testid={`${item.testId ?? item.id}-unread`} />
                       )}
+                        </span>
+                      </span>
                       {item.menu && (
                         /**
                          * 挡冒泡的壳：见 `RecentItem.onDelete` 的注释。
@@ -424,7 +438,7 @@ function Sidebar({
                          * 按钮把焦点抢走这条判据就会跟着错。
                          */
                         <span
-                          className="ml-auto shrink-0"
+                          className="recent-menu shrink-0"
                           onPointerDown={(event) => event.stopPropagation()}
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => event.stopPropagation()}
@@ -642,7 +656,7 @@ export function PageShell({
             一屏几十条，留一棵看不见的 DOM 只会让 Tab 顺序凭空多出几十站。 */}
         {rail && !isNarrow && !railCollapsed && (
           <nav
-            className="hidden w-[16.5rem] shrink-0 flex-col gap-1 bg-background-secondary p-3 text-foreground min-[901px]:flex"
+            className={`app-rail hidden shrink-0 flex-col gap-1 p-3 text-foreground min-[901px]:flex ${recent ? 'app-rail--chats' : 'w-[16.5rem] bg-background-secondary'}`}
             data-testid="nav-rail"
             aria-label="主导航"
           >

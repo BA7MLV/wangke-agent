@@ -87,6 +87,8 @@ Content-Type: application/json
 
 之后每个请求带 `Authorization: Bearer <token>`。退出登录：带着同一个头 `POST /api/v1/auth/logout`，token 立刻失效。
 
+浏览器管理员可在已登录 Cookie 下调用 `POST /api/v1/account/reset`，提交 `{ "password": "…" }`。密码验证成功后会清空整套云端数据、撤销全部凭据并返回新的 `bootstrapSecret`；这是不可逆的首次初始化重置，不应暴露给未授权调用方。
+
 - token 只在这次响应里出现一次，数据库只存 SHA-256 哈希。
 - 密码错误和浏览器登录共用同一套按 IP 的退避。
 - 带 Bearer、不带 Cookie 的写请求不做 Origin 校验（浏览器不会自动附带 Authorization 头，不存在 CSRF）。

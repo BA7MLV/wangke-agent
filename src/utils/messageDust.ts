@@ -8,6 +8,8 @@ export interface MessageDust {
 /** DOM capture/lifecycle adapter. Particle rendering is the actual Telegram shader. */
 export async function prepareMessageDust(node: HTMLElement, signal: AbortSignal): Promise<MessageDust | undefined> {
   if (prefersReducedMotion() || signal.aborted || document.hidden) return;
+  // Capture the actual bubble/attachments, not an entire empty 820px message row.
+  node = node.querySelector<HTMLElement>('[data-dust-surface]') ?? node;
   const rect = node.getBoundingClientRect();
   const scroll = node.closest('[data-testid="course-chat-messages"], [data-testid="chat-list"]');
   const clip = scroll?.getBoundingClientRect();
@@ -30,7 +32,7 @@ export async function prepareMessageDust(node: HTMLElement, signal: AbortSignal)
           createTelegramThanosRenderer,
           snapshot: await toCanvas(node, {
             width: rect.width, height, pixelRatio: density, skipFonts: true,
-            style: { margin: '0', height: `${rect.height}px`,
+            style: { margin: '0', maxWidth: 'none', height: `${rect.height}px`,
               transform: `translateY(-${cropTop}px)`, animation: 'none', overflow: 'hidden' },
             filter: (child) => !child.matches?.('[data-testid="chat-message-actions"], iframe, video, [data-dust-ignore]'),
             fetchRequestInit: { signal: captureAbort.signal },

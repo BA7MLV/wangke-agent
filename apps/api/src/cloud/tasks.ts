@@ -36,6 +36,7 @@ export class CloudTaskRunner {
   private stopped = false;
   private active = new Map<string, AbortController>();
   private draining = false;
+  private resetting = false;
   private timer?: ReturnType<typeof setInterval>;
   private running = new Map<string, Promise<void>>();
   private readonly records: CloudRecords;
@@ -51,6 +52,12 @@ export class CloudTaskRunner {
     void this.drain(origin);
   }
   async cancel(id: string) { this.active.get(id)?.abort(); await this.running.get(id); }
+  async reset() {
+    this.resetting = true;
+    for (const controller of this.active.values()) controller.abort();
+    await Promise.allSettled(this.running.values());
+    this.resetting = false;
+  }
   async close() {
     this.stopped = true;
     clearInterval(this.timer);
@@ -58,7 +65,7 @@ export class CloudTaskRunner {
     await Promise.allSettled(this.running.values());
   }
   private async drain(origin: string) {
-    if (this.stopped || this.draining) return;
+    if (this.stopped || this.resetting || this.draining) return;
     this.draining = true;
     try {
       this.store.db.prepare("UPDATE cloud_tasks SET status='queued',worker_id=NULL,lease_expires_at=NULL,updated_at=? WHERE executor='browser' AND status IN ('running','waiting_user') AND lease_expires_at IS NOT NULL AND lease_expires_at<=?")

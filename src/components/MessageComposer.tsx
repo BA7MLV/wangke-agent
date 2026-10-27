@@ -22,7 +22,7 @@ export interface MessageComposerProps {
   onSubmit: (value: string) => void;
   placeholder?: string;
   disabled?: boolean;
-  /** 生成或执行中：发送键换成停止键 */
+  /** 生成或执行中：没有草稿时发送键换成停止键；有草稿时仍允许发送 */
   busy?: boolean;
   onStop?: () => void;
   onAttach?: () => void;
@@ -99,7 +99,7 @@ const MessageComposer = forwardRef<MessageComposerHandle, MessageComposerProps>(
               submit();
             }}
           />
-          {busy && onStop ? (
+          {busy && onStop && !value.trim() ? (
             <Button isIconOnly size="sm" variant="secondary" className="imsg-composer__send" data-shown aria-label="停止" onPress={onStop}>
               <Sym name="stop" />
             </Button>

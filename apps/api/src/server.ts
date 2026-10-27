@@ -16,6 +16,7 @@ import { CloudConfiguration } from './cloud/config.js';
 import { receiveFile, byteRange } from './cloud/files.js';
 import { registerCloudRoutes } from './cloud/routes.js';
 import { workerIdentity } from './cloud/tasks.js';
+import { workerTokens } from './cloud/workerAuth.js';
 import { McpRepository } from './mcp/repository.js';
 import { McpManager } from './mcp/manager.js';
 import { registerMcpRoutes } from './mcp/routes.js';
@@ -39,6 +40,19 @@ function loadOrCreateSecret(secretFile: string): { secret: string; createdAt: nu
   }
   fs.chmodSync(secretFile, 0o600);
   return { secret, createdAt: Date.now() };
+}
+function replaceBootstrapSecret(secretFile: string): { secret: string; createdAt: number } {
+  fs.mkdirSync(path.dirname(secretFile), { recursive: true, mode: 0o700 });
+  const secret = crypto.randomBytes(32).toString('base64url');
+  const temporary = `${secretFile}.${process.pid}.${crypto.randomBytes(8).toString('hex')}.tmp`;
+  fs.writeFileSync(temporary, `${secret}\n`, { mode: 0o600, flag: 'wx' });
+  fs.renameSync(temporary, secretFile);
+  fs.chmodSync(secretFile, 0o600);
+  return { secret, createdAt: Date.now() };
+}
+function clearDirectory(directory: string) {
+  fs.mkdirSync(directory, { recursive: true });
+  for (const entry of fs.readdirSync(directory)) fs.rmSync(path.join(directory, entry), { recursive: true, force: true });
 }
 const hashToken = (value: string) => crypto.createHash('sha256').update(value).digest('hex');
 const now = () => new Date().toISOString();
@@ -83,7 +97,7 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const runner = new BotRunner(store, { fetch: options.fetch, sandbox: options.sandbox, sandboxCleanup: options.sandboxCleanup, configuration: cloudConfig, mcp, projects });
   projects.isActive = id => runner.isProjectActive(id);
   // Never recreate a bootstrap secret after the database has been initialized.
-  const bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
+  let bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 16 * 1024 * 1024 });
   app.setErrorHandler((error, _request, reply) => {
@@ -254,6 +268,22 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   });
   app.get('/api/v1/auth/session', async (request) => { const user = session(request); return { authenticated: Boolean(user), user: user ? publicUser(user) : null }; });
   app.post('/api/v1/auth/logout', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = session(request); const authorization = request.headers.authorization; if (authorization?.startsWith('Bearer ')) { const bearer = authorization.slice(7).trim(); if (bearer) store.db.prepare('UPDATE api_tokens SET revoked_at=? WHERE token_hash=? AND revoked_at IS NULL').run(now(), hashToken(bearer)); } else if (user?.session_id) store.db.prepare('UPDATE sessions SET revoked_at=? WHERE id=?').run(now(), user.session_id); reply.header('set-cookie', `wangke_session=; Path=/; HttpOnly; SameSite=${sameSite}${secureCookie ? '; Secure' : ''}; Max-Age=0`); return { ok: true }; });
+  app.post<{ Body: { password?: string } }>('/api/v1/account/reset', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const current = session(request);
+    if (!current) return bad(reply, 401, 'unauthorized');
+    const record = await verifyPassword(request);
+    if (!record || record.id !== current.id) return bad(reply, 401, 'invalid_credentials');
+    await cloudRunner.reset();
+    await runner.reset();
+    clearDirectory(filesDir);
+    store.resetData();
+    workerTokens.clear();
+    bootstrap = replaceBootstrapSecret(secretFile);
+    attempts.clear();
+    reply.header('set-cookie', `wangke_session=; Path=/; HttpOnly; SameSite=${sameSite}${secureCookie ? '; Secure' : ''}; Max-Age=0`);
+    return { reset: true, initialized: false, bootstrapSecret: bootstrap.secret, expiresAt: new Date(bootstrap.createdAt + bootstrapTtlMs).toISOString() };
+  });
 
   app.post<{ Body: { deviceName?: string } }>('/api/v1/pairing/create', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;

@@ -42,7 +42,6 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
   const [setup, setSetup] = useState(!initialized || location.hash.startsWith('#/setup'));
   const [step, setStep] = useState<OnboardingStep>(() => initialStep({ initialized, authenticated }));
   const [direction, setDirection] = useState<'forward' | 'back'>('forward');
-  const [name, setName] = useState('Administrator');
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState(() => useSettings.getState().userName);
   const [secret, setSecret] = useState(initialSecret);
@@ -82,12 +81,12 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
     setBusy(true); setError('');
     try {
       if (step === 'account') {
-        await serverClient.bootstrapInitialize(password, secret, name);
+        await serverClient.bootstrapInitialize(password, secret);
         setCreated(true);
       }
       const response = passkey
         ? await serverClient.passkeyLoginVerify(await startAuthentication({ optionsJSON: await serverClient.passkeyLoginOptions() }))
-        : await serverClient.login(name, password);
+        : await serverClient.login(password);
       await startCloud(response.user!.id);
       setPassword(''); setSecret(''); setReady(true);
       if (setup) go(step === 'account' ? 'name' : 'models');
@@ -168,12 +167,8 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
 
           {(step === 'account' || step === 'login') && <div className="ob__group" data-shake={attempt || undefined} key={`${step}-${attempt}`}>
             <TextField fullWidth isRequired>
-              <Label className="sr-only">{t('onboarding.username')}</Label>
-              <Input className="ob__input" placeholder={t('onboarding.username')} value={name} onChange={(e) => setName(e.target.value)} autoComplete="username" autoCapitalize="none" spellCheck={false} />
-            </TextField>
-            <TextField fullWidth isRequired>
               <Label className="sr-only">{t('onboarding.password')}</Label>
-              <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus={step === 'account' || !!name} />
+              <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus />
             </TextField>
           </div>}
 
@@ -187,7 +182,7 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
           <p className="ob__error" role="alert">{error}</p>
 
           <div className="ob__actions">
-            <Button className="ob__primary" type="submit" size="lg" isDisabled={busy || (step === 'key' && !secret.trim()) || (step === 'account' && password.length < 12) || (step === 'login' && (!name || !password))}>
+            <Button className="ob__primary" type="submit" size="lg" isDisabled={busy || (step === 'key' && !secret.trim()) || (step === 'account' && password.length < 12) || (step === 'login' && !password)}>
               {busy ? <><Spinner size="sm" color="current" />{t(step === 'account' ? 'onboarding.creating' : 'onboarding.signingIn')}</>
                 : t(ACTION[step as keyof typeof ACTION])}
             </Button>

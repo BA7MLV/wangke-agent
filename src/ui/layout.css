@@ -593,6 +593,98 @@
   white-space: nowrap;
 }
 
+/* Telegram Web A Chat.tsx/Chat.scss: avatar + title/time + preview/status.
+   Source study and application-specific adaptations: docs/telegram-chat-source-study.md. */
+.app-rail--chats {
+  width: clamp(280px, 26vw, 344px);
+  background: var(--background);
+  border-inline-end: 1px solid var(--border);
+}
+
+.recent-heading {
+  display: flex;
+  justify-content: space-between;
+  padding: 0 12px 10px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.recent-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 4px 10px;
+  padding: 0 12px;
+  min-height: 42px;
+  border-radius: 24px;
+  color: var(--muted);
+  background: var(--background-secondary);
+}
+
+.recent-search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
+.recent-search input {
+  width: 100%;
+  min-width: 0;
+  padding-block: 10px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.875rem;
+}
+.recent-search input:focus-visible { outline: none; }
+.recent-empty { padding: 12px; color: var(--muted); font-size: 0.875rem; }
+.recent-list .recent-item {
+  position: relative;
+  display: flex;
+  gap: 10px;
+  min-height: 76px;
+  padding: 10px;
+  border-radius: 12px;
+  color: var(--foreground);
+  font-weight: 400;
+}
+.recent-list .recent-item[data-hovered='true'] { background: var(--background-secondary); }
+.recent-list .recent-item[data-selected='true'] { background: var(--accent); color: var(--accent-foreground); }
+.recent-avatar {
+  display: grid;
+  place-items: center;
+  flex: none;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  background: #4476b4;
+  color: #fff;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+.recent-avatar[data-color='1'] { background: #8a5bb0; }
+.recent-avatar[data-color='2'] { background: #357e78; }
+.recent-avatar[data-color='3'] { background: #ae6040; }
+.recent-avatar[data-color='4'] { background: #aa5479; }
+.recent-info { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
+.recent-info__top, .recent-info__bottom { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.recent-info__top { font-size: 0.9375rem; font-weight: 600; }
+.recent-info__top .recent-title { flex: 1; }
+.recent-time { flex: none; font-size: 0.6875rem; font-weight: 400; color: var(--muted); }
+.recent-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; color: var(--muted); }
+.recent-preview[data-pending='true'] { color: var(--accent); }
+.recent-status { display: grid; place-items: center; flex: none; width: 20px; height: 20px; font-size: 0.75rem; }
+.recent-list .recent-item[data-selected='true'] :is(.recent-time, .recent-preview, .recent-pin button, .recent-menu button) { color: inherit; }
+.recent-list .recent-item[data-selected='true'] .recent-unread { background: currentColor; }
+.recent-menu { position: absolute; inset-inline-end: 8px; top: 8px; }
+.recent-menu button { background: var(--background); }
+.recent-list .recent-item[data-selected='true'] .recent-menu button { background: var(--accent); }
+.recent-item:hover .recent-time, .recent-item:has([aria-expanded='true']) .recent-time { visibility: hidden; }
+@media (pointer: coarse) {
+  .recent-search input { font-size: 1rem; }
+}
+@media (hover: none), (max-width: 900px) {
+  .recent-info__top { padding-inline-end: 24px; }
+  .recent-item:hover .recent-time { visibility: visible; }
+  .recent-menu button { width: 32px; height: 32px; }
+}
+
 .recent-title > span {
   display: inline-block;
   white-space: nowrap;

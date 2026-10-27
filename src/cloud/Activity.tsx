@@ -35,7 +35,10 @@ export default function CloudActivity() {
       finally { busy = false; }
     };
     window.addEventListener('cloud-data-changed', changed);
-    const timer = setInterval(() => void refresh(), 1000); void refresh();
+    // Server-side course tasks publish throttled token progress. Poll faster
+    // than the old one-second cadence so that the durable task stream still
+    // feels live without opening a second transport channel.
+    const timer = setInterval(() => void refresh(), 250); void refresh();
     return () => { stopped = true; clearInterval(timer); window.removeEventListener('cloud-data-changed', changed); };
   }, []);
   return cloud.enabled && error ? <p role="alert" className="bg-surface p-3 text-danger">{error}</p> : null;

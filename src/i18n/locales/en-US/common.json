@@ -92,7 +92,7 @@
     "typingShort": "Typing…",
     "nav": {
       "label": "Navigation",
-      "chat": "Chat",
+      "chat": "BOT",
       "projects": "Projects",
       "course": "Course Q&A",
       "library": "Library"
@@ -107,9 +107,14 @@
     "archived": "Archived",
     "conversation": "Conversation with {{name}}",
     "composer": "Message",
+    "taskPlaceholder": "Give your BOT a task…",
+    "purpose": "Run tasks, create projects, manage settings",
+    "projectPurpose": "Work on files and tasks in this project",
+    "courseLink": "Study and search materials → Course Q&A",
     "attach": "Add attachment",
     "attachment": "Attachment",
     "settings": "Settings",
+    "permissions": "BOT permissions",
     "stop": "Stop current task",
     "stopped": "Stopped",
     "notRunning": "Nothing is running",

@@ -705,13 +705,17 @@ function ProviderRow({
           <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true">
             {preset ? <ProviderLogo id={preset.id} /> : <Sym name="dns" />}
           </span>
-          <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'ready' ? 'bg-success/12' : status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
+          {status !== 'ready' && <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
             {STATUS_HINT[status]}
-          </span>
+          </span>}
         </span>
         <span className="flex min-w-0 flex-1 flex-col justify-end gap-1">
-          <span className="flex items-center gap-1.5 truncate text-lg font-semibold text-foreground max-[640px]:text-xs">
-            {provider.name.trim() || '未命名供应商'}
+          <span className="flex min-w-0 items-center gap-1.5 text-lg font-semibold text-foreground max-[640px]:text-xs">
+            <span className="truncate">{provider.name.trim() || '未命名供应商'}</span>
+            {status === 'ready' && <span className="inline-flex shrink-0 items-center text-success" title={STATUS_HINT[status]} data-testid={`provider-ready-${provider.id}`}>
+              <Sym name="check_circle" size={18} />
+              <span className="sr-only">{STATUS_HINT[status]}</span>
+            </span>}
             {dupName && <Chip size="sm" variant="soft" color="danger" className="h-4 px-1 text-[10px]">重名</Chip>}
           </span>
           {showEndpoint && <span className="truncate font-mono text-xs text-muted max-[640px]:text-[9px]" title={provider.baseUrl}>
@@ -860,7 +864,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
   const [keyError, setKeyError] = useState<string | null>(null);
   /** 当前进入详情页的供应商（provider id）。null = 供应商总览 */
   const [selectedProviderId, setSelectedProviderId] = useState<string | null>(null);
-  const [connectingProvider, setConnectingProvider] = useState(false);
   /** 新连接只放在组件内存中；明确保存前不进入持久化设置或模型发现。 */
   const [draftProvider, setDraftProvider] = useState<Provider | null>(null);
   const [draftError, setDraftError] = useState('');
@@ -876,7 +879,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
     if (settingsOpen || standalone) return;
     setDraftProvider(null);
     setDraftError('');
-    setConnectingProvider(false);
   }, [settingsOpen, standalone]);
 
   /** 供应商 key 仅用于消除同名歧义；未填写也能刷新和使用能力目录。 */
@@ -962,7 +964,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
   const addProvider = () => {
     setDraftProvider({ id: 'draft', name: '', baseUrl: '', apiKey: '', protocol: 'openai-chat', serves: ['chat'], catalogId: '' });
     setDraftError('');
-    setConnectingProvider(false);
     setSelectedProviderId(null);
   };
 
@@ -970,7 +971,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
     // 已有同端点的连接时直接打开，保留名称、密钥、协议及用户配置。
     const existing = settings.providers.find((p) => matchesProviderPreset(p, preset));
     setDraftError('');
-    setConnectingProvider(false);
     if (existing) {
       setDraftProvider(null);
       setSelectedProviderId(existing.id);
@@ -983,7 +983,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
   const discardDraftProvider = () => {
     setDraftProvider(null);
     setDraftError('');
-    setConnectingProvider(true);
   };
 
   const saveDraftProvider = () => {
@@ -1040,7 +1039,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
   return (
     <>
       <SectionCard
-        title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : connectingProvider ? '连接提供商' : '模型供应商'}
+        title={draftProvider ? (draftProvider.name.trim() || '自定义提供商') : selectedProvider ? (selectedProvider.name.trim() || '未命名供应商') : '模型供应商'}
         testId="card-api"
       >
         {draftProvider ? (
@@ -1049,7 +1048,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
             saveDraftProvider();
           }}>
             <Button type="button" variant="tertiary" className="self-start" data-testid="provider-draft-back" onPress={discardDraftProvider}>
-              <Sym name="arrow_back" />返回常用端点
+              <Sym name="arrow_back" />返回供应商列表
             </Button>
             <ProviderRow
               key={draftProvider.id}
@@ -1116,29 +1115,12 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
               />
             </ProviderRow>
           </div>
-        ) : connectingProvider ? (
+        ) : (
           <ProviderPresets
             providers={settings.providers}
             onSelect={connectPreset}
             onCustom={addProvider}
-            onBack={() => setConnectingProvider(false)}
-          />
-        ) : (
-          <div className="grid grid-cols-3 gap-4 max-[640px]:gap-1.5">
-            <button
-              type="button"
-              className="flex min-h-[218px] cursor-pointer flex-col items-center justify-center gap-4 rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted transition-colors duration-200 hover:border-accent/55 hover:bg-background-secondary focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus max-[640px]:min-h-[150px] max-[640px]:gap-2 max-[640px]:rounded-xl max-[640px]:p-2"
-              data-testid="provider-add-card"
-              aria-label="连接提供商"
-              onClick={() => setConnectingProvider(true)}
-            >
-              <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg">
-                <Sym name="add" />
-              </span>
-              <span className="text-lg font-semibold text-foreground max-[640px]:text-[10px]">连接提供商</span>
-              <span className="text-sm max-[640px]:text-[9px]">API 密钥或登录</span>
-            </button>
-            {settings.providers.map((p, i) => (
+            renderProvider={p => (
               <ProviderRow
                 key={p.id}
                 provider={p}
@@ -1149,7 +1131,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
                 modelCount={modelOptions[p.id]?.length ?? savedModelsOf(settings).filter((m) => m.providerId === p.id).length}
                 open={false}
                 shaking={keyError === p.id}
-                removable={serverManaged || settings.providers.length > 1 || i > 0}
+                removable={serverManaged || settings.providers.length > 1}
                 onToggle={() => setSelectedProviderId(p.id)}
                 onChange={(patch) => {
                   settings.update({ providers: settings.providers.map((x) => (x.id === p.id ? { ...x, ...patch } : x)) });
@@ -1160,8 +1142,8 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
               >
                 <ModelLibrary key={p.id} providerId={p.id} allowDecision={!serverManaged} checking={checking} onRefresh={() => void handleCheck(p.id)} />
               </ProviderRow>
-            ))}
-          </div>
+            )}
+          />
         )}
         <div className="mt-4 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs leading-relaxed text-muted">
           <span>能力数据由 <a href="https://models.dev" target="_blank" rel="noreferrer" className="underline underline-offset-2">models.dev</a> 提供。</span>
@@ -1181,7 +1163,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         </div>
         {metaError && <p role="alert" className="mt-1 text-xs text-pretty text-danger">{metaError}</p>}
       </SectionCard>
-      {!draftProvider && !selectedProvider && !connectingProvider && <>
+      {!draftProvider && !selectedProvider && <>
       <SectionCard
         title="选择模型"
         testId="card-models"

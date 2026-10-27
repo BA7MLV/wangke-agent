@@ -169,11 +169,50 @@ try {
     assert.ok(body.messages.some(m => m.role === 'tool' && m.content.includes('fixture:bot-loop')));
     return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'send_message', arguments: JSON.stringify({ kind: 'text', text: 'MCP verified' }) } }] } }] });
   } });
+  const beforeBotCall = calls.length;
   bot.start();
+  for (let i = 0; i < 100 && store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId).status !== 'waiting_user'; i++) await new Promise(r => setTimeout(r, 50));
+  assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId).status, 'waiting_user');
+  assert.equal(calls.length, beforeBotCall, 'external tools must wait for human approval');
+  store.db.prepare("UPDATE approvals SET status='approved' WHERE run_id=?").run(runId);
+  store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(runId);
+  bot.enqueue();
   for (let i = 0; i < 100 && store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId).status !== 'completed'; i++) await new Promise(r => setTimeout(r, 50));
   assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(runId).status, 'completed');
   assert.match(store.db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool LIKE 'mcp_%'").get(runId).result, /fixture:bot-loop/);
   await bot.close();
+  // Pending approvals never survive rejection, a server edit, or scope revocation.
+  for (const scenario of ['reject', 'server-edit', 'scope-revoked']) {
+    const pendingRun = crypto.randomUUID();
+    let turns = 0;
+    store.db.prepare("UPDATE threads SET mcp_server_ids=NULL WHERE id=?").run(threadId);
+    store.db.prepare("INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES(?,?,'bot','queued',?)").run(pendingRun, threadId, timestamp);
+    bot = new BotRunner(store, { configuration: config, mcp: manager, fetch: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      if (turns++ === 0) {
+        const name = body.tools.find(t => t.function.name.startsWith('mcp_') && t.function.description.includes('/ echo]')).function.name;
+        return Response.json({ choices: [{ message: { tool_calls: [{ function: { name, arguments: '{"text":"must-not-execute"}' } }] } }] });
+      }
+      assert.ok(body.messages.some(m => m.role === 'tool' && /denied|unavailable/.test(m.content)));
+      return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'send_message', arguments: '{"kind":"text","text":"Stopped"}' } }] } }] });
+    } });
+    const before = calls.length;
+    bot.start();
+    for (let i = 0; i < 100 && store.db.prepare('SELECT status FROM runs WHERE id=?').get(pendingRun).status !== 'waiting_user'; i++) await new Promise(r => setTimeout(r, 20));
+    assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(pendingRun).status, 'waiting_user');
+    if (scenario === 'server-edit') {
+      repository.save(owner, { ...repository.public(repository.get(owner, second.id)), name: 'Edited after approval request' }, second.id);
+      await manager.invalidate(owner, second.id);
+    }
+    if (scenario === 'scope-revoked') store.db.prepare("UPDATE threads SET mcp_server_ids='[]' WHERE id=?").run(threadId);
+    store.db.prepare('UPDATE approvals SET status=? WHERE run_id=?').run(scenario === 'reject' ? 'rejected' : 'approved', pendingRun);
+    store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(pendingRun);
+    bot.enqueue();
+    for (let i = 0; i < 100 && store.db.prepare('SELECT status FROM runs WHERE id=?').get(pendingRun).status !== 'completed'; i++) await new Promise(r => setTimeout(r, 20));
+    assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(pendingRun).status, 'completed');
+    assert.equal(calls.length, before, scenario);
+    await bot.close();
+  }
   const recoveryRun = crypto.randomUUID(), recoveryCall = crypto.randomUUID();
   const pendingTool = { id: recoveryCall, type: 'function', function: { name: a.tools.find(t => t.serverId === second.id).name, arguments: '{"text":"do-not-replay"}' } };
   const savedContext = [{ role: 'system', content: 'Test recovery' }, { role: 'assistant', content: null, tool_calls: [pendingTool] }];

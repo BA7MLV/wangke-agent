@@ -5,6 +5,7 @@
  */
 .bh {
   --bh-list-width: 320px;
+  --bh-chat-column: 820px;
   --bh-hairline: color-mix(in oklab, var(--foreground) 10%, transparent);
   --bh-tint: var(--accent);
   --imsg-mine: var(--accent);
@@ -422,7 +423,14 @@
 }
 
 .bh-chat .bot-composer {
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px max(20px, calc((100% - var(--bh-chat-column)) / 2))
+    max(12px, env(safe-area-inset-bottom));
   border-top: 0;
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
 }
 
 .bh-chat[data-landing] .bot-composer {
@@ -431,12 +439,63 @@
   -webkit-backdrop-filter: none;
 }
 
-/* 宽屏：输入栏和气泡同一条中线，最宽 760px */
-@media (min-width: 761px) {
-  .bh-chat .bot-composer {
-    width: min(100%, 800px);
-    margin: 0 auto;
-    padding-bottom: max(14px, env(safe-area-inset-bottom));
+/* Bot 与课程聊天共用同一种输入卡：浅色画布上的白色大圆角工作区。
+   MessageComposer 仍保留 Bot 的附件上传能力，只把外层交互语言对齐到课程聊天。 */
+.bh-chat .imsg-composer__row {
+  box-sizing: border-box;
+  width: min(100%, var(--bh-chat-column));
+  margin: 0 auto;
+  padding: 8px 12px;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 24px;
+  background: var(--background);
+  box-shadow: var(--shadow-sm);
+  transition: border-color var(--duration-quick) var(--ease-out), box-shadow var(--duration-quick) var(--ease-out);
+}
+
+.bh-chat .imsg-composer__row:focus-within {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.04),
+    0 10px 30px rgb(0 0 0 / 0.07);
+}
+
+.bh-chat .imsg-composer__attach {
+  width: 36px;
+  min-width: 36px;
+  height: 36px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.bh-chat .imsg-composer__field {
+  min-height: 36px;
+  border: 0;
+  background: transparent;
+}
+
+.bh-chat .imsg-composer__input,
+.bh-chat .imsg-composer__input:focus,
+.bh-chat .imsg-composer__input:focus-visible {
+  min-height: 36px;
+  padding: 5px 40px 5px 0;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+}
+
+.bh-chat .imsg-composer__input:focus-visible {
+  outline: none;
+}
+
+.bh-chat .imsg-composer__send {
+  right: 4px;
+  bottom: 4px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bh-chat .imsg-composer__row {
+    transition: none;
   }
 }
 
@@ -724,51 +783,6 @@
   box-shadow: 0 1px 6px rgb(0 0 0 / 0.08);
   backdrop-filter: blur(12px);
   -webkit-backdrop-filter: blur(12px);
-}
-
-/* ── 输入栏：一条细胶囊，「＋」在里面左边，有字才出现发送键 ── */
-.bh-chat .bot-composer {
-  background: color-mix(in srgb, var(--bh-canvas) 84%, transparent);
-}
-
-.bh-chat .imsg-composer__row {
-  gap: 0;
-  padding: 3px;
-  border: 1px solid color-mix(in oklab, var(--foreground) 13%, transparent);
-  border-radius: 22px;
-  background: var(--bh-canvas);
-  transition: border-color var(--duration-quick) var(--ease-out), box-shadow var(--duration-quick) var(--ease-out);
-}
-
-.bh-chat .imsg-composer__row:focus-within {
-  border-color: color-mix(in oklab, var(--foreground) 24%, transparent);
-  box-shadow: 0 1px 8px rgb(0 0 0 / 0.05);
-}
-
-.bh-chat .imsg-composer__attach {
-  width: 32px;
-  min-width: 32px;
-  height: 32px;
-  background: transparent;
-  color: var(--muted);
-  font-size: 1.25rem;
-}
-
-.bh-chat .imsg-composer__field {
-  border: 0;
-  background: transparent;
-}
-
-.bh-chat .imsg-composer__input,
-.bh-chat .imsg-composer__input:focus,
-.bh-chat .imsg-composer__input:focus-visible {
-  min-height: 32px;
-  padding: 5px 40px 5px 8px;
-}
-
-.bh-chat .imsg-composer__send {
-  bottom: 1px;
-  right: 1px;
 }
 
 .imsg-rich pre {

@@ -211,3 +211,24 @@ export function stopCloud() {
   // settings from a previous identity remain visible after logout/session expiry.
   window.location.reload();
 }
+
+/** Discard this browser's cloud cache after a server-side account reset. */
+export async function clearCloudLocalData() {
+  clearInterval(timer);
+  fileCache.clear();
+  flight = undefined;
+  configSignature = '';
+  configCheckedAt = 0;
+  const owner = cloud.userId;
+  cloud.enabled = false;
+  cloud.userId = '';
+  cloud.worker = false;
+  cloud.taskId = '';
+  cloud.workerToken = '';
+  cloud.permissionId = undefined;
+  useSettings.persist.setOptions({ name: 'wangke-settings' });
+  if (owner) localStorage.removeItem(`wangke-cloud-settings-${owner}`);
+  useSettings.setState(useSettings.getInitialState());
+  await useSettings.persist.clearStorage();
+  await db.delete();
+}

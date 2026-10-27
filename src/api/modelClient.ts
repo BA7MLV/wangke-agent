@@ -463,13 +463,37 @@ export async function chatStream(
   onDelta?: (content: string) => void,
   onReasoning?: (text: string) => void,
   onToolCallDelta?: (call: ToolCallDelta) => void,
+  fetcher: typeof fetch = fetch,
 ): Promise<ChatMessage> {
   const messages = wire(opts.messages);
   const res = await request(t, chatPath(t), {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify(requestBody(t, opts, messages, true)),
-  }, messages);
+  }, messages, fetcher);
+
+  /**
+   * Some OpenAI-compatible gateways ignore `stream=true` and return one JSON
+   * response. Treat that as a one-chunk stream instead of trying to parse JSON
+   * as SSE (which otherwise looks like an empty answer).
+   */
+  const contentType = res.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().includes('text/event-stream')) {
+    const body = await res.text();
+    if (!body.trim()) throw new Error('模型接口返回为空，请重试或检查模型服务');
+    let data: unknown;
+    try { data = JSON.parse(body); } catch { throw new Error('模型接口返回的数据不完整或不是有效 JSON，请重试或检查模型服务'); }
+    if (!data || typeof data !== 'object') throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
+    const raw = normalizeResponse(data, t.protocol);
+    const msg = !opts.tools?.length || typeof raw.content !== 'string' ? raw : applyRecoveredDsml(raw, raw.content);
+    const content = textOf(msg);
+    if (content) onDelta?.(content);
+    if (msg.reasoning_content) onReasoning?.(msg.reasoning_content);
+    msg.tool_calls?.forEach((call, index) => onToolCallDelta?.({
+      index, id: call.id, name: call.function.name, arguments: call.function.arguments,
+    }));
+    return msg;
+  }
 
   const reader = res.body!.getReader();
   const decoder = new TextDecoder();

@@ -6,10 +6,12 @@ import { useCourseChat } from '../store/courseChat';
 import { confirmDialog, promptDialog, Sym, toast } from '../ui';
 import type { RecentItem } from '../ui/layout';
 import { cloud } from '../cloud/state';
+import { markdownToPlainText } from '../utils/chatExport';
 
 // 页面切换会重挂 hook，但最近会话不应因此退回空态。
 // 只缓存查询结果；每次挂载仍订阅 liveQuery，删除、后台消息等会继续实时更新。
-let cachedActivity: Map<number, number> | null = null;
+type ChatActivity = { timestamp: number; preview: string };
+let cachedActivity: Map<number, ChatActivity> | null = null;
 
 /** 主页和资料页共用会话筛选、排序、状态与操作；只有主页显示当前会话高亮。 */
 export function useRecentChats(showActive = false) {
@@ -35,7 +37,12 @@ export function useRecentChats(showActive = false) {
           query().filter((message) => message.role === 'user').first(),
           query().first(),
         ]);
-        return [session.id!, user ? (latest?.createdAt ?? user.createdAt) : 0] as const;
+        const text = latest?.content ? markdownToPlainText(latest.content.slice(0, 500)).replace(/\s+/g, ' ').trim() : '';
+        const preview = text || (latest?.attachments?.length || latest?.images?.length ? '附件消息' : '开始对话');
+        return [session.id!, {
+          timestamp: user ? (latest?.createdAt ?? user.createdAt) : 0,
+          preview: `${latest?.role === 'user' ? '你：' : ''}${preview}`,
+        }] as const;
       }),
     )))).subscribe({
       next: (next) => {
@@ -54,9 +61,9 @@ export function useRecentChats(showActive = false) {
   const recentSessions = useMemo(() => {
     if (!activity) return [];
     return sessions
-    .filter((session) => activity.has(session.id!) && activity.get(session.id!) !== 0)
+    .filter((session) => (activity.get(session.id!)?.timestamp ?? 0) !== 0)
     .sort((a, b) => Number(!!b.pinned) - Number(!!a.pinned)
-      || activity.get(b.id!)! - activity.get(a.id!)!
+      || activity.get(b.id!)!.timestamp - activity.get(a.id!)!.timestamp
       || b.createdAt - a.createdAt || b.id! - a.id!);
   }, [sessions, activity]);
 
@@ -100,6 +107,8 @@ export function useRecentChats(showActive = false) {
     const pin = () => void useCourseChat.getState().setPinned(id, !session.pinned);
     return {
       id: String(id), label: session.title,
+      preview: awaitingIds.includes(id) ? '等待你的回答' : busy ? '正在回复…' : activity?.get(id)?.preview,
+      updatedAt: activity?.get(id)?.timestamp,
       active: showActive && id === activeId,
       pendingReply: busy && !awaitingIds.includes(id),
       pinned: !!session.pinned,

@@ -3,6 +3,8 @@ import { useLocation, useNavigate, useParams, useSearchParams } from 'react-rout
 import { Avatar, Button, Dropdown, ListBox, Modal, Spinner, cn } from '@heroui/react';
 import { PageShell, Sym, toast, promptDialog, confirmDialog } from '../ui';
 import { useAppNav } from '../components/appNav';
+import { openSettings } from '../components/settingsDialogStore';
+import { cloud } from '../cloud/state';
 import ModeShell, { AppMenu, ModeSwitch, MoreMenu, useAppMenuActions, type MenuAction } from '../components/ModeShell';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
@@ -661,6 +663,7 @@ function Workspace({ projectId }: { projectId?: string }) {
   ];
   const runActions: MenuAction[] = [
     { key: 'stop', label: t('botHome.stop'), icon: <Sym name="stop" />, disabled: !active, onAction: () => void stop() },
+    ...(!projectId && cloud.enabled ? [{ key: 'permissions', label: t('botHome.permissions'), icon: <Sym name="tune" />, onAction: () => openSettings('data') }] : []),
     ...(!projectId ? [{ key: 'mcp', label: ts('mcp.scope'), icon: <Sym name="extension" />, disabled: !active, onAction: () => setMcpOpen(true) }] : []),
   ];
   const threadMenu: MenuAction[] = activeSummary ? [
@@ -693,6 +696,8 @@ function Workspace({ projectId }: { projectId?: string }) {
             {projectId && !availableAgents.length ? <p className="bh-hello__note">{tp('noAgent')}</p> : <>
               <BotAvatar agent={currentAgent} size={narrow ? 96 : 112} className="bh-hello__avatar" />
               <p className="bh-hello__name">{currentAgent?.name}</p>
+              <p className="bh-hello__note">{t(projectId ? 'botHome.projectPurpose' : 'botHome.purpose')}</p>
+              {!projectId && <Button variant="ghost" size="sm" onPress={() => navigate('/course-chat')}>{t('botHome.courseLink')}</Button>}
             </>}
           </div>
         ) : !active ? (
@@ -717,11 +722,13 @@ function Workspace({ projectId }: { projectId?: string }) {
     <MessageComposer
       className="bot-composer"
       ariaLabel={t('botHome.composer')}
-      placeholder={project?.archived ? tp('readOnly') : t('botHome.composer')}
+      placeholder={project?.archived ? tp('readOnly') : t('botHome.taskPlaceholder')}
       value={draft}
       onChange={setDraft}
       onSubmit={() => void send()}
       disabled={!canChat || sendBusy || Boolean(activeId && !active)}
+      busy={activeRunning}
+      onStop={() => void stop()}
       onAttach={() => uploadInputRef.current?.click()}
       attachBusy={uploadBusy}
       attachLabel={t('botHome.attach')}

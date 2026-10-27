@@ -38,7 +38,7 @@ export class ProjectRepository {
     return project;
   }
 
-  create(owner: string, name: unknown, agentId: string): ProjectDetailDto {
+  create(owner: string, name: unknown, agentId: string, role: ProjectRole = 'write'): ProjectDetailDto {
     const cleanName = nameOf(name);
     this.agent(owner, agentId);
     const id = crypto.randomUUID();
@@ -48,7 +48,7 @@ export class ProjectRepository {
     const now = timestamp();
     this.store.transaction(() => {
       this.store.db.prepare('INSERT INTO projects(id,owner_id,name,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, owner, cleanName, now, now);
-      this.store.db.prepare('INSERT INTO project_agents(project_id,agent_id,role) VALUES(?,?,?)').run(id, agentId, 'write');
+      this.store.db.prepare('INSERT INTO project_agents(project_id,agent_id,role) VALUES(?,?,?)').run(id, agentId, role);
     });
     return this.get(owner, id);
   }

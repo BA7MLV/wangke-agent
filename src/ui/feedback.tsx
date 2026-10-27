@@ -84,6 +84,10 @@ export interface PromptOptions {
   defaultValue?: string;
   /** 输入框占位符 */
   placeholder?: string;
+  /** 输入框类型；密码确认不应在屏幕上明文显示。 */
+  inputType?: 'text' | 'password';
+  /** 默认会去掉首尾空白；密码需要保留用户输入时设为 false。 */
+  trim?: boolean;
   /** 确认按钮文案 */
   confirmText?: string;
   /** 取消按钮文案 */
@@ -219,7 +223,7 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
    * 空串一律当取消：确认一个空标题等于把这条会话改成无名，用户多半是直接回车忘了填。
    */
   const submitPrompt = () => {
-    const value = draft.trim();
+    const value = promptOptions?.trim === false ? draft : draft.trim();
     if (!value) return;
     const problem = promptOptions?.validate?.(value) ?? null;
     if (problem) return setError(problem);
@@ -261,6 +265,7 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
                   <Input
                     autoFocus
                     data-testid="prompt-dialog-input"
+                    type={promptOptions.inputType ?? 'text'}
                     placeholder={promptOptions.placeholder}
                     /* 回车提交。HeroUI 的 TextField 不接 `onSubmit`，
                        而 Modal 也不是 form —— 不在这里手动拦的话，

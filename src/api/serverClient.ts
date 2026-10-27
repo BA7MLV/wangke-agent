@@ -55,6 +55,7 @@ export const serverClient = {
   passkeyRegisterVerify: (response: RegistrationResponseJSON) => request<{ verified: true }>('/auth/passkey/register/verify', { method: 'POST', body: JSON.stringify(response) }),
   session: () => request<Session>('/auth/session'),
   logout: () => request<{ ok: true }>('/auth/logout', { method: 'POST' }),
+  resetAccount: (password: string) => request<{ reset: true; initialized: false; bootstrapSecret: string; expiresAt: string }>('/account/reset', { method: 'POST', body: JSON.stringify({ password }) }),
   agents: () => request<{ agents: AgentProfileDto[] }>('/agents'),
   createAgent: (profile: { name: string; role?: string; systemPrompt?: string; avatar?: string }) => request<AgentProfileDto>('/agents', { method: 'POST', body: JSON.stringify(profile) }),
   threads: (projectId?: string) => request<{ threads: ThreadDto[] }>(`/threads${projectId ? `?projectId=${encodeURIComponent(projectId)}` : ''}`),

@@ -310,5 +310,20 @@ export class DatabaseStore {
     return this.db.transaction(fn)();
   }
 
+  /** Remove all application data while retaining the schema for a fresh bootstrap. */
+  resetData() {
+    const tables = (this.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").all() as Array<{ name: string }>)
+      .map(({ name }) => name)
+      .filter(name => name !== 'schema_migrations');
+    this.db.pragma('foreign_keys = OFF');
+    try {
+      this.transaction(() => {
+        for (const table of tables) this.db.prepare(`DELETE FROM "${table.replaceAll('"', '""')}"`).run();
+      });
+    } finally {
+      this.db.pragma('foreign_keys = ON');
+    }
+  }
+
   close() { this.db.close(); }
 }

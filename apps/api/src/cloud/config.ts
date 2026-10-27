@@ -48,7 +48,7 @@ export class CloudConfiguration {
       ids.add(p.id);
       const url = new URL(p.baseUrl);
       if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.search || url.hash) throw new Error('invalid_provider_url');
-      // The administrator may deliberately configure a LAN-hosted model. Never accept an endpoint from a task/model.
+      // LAN-hosted models are supported. Bot endpoint changes must pass the exact-argument human approval in BotSettingsTools.
       const apiKey = p.apiKey === undefined ? previous.providers.find(old => old.id === p.id)?.apiKey ?? '' : p.apiKey;
       if (typeof apiKey !== 'string' || apiKey.length > 4096) throw new Error('invalid_provider_key');
       return { id: p.id, name: p.name, baseUrl: url.href.replace(/\/+$/, ''), protocol: p.protocol, apiKey,
@@ -77,8 +77,11 @@ export class CloudConfiguration {
     const config = this.get(owner);
     const agents = this.store.db.prepare('SELECT agent_id FROM thread_participants WHERE thread_id=?').all(threadId) as Array<{ agent_id: string }>;
     const trusted = agents.length > 0 && agents.every(a => config.trustedAgentIds?.includes(a.agent_id));
-    // Explicit prohibitions and the independent network switch still apply to trusted agents.
-    return { ...config.policy, shell: trusted && config.policy.shell === 'ask' ? 'allow' as const : config.policy.shell };
+    // Trust removes routine write/command prompts, not deletion or sensitive configuration approval.
+    // Explicit prohibitions and the independent network switch still apply.
+    return { ...config.policy,
+      write: trusted && config.policy.write === 'ask' ? 'allow' as const : config.policy.write,
+      shell: trusted && config.policy.shell === 'ask' ? 'allow' as const : config.policy.shell };
   }
   audit(owner: string, action: string, detail: unknown) {
     this.store.db.prepare('INSERT INTO cloud_audit(owner_id,action,detail,created_at) VALUES(?,?,?,?)')

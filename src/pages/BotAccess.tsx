@@ -13,17 +13,15 @@ export function passkeyError(error: unknown, action: '登录' | '注册') {
 }
 
 const errorText: Record<string, string> = {
-  invalid_credentials: '用户名或密码不对',
+  invalid_credentials: '密码不对',
   invalid_or_expired_bootstrap_secret: '安装 secret 无效或已过期',
   admin_password_must_be_12_to_256_characters: '密码至少 12 位',
   bootstrap_closed: '已经初始化过了，请直接登录',
 };
 
 export default function AccessForm({ initialized, onDone }: { initialized: boolean; onDone: () => void }) {
-  const [username, setUsername] = useState('Administrator');
   const [password, setPassword] = useState('');
   const [secret, setSecret] = useState('');
-  const [name, setName] = useState('Administrator');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [passkeyBusy, setPasskeyBusy] = useState(false);
@@ -34,8 +32,8 @@ export default function AccessForm({ initialized, onDone }: { initialized: boole
     setBusy(true);
     setError('');
     try {
-      if (!initialized) await serverClient.bootstrapInitialize(password, secret, name);
-      else await serverClient.login(username, password);
+       if (!initialized) await serverClient.bootstrapInitialize(password, secret);
+       else await serverClient.login(password);
       onDone();
     } catch (e) {
       setError(e instanceof ServerApiError ? errorText[e.code] ?? e.code : '连不上服务');
@@ -76,13 +74,9 @@ export default function AccessForm({ initialized, onDone }: { initialized: boole
         <h2 className="bot-access__title">{initialized ? '登录' : '创建管理员'}</h2>
 
         <div className="bot-access__group">
-          {!initialized ? (
-            <>
-              <TextField fullWidth>
-                <Label className="sr-only">管理员名称</Label>
-                <Input placeholder="管理员名称" value={name} onChange={(event) => setName(event.target.value)} autoComplete="name" />
-              </TextField>
-              <TextField fullWidth>
+           {!initialized ? (
+             <>
+               <TextField fullWidth>
                 <Label className="sr-only">安装 secret</Label>
                 <div className="bot-access__secret">
                   <Input type="password" placeholder="安装 secret" value={secret} onChange={(event) => setSecret(event.target.value)} autoComplete="off" required />
@@ -93,12 +87,7 @@ export default function AccessForm({ initialized, onDone }: { initialized: boole
               </TextField>
               <input ref={secretFileRef} className="bot-hidden-file" type="file" accept=".txt,.env" aria-label="从文件读取 secret" onChange={readSecret} />
             </>
-          ) : (
-            <TextField fullWidth>
-              <Label className="sr-only">用户名</Label>
-              <Input placeholder="用户名" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="username" />
-            </TextField>
-          )}
+           ) : null}
           <TextField fullWidth>
             <Label className="sr-only">密码</Label>
             <Input
@@ -127,4 +116,3 @@ export default function AccessForm({ initialized, onDone }: { initialized: boole
     </div>
   );
 }
-

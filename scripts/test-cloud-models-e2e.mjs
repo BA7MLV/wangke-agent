@@ -34,8 +34,8 @@ try {
   await page.getByRole('button', { name: '设置密码并继续', exact: true }).click();
   await page.getByTestId('provider-add-card').waitFor();
   await page.getByTestId('model-meta-updated-at').locator('time').waitFor();
-  await page.getByTestId('provider-add-card').click();
-  await page.getByTestId('provider-preset-fixture').click();
+  await page.getByTestId('provider-preset-search').fill('Fixture Provider');
+  await page.getByRole('option').filter({ hasText: 'Fixture Provider' }).click();
   await page.getByTestId('api-key-draft').fill('secret-for-server-only');
   await page.getByTestId('provider-draft-save').click();
   await page.getByTestId('provider-back').waitFor();

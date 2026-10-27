@@ -33,9 +33,13 @@ export function useMessageDeletion(
       if (!ok || !signal || signal.aborted || currentScope.current !== scope) return;
       const node = Array.from(listRef.current?.querySelectorAll<HTMLElement>('[data-chat-message]') ?? [])
         .find((element) => element.dataset.chatMessage === key);
+      // Capture the mounted bubble before removing its DOM. Racing these operations
+      // makes the particle effect lose its source on virtually every local deletion.
+      // Preparation has a bounded timeout and fails open when WebGL is unavailable.
       dust = node ? await prepareMessageDust(node, signal) : undefined;
       if (signal.aborted || currentScope.current !== scope) return;
-      if (await remove(key)) {
+      const removed = await remove(key);
+      if (removed) {
         committed = true;
         dust?.play();
         toast.success('已删除这条消息');

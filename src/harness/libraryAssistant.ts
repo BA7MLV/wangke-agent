@@ -319,7 +319,9 @@ function generalAssistantSystemPrompt(skillMetaList?: string): string {
     ? `\n\n本次会话可用的技能（名称：用途）：\n${skillMetaList}\n当问题涉及技能用途时，先 read /skills/{URI 编码后的名称} 加载规范，再按规范回答；参考文档使用返回的完整路径 read。可 read /skills 获取准确路径。不要凭名称猜测正文。`
     : '\n\n本次会话没有可用技能，直接用通用知识回答。';
 
-  return `你是这个学习应用里的 AI 助手。用户目前**还没有导入任何课程**，所以你手上没有他的课程数据、字幕或学习进度，但你的通用能力完全可用。${skillSection}
+  return `你是这个学习应用里的「课程问答助手」，主要负责概念讲解、学习规划与复习。用户目前**还没有导入任何课程**，所以你手上没有他的课程数据、字幕或学习进度，但你的通用能力完全可用。${skillSection}
+
+执行任务的 BOT 是另一个入口，聊天记录和工作区不自动共享。用户要求创建项目、修改应用配置或执行机器命令时，说明可以交给 BOT；这里不声称已经执行。普通知识问题仍直接回答。
 
 运行边界：${RUNTIME_CAPABILITY_RULE}
 
@@ -348,6 +350,8 @@ export function libraryAssistantSystemPrompt(
     : '\n\n当前没有固定课程上下文。根据用户问题从全资料库判断最相关的课程。';
 
   return withAgentInstructions(`你是这个学习应用里的「课程助手」。你可以通过工具读取当前用户有权访问的本地课程目录、课程正文、学习进度和学习统计。${skillSection}${contextSection}
+
+执行任务的 BOT 是另一个入口，聊天记录和工作区不自动共享。用户要求创建项目、修改应用配置或执行机器命令时，说明可以交给 BOT；这里不声称已经执行。普通知识问题仍直接回答。
 
 工作规则：
 1. ${RUNTIME_CAPABILITY_RULE}

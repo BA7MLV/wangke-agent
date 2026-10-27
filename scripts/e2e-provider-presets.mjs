@@ -24,8 +24,19 @@ const settings = () => page.evaluate(async () => {
   return JSON.parse(JSON.stringify(useSettings.getState()));
 });
 const openPicker = async () => {
-  await page.getByTestId('provider-add-card').click();
   await page.getByTestId('provider-presets').waitFor();
+};
+const selectPreset = async (id, keyboard = false) => {
+  const baseUrl = presets.find(preset => preset[0] === id)[1];
+  // 点击等待滚动后的布局稳定，再输入；fill 本身不会等待滚动事件，可能刚打开菜单就被滚动关闭。
+  await page.getByTestId('provider-preset-search').click();
+  await page.getByTestId('provider-preset-search').fill(baseUrl);
+  const option = page.getByRole('option').filter({ hasText: baseUrl });
+  await option.waitFor();
+  if (keyboard) {
+    await page.getByTestId('provider-preset-search').press('ArrowDown');
+    await page.getByTestId('provider-preset-search').press('Enter');
+  } else await option.click();
 };
 let failMeta = false;
 let releaseMeta;
@@ -54,18 +65,25 @@ try {
   const initial = await settings();
   await openPicker();
   assert.equal((await settings()).providers.length, initial.providers.length, 'opening the picker does not create an empty connection');
-  for (const [id] of presets) await page.getByTestId(`provider-preset-${id}`).waitFor();
-  await page.getByTestId('provider-preset-custom').waitFor();
-  assert.equal(await page.getByTestId('card-models').count(), 0, 'picker is a dedicated page');
+  await page.getByTestId('provider-preset-typesafe').waitFor();
+  assert.deepEqual(await page.getByTestId('provider-overview-grid').locator(':scope > *').evaluateAll(cards => cards.map(card => card.getAttribute('data-testid'))),
+    ['provider-add-card', 'provider-card-sf', 'provider-preset-typesafe'], 'the first screen is custom, SiliconFlow, TypeSafe');
+  await page.getByTestId('provider-preset-search').fill('no-such-provider');
+  await page.getByText('没有匹配的端点，可使用上方自定义添加。', { exact: true }).waitFor();
+  await page.keyboard.press('Escape');
+  await page.getByRole('listbox').filter({ has: page.getByText('没有匹配的端点，可使用上方自定义添加。', { exact: true }) }).waitFor({ state: 'hidden' });
+  assert.equal(await page.getByTestId('card-models').count(), 1, 'endpoint search is on the first settings screen');
   assert.deepEqual(modelRequests, [], 'browsing presets never sends credentials or fetches provider models');
   await mkdir('scripts/out', { recursive: true });
   await page.screenshot({ path: 'scripts/out/provider-presets-desktop.png' });
-  await page.getByTestId('provider-presets-back').click();
-  assert.equal((await settings()).providers.length, initial.providers.length, 'back leaves settings unchanged');
+  await page.getByTestId('provider-preset-typesafe').click();
+  await page.getByTestId('provider-draft').waitFor();
+  await page.getByTestId('provider-draft-back').click();
+  assert.equal((await settings()).providers.length, initial.providers.length, 'previewing the default TypeSafe shortcut leaves settings unchanged');
 
   // 新供应商仅为内存草稿：无 Key 不可保存；有 Key 但未保存也不持久化、不发请求。
   await openPicker();
-  await page.getByTestId('provider-preset-deepseek').click();
+  await selectPreset('deepseek');
   await page.getByTestId('provider-draft').waitFor();
   assert.equal(await page.getByRole('textbox', { name: '供应商名称', exact: true }).isVisible(), true);
   assert.equal(await page.getByRole('textbox', { name: 'API 地址', exact: true }).count(), 0);
@@ -84,11 +102,11 @@ try {
   assert.equal(await page.evaluate(() => localStorage.getItem('wangke-settings')?.includes('sk-unsaved') ?? false), false);
   assert.deepEqual(modelRequests, [], 'unsaved credentials never trigger model discovery');
   await page.getByTestId('provider-draft-cancel').click();
-  await page.getByTestId('provider-preset-deepseek').click();
+  await selectPreset('deepseek');
   assert.equal(await page.getByTestId('api-key-draft').inputValue(), '', 'cancel discards the draft Key');
   await page.getByTestId('api-key-draft').fill('sk-back-unsaved');
   await page.getByTestId('provider-draft-back').click();
-  await page.getByTestId('provider-preset-deepseek').click();
+  await selectPreset('deepseek');
   assert.equal(await page.getByTestId('api-key-draft').inputValue(), '', 'back also discards the draft Key');
   await page.getByTestId('api-key-draft').fill('sk-close-unsaved');
   await page.getByRole('button', { name: '关闭设置', exact: true }).click();
@@ -96,7 +114,7 @@ try {
   await page.getByTestId('provider-add-card').waitFor();
   assert.deepEqual((await settings()).providers, initial.providers, 'closing settings does not save a draft');
   await openPicker();
-  await page.getByTestId('provider-preset-deepseek').click();
+  await selectPreset('deepseek');
   assert.equal(await page.getByTestId('api-key-draft').inputValue(), '');
   await page.getByTestId('api-key-draft').fill('sk-reload-unsaved');
   await page.reload();
@@ -107,11 +125,7 @@ try {
   for (const [catalogId, baseUrl, protocol] of presets) {
     await openPicker();
     const before = await settings();
-    const button = page.getByTestId(`provider-preset-${catalogId}`);
-    if (catalogId === 'openai') {
-      await button.focus();
-      await page.keyboard.press('Enter');
-    } else await button.click();
+    await selectPreset(catalogId, catalogId === 'openai');
     if (catalogId !== 'siliconflow-cn') {
       await page.getByTestId('provider-draft').waitFor();
       assert.equal(await page.getByTestId('base-url-draft').count(), 0, 'presets do not expose endpoint inputs');
@@ -139,6 +153,13 @@ try {
     await page.getByTestId('provider-back').click();
   }
   assert.deepEqual(modelRequests, [], 'saving and reopening providers never fetches models automatically');
+  const deepseek = (await settings()).providers.find(provider => provider.catalogId === 'deepseek');
+  await page.getByTestId(`provider-summary-${deepseek.id}`).click();
+  await page.getByTestId('btn-check-models').click();
+  await page.getByTestId(`provider-ready-${deepseek.id}`).waitFor();
+  assert.equal(await page.getByTestId(`provider-ready-${deepseek.id}`).locator('svg').count(), 1, 'successful discovery is shown as a check icon');
+  await page.getByTestId('provider-back').click();
+  await page.getByTestId(`provider-ready-${deepseek.id}`).waitFor();
 
   // 旧版 DeepSeek 的 /v1/ 写法也复用，且保留所有用户配置，不只保留密钥。
   await page.evaluate(async () => {
@@ -152,14 +173,15 @@ try {
   await page.getByTestId('provider-add-card').waitFor();
   const saved = await settings();
   await openPicker();
-  assert.match(await page.getByTestId('provider-preset-deepseek').innerText(), /已添加/);
-  await page.getByTestId('provider-preset-deepseek').click();
+  await page.getByTestId('provider-preset-search').fill('https://api.deepseek.com');
+  assert.match(await page.getByRole('option').filter({ hasText: 'https://api.deepseek.com' }).innerText(), /已添加/);
+  await page.getByRole('option').filter({ hasText: 'https://api.deepseek.com' }).click();
   await page.getByTestId('provider-back').waitFor();
   assert.deepEqual((await settings()).providers, saved.providers, 'existing endpoints are not duplicated or overwritten');
   await page.getByTestId('provider-back').click();
 
   await openPicker();
-  await page.getByTestId('provider-preset-custom').click();
+  await page.getByTestId('provider-add-card').click();
   await page.getByTestId('provider-draft').waitFor();
   assert.equal(await page.getByTestId('base-url-draft').inputValue(), '');
   assert.equal(await page.getByRole('button', { name: /API 协议/ }).isVisible(), true, 'custom connections keep protocol configuration');
@@ -214,12 +236,11 @@ try {
   }
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`${BASE}/#/settings/models`);
-  await page.getByTestId('provider-add-card').click(); // 响应式 Modal → Drawer 会重新挂载模块。
   await page.getByTestId('provider-presets').waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   assert.equal(await page.getByTestId('settings-module-models').evaluate((el) => el.scrollWidth > el.clientWidth), false);
   await page.screenshot({ path: 'scripts/out/provider-presets-mobile.png' });
-  await page.getByTestId('provider-preset-deepseek').click();
+  await selectPreset('deepseek');
   await page.getByTestId('provider-back').waitFor();
   assert.equal(await page.getByRole('textbox', { name: '供应商名称', exact: true }).inputValue(), '我的 DeepSeek');
   await page.getByTestId('provider-back').click();

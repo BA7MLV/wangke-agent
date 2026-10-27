@@ -60,6 +60,8 @@ export function formatListTime(iso: string, locale = 'zh-CN', now = new Date()):
 const fromUser = (message: MessageDto) => message.role === 'user';
 
 export function groupMessages(messages: MessageDto[], locale = 'zh-CN', options: { running?: boolean; now?: Date } = {}): Row[] {
+  // 兼容旧记录：模型失败属于运行诊断，不作为 Bot 消息展示。
+  messages = messages.filter(message => !(message.role === 'assistant' && message.kind === 'progress' && message.content.trim() === '模型暂时不可用，请稍后重试。'));
   const now = options.now ?? new Date();
   // 已读：这一条之后对方有过任何动静（回复、进度、提问），或者 Bot 正在处理。
   let answeredUpTo = -1;

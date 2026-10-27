@@ -1,6 +1,6 @@
 /** Bundled for Node, reusing the same client, prompts, parsers and generators as the UI. */
 import fs from 'node:fs/promises';
-import { chatOnce, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '../../../src/api/modelClient';
+import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '../../../src/api/modelClient';
 import type { ModelOverrides } from '../../../src/api/modelMeta';
 import type { ModelTarget } from '../../../src/store/settings';
 import { generateText, type TextSegment } from '../../../src/pipelines/textGeneration';
@@ -220,9 +220,9 @@ interface ServerAgentResult {
 }
 
 /**
- * Runtime-neutral tool loop for server tasks.  It deliberately uses the
- * non-streaming model client: the durable task row is the stream boundary,
- * while the browser only renders progress and synced records.
+ * Runtime-neutral tool loop for server tasks. Progress is throttled into the
+ * durable task row, while the browser renders the latest server-side stream
+ * and synced records remain the durable source of truth.
  */
 async function runServerAgent(
   context: TaskContext,
@@ -238,22 +238,34 @@ async function runServerAgent(
   let narration = '';
   const seen = new Set<string>();
   const maxRounds = Math.max(1, Math.min(8, Number(context.configuration.get(context.owner).policy.maxSteps) || 6));
-  const report = (phase: string, round: number) => context.report({
-    phase, round, content: clip(answer || narration, 20_000), reasoning: clip(reasoning, 8_000), tools: traceResult(traces),
-  });
+  let lastReportAt = 0;
+  const report = (phase: string, round: number, force = false) => {
+    const now = Date.now();
+    // Do not turn every model token into a SQLite write.  100 ms is still
+    // visibly streaming and keeps the task row from becoming the bottleneck.
+    if (!force && now - lastReportAt < 100) return;
+    lastReportAt = now;
+    context.report({
+      phase, round, content: clip(answer || narration, 20_000), reasoning: clip(reasoning, 8_000), tools: traceResult(traces),
+    });
+  };
 
   for (let round = 0; round < maxRounds; round++) {
     context.checkActive();
-    const message = await chatOnce(target, {
+    answer = '';
+    const message = await chatStream(target, {
       messages: out,
       tools,
       temperature: 0.3,
       max_tokens: 8192,
       signal: context.signal,
-    }, modelFetch(context));
+    },
+    delta => { answer += delta; report('answer', round + 1); },
+    delta => { reasoning += delta; report('thinking', round + 1); },
+    undefined,
+    modelFetch(context));
     out.push(message);
     const text = textOf(message);
-    if (message.reasoning_content) reasoning += message.reasoning_content;
     if (message.tool_calls?.length) {
       if (text.trim()) narration = text;
       for (const call of message.tool_calls) {
@@ -268,7 +280,7 @@ async function runServerAgent(
         const trace: ServerToolTrace = { name: call.function.name, status: 'running', detail: JSON.stringify(args).slice(0, 300) };
         traces.push(trace);
         const started = Date.now();
-        report('tool', round + 1);
+        report('tool', round + 1, true);
         let result: string;
         try {
           result = await executeTool(call.function.name, args);
@@ -280,13 +292,13 @@ async function runServerAgent(
         trace.ms = Date.now() - started;
         trace.result = clip(result, 4_000);
         out.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: clip(result, 24_000) });
-        report('tool', round + 1);
+        report('tool', round + 1, true);
       }
       continue;
     }
     if (text.trim()) {
       answer = text;
-      report('answer', round + 1);
+      report('answer', round + 1, true);
       return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces) };
     }
     // An empty assistant turn is not a successful answer.  Give the model a
@@ -297,10 +309,14 @@ async function runServerAgent(
 
   context.checkActive();
   out.push({ role: 'user', content: '请停止调用工具，只用中文总结已经查到的资料和结论；如果证据不足，请明确说明。' });
-  const final = await chatOnce(target, { messages: out, temperature: 0.3, max_tokens: 4096, signal: context.signal }, modelFetch(context));
+  answer = '';
+  const final = await chatStream(target, { messages: out, temperature: 0.3, max_tokens: 4096, signal: context.signal },
+    delta => { answer += delta; report('answer', maxRounds + 1); },
+    delta => { reasoning += delta; report('thinking', maxRounds + 1); },
+    undefined,
+    modelFetch(context));
   answer = textOf(final).trim() || narration || '未获得有效回答。';
-  if (final.reasoning_content) reasoning += final.reasoning_content;
-  report('answer', maxRounds + 1);
+  report('answer', maxRounds + 1, true);
   return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces) };
 }
 

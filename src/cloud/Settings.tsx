@@ -45,6 +45,12 @@ export default function CloudSettings() {
     <h2 className="text-xl font-semibold">云端账号与权限</h2>
     <p className="text-sm text-muted">课程和学习记录按登录账号同步。Provider 与模型能力在「模型」设置中管理。</p>
     <h3 className="text-lg font-semibold">Agent 权限</h3>
+    <div className="rounded-xl bg-background-secondary p-4 flex flex-col gap-3">
+      <p className="text-sm">把工作环境交给 BOT：日常读写、建项目、切换模型和运行命令可自主进行；删除文件、敏感配置变更和明显危险命令仍需逐次批准。外部 MCP 工具暂时逐次确认。</p>
+      <p className="text-sm text-muted">当前命令在隔离工作区运行，不能控制宿主机。命令检测不能识别任意脚本的全部影响，隔离仍是执行边界。</p>
+      <Button variant="secondary" className="self-start" onPress={() => setConfig({ ...config, policy: { ...config.policy, read: 'allow', write: 'allow', shell: 'allow', remove: 'ask', network: 'allow' } })}>采用专用工作机权限</Button>
+      <span className="text-xs text-muted">点击下方「保存服务器配置」后生效；项目仍遵循自己的权限设置。</span>
+    </div>
     {(['read', 'write', 'remove', 'shell'] as const).map((capability, i) => <label key={capability} className="flex items-center justify-between gap-3">
       {['读取资料', '修改资料', '删除资料', '沙盒命令'][i]}<select className="input" value={config.policy[capability]} onChange={e => setConfig({ ...config, policy: { ...config.policy, [capability]: e.target.value } })}>
         <option value="allow">允许</option><option value="ask">每次审批</option><option value="deny">禁止</option>
@@ -53,7 +59,7 @@ export default function CloudSettings() {
     <label>沙盒联网<select className="input w-full" value={config.policy.network} onChange={e => setConfig({ ...config, policy: { ...config.policy, network: e.target.value as 'allow' | 'deny' } })}><option value="deny">禁止</option><option value="allow">允许（需部署启用沙盒网络）</option></select></label>
     <label>每任务最多步骤<input className="input w-full" type="number" min={1} max={1000} value={config.policy.maxSteps} onChange={e => setConfig({ ...config, policy: { ...config.policy, maxSteps: Number(e.target.value) } })} /></label>
     <fieldset className="flex flex-col gap-2"><legend>长期信任的 Bot</legend>
-      <p className="text-sm text-muted">仅当线程中所有 Bot 都受信任时，命令可跳过逐次审批；“禁止”和联网开关仍然生效。</p>
+      <p className="text-sm text-muted">线程中所有 Bot 都受信任时，日常写入、建项目和命令可跳过逐次审批；删除与敏感配置仍需确认。“禁止”、联网开关和项目权限仍生效。</p>
       {agents.map(agent => <label key={agent.id} className="flex items-center gap-2"><input type="checkbox" checked={config.trustedAgentIds?.includes(agent.id) ?? false} onChange={e => setConfig({ ...config, trustedAgentIds: e.target.checked ? [...(config.trustedAgentIds ?? []), agent.id] : config.trustedAgentIds?.filter(id => id !== agent.id) })} />{agent.name}</label>)}
     </fieldset>
     <Button isDisabled={busy} onPress={() => void act(async () => {
