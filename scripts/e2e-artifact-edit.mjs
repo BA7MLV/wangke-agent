@@ -128,12 +128,12 @@ try {
   cancelled.release();
   await panel(first).getByRole('button', { name: '收起', exact: true }).click();
 
-  const staticBlock = artifacts.filter({ has: page.locator(':scope > [data-testid="widget-stream-preview"]') });
+  const staticBlock = artifacts.filter({ has: page.locator(':scope > [data-testid="html-answer"]') });
   await staticBlock.getByRole('button', { name: '修改此 HTML' }).click();
   await panel(staticBlock).getByRole('textbox', { name: '修改要求', exact: true }).fill('改标题');
   plan({ edits: [{ search: 'old static', replace: 'new static' }] });
   await panel(staticBlock).getByRole('button', { name: '生成局部修改', exact: true }).click();
-  await panel(staticBlock).getByTestId('artifact-edit-preview').getByText('new static', { exact: true }).waitFor();
+  await panel(staticBlock).getByTestId('artifact-edit-preview').getByTestId('widget-frame').contentFrame().getByText('new static', { exact: true }).waitFor();
   await panel(staticBlock).getByRole('button', { name: '应用修改', exact: true }).click();
   await panel(staticBlock).waitFor({ state: 'hidden' });
   assert.equal((await readRow()).content, initial.replace('"value":4', '"value":7').replace('old static', 'new static'));
@@ -185,7 +185,7 @@ try {
   await page.reload();
   await page.waitForFunction(async () => (await window.__artifactTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await switchSession(sessionId);
-  await page.getByTestId('widget-stream-preview').getByText('new static', { exact: true }).waitFor();
+  await page.getByTestId('html-answer').getByTestId('widget-frame').contentFrame().getByText('new static', { exact: true }).waitFor();
   assert.equal((await readRow()).widget.html, revisedWidget);
   const deletedId = await page.evaluate(async () => {
     const { db } = await window.__artifactTestImport('/src/store/db.ts');

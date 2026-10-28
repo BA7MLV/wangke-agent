@@ -5,9 +5,9 @@ import { useTranslation } from 'react-i18next';
 import { request, serverClient } from '../api/serverClient';
 import { SectionCard, Sym, confirmDialog, toast } from '../ui';
 import { SettingRow, SettingSelect, SettingSwitch } from '../components/settings/controls';
-import { closeSettingsAndClearHash } from '../components/settingsDialogStore';
+import { closeSettingsAndClearHash, openSettings } from '../components/settingsDialogStore';
 import { useBotPanel } from '../store/botPanel';
-import type { GatewayManifest, GatewayConnectionDiagnostics } from '@wangke/contracts/gateway';
+import type { GatewayManifest, GatewayConnectionDiagnostics, GatewayReadiness } from '@wangke/contracts/gateway';
 
 /*
  * 设置 → 消息渠道（微信 iLink / 飞书）。
@@ -27,13 +27,14 @@ interface Account {
   id: string; channel: string; agentId: string; preset: string; enabled: number; health: string;
   manifest?: GatewayManifest;
   connection?: GatewayConnectionDiagnostics;
+  readiness?: GatewayReadiness;
   configuration?: Record<string, { value?: string; configured?: boolean }>;
   bindings: Array<{ id: string; peer: string; threadId: string; revoked: number }>;
 }
 interface Activity {
   accounts: Account[];
   channels?: GatewayManifest[];
-  deliveries: Array<{ id: string; channel: string; status: string; attempts: number; error: string | null }>;
+  deliveries: Array<{ id: string; channel: string; accountId: string; status: string; attempts: number; error: string | null }>;
   reminders: Array<{ id: string; text: string; timezone: string; nextAt: number; intervalSeconds: number | null; status: string }>;
   inboxFailures: Array<{ id: number; channel: string; error: string }>;
   projectionFailures: Array<{ eventId: number; channel: string; threadId: string; error: string }>;
@@ -42,6 +43,10 @@ type View = { kind: 'list' } | { kind: 'add' } | { kind: 'feishu' } | { kind: 'a
 
 const post = <T,>(path: string, body: unknown = {}, signal?: AbortSignal) => request<T>(`/gateway${path}`, { method: 'POST', body: JSON.stringify(body), signal });
 const HEALTH = ['connected', 'connecting', 'reconnecting', 'login_required', 'connection_failed', 'stopped', 'runtime_failed', 'inbound_failed'] as const;
+const accountIdentity = (account: Account) => account.configuration?.botId?.value || account.configuration?.appId?.value || account.id;
+const readinessState = (account: Account): GatewayReadiness['state'] => account.readiness?.state ?? (!account.enabled ? 'disabled'
+  : account.health === 'login_required' ? 'login_required' : account.health !== 'connected' ? 'connection_required'
+  : !account.bindings.some(b => !b.revoked) ? 'binding_required' : 'ready');
 
 function ChannelIcon({ channel }: { channel: string }) {
   const wechat = channel === 'ilink';
@@ -71,21 +76,31 @@ export default function GatewaySettings() {
   const [agents, setAgents] = useState<Array<{ id: string; name: string; enabled?: boolean }>>([]);
   const [view, setView] = useState<View>({ kind: 'list' });
   const [busy, setBusy] = useState(false);
+  const [loadFailed, setLoadFailed] = useState(false);
+  const [selectedAgent, setSelectedAgent] = useState('');
+  const revision = useRef(0);
+  const mounted = useRef(false);
 
-  const refresh = useCallback(async () => setData(await request<Activity>('/gateway')), []);
-  useEffect(() => {
-    let alive = true;
-    const tick = () => void request<Activity>('/gateway').then((value) => { if (alive) setData(value); }).catch(() => {});
-    tick();
-    void serverClient.agents().then((r) => { if (alive) setAgents(r.agents.filter((a) => a.enabled !== false)); }).catch(() => {});
-    const timer = setInterval(() => { if (document.visibilityState === 'visible') tick(); }, 4000);
-    return () => { alive = false; clearInterval(timer); };
+  const refresh = useCallback(async () => {
+    if (!mounted.current) return;
+    const current = ++revision.current;
+    try {
+      const [value, profiles] = await Promise.all([request<Activity>('/gateway'), serverClient.agents()]);
+      if (current === revision.current) { setData(value); setAgents(profiles.agents); setLoadFailed(false); }
+    } catch { if (current === revision.current) setLoadFailed(true); }
   }, []);
+  useEffect(() => {
+    mounted.current = true;
+    let alive = true, timer: ReturnType<typeof setTimeout>;
+    const tick = async () => { if (document.visibilityState === 'visible') await refresh(); if (alive) timer = setTimeout(tick, 4000); };
+    void tick();
+    return () => { alive = false; mounted.current = false; revision.current++; clearTimeout(timer); };
+  }, [refresh]);
 
   const act = async (action: () => Promise<unknown>) => {
     setBusy(true);
     try { await action(); await refresh(); }
-    catch (e) { toast.error((e as Error).message); }
+    catch (e) { const code = (e as Error).message; toast.error(code === 'duplicate_channel_account' ? t('duplicateAccount') : code === 'channel_busy' ? t('channelBusy') : code); }
     finally { setBusy(false); }
   };
 
@@ -93,21 +108,27 @@ export default function GatewaySettings() {
   const healthLabel = (account: Account) => !account.enabled ? t('health.stopped')
     : (HEALTH as readonly string[]).includes(account.health) ? t(`health.${account.health as typeof HEALTH[number]}`) : t('health.unknown');
 
-  if (!data) return <div className="grid min-h-40 place-items-center text-muted"><Spinner size="sm" color="current" /></div>;
+  const loadError = <div className="flex items-center justify-between gap-3 py-3 text-sm text-warning" role="alert"><span>{t('loadFailed')}</span><Button size="sm" variant="secondary" onPress={() => void refresh()}>{t('retry')}</Button></div>;
+  if (!data) return loadFailed ? loadError : <div className="grid min-h-40 place-items-center text-muted"><Spinner size="sm" color="current" /></div>;
+  const enabledAgents = agents.filter(a => a.enabled !== false);
+  const newAgentId = enabledAgents.find(a => a.id === selectedAgent)?.id ?? enabledAgents[0]?.id ?? '';
 
   /* ── 添加：选渠道 ── */
   if (view.kind === 'add') {
     const channels = data.channels ?? [];
     const start = (channel: string) => act(async () => {
       if (channel === 'feishu') { setView({ kind: 'feishu' }); return; }
-      const { id } = await post<{ id: string }>('/accounts', { channel, agentId: agents[0].id, preset: 'inherit', enabled: true, config: {} });
+      const { id } = await post<{ id: string }>('/accounts', { channel, agentId: newAgentId, preset: 'inherit', enabled: true, config: {} });
+      await refresh();
       setView({ kind: 'account', id, login: true });
     });
     return (
       <section data-testid="gateway-settings">
         <PushedHeader back={t('back')} title={t('add')} onBack={() => setView({ kind: 'list' })} />
-        {agents.length === 0 ? <p className="py-6 text-center text-sm text-muted">{t('noBot')}</p> : (
+        <p className="mb-3 text-sm text-muted">{t('multiChannelHint')}</p>
+        {enabledAgents.length === 0 ? <><p className="py-6 text-center text-sm text-muted">{t('noBot')}</p><Button onPress={() => openSettings('bot')}>{t('configureBot')}</Button></> : (
           <SectionCard title={t('channels')}>
+             <SettingSelect label={t('bot')} value={newAgentId} options={enabledAgents.map(a => ({ id: a.id, label: a.name }))} onChange={setSelectedAgent} isDisabled={busy} />
             {channels.map((channel) => (
               <button key={channel.id} type="button" disabled={busy} data-testid={`gateway-add-${channel.id}`}
                 className="flex min-h-12 w-full items-center gap-3 border-b border-border/70 py-2 text-left last:border-b-0 disabled:opacity-60"
@@ -125,9 +146,10 @@ export default function GatewaySettings() {
 
   /* ── 添加飞书：两个字段 + 连接 ── */
   if (view.kind === 'feishu') {
-    return <FeishuForm agents={agents} busy={busy} onBack={() => setView({ kind: 'add' })}
+    return <FeishuForm agents={enabledAgents} initialAgentId={newAgentId} busy={busy} onBack={() => setView({ kind: 'add' })}
       onSubmit={(fields) => act(async () => {
         const { id } = await post<{ id: string }>('/accounts', { channel: 'feishu', agentId: fields.agentId, preset: 'inherit', enabled: true, config: { appId: fields.appId, appSecret: fields.appSecret } });
+        await refresh();
         setView({ kind: 'account', id });
       })} />;
   }
@@ -135,10 +157,16 @@ export default function GatewaySettings() {
   /* ── 某个渠道 ── */
   if (view.kind === 'account') {
     const account = data.accounts.find((a) => a.id === view.id);
-    if (!account) return <div className="grid min-h-40 place-items-center text-muted"><Spinner size="sm" color="current" /></div>;
-    return <AccountDetail key={account.id} account={account} agents={agents} busy={busy} startLogin={view.login}
+    if (!account) return <section>{loadFailed ? loadError : <p className="py-4 text-muted">{t('removed')}</p>}<Button onPress={() => setView({ kind: 'list' })}>{t('back')}</Button></section>;
+    return <>{loadFailed && loadError}<AccountDetail key={account.id} account={account} agents={enabledAgents} busy={busy} startLogin={view.login}
+      deliveries={data.deliveries.filter(d => d.accountId === account.id && ['failed', 'uncertain'].includes(d.status))}
       title={channelName(account.channel)} status={healthLabel(account)}
-      onBack={() => setView({ kind: 'list' })} act={act} refresh={refresh} />;
+      onRemoved={() => {
+        revision.current++;
+        setData(value => value && { ...value, accounts: value.accounts.filter(a => a.id !== account.id), deliveries: value.deliveries.filter(d => d.accountId !== account.id) });
+        setView({ kind: 'list' });
+      }}
+      onBack={() => setView({ kind: 'list' })} act={act} refresh={refresh} /></>;
   }
 
   /* ── 列表 ── */
@@ -146,15 +174,18 @@ export default function GatewaySettings() {
   const activeReminders = data.reminders.filter((r) => r.status === 'active');
   return (
     <section className="flex min-w-0 flex-col" data-testid="gateway-settings">
+      {loadFailed && loadError}
+      <p className="mb-3 text-sm text-muted">{t('multiChannelHint')}</p>
       <SectionCard title={t('channels')} actions={<Button size="sm" variant="secondary" onPress={() => setView({ kind: 'add' })} data-testid="gateway-add">{t('add')}</Button>}>
         {data.accounts.length === 0 && <p className="py-3 text-sm text-muted">{t('empty')}</p>}
         {data.accounts.map((account) => (
           <button key={account.id} type="button" data-testid={`gateway-account-${account.channel}`}
+            data-account-id={account.id}
             className="flex min-h-12 w-full items-center gap-3 border-b border-border/70 py-2 text-left last:border-b-0"
             onClick={() => setView({ kind: 'account', id: account.id })}>
             <ChannelIcon channel={account.channel} />
-            <span className="min-w-0 flex-1 truncate text-sm font-medium">{channelName(account.channel)}</span>
-            <span className={`text-sm ${account.enabled && account.health === 'connected' ? 'text-muted' : account.enabled ? 'text-warning' : 'text-muted'}`}>{healthLabel(account)}</span>
+            <span className="flex min-w-0 flex-1 flex-col gap-1"><span className="truncate text-sm font-medium">{channelName(account.channel)} · {account.readiness?.botName || t('bot')}</span><span className="truncate font-mono text-xs text-muted">…{accountIdentity(account).slice(-12)}</span></span>
+            <span className={`max-w-[40%] text-right text-sm ${readinessState(account) === 'ready' ? 'text-success' : account.enabled ? 'text-warning' : 'text-muted'}`}>{t(`readiness.${readinessState(account)}`)}</span>
             <Sym name="chevron_right" className="text-muted" />
           </button>
         ))}
@@ -198,8 +229,9 @@ function OpenThread({ threadId, children }: { threadId: string; children?: React
   return <Button size="sm" variant="secondary" onPress={() => { closeSettingsAndClearHash(); useBotPanel.getState().openThread(threadId); navigate('/'); }}>{children ?? t('open')}</Button>;
 }
 
-function FeishuForm({ agents, busy, onBack, onSubmit }: {
+function FeishuForm({ agents, initialAgentId, busy, onBack, onSubmit }: {
   agents: Array<{ id: string; name: string }>;
+  initialAgentId: string;
   busy: boolean;
   onBack: () => void;
   onSubmit: (fields: { appId: string; appSecret: string; agentId: string }) => void;
@@ -207,8 +239,8 @@ function FeishuForm({ agents, busy, onBack, onSubmit }: {
   const { t } = useTranslation('gateway');
   const [appId, setAppId] = useState('');
   const [appSecret, setAppSecret] = useState('');
-  const [agentId, setAgentId] = useState(agents[0]?.id ?? '');
-  const ready = /^cli_\w+$/.test(appId.trim()) && appSecret.trim().length > 0 && agentId;
+  const [agentId, setAgentId] = useState(initialAgentId);
+  const ready = /^cli_\w+$/.test(appId.trim()) && appSecret.trim().length > 0 && agents.some(a => a.id === agentId);
   return (
     <section data-testid="gateway-settings">
       <PushedHeader back={t('add')} title={t('feishu')} onBack={onBack} />
@@ -233,14 +265,16 @@ function FeishuForm({ agents, busy, onBack, onSubmit }: {
   );
 }
 
-function AccountDetail({ account, agents, busy, startLogin, title, status, onBack, act, refresh }: {
+function AccountDetail({ account, agents, busy, startLogin, title, status, deliveries, onBack, onRemoved, act, refresh }: {
   account: Account;
   agents: Array<{ id: string; name: string }>;
   busy: boolean;
   startLogin?: boolean;
   title: string;
   status: string;
+  deliveries: Activity['deliveries'];
   onBack: () => void;
+  onRemoved: () => void;
   act: (action: () => Promise<unknown>) => Promise<void>;
   refresh: () => Promise<void>;
 }) {
@@ -251,6 +285,8 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
   const [appId, setAppId] = useState(account.configuration?.appId?.value ?? '');
   const [appSecret, setAppSecret] = useState('');
   const active = account.bindings.filter((b) => !b.revoked);
+  const state = readinessState(account), readiness = account.readiness;
+  const createPair = () => act(async () => setPair(await post<{ command: string; expiresAt: string }>(`/accounts/${account.id}/pair`)));
   const save = (patch: Partial<{ agentId: string; preset: string; enabled: boolean }>, config: Record<string, string> = {}) => act(() => post('/accounts', {
     id: account.id, channel: account.channel, agentId: account.agentId, preset: account.preset, enabled: Boolean(account.enabled), ...patch, config,
   }));
@@ -261,11 +297,38 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
     <section data-testid="gateway-settings">
       <PushedHeader back={t('back')} title={title} onBack={onBack} />
 
+      <SectionCard title={t(`readiness.${state}`)} testId="gateway-readiness">
+        <p className="py-2 text-sm text-muted">{t(`readinessHint.${state}`)}</p>
+        <ol className="grid grid-cols-2 gap-2 py-2 text-sm" aria-label={t('setupSteps')}>
+          {([
+            ['connection', readiness?.connected ?? account.health === 'connected'],
+            ['binding', active.length > 0],
+            ['bot', readiness?.botEnabled ?? true],
+            ['model', readiness?.modelConfigured ?? false],
+          ] as const).map(([step, done], index) => <li key={step} className="flex min-w-0 items-center gap-2 rounded-xl bg-background-secondary px-3 py-2">
+            <span className={done ? 'text-success' : 'text-muted'} aria-hidden="true">{done ? <Sym name="check_circle" /> : index + 1}</span>
+            <span>{t(`steps.${step}`)}<span className="sr-only"> · {done ? t('stepDone') : t('stepPending')}</span></span>
+          </li>)}
+        </ol>
+        {state === 'model_required' && <Button variant="primary" onPress={() => openSettings('models')}>{t('configureModel')}</Button>}
+        {state === 'bot_required' && <Button variant="primary" onPress={() => openSettings('bot')}>{t('configureBot')}</Button>}
+        {Boolean(readiness?.inboxFailures) && <p className="py-2 text-sm text-warning">{t('inboxFailureHint', { count: readiness?.inboxFailures })}</p>}
+        {Boolean(readiness?.projectionFailures) && <p className="py-2 text-sm text-warning">{t('projectionFailureHint', { count: readiness?.projectionFailures })}</p>}
+        {readiness?.latestRun && ['failed', 'waiting_user', 'paused'].includes(readiness.latestRun.status) && <p className="py-2 text-sm text-warning">{t(`runState.${readiness.latestRun.status as 'failed' | 'waiting_user' | 'paused'}`)}{readiness.latestRun.errorCode && <code className="ml-1 break-all">{readiness.latestRun.errorCode}</code>}</p>}
+        {readiness?.lastInboundAt != null && <p className="pt-2 text-xs text-muted">{t('lastInbound', { time: new Date(readiness.lastInboundAt).toLocaleString() })}</p>}
+      </SectionCard>
+
+      {!login && !active.length && <SectionCard title={t('pairTitle')} testId="gateway-pairing">
+        <p className="py-2 text-sm text-muted">{t('pairExplanation')}</p>
+        {pair ? <PairCode pair={pair} channel={title} renew={createPair} busy={busy} /> : <Button variant="primary" fullWidth className="min-h-11" isDisabled={busy || !account.enabled || account.health !== 'connected'} data-testid="gateway-pair" onPress={() => void createPair()}>{t('pairTitle')}</Button>}
+      </SectionCard>}
+
       {wechat && login ? (
-        <WeChatLogin accountId={account.id} onDone={() => { setLogin(false); void refresh(); }} />
+        <><WeChatLogin accountId={account.id} onDone={() => { setLogin(false); void refresh(); }} /><Button variant="ghost" onPress={() => setLogin(false)}>{t('cancel')}</Button></>
       ) : (
         <SectionCard title={title}>
-          <SettingRow label={t('status')}>
+          <p className="break-all pb-2 font-mono text-xs text-muted">{accountIdentity(account)}</p>
+          <SettingRow label={t('transportStatus')}>
             <span className="text-sm text-muted" role="status">{status}</span>
             {wechat && <Button size="sm" variant="secondary" onPress={() => setLogin(true)} data-testid="gateway-relogin">{t('qr.relogin')}</Button>}
           </SettingRow>
@@ -274,8 +337,9 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
             <Button size="sm" variant="secondary" onPress={() => void save({})} isDisabled={busy}>{t('reconnect')}</Button>
           )}
           <SettingSwitch label={t('enabled')} isSelected={Boolean(account.enabled)} isDisabled={busy} onChange={(on) => void save({ enabled: on })} />
-          {agents.length > 1 && <SettingSelect label={t('bot')} value={account.agentId} isDisabled={busy}
-            options={agents.map((a) => ({ id: a.id, label: a.name }))} onChange={(agentId) => void save({ agentId })} />}
+          {agents.length > 0 ? <SettingSelect label={t('bot')} value={account.agentId} isDisabled={busy}
+            options={agents.some(a => a.id === account.agentId) ? agents.map(a => ({ id: a.id, label: a.name })) : [{ id: account.agentId, label: `${readiness?.botName || t('bot')} · ${t('readiness.bot_required')}` }, ...agents.map(a => ({ id: a.id, label: a.name }))]} onChange={(agentId) => void save({ agentId })} />
+            : <Button variant="secondary" onPress={() => openSettings('bot')}>{t('configureBot')}</Button>}
           <SettingSelect label={t('preset')} value={account.preset} isDisabled={busy}
             options={[{ id: 'inherit', label: t('inherit') }, { id: 'autonomous', label: t('autonomous') }]} onChange={(preset) => void save({ preset })} />
         </SectionCard>
@@ -301,8 +365,8 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
         </SectionCard>
       )}
 
-      {!(wechat && login) && (
-        <SectionCard title={active.length ? t('bindings') : t('pairTitle')} testId="gateway-pairing">
+      {!login && active.length > 0 && (
+        <SectionCard title={t('bindings')} testId="gateway-pairing">
           {active.map((binding) => (
             <SettingRow key={binding.id} label={<span className="font-mono text-xs">…{binding.peer.slice(-6)}</span>}>
               <OpenThread threadId={binding.threadId} />
@@ -311,14 +375,30 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
               })}>{t('revoke')}</Button>
             </SettingRow>
           ))}
-          {!active.length && (pair ? <PairCode pair={pair} channel={title} /> : (
-            <div className="py-2">
-              <Button variant="primary" fullWidth className="min-h-11" isDisabled={busy || !account.enabled} data-testid="gateway-pair"
-                onPress={() => void act(async () => setPair(await post<{ command: string; expiresAt: string }>(`/accounts/${account.id}/pair`)))}>{t('pairTitle')}</Button>
-            </div>
-          ))}
         </SectionCard>
       )}
+      {deliveries.length > 0 && <SectionCard title={t('deliveryProblems')}>
+        {deliveries.map(d => <div key={d.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+          <span className="min-w-0 break-words">{t(`delivery.${d.status as 'failed' | 'uncertain'}`)}<code className="block text-xs text-muted">{d.error}</code></span>
+          <div className="flex gap-2">
+            <Button size="sm" variant="secondary" isDisabled={busy} onPress={() => void act(async () => {
+              if (d.status === 'uncertain' && !await confirmDialog({ headline: t('retry'), description: t('uncertain'), confirmText: t('retry') })) return;
+              await post(`/deliveries/${d.id}/retry`, { acknowledgeUncertain: d.status === 'uncertain' });
+            })}>{t('retry')}</Button>
+            <Button size="sm" variant="ghost" isDisabled={busy} onPress={() => void act(async () => {
+              if (await confirmDialog({ headline: t('discard'), description: t('discardConfirm'), confirmText: t('discard') })) await post(`/deliveries/${d.id}/discard`);
+            })}>{t('discard')}</Button>
+          </div>
+        </div>)}
+      </SectionCard>}
+      <div className="mt-4 flex flex-col gap-2 pb-2">
+        <Button variant="ghost" fullWidth className="min-h-11 text-danger" isDisabled={busy} data-testid="gateway-remove" onPress={() => void act(async () => {
+          if (!await confirmDialog({ headline: t('remove'), description: t('removeConfirm'), confirmText: t('remove'), danger: true })) return;
+          await request(`/gateway/accounts/${account.id}`, { method: 'DELETE' });
+          onRemoved(); toast.success(t('removed'));
+        })}><Sym name="delete" />{t('remove')}</Button>
+        <p className="text-center text-xs text-muted">{t('removeHint')}</p>
+      </div>
     </section>
   );
 }
@@ -337,20 +417,26 @@ function ConnectionDetails({ connection }: { connection?: GatewayConnectionDiagn
   </div>;
 }
 
-function PairCode({ pair, channel }: { pair: { command: string; expiresAt: string }; channel: string }) {
+function PairCode({ pair, channel, renew, busy }: { pair: { command: string; expiresAt: string }; channel: string; renew: () => Promise<void>; busy: boolean }) {
   const { t } = useTranslation('gateway');
   const [copied, setCopied] = useState(false);
-  const minutes = Math.max(1, Math.round((Date.parse(pair.expiresAt) - Date.now()) / 60_000));
+  const [now, setNow] = useState(Date.now);
+  useEffect(() => { const timer = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(timer); }, []);
+  useEffect(() => { setCopied(false); setNow(Date.now()); }, [pair.command]);
+  const minutes = Math.max(0, Math.ceil((Date.parse(pair.expiresAt) - now) / 60_000));
   return (
     <div className="flex flex-col items-center gap-3 py-3 text-center">
       <span className="text-sm text-muted">{t('pairSend', { channel })}</span>
       <code className="select-all rounded-xl bg-background-secondary px-4 py-3 font-mono text-xl tracking-wider" data-testid="gateway-pair-command">{pair.command}</code>
-      <Button variant="secondary" className="min-h-11 min-w-32" onPress={() => {
-        void navigator.clipboard?.writeText(pair.command).then(() => { setCopied(true); setTimeout(() => setCopied(false), 1500); }).catch(() => {});
+      <Button variant="secondary" className="min-h-11 min-w-32" isDisabled={minutes === 0} onPress={() => {
+        if (!navigator.clipboard) { toast.error(t('copyFailed')); return; }
+        void navigator.clipboard.writeText(pair.command).then(() => setCopied(true)).catch(() => toast.error(t('copyFailed')));
       }}>
         <Sym name={copied ? 'check' : 'content_copy'} />{copied ? t('copied') : t('copy')}
       </Button>
-      <span className="text-xs text-muted">{t('pairExpires', { minutes })}</span>
+      <span className="text-xs text-muted">{minutes ? t('pairExpires', { minutes }) : t('pairExpired')}</span>
+      <p className="text-sm text-muted">{t('pairWaiting')}</p>
+      <Button variant="ghost" size="sm" isDisabled={busy} onPress={() => void renew()}>{t('pairRenew')}</Button>
     </div>
   );
 }
@@ -364,6 +450,7 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
   const [qr, setQr] = useState<{ qrcode: string; qrDataUrl: string; redirectHost?: string }>();
   const [state, setState] = useState<'loading' | 'wait' | 'scaned' | 'confirmed' | 'expired' | 'verify' | 'blocked' | 'already_bound' | 'error'>('loading');
   const [identityChanged, setIdentityChanged] = useState(false);
+  const [duplicate, setDuplicate] = useState(false);
   const [verifyCode, setVerifyCode] = useState('');
   const [round, setRound] = useState(0);
   const renewals = useRef(0);
@@ -382,7 +469,7 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
       if (controller.signal.aborted) finish();
     });
     void (async () => {
-      setState('loading'); setIdentityChanged(false); setVerifyCode(''); verifyRef.current = '';
+      setState('loading'); setIdentityChanged(false); setDuplicate(false); setVerifyCode(''); verifyRef.current = '';
       let current: { qrcode: string; qrDataUrl: string; redirectHost?: string };
       try { current = await post(`/accounts/${accountId}/login`, { action: 'qr' }, controller.signal); }
       catch { if (alive) setState('error'); return; }
@@ -398,6 +485,7 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
         } catch (error) {
           if (!alive) return;
           if ((error as Error).message === 'channel_identity_changed') { setIdentityChanged(true); setState('error'); return; }
+          if ((error as Error).message === 'duplicate_channel_account') { setDuplicate(true); setState('error'); return; }
           if (++failures >= 3) { setState('error'); return; }
           await pause(1000 * 2 ** failures);
           continue;
@@ -439,7 +527,7 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
             <Button className="absolute" variant="primary" onPress={() => { renewals.current = 0; setRound((value) => value + 1); }}>{t('qr.refresh')}</Button>
           )}
         </div>
-        <p className="text-base font-medium" role="status" aria-live="polite">{state === 'error' ? identityChanged ? t('qr.identityChanged') : t('health.connection_failed') : label}</p>
+        <p className="text-base font-medium" role="status" aria-live="polite">{state === 'error' ? duplicate ? t('duplicateAccount') : identityChanged ? t('qr.identityChanged') : t('health.connection_failed') : label}</p>
         {(state === 'error' || state === 'blocked') && <Button variant="secondary" onPress={() => setRound((value) => value + 1)}>{t('qr.refresh')}</Button>}
         {state === 'already_bound' && <Button variant="secondary" onPress={() => doneRef.current()}>{t('back')}</Button>}
         {state === 'verify' && (

@@ -115,6 +115,10 @@ try {
   assert.equal(qaTask.executor, 'node');
   assert.equal(qaTask.result.content, reply);
   assert.ok(qaTask.result.rowId);
+  const conversation = store.db.prepare("SELECT value FROM cloud_records WHERE owner_id=? AND table_name='chats' AND value IS NOT NULL").all(owner)
+    .map(row => JSON.parse(row.value)).sort((a, b) => a.createdAt - b.createdAt);
+  assert.deepEqual(conversation.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
+  assert.ok(conversation.every((row, index) => !index || row.createdAt > conversation[index - 1].createdAt), 'server commits a strictly ordered timeline for both chat and qa');
   put('cards', 100, { id: 100, videoId, q: 'old', a: 'old' });
   put('cards', 100, { id: 100, videoId, q: 'other account', a: 'untouched' }, other);
   reply = '[{"time":"00:10","q":"什么是测试课程？","a":"用于测试的课程。"}]';

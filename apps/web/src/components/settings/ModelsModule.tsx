@@ -1204,7 +1204,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
             onPress={() => void handleRefreshMeta()}
           ><Sym name="refresh" /></LoadingButton>
           <span className="tabular-nums" data-testid="model-meta-updated-at" aria-live="polite">
-            {metaInfo ? <time dateTime={new Date(metaInfo.updatedAt).toISOString()} title="本机能力目录的最近成功更新时间">更新于 {new Date(metaInfo.updatedAt).toLocaleString('zh-CN', { year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })}</time> : '尚未更新'}
+            {metaInfo ? <time dateTime={new Date(metaInfo.updatedAt).toISOString()} title="本机能力目录的最近成功更新时间（北京时间，UTC+8）">更新于 {new Date(metaInfo.updatedAt).toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false })} BJT</time> : '尚未更新'}
           </span>
         </div>
         {metaError && <p role="alert" className="mt-1 text-xs text-pretty text-danger">{metaError}</p>}

@@ -55,4 +55,15 @@ assert.equal(nextVisualRound('```html\n<div>第一题</div>\n```'), '```html\n<d
 assert.equal(nextVisualRound('题目讲解', true), '题目讲解\n\n', 'widget explanation also survives');
 assert.equal(nextVisualRound('```wbw-widget\nquestion-1\n```'), '```wbw-widget\nquestion-1\n```\n\n');
 
+const svg = '<svg width="200" height="200"><defs><linearGradient id="g"><stop offset="0%" stop-color="#fff"/></linearGradient></defs><circle r="80" fill="url(#g)"/></svg>';
+const mixedSvg = `前文\n\n${svg}\n\n后文\n\n${svg}\n结束`;
+assert.deepEqual(splitAssistantContent(mixedSvg).map(block => block.kind), ['markdown', 'svg', 'markdown', 'svg', 'markdown']);
+assert.deepEqual(splitAssistantContent(mixedSvg).filter(block => block.kind === 'svg').map(block => block.source), [svg, svg]);
+assert.equal(splitAssistantContent('```html\n' + svg + '\n```')[0].kind, 'svg', 'standalone SVG is not a stripped HTML preview');
+assert.equal(splitAssistantContent('<svg width="200"')[0].closed, false);
+assert.equal(splitAssistantContent('示例：\n\n    ' + svg)[0].kind, 'markdown', 'indented examples go through the code renderer');
+assert.equal(splitAssistantContent('```js\n' + svg + '\n```')[0].kind, 'markdown');
+for (const value of [svg, '```xml\n' + svg + '\n```', '```\n' + svg + '\n```'])
+  assert.equal(nextVisualRound(value), value + '\n\n', 'SVG survives later tool rounds');
+
 console.log('Streaming HTML: ordered mixed blocks, three questions, chunk boundaries, retained rounds and partial JSON decoding passed.');

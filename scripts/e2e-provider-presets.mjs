@@ -13,7 +13,7 @@ const presets = [
   ['vercel', 'https://ai-gateway.vercel.sh/v1', 'openai-chat'],
 ];
 const browser = await chromium.launch({ headless: true });
-const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', locale: 'zh-CN' });
+const page = await browser.newPage({ viewport: { width: 1440, height: 1000 }, reducedMotion: 'reduce', locale: 'zh-CN', timezoneId: 'America/Los_Angeles' });
 const errors = [];
 const modelRequests = [];
 page.on('pageerror', (error) => errors.push(error.message));
@@ -59,6 +59,10 @@ try {
   await page.goto(`${BASE}/#/settings`);
   await page.getByTestId('card-api').waitFor();
   await page.getByTestId('model-meta-updated-at').locator('time').waitFor();
+  const metaTime = page.getByTestId('model-meta-updated-at').locator('time');
+  const metaDate = new Date(await metaTime.getAttribute('datetime'));
+  const beijingTime = metaDate.toLocaleString('zh-CN', { timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', hour12: false });
+  assert.equal(await metaTime.innerText(), `更新于 ${beijingTime} BJT`, 'metadata update time stays in Beijing time on a non-China device');
   assert.equal(await page.getByTestId('btn-add-provider').count(), 0);
   assert.equal(await page.getByTestId('btn-refresh-meta').innerText(), '', 'refresh is an icon, not a text action');
   assert.equal(await page.getByTestId('btn-refresh-meta').getAttribute('aria-label'), '刷新能力数据');

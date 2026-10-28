@@ -19,6 +19,8 @@
  *   问答/题卡里可能有这种围栏，去掉它们会渲染成一坨源码。新内容不再教这条（见 DIAGRAM_RULE）。
  */
 
+import { isSvgCode } from '../../utils/artifactEdit';
+
 /** 前端支持的图表围栏类型 */
 export type DiagramKind = 'mermaid' | 'diagram' | 'svg';
 
@@ -41,13 +43,13 @@ const LANG_RULES: readonly (readonly [DiagramKind, RegExp])[] = [
  *
  * @returns 图表类型；不是图表围栏时返回 null（普通代码块 / 行内 code 照旧渲染）
  */
-export function diagramKindOf(props: { block?: unknown; lang?: unknown }): DiagramKind | null {
+export function diagramKindOf(props: { block?: unknown; lang?: unknown; children?: unknown }): DiagramKind | null {
   if (!props.block) return null;
   const lang = String(props.lang ?? '');
   for (const [kind, re] of LANG_RULES) {
     if (re.test(lang)) return kind;
   }
-  return null;
+  return isSvgCode(lang, props.children) ? 'svg' : null;
 }
 
 // ───────────────────────────────────────────────────────────────────────────────

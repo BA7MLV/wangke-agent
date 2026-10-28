@@ -235,6 +235,20 @@ test('diagramKindOf 不认行内 code 与缺 lang 的围栏', () => {
   assert.equal(diagramKindOf({ block: true, lang: undefined }), null);
 });
 
+test('SVG 内容识别兼容 XML、HTML、无语言与转义源码，但不误判普通代码', () => {
+  const source = '<svg width="200" height="200"><circle r="80"/></svg>';
+  for (const lang of ['', 'xml', 'XML', 'html', 'htm', 'image/svg+xml', 'application/svg+xml']) {
+    assert.equal(diagramKindOf({ block: true, lang, children: source }), 'svg', lang);
+    assert.equal(diagramKindOf({ block: true, lang, children: '<?xml version="1.0"?>\n<!-- example -->\n' + source }), 'svg');
+  }
+  assert.equal(diagramKindOf({ block: true, children: '&lt;svg width=&quot;200&quot;&gt;&lt;/svg&gt;' }), 'svg');
+  assert.equal(diagramKindOf({ block: true, lang: 'xml', children: '<svg width="200"' }), 'svg', 'partial roots can draw while streaming');
+  for (const lang of ['js', 'jsx', 'tsx', 'python', 'text']) assert.equal(diagramKindOf({ block: true, lang, children: source }), null);
+  assert.equal(diagramKindOf({ block: false, children: source }), null);
+  assert.equal(diagramKindOf({ block: true, lang: 'xml', children: '<catalog><svg/></catalog>' }), null);
+  assert.equal(diagramKindOf({ block: true, children: 'const source = "<svg></svg>";' }), null);
+});
+
 // —— 围栏标题：```diagram title="抛物线开口方向" ——
 // 与 diagramKindOf 共用同一条 info string（XMarkdown 的 data-lang 是**完整** info string），
 // 所以两者必须能在同一串上并存；提示词与 show_widget 回执都按这里的口径写 title=。

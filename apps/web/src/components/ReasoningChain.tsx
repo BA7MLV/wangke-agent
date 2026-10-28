@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Disclosure } from '@heroui/react';
 import { Sym } from '../ui/icons';
 import { MatrixDots, TextSwap, useReasoningStream } from './motion';
+import ReasoningMarkdown from './ReasoningMarkdown';
 import './reasoning-chain.css';
 
 /**
@@ -210,7 +211,7 @@ export default function ReasoningChain({
           <div ref={innerRef}
             className={live ? 'reasoning-chain__body reasoning-chain__body--live t-reason' : 'reasoning-chain__body'}
             tabIndex={open ? 0 : -1} role="region" aria-label="思考过程">
-            <div className="reasoning-chain__entries">{children ?? reasoning}</div>
+            <div className="reasoning-chain__entries">{children ?? <ReasoningMarkdown content={reasoning} streaming={active} />}</div>
           </div>
         </div>
         </Disclosure.Body>

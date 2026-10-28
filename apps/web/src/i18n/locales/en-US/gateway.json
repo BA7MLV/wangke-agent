@@ -12,6 +12,45 @@
   "enabled": "Enabled",
   "status": "Status",
   "reconnect": "Reconnect now",
+  "multiChannelHint": "One server can connect multiple WeChat or Feishu accounts, with separate links and conversations. Add each bot account only once.",
+  "duplicateAccount": "This bot account is already added. Use the existing channel, or use a different bot account for a new channel.",
+  "channelBusy": "This channel is being updated. Try again shortly.",
+  "loadFailed": "Could not refresh channel status. Please retry.",
+  "transportStatus": "Platform connection",
+  "configureBot": "Open Bot settings",
+  "configureModel": "Configure chat model",
+  "setupSteps": "Setup checklist",
+  "stepDone": "Complete",
+  "stepPending": "Pending",
+  "steps": { "connection": "Connect platform", "binding": "Link yourself", "bot": "Enable Bot", "model": "Set up model" },
+  "readiness": {
+    "disabled": "Off", "login_required": "Sign in to continue", "connection_required": "Waiting for connection",
+    "binding_required": "Connected · Link required", "bot_required": "Bot disabled", "model_required": "Model required",
+    "attention": "Needs attention", "ready": "Setup complete"
+  },
+  "readinessHint": {
+    "disabled": "Enable this channel to reconnect. Account details and conversation history are kept while paused.",
+    "login_required": "Sign in with WeChat or enter Feishu credentials, then link your own account.",
+    "connection_required": "Waiting for the platform connection. Check the details below or reconnect.",
+    "binding_required": "The platform is connected, but the Bot does not yet know which conversation is yours. Send the linking command below; ordinary messages will not start tasks yet.",
+    "bot_required": "The selected Bot is disabled. Enable it or select another Bot below.",
+    "model_required": "Your account is linked. Configure a chat model before asking the Bot questions.",
+    "attention": "The platform is connected, but processing or delivery needs attention. Check the records below or open the conversation for approvals and failures.",
+    "ready": "Connection, account linking and model setup are complete. Send a question in the platform chat, or send /status to check the round trip first. Model availability is confirmed by an actual reply."
+  },
+  "runState": { "failed": "Latest task failed: ", "waiting_user": "A task is waiting for your approval or answer. Open the conversation.", "paused": "A task is paused. Open the conversation for details." },
+  "lastInbound": "Last message received: {{time}}",
+  "deliveryProblems": "Reply delivery issues",
+  "inboxFailureHint": "{{count}} incoming messages could not be processed. Check the conversation, then resend any unanswered questions from the platform.",
+  "projectionFailureHint": "Delivery preparation failed for {{count}} replies and will be retried automatically. Open the web conversation to read them in the meantime.",
+  "pairExplanation": "Signing in and linking yourself are separate steps. Copy the command and send it in this bot's WeChat / Feishu direct chat. This page updates automatically when confirmed.",
+  "pairWaiting": "Waiting for you to send the command in the platform chat. Earlier unlinked messages will not run automatically; resend your question after linking.",
+  "pairExpired": "This linking command has expired. Generate a new one.",
+  "pairRenew": "Generate new linking command",
+  "copyFailed": "Clipboard unavailable. Select and copy the command above.",
+  "removeConfirm": "This stops the channel's tasks, reminders and messaging, and deletes its credentials, links and delivery queue. Web conversation history and study materials are kept. Sent messages are not recalled. You can add the channel again later.",
+  "removeHint": "Removes credentials and account links. Web conversation history and study materials are kept.",
+  "removed": "Channel removed",
   "connection": {
     "failures": "Consecutive failures: {{attempts}}",
     "retryAt": "Next retry: {{time}}",
@@ -31,7 +70,8 @@
     "unsafe_platform_message_id": "Message ID precision error. Upgrade the server.",
     "response_too_large": "WeChat response exceeded the size limit. The cursor is preserved.",
     "inbox_capacity": "The inbox is full. Polling resumes as the backlog clears.",
-    "receive_failed": "Could not persist incoming messages. Retrying from the same cursor."
+    "receive_failed": "Could not persist incoming messages. Retrying from the same cursor.",
+    "duplicate_channel_account": "This bot account is configured more than once. Keep one channel, remove duplicates, then reconnect."
   },
   "health": {
     "connected": "Connected",
@@ -89,5 +129,5 @@
   "cancel": "Cancel",
   "back": "Messaging",
   "saved": "Saved",
-  "remove": "Turn off"
+  "remove": "Remove channel"
 }

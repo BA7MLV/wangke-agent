@@ -488,7 +488,19 @@
   padding-inline: 4px;
   gap: 4px;
   color: var(--muted);
-  border-radius: var(--radius-full);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.course-chat__user-expand:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.course-chat__user-expand:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .course-chat__user-expand[aria-expanded='true'] svg {

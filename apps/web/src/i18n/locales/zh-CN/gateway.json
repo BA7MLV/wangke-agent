@@ -12,6 +12,45 @@
   "enabled": "启用",
   "status": "状态",
   "reconnect": "立即重连",
+  "multiChannelHint": "同一台服务器可连接多个微信或飞书账号，每个渠道独立绑定、独立对话。同一个机器人账号只添加一次。",
+  "duplicateAccount": "这个机器人账号已添加，请返回使用已有渠道；添加新渠道需要不同的机器人账号。",
+  "channelBusy": "渠道正在更新，请稍后重试。",
+  "loadFailed": "渠道状态刷新失败，请重试。",
+  "transportStatus": "平台连接",
+  "configureBot": "前往 Bot 设置",
+  "configureModel": "配置聊天模型",
+  "setupSteps": "使用前的准备",
+  "stepDone": "已完成",
+  "stepPending": "待完成",
+  "steps": { "connection": "连接平台", "binding": "绑定本人", "bot": "启用 Bot", "model": "配置模型" },
+  "readiness": {
+    "disabled": "已停用", "login_required": "待登录", "connection_required": "等待连接",
+    "binding_required": "已连接 · 待绑定", "bot_required": "Bot 未启用", "model_required": "待配置模型",
+    "attention": "需要处理", "ready": "配置完成"
+  },
+  "readinessHint": {
+    "disabled": "启用渠道后会恢复连接。暂停期间保留账号与聊天记录。",
+    "login_required": "先扫码登录微信，或填写飞书应用凭据，再完成本人绑定。",
+    "connection_required": "正在等待平台连接。下方可查看原因并重新连接。",
+    "binding_required": "平台连接正常，但 Bot 还不知道哪个会话属于你。请把下方绑定命令发给它；普通消息暂时不会触发任务。",
+    "bot_required": "此渠道选择的 Bot 已停用。请启用它，或在下方选择另一个 Bot。",
+    "model_required": "本人绑定已完成。配置聊天模型后，Bot 才能回答问题。",
+    "attention": "连接正常，但处理或投递存在问题。请查看下方记录，或打开对话处理审批与失败。",
+    "ready": "已完成连接、本人绑定和模型配置。可在平台私聊里发送问题；发送 /status 可先检查消息往返。模型服务可用性以实际回复为准。"
+  },
+  "runState": { "failed": "最近一次任务失败：", "waiting_user": "任务正在等待你的审批或回答，请打开对话。", "paused": "任务已暂停，请打开对话查看原因。" },
+  "lastInbound": "最近收到消息：{{time}}",
+  "deliveryProblems": "回复投递问题",
+  "inboxFailureHint": "有 {{count}} 条消息处理失败。请打开对话核对，再从平台重新发送未处理的问题。",
+  "projectionFailureHint": "有 {{count}} 条回复的投递准备失败，系统会自动重试；可先打开网页对话查看回复。",
+  "pairExplanation": "扫码登录与本人绑定是两步。复制绑定命令，在这个微信 / 飞书机器人的私聊里发送；收到确认后，本页会自动更新。",
+  "pairWaiting": "等待你在平台发送绑定命令。绑定前的普通消息不会自动补执行，请在绑定成功后重新发送问题。",
+  "pairExpired": "绑定命令已过期，请重新生成。",
+  "pairRenew": "重新生成绑定命令",
+  "copyFailed": "无法访问剪贴板，请长按上方命令复制。",
+  "removeConfirm": "移除后停止此渠道的任务、提醒和消息收发，并删除登录凭据、绑定与投递队列。网页聊天记录和学习资料保留；不撤回已发送的消息。以后可重新添加。",
+  "removeHint": "移除渠道会清除登录凭据和绑定，保留网页聊天记录与学习资料。",
+  "removed": "消息渠道已移除",
   "connection": {
     "failures": "连续失败 {{attempts}} 次",
     "retryAt": "下次重试：{{time}}",
@@ -31,7 +70,8 @@
     "unsafe_platform_message_id": "消息 ID 精度异常，请升级服务端。",
     "response_too_large": "微信响应超过大小限制，已保留原游标。",
     "inbox_capacity": "收件队列已满，处理积压后会自动继续。",
-    "receive_failed": "消息落库失败，已保留原游标等待重试。"
+    "receive_failed": "消息落库失败，已保留原游标等待重试。",
+    "duplicate_channel_account": "同一个机器人账号被重复添加。请保留一个渠道并移除重复项，再重新连接。"
   },
   "health": {
     "connected": "已连接",
@@ -89,5 +129,5 @@
   "cancel": "取消",
   "back": "消息渠道",
   "saved": "已保存",
-  "remove": "停用"
+  "remove": "移除消息渠道"
 }

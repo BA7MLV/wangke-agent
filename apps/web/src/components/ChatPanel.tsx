@@ -52,7 +52,7 @@ import VirtualMessages, { type VirtualMessagesHandle } from './VirtualMessages';
 import { useMessageDeletion } from './useMessageDeletion';
 import { useChatScroll } from './useChatScroll';
 import ChatHistorySkeleton from './ChatHistorySkeleton';
-import { readChatPage } from '../store/chatHistory';
+import { readChatPage, readChatHistory } from '../store/chatHistory';
 import { framePatch } from '../utils/framePatch';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import { MarkdownTable } from './MdTable';
@@ -897,7 +897,7 @@ export default function ChatPanel({
 
   /** 当前会话 → Markdown 全文（复制与导出共用） */
   const sessionMarkdown = async () => {
-    const rows = activeId == null ? [] : await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const rows = activeId == null ? [] : await readChatHistory(activeId);
     const ids = new Set(rows.map((row) => row.id));
     const all = [...rows.map((row) => ({ ...row, role: row.role === 'user' ? 'user' : 'ai' })), ...msgs.filter((m) => !ids.has(m.rowId))];
     return buildSessionMarkdown({
@@ -1295,7 +1295,7 @@ export default function ChatPanel({
       const systemPrompt = isMaterial
         ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, curShots.length, curRefs.length, canEditMd, settings.agentInstructions)
         : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, curShots.length, curRefs.length, settings.agentInstructions);
-      const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const history = await readChatHistory(sessionId);
       // 末条即刚落库的当前问题，按降级链路组装（历史保持纯文本，截图不重复发送）
       // descBlock 已含 [截图@...] 标记，不再重复裸 marker 前缀
       // ⚠️ 引用块要同时进两处：displayContent（上屏 + 落库，用户回看历史时能看到自己引了什么）
@@ -1588,7 +1588,7 @@ export default function ChatPanel({
       return;
     }
 
-    const rows = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const rows = await readChatHistory(activeId);
     const rowIdx = rows.findIndex((row) => row.id === message.rowId);
     if (rowIdx < 0) return;
 
@@ -1626,7 +1626,7 @@ export default function ChatPanel({
     if (loading || activeId == null || message.rowId == null) return;
     const source = sessions.find((s) => s.id === activeId);
     if (!source) return;
-    const rows = await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const rows = await readChatHistory(activeId);
     const cut = rows.findIndex((row) => row.id === message.rowId);
     if (cut < 0) return;
     const kept = rows.slice(0, cut + 1);

@@ -57,6 +57,7 @@ import { ThinkLine, StreamParagraph, Collapse } from './motion';
 import { MarkdownCode, MarkdownPre } from './mermaid/markdown';
 import QuizCard from './QuizCard';
 import WidgetMessage from './WidgetMessage';
+import ReasoningMarkdown from './ReasoningMarkdown';
 import './live-chat-panel.css';
 
 /** QuizCard 要的形状。**本地定义而不是 import store/db 的 QuizState**：guest 不碰 db
@@ -114,7 +115,7 @@ function ReasoningChain({ reasoning, active }: { reasoning: string; active: bool
         {active ? '思考中…' : '思考过程'}
       </button>
       <Collapse open={open} id={bodyId} innerClassName="chat-reason__body">
-        {reasoning}
+        <ReasoningMarkdown content={reasoning} streaming={active} />
       </Collapse>
     </div>
   );

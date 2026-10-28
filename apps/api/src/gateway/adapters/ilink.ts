@@ -62,7 +62,7 @@ export class IlinkPlugin implements ChannelPlugin {
     loginSteps: [{ action: 'qr', label: 'QR', fields: [] }, { action: 'poll', label: 'Check login', fields: ['qrcode', 'redirectHost', 'verifyCode'] }],
     loginPublicFields: ['status', 'qrcode', 'qrDataUrl', 'redirectHost'],
     loginConfigFields: ['botToken', 'botId', 'baseUrl'],
-    management: ['configure', 'pair', 'revoke', 'login', 'retry', 'discard'],
+    management: ['configure', 'pair', 'revoke', 'login', 'retry', 'discard', 'remove'],
     capabilities: { direct: true, groups: false, images: true, files: true, proactive: 'context-dependent', deduplicationWindowMs: 0 },
   };
   private expired = false;

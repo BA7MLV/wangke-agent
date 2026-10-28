@@ -7,7 +7,7 @@ import { receiveFile } from '../cloud/files.js';
 import { DeliveryError, type ChannelPlugin, type GatewayEnvelope, type GatewayPayload } from './plugin.js';
 import { cleanupGateway, gatewayLimits } from './retention.js';
 import { publishBotEvent } from '../agent/events.js';
-import { GATEWAY_CONNECTION_ERRORS, type GatewayConnectionDiagnostics } from '@wangke/contracts/gateway';
+import { GATEWAY_CONNECTION_ERRORS, type GatewayConnectionDiagnostics, type GatewayReadiness } from '@wangke/contracts/gateway';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -28,6 +28,7 @@ export class GatewayCore {
   private inbound = new Map<number, { binding: string; controller: AbortController }>();
   private logins = new Map<string, AbortController>();
   private restartAfter = new Map<string, number>();
+  private changing = new Set<string>();
   // A pass owns only scheduling/projection/delivery, not attachment workers.
   // Identity prevents an older tick's finally from releasing a newer pass.
   private busy?: symbol;
@@ -43,7 +44,10 @@ export class GatewayCore {
   }
   config(account: any): Record<string, string> { return JSON.parse(this.secrets.open(account.config)); }
   list(owner: string) {
-    return (this.store.db.prepare('SELECT id,channel,agent_id AS agentId,enabled,preset,health,created_at AS createdAt FROM gateway_accounts WHERE owner_id=?').all(owner) as any[]).map(a => ({ ...a,
+    const model = this.secrets.get(owner);
+    const modelConfigured = Boolean(model.llmModel.model && model.providers.some(p => p.id === model.llmModel.providerId && p.baseUrl && p.serves.includes('chat')));
+    return (this.store.db.prepare('SELECT id,channel,agent_id AS agentId,enabled,preset,health,created_at AS createdAt FROM gateway_accounts WHERE owner_id=? ORDER BY created_at,id').all(owner) as any[]).map(a => ({ ...a,
+      readiness: this.readiness(a, modelConfigured),
       connection: this.connections.get(a.id),
       manifest: this.factories[a.channel]?.().manifest,
       configuration: Object.fromEntries((this.factories[a.channel]?.().manifest.configFields ?? []).map(field => { const config = this.config(this.account(owner, a.id)); return [field.key, field.secret ? { configured: Boolean(config[field.key]) } : { value: config[field.key] ?? '' }]; })),
@@ -51,9 +55,33 @@ export class GatewayCore {
       bindings: this.store.db.prepare('SELECT id,tenant,peer,chat,thread_id AS threadId,revoked FROM gateway_bindings WHERE account_id=?').all(a.id),
     }));
   }
+  private readiness(a: any, modelConfigured: boolean): GatewayReadiness {
+    const agent = this.store.db.prepare('SELECT name,enabled FROM agent_profiles WHERE id=?').get(a.agentId) as any;
+    const bound = Boolean(this.store.db.prepare('SELECT 1 FROM gateway_bindings WHERE account_id=? AND revoked=0').get(a.id));
+    const inbox = this.store.db.prepare("SELECT MAX(received_at) lastInboundAt,COUNT(CASE WHEN status='failed' THEN 1 END) failures FROM gateway_inbox WHERE account_id=?").get(a.id) as any;
+    const outbox = this.store.db.prepare("SELECT COUNT(*) failures FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id WHERE b.account_id=? AND b.revoked=0 AND o.status IN ('failed','uncertain')").get(a.id) as any;
+    const projection = this.store.db.prepare('SELECT COUNT(*) n FROM gateway_projection_failures f JOIN gateway_bindings b ON b.id=f.binding_id WHERE b.account_id=? AND b.revoked=0').get(a.id) as any;
+    const latestRun = this.store.db.prepare('SELECT r.status,r.error_code AS errorCode FROM runs r JOIN gateway_bindings b ON b.thread_id=r.thread_id WHERE b.account_id=? AND b.revoked=0 ORDER BY r.created_at DESC,r.rowid DESC LIMIT 1').get(a.id) as GatewayReadiness['latestRun'] | undefined;
+    const connected = a.health === 'connected', botEnabled = Boolean(agent?.enabled);
+    const state: GatewayReadiness['state'] = !a.enabled ? 'disabled' : a.health === 'login_required' ? 'login_required' : !connected ? 'connection_required'
+      : !bound ? 'binding_required' : !botEnabled ? 'bot_required' : !modelConfigured ? 'model_required'
+      : outbox.failures || inbox.failures || projection.n || latestRun && ['failed', 'waiting_user', 'paused'].includes(latestRun.status) ? 'attention' : 'ready';
+    return { state, connected, bound, botEnabled, modelConfigured, botName: agent?.name ?? '', lastInboundAt: inbox.lastInboundAt,
+      deliveryFailures: outbox.failures, inboxFailures: inbox.failures, projectionFailures: projection.n, latestRun: latestRun ?? null };
+  }
+  /** One platform identity, one consumer; checking all owners also avoids cross-owner event theft. */
+  private assertUnique(channel: string, config: Record<string, string>, except?: string) {
+    for (const account of this.store.db.prepare('SELECT * FROM gateway_accounts WHERE channel=? AND id<>?').all(channel, except ?? '') as any[]) {
+      const other = this.config(account);
+      const duplicate = channel === 'ilink'
+        ? config.botId && config.botId === other.botId || config.botToken && config.botToken === other.botToken
+        : channel === 'feishu' && config.appId && config.appId === other.appId;
+      if (duplicate) throw new Error('duplicate_channel_account');
+    }
+  }
   async save(owner: string, value: { id?: string; channel: string; agentId: string; enabled: boolean; preset?: string; config?: Record<string, string> }) {
     if (!this.factories[value.channel] || !['inherit', 'autonomous'].includes(value.preset ?? 'inherit') || typeof value.enabled !== 'boolean') throw new Error('invalid_account');
-    if (!this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=? AND enabled=1').get(value.agentId, owner)) throw new Error('agent_not_found');
+    if (!this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=? AND (enabled=1 OR ?=0)').get(value.agentId, owner, Number(value.enabled))) throw new Error('agent_not_found');
     const old = value.id ? this.account(owner, value.id) : null;
     if (old && old.channel !== value.channel) throw new Error('channel_immutable');
     const fields = this.factories[value.channel]().manifest.configFields;
@@ -65,18 +93,28 @@ export class GatewayCore {
     if (Object.values(config).some(v => typeof v !== 'string' || v.length > 16384)) throw new Error('invalid_config');
     this.factories[value.channel]().validate(config);
     const id = old?.id ?? crypto.randomUUID();
-    await this.stop(id);
-    this.store.db.prepare(`INSERT INTO gateway_accounts(id,owner_id,channel,agent_id,enabled,preset,config,created_at) VALUES(?,?,?,?,?,?,?,?)
-      ON CONFLICT(id) DO UPDATE SET agent_id=excluded.agent_id,enabled=excluded.enabled,preset=excluded.preset,config=excluded.config`)
-      .run(id, owner, value.channel, value.agentId, Number(value.enabled), value.preset ?? 'inherit', this.secrets.seal(JSON.stringify(config)), stamp());
-    if (old && (!value.enabled || old.agent_id !== value.agentId || old.preset !== (value.preset ?? 'inherit'))) {
-      for (const b of this.store.db.prepare('SELECT thread_id FROM gateway_bindings WHERE account_id=? AND revoked=0').all(id) as any[]) {
-        this.bot.stop(owner, b.thread_id);
-        this.store.db.prepare('DELETE FROM thread_participants WHERE thread_id=?').run(b.thread_id);
-        this.store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(b.thread_id, value.agentId, stamp());
-      }
-    }
-    this.secrets.audit(owner, 'gateway.configured', { id, channel: value.channel, enabled: value.enabled, preset: value.preset });
+    this.assertUnique(value.channel, config, id);
+    if (this.changing.has(id)) throw new Error('channel_busy');
+    this.changing.add(id);
+    try {
+      await this.stop(id);
+      // stop awaits plugin cleanup. Recheck identity and existence after that yield.
+      if (old) this.account(owner, id);
+      this.assertUnique(value.channel, config, id);
+      this.store.transaction(() => {
+        this.store.db.prepare(`INSERT INTO gateway_accounts(id,owner_id,channel,agent_id,enabled,preset,config,created_at) VALUES(?,?,?,?,?,?,?,?)
+          ON CONFLICT(id) DO UPDATE SET agent_id=excluded.agent_id,enabled=excluded.enabled,preset=excluded.preset,config=excluded.config`)
+          .run(id, owner, value.channel, value.agentId, Number(value.enabled), value.preset ?? 'inherit', this.secrets.seal(JSON.stringify(config)), stamp());
+        if (old && (!value.enabled || old.agent_id !== value.agentId || old.preset !== (value.preset ?? 'inherit'))) {
+          for (const b of this.store.db.prepare('SELECT thread_id FROM gateway_bindings WHERE account_id=? AND revoked=0').all(id) as any[]) {
+            this.bot.stop(owner, b.thread_id);
+            this.store.db.prepare('DELETE FROM thread_participants WHERE thread_id=?').run(b.thread_id);
+            this.store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(b.thread_id, value.agentId, stamp());
+          }
+        }
+        this.secrets.audit(owner, 'gateway.configured', { id, channel: value.channel, enabled: value.enabled, preset: value.preset });
+      });
+    } finally { this.changing.delete(id); }
     if (value.enabled) this.launch(id);
     return { id };
   }
@@ -106,8 +144,27 @@ export class GatewayCore {
     });
     for (const active of this.inbound.values()) if (active.binding === binding) active.controller.abort();
     // An in-flight send/download must not continue using a revoked authority.
-    this.track(this.stop(id).then(() => { if (!this.stopped) { const a = this.account(owner, id); if (a.enabled) this.launch(id); } }));
+    this.track(this.stop(id).then(() => { if (!this.stopped) this.launch(id); }));
     this.secrets.audit(owner, 'gateway.revoked', { id, binding });
+  }
+  async remove(owner: string, id: string) {
+    const account = this.account(owner, id);
+    if (this.changing.has(id)) throw new Error('channel_busy');
+    this.changing.add(id);
+    try {
+      // Delete atomically before yielding: no scheduler, pairing or late login can revive it.
+      this.store.transaction(() => {
+        for (const binding of this.store.db.prepare('SELECT thread_id FROM gateway_bindings WHERE account_id=?').all(id) as any[]) {
+          this.bot.stop(owner, binding.thread_id);
+          this.store.db.prepare("UPDATE bot_reminders SET status='cancelled' WHERE thread_id=? AND status='active'").run(binding.thread_id);
+        }
+        this.store.db.prepare('DELETE FROM gateway_accounts WHERE id=? AND owner_id=?').run(id, owner);
+        this.secrets.audit(owner, 'gateway.removed', { id, channel: account.channel });
+      });
+      await this.stop(id);
+      this.connections.delete(id); this.restartAfter.delete(id);
+      return { removed: true };
+    } finally { this.changing.delete(id); }
   }
   start(automatic = true) {
     this.stopped = false;
@@ -145,16 +202,21 @@ export class GatewayCore {
       ...(number(detail?.retryAt) && detail.retryAt > now ? { retryAt: detail.retryAt } : {}),
       ...(error ? { error } : {}),
     };
-    this.store.db.prepare('UPDATE gateway_accounts SET health=? WHERE id=?').run(state, id);
+    if (!this.store.db.prepare('UPDATE gateway_accounts SET health=? WHERE id=?').run(state, id).changes) return;
     this.connections.set(id, value);
     if (error && (JSON.stringify(error) !== JSON.stringify(previous?.error) || value.consecutiveFailures > 0 && Number.isInteger(Math.log2(value.consecutiveFailures)))) {
       console.warn('gateway_connection', JSON.stringify({ accountId: id, state, ...value }));
     }
   }
   private launch(id: string) {
-    if (this.stopped || this.live.has(id)) return;
+    if (this.stopped || this.live.has(id) || this.changing.has(id)) return;
     const a = this.store.db.prepare('SELECT * FROM gateway_accounts WHERE id=?').get(id) as any;
     if (!a?.enabled) return;
+    try { this.assertUnique(a.channel, this.config(a), id); }
+    catch {
+      this.restartAfter.set(id, Date.now() + 30_000);
+      this.connectionHealth(id, 'connection_failed', { error: { code: 'duplicate_channel_account' }, consecutiveFailures: 1 }); return;
+    }
     let plugin: ChannelPlugin;
     try { plugin = this.factories[a.channel](a); }
     catch {
@@ -190,7 +252,7 @@ export class GatewayCore {
     const live = this.live.get(id); this.live.delete(id);
     live?.controller.abort();
     if (live) await Promise.race([Promise.resolve().then(() => live.plugin.stop()).catch(() => {}), new Promise(resolve => setTimeout(resolve, 1500))]);
-    this.connectionHealth(id, 'stopped');
+    if (!this.live.has(id)) this.connectionHealth(id, 'stopped');
   }
   async close() {
     this.stopped = true; clearInterval(this.timer);
@@ -202,6 +264,7 @@ export class GatewayCore {
     while (this.work.size) await Promise.allSettled([...this.work]);
   }
   async login(owner: string, id: string, action: Record<string, string>, externalSignal?: AbortSignal) {
+    if (this.changing.has(id)) throw new Error('channel_busy');
     const a = this.account(owner, id), live = this.live.get(id);
     const plugin = live?.plugin ?? this.factories[a.channel](a);
     if (!plugin.login) throw new Error('login_not_supported');
@@ -222,8 +285,14 @@ export class GatewayCore {
     if (Object.keys(loginConfig).length) {
       const config = { ...this.config(a), ...loginConfig }; plugin.validate(config);
       if (a.channel === 'ilink' && this.config(a).botId && config.botId !== this.config(a).botId) throw new Error('channel_identity_changed');
-      this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify(config)), id);
-      await this.stop(id); if (a.enabled) this.launch(id);
+      this.account(owner, id);
+      this.assertUnique(a.channel, config, id);
+      this.changing.add(id);
+      try {
+        this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify(config)), id);
+        await this.stop(id);
+      } finally { this.changing.delete(id); }
+      if (a.enabled) this.launch(id);
     }
     return Object.fromEntries(Object.entries(result).filter(([key]) => plugin.manifest.loginPublicFields?.includes(key) && !plugin.manifest.loginConfigFields?.includes(key)));
   }
@@ -350,7 +419,9 @@ export class GatewayCore {
             });
           }
         }
-        this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
+        if ((!b || b.revoked) && !m.text.startsWith('/pair ')) {
+          this.store.db.prepare("UPDATE gateway_inbox SET status='done',error='binding_required' WHERE id=?").run(row.id);
+        } else this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
       } catch {
         this.store.db.prepare("UPDATE gateway_inbox SET status='failed',error='inbound_processing_failed' WHERE id=? AND status='pending'").run(row.id);
       } finally { this.inbound.delete(row.id); }

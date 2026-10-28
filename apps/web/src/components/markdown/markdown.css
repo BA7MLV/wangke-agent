@@ -1,5 +1,8 @@
 .x-markdown { min-width: 0; }
 
+/* Reasoning inherits its muted typography, but Markdown owns whitespace/layout. */
+.reasoning-markdown { white-space: normal; color: inherit; font: inherit; }
+
 /* XMarkdown's default descendant selectors also style React-owned controls.
    Keep its prose geometry/variables, but stop at embedded UI. One class keeps
    prose above the app reset, without competing with embedded host utilities. */

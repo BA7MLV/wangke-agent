@@ -3,6 +3,15 @@ export type ArtifactKind = 'diagram' | 'svg' | 'mermaid' | 'html';
 export type ArtifactLocation = 'fence' | 'html' | 'widget';
 export const MAX_ARTIFACT_LENGTH = 120_000;
 
+/** Only infer visual content for markup/unlabelled code, never JS/JSX strings or ordinary XML. */
+export function isSvgCode(lang: unknown, source: unknown): boolean {
+  if (!/^(?:xml|html?|image\/svg\+xml|application\/svg\+xml)?$/i.test(String(lang ?? '').trim())) return false;
+  if (typeof source !== 'string') return false;
+  const text = source.replace(/&lt;/g, '<').replace(/&gt;/g, '>')
+    .replace(/^\s*(?:<\?xml\b[^?]*\?>\s*|<!--[\s\S]*?-->\s*)*/i, '').trimStart();
+  return /^<svg(?:\s|\/?>|$)/i.test(text);
+}
+
 export function parseArtifactReply(reply: string): unknown {
   const clean = reply.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1');
   if (!clean.trim()) throw new Error('模型未返回修改内容，原内容未修改；请重试或切换模型');
@@ -66,7 +75,8 @@ export function artifactFences(content: string): FenceRange[] {
 }
 
 export function replaceArtifactFence(content: string, kind: ArtifactKind, source: string, next: string): string {
-  const matches = artifactFences(content).filter((f) => (f.kind === kind || (kind === 'html' && f.kind === 'htm')) && f.source === source.replace(/\s+$/, ''));
+  const matches = artifactFences(content).filter((f) => (f.kind === kind || (kind === 'html' && f.kind === 'htm')
+    || (kind === 'svg' && isSvgCode(f.kind, f.source))) && f.source === source.replace(/\s+$/, ''));
   if (matches.length !== 1) throw new Error('无法唯一定位此块，原回答未修改（可能包含相同的图或内容已变化）');
   const range = matches[0];
   // Do not let model output escape its fence and inject/replace other answer blocks.

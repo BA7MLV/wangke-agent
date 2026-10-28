@@ -1,5 +1,5 @@
 import { db, type ChatRow } from './db';
-import { htmlPreviewSource, splitAssistantContent } from '../utils/streamingHtml';
+import { splitAssistantContent } from '../utils/streamingHtml';
 import { replaceArtifactFence, type ArtifactKind, type ArtifactLocation } from '../utils/artifactEdit';
 import { uuid } from '../utils/uuid';
 import { messageWidgets } from '../harness/widgetLayout';
@@ -24,13 +24,15 @@ export function assertArtifactTarget(row: ChatRow | undefined, input: ArtifactTa
   }
 }
 
-/** Exact raw HTML blocks can be edited without replacing the rest of a mixed answer. */
+/** Exact raw HTML/SVG blocks can be edited without replacing the rest of a mixed answer. */
 function replaceHtmlBlock(content: string, source: string, next: string): string {
-  const blocks = splitAssistantContent(content).filter((block) => block.kind === 'html' && block.source === source);
+  const blocks = splitAssistantContent(content).filter((block) => (block.kind === 'html' || block.kind === 'svg') && block.source === source);
   if (blocks.length !== 1) throw new Error('原 HTML 已变化或位置不唯一，请重新打开修改');
   const block = blocks[0];
-  if (block.location === 'fence') return replaceArtifactFence(content, 'html', source, next);
-  if (htmlPreviewSource(next)?.trim() !== next.trim()) throw new Error('修改结果不能保持 HTML 预览，请保留原来的 HTML 根元素');
+  if (block.location === 'fence') return replaceArtifactFence(content, block.kind === 'svg' ? 'svg' : 'html', source, next);
+  const replacements = splitAssistantContent(next).filter((item) => item.source.trim());
+  if (replacements.length !== 1 || replacements[0].kind !== block.kind || replacements[0].source.trim() !== next.trim())
+    throw new Error('修改结果不能保持图形预览，请保留原来的 HTML/SVG 根元素');
   return content.slice(0, block.start) + next + content.slice(block.end);
 }
 

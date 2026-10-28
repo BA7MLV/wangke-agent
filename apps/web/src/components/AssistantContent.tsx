@@ -1,8 +1,9 @@
 import { Fragment, useMemo, type ReactNode } from 'react';
 import { splitAssistantContent } from '../utils/streamingHtml';
 import ArtifactEditor from './ArtifactEditor';
-import StreamingHtmlPreview from './StreamingHtmlPreview';
+import HtmlAnswer from './HtmlAnswer';
 import { InlineWidget } from './WidgetMessage';
+import SvgBlock from './mermaid/SvgBlock';
 
 /** Keep each delivered question in place while the assistant continues writing. */
 export default function AssistantContent({ content, streaming = false, children }: {
@@ -13,7 +14,11 @@ export default function AssistantContent({ content, streaming = false, children 
   const blocks = useMemo(() => splitAssistantContent(content), [content]);
   return blocks.map((block, index) => block.kind === 'html' ? (
     <ArtifactEditor key={`html-${block.start}`} kind="html" location={block.location} source={block.source} closed={block.closed}>
-      <StreamingHtmlPreview html={block.source} isStreaming={streaming && !block.closed} statusText="正在解析 HTML" />
+      <HtmlAnswer source={block.source} streaming={streaming && !block.closed} />
+    </ArtifactEditor>
+  ) : block.kind === 'svg' ? (
+    <ArtifactEditor key={`svg-${block.start}`} kind="svg" location={block.location} source={block.source} closed={!streaming || block.closed}>
+      <SvgBlock code={block.source} closed={!streaming || block.closed} />
     </ArtifactEditor>
   ) : block.kind === 'widget' ? (
     <InlineWidget key={`widget-${block.start}`} reference={block.source} closed={block.closed} />

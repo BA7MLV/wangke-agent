@@ -38,6 +38,7 @@ import FolderPlanCard from '../components/FolderPlanCard';
 import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
 import { ArtifactEditProvider } from '../components/ArtifactEditor';
 import AssistantContent from '../components/AssistantContent';
+import { readChatHistory } from '../store/chatHistory';
 import WidgetMessage from '../components/WidgetMessage';
 import ContextUsageButton from '../components/ContextUsageButton';
 import { useContextCompression } from '../components/useContextCompression';
@@ -908,7 +909,7 @@ export default function CourseChat() {
    */
   const exportSession = async () => {
     if (messages.length === 0) return void toast.info('当前会话还没有内容');
-    const rows = activeId == null ? [] : await db.chats.where('sessionId').equals(activeId).sortBy('createdAt');
+    const rows = activeId == null ? [] : await readChatHistory(activeId);
     const savedIds = new Set(rows.map((row) => row.id));
     const exportMessages = [
       ...rows.map((row) => ({ ...row, role: row.role === 'user' ? 'user' : 'ai' })),
@@ -980,17 +981,6 @@ export default function CourseChat() {
             <Sym name="edit" />
           </Button>
         )}
-        <Button
-          isIconOnly
-          variant={botOpen ? 'secondary' : 'tertiary'}
-          className="course-chat__new-chat"
-          aria-label="Bot"
-          aria-pressed={botOpen}
-          data-testid="chat-bot-toggle"
-          onPress={() => setBotOpen(!botOpen)}
-        >
-          <Sym name="smart_toy" />
-        </Button>
       </>}
       aside={{
         open: botOpen,

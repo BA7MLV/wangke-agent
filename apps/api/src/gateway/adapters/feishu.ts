@@ -22,7 +22,7 @@ export async function limitedBytes(response: Response, limit = 20 * 1024 * 1024)
   const result = new Uint8Array(size); let offset = 0; for (const c of chunks) { result.set(c, offset); offset += c.length; } return result;
 }
 export class FeishuPlugin implements ChannelPlugin {
-  readonly manifest: ChannelPlugin['manifest'] = { id: 'feishu', version: 1, name: '飞书', configFields: [{ key: 'appId', label: 'App ID', secret: false, required: true, write: 'replace-or-preserve' }, { key: 'appSecret', label: 'App Secret', secret: true, required: true, write: 'replace-or-preserve' }], loginSteps: [], management: ['configure', 'pair', 'revoke', 'retry', 'discard'], capabilities: { direct: true, groups: false, images: true, files: true, proactive: 'yes', deduplicationWindowMs: 3600_000 } };
+  readonly manifest: ChannelPlugin['manifest'] = { id: 'feishu', version: 1, name: '飞书', configFields: [{ key: 'appId', label: 'App ID', secret: false, required: true, write: 'replace-or-preserve' }, { key: 'appSecret', label: 'App Secret', secret: true, required: true, write: 'replace-or-preserve' }], loginSteps: [], management: ['configure', 'pair', 'revoke', 'retry', 'discard', 'remove'], capabilities: { direct: true, groups: false, images: true, files: true, proactive: 'yes', deduplicationWindowMs: 3600_000 } };
   private ws?: WSClient;
   constructor(private resolveFile: FileResolver, private fetcher: typeof fetch = fetch) {}
   validate(c: Record<string, string>) { if (!/^cli_[\w]+$/.test(c.appId ?? '') || !c.appSecret || c.appSecret.length > 4096) throw new Error('invalid_feishu_credentials'); }

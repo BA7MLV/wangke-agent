@@ -6,7 +6,7 @@ export interface GatewayManifest {
   loginPublicFields?: string[];
   /** Login result fields persisted as encrypted config, never public by default. */
   loginConfigFields?: string[];
-  management?: Array<'configure' | 'pair' | 'revoke' | 'login' | 'retry' | 'discard'>;
+  management?: Array<'configure' | 'pair' | 'revoke' | 'login' | 'retry' | 'discard' | 'remove'>;
   capabilities: { direct: true; groups: false; images: boolean; files: boolean; proactive: 'yes' | 'context-dependent'; deduplicationWindowMs: number };
 }
 export interface GatewayEnvelope {
@@ -17,7 +17,7 @@ export interface GatewayEnvelope {
 export interface GatewayPayload { text: string; fileId?: string }
 
 /** Closed vocabulary: never put platform text, URLs, tokens or envelopes in diagnostics. */
-export const GATEWAY_CONNECTION_ERRORS = ['network_error', 'dns_error', 'tls_error', 'request_timeout', 'rate_limited', 'login_required', 'platform_http_error', 'platform_rejected', 'invalid_platform_response', 'invalid_platform_message', 'unsafe_platform_message_id', 'response_too_large', 'inbox_capacity', 'receive_failed'] as const;
+export const GATEWAY_CONNECTION_ERRORS = ['network_error', 'dns_error', 'tls_error', 'request_timeout', 'rate_limited', 'login_required', 'platform_http_error', 'platform_rejected', 'invalid_platform_response', 'invalid_platform_message', 'unsafe_platform_message_id', 'response_too_large', 'inbox_capacity', 'receive_failed', 'duplicate_channel_account'] as const;
 export interface GatewayConnectionError {
   code: typeof GATEWAY_CONNECTION_ERRORS[number];
   httpStatus?: number;
@@ -29,4 +29,18 @@ export interface GatewayConnectionDiagnostics {
   consecutiveFailures: number;
   retryAt?: number;
   error?: GatewayConnectionError;
+}
+
+export interface GatewayReadiness {
+  state: 'disabled' | 'login_required' | 'connection_required' | 'binding_required' | 'bot_required' | 'model_required' | 'attention' | 'ready';
+  connected: boolean;
+  bound: boolean;
+  botEnabled: boolean;
+  modelConfigured: boolean;
+  botName: string;
+  lastInboundAt: number | null;
+  deliveryFailures: number;
+  inboxFailures: number;
+  projectionFailures: number;
+  latestRun: { status: string; errorCode: string | null } | null;
 }

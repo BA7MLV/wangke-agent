@@ -15,6 +15,14 @@ assert.throws(() => replaceArtifactFence(content + '\n```diagram\n' + old + '\n`
 assert.throws(() => replaceArtifactFence(content, 'diagram', old, next + '\n```\n污染正文'), /结束标记/);
 assert.throws(() => replaceArtifactFence('```json\n```diagram\n' + old + '\n```\n```', 'diagram', old, next), /唯一/);
 
+const svgSource = '<svg width="200" height="200"><circle r="80"/></svg>';
+const nextSvg = svgSource.replace('80', '60');
+for (const lang of ['svg', 'xml', '', 'html']) {
+  const fencedSvg = `说明\n\n\`\`\`${lang}\n${svgSource}\n\`\`\`\n\n结束`;
+  assert.equal(replaceArtifactFence(fencedSvg, 'svg', svgSource, nextSvg), fencedSvg.replace(svgSource, nextSvg));
+}
+assert.throws(() => replaceArtifactFence('```js\n' + svgSource + '\n```', 'svg', svgSource, nextSvg), /唯一/);
+
 const reply = parseArtifactReply('```json\n{"edits":[{"search":"x^2","replace":"sin(x)"}]}\n```');
 assert.throws(() => parseArtifactReply('   '), /未返回修改内容/);
 assert.throws(() => parseArtifactReply('{"edits":['), /JSON 不完整或格式不正确/);
@@ -55,6 +63,9 @@ const mixed = '<p>old</p>\n\n讲解不变\n\n<div>第二题</div>\n\n```html\n<s
 await db.chats.update(rowId, { content: mixed });
 assert.equal((await save({ kind: 'html', location: 'html', source: '<p>old</p>', next: '<p>new</p>' })).content, mixed.replace('<p>old</p>', '<p>new</p>'), 'raw HTML edits preserve later prose and questions');
 assert.equal((await save({ kind: 'html', location: 'fence', source: '<section>第三题</section>', next: '<section>第三题修改</section>' })).content, mixed.replace('<p>old</p>', '<p>new</p>').replace('第三题', '第三题修改'), 'fenced edits remain isolated in mixed answers');
+await db.chats.update(rowId, { content: `说明\n\n${svgSource}\n\n结束` });
+assert.equal((await save({ kind: 'svg', location: 'html', source: svgSource, next: nextSvg })).content, `说明\n\n${nextSvg}\n\n结束`);
+await assert.rejects(save({ kind: 'svg', location: 'html', source: nextSvg, next: nextSvg + '\n\n篡改正文' }), /保留/);
 await db.chats.update(rowId, { interrupted: true });
 await assert.rejects(save(), /先完成/);
 await db.chats.delete(rowId);

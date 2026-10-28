@@ -201,7 +201,19 @@
   padding-inline: 4px;
   gap: 4px;
   color: var(--muted);
-  border-radius: var(--radius-full);
+  background: transparent;
+  border-radius: 4px;
+}
+
+.chat-user-expand:hover {
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.chat-user-expand:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
 }
 
 .chat-user-expand[aria-expanded='true'] svg {

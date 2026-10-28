@@ -3,6 +3,7 @@ import type { ChatToolCall } from '../store/db';
 import { processSteps, processTitle, type ProcessPhase } from '../utils/responseProcess';
 import { toolDisplay } from '../utils/toolTrace';
 import ReasoningChain from './ReasoningChain';
+import ReasoningMarkdown from './ReasoningMarkdown';
 import { PendingReply } from './motion';
 import './response-process.css';
 
@@ -47,7 +48,7 @@ export default function ResponseProcess({
         <p className="response-process__note">早期记录未保存分析与工具的交错顺序</p>
       )}
       {steps.map((step) => {
-        if (step.kind === 'reasoning') return <div key={step.key} className="response-process__text">{step.text}</div>;
+        if (step.kind === 'reasoning') return <div key={step.key} className="response-process__text"><ReasoningMarkdown content={step.text} streaming={streaming} /></div>;
         const { call } = step;
         const { label, detail } = toolDisplay(call.name, call.detail);
         const pending = call.status === 'running';

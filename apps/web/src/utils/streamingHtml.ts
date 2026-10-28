@@ -12,6 +12,8 @@
  * pipeline in `StreamingHtmlPreview` before it is put in the DOM.
  */
 
+import { artifactFences, isSvgCode } from './artifactEdit';
+
 const VOID_TAGS = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
   'param', 'source', 'track', 'wbr',
@@ -63,7 +65,7 @@ export function htmlPreviewSource(source: string): string | undefined {
 }
 
 export interface AssistantContentBlock {
-  kind: 'markdown' | 'html' | 'widget';
+  kind: 'markdown' | 'html' | 'svg' | 'widget';
   source: string;
   /** Offsets in the original answer, including fence markers when fenced. */
   start: number;
@@ -92,12 +94,20 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
       const end = match ? match.index + match[0].length : source.length;
       if (/^html?$/i.test(fence[2]) || fence[2] === 'wbw-widget') {
         markdown(cursor);
-        blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : 'html', source: source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, ''),
+        const body = source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, '');
+        blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : isSvgCode(fence[2], body) ? 'svg' : 'html', source: body,
           start: cursor, end, location: 'fence', closed: !!match });
         markdownStart = end;
       }
       // Never interpret HTML examples inside another language's code fence.
       cursor = end;
+    } else if (/^ {0,3}<svg(?:\s|\/?>|$)/i.test(line)) {
+      markdown(cursor);
+      const end = rawHtmlEnd(source, cursor);
+      blocks.push({ kind: 'svg', source: source.slice(cursor, end ?? source.length), start: cursor,
+        end: end ?? source.length, location: 'html', closed: end !== undefined });
+      cursor = end ?? source.length;
+      markdownStart = cursor;
     } else if (/^ {0,3}</.test(line) && looksLikeRawHtml(line.trimStart())) {
       markdown(cursor);
       const end = rawHtmlEnd(source, cursor);
@@ -115,7 +125,8 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
 
 /** Retrieval narration can reset; delivered visuals and their surrounding explanation cannot. */
 export function nextVisualRound(source: string, hasWidgets = false): string {
-  const visual = hasWidgets || splitAssistantContent(source).some((block) => block.kind === 'html')
+  const visual = hasWidgets || splitAssistantContent(source).some((block) => block.kind === 'html' || block.kind === 'svg')
+    || artifactFences(source).some((fence) => fence.kind === 'svg' || isSvgCode(fence.kind, fence.source))
     || /^ {0,3}(?:`{3,}|~{3,})wbw-widget[ \t]*$/m.test(source);
   return visual && source.trim() ? `${source.trimEnd()}\n\n` : '';
 }

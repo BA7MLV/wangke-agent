@@ -1,5 +1,6 @@
 import { runAgentLoop, noAnswerNotice, type AgentStopInfo } from './agent';
 import { remoteTasks } from '../cloud/state';
+import { readChatHistory } from '../store/chatHistory';
 import { runCloudTask } from '../cloud/tasks';
 import { resolveMaxRounds } from './loopGuard';
 import { mdEditorOpen } from './tools';
@@ -152,7 +153,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
     createdAt: Date.now(),
     ...(input.chatImages?.length ? { images: input.chatImages } : {}),
   });
-  const history = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+  const history = await readChatHistory(sessionId);
 
   // ── 上下文原料：技能清单 / 画面元数据 / 编辑面（照搬 ChatPanel 的三段探测）───
   // Level 1：技能元数据清单进系统提示词，agent 按需用 use_skill 加载正文。

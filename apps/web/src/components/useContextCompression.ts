@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { db } from '../store/db';
+import { readChatHistory } from '../store/chatHistory';
 import { estimateTokens } from '../harness/context';
 import { decisionConfigOf, getSettings, useSettings } from '../store/settings';
 import {
@@ -33,7 +33,7 @@ export function useContextCompression({ sessionId, tokens, windowTokens, query, 
     const abort = new AbortController();
     controller.current = abort;
     try {
-      const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const rows = await readChatHistory(sessionId);
       abort.signal.throwIfAborted();
       const current = useContextCompressionStore.getState().sessions[sessionId] ?? EMPTY_COMPRESSION;
       const historyTokens = retainedContext(rows, current).reduce((sum, row) => sum + estimateTokens(row.content), 0);

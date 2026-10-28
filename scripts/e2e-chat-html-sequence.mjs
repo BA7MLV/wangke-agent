@@ -50,20 +50,23 @@ try {
   await page.getByText('三道题全部输出完成。', { exact: true }).waitFor();
   const waitDone = () => page.waitForFunction(async () => !(await window.__htmlTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loading);
   await waitDone();
-  for (const title of ['HTML 第一题', 'HTML 第二题', 'HTML 第三题']) await page.getByText(title, { exact: true }).waitFor();
-  assert.equal(await page.getByTestId('widget-stream-preview').count(), 3, 'leading fenced HTML cannot consume later questions');
+  const htmlAnswers = page.getByTestId('html-answer');
+  for (const [index, title] of ['HTML 第一题', 'HTML 第二题', 'HTML 第三题'].entries())
+    await htmlAnswers.nth(index).getByTestId('widget-frame').contentFrame().getByText(title, { exact: true }).waitFor();
+  assert.equal(await htmlAnswers.count(), 3, 'leading fenced HTML cannot consume later questions');
   assert.equal(await page.locator('.widget-stream-preview__status').count(), 0, 'completed questions are not marked as generating');
-  const order = await page.locator('.course-chat__bubble--ai').last().innerText();
-  for (const [before, after] of [['HTML 第一题', '第一题的讲解。'], ['第一题的讲解。', 'HTML 第二题'], ['第二题的讲解。', 'HTML 第三题'], ['HTML 第三题', '三道题全部输出完成。']]) {
-    assert.ok(order.indexOf(before) < order.indexOf(after), `${before} stays before ${after}: ${JSON.stringify(order)}`);
+  const ordered = [htmlAnswers.nth(0), page.getByText('第一题的讲解。', { exact: true }), htmlAnswers.nth(1),
+    page.getByText('第二题的讲解。', { exact: true }), htmlAnswers.nth(2), page.getByText('三道题全部输出完成。', { exact: true })];
+  for (let index = 1; index < ordered.length; index++) {
+    assert.ok((await ordered[index - 1].boundingBox()).y < (await ordered[index].boundingBox()).y, 'HTML and prose retain their visual order');
   }
   if (process.env.SCREENSHOT_PATH) await page.screenshot({ path: process.env.SCREENSHOT_PATH, fullPage: true });
   const firstSession = await page.evaluate(async () => (await window.__htmlTestImport('/src/store/courseChat.ts')).useCourseChat.getState().activeId);
   await page.reload();
   await page.waitForFunction(async () => (await window.__htmlTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await page.evaluate(async (id) => (await window.__htmlTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), firstSession);
-  await page.getByText('HTML 第三题', { exact: true }).waitFor();
-  assert.equal(await page.getByTestId('widget-stream-preview').count(), 3, 'refresh retains all three questions');
+  await htmlAnswers.nth(2).getByTestId('widget-frame').contentFrame().getByText('HTML 第三题', { exact: true }).waitFor();
+  assert.equal(await htmlAnswers.count(), 3, 'refresh retains all three questions');
 
   mode = 'widgets';
   requests = 0;
@@ -93,8 +96,8 @@ try {
   await composer.press('Enter');
   await page.getByText('分轮出题完成。', { exact: true }).waitFor();
   await waitDone();
-  for (let number = 1; number <= 3; number++) await page.getByText(`连续 HTML 第 ${number} 题`, { exact: true }).waitFor();
-  assert.equal(await page.getByTestId('widget-stream-preview').count(), 3, 'raw/fenced HTML remains visible across retrieval rounds');
+  for (let number = 1; number <= 3; number++) await htmlAnswers.nth(number - 1).getByTestId('widget-frame').contentFrame().getByText(`连续 HTML 第 ${number} 题`, { exact: true }).waitFor();
+  assert.equal(await htmlAnswers.count(), 3, 'raw/fenced HTML remains visible across retrieval rounds');
   assert.equal(requests, 3);
 
   const qa = await page.evaluate(async () => {

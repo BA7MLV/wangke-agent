@@ -255,7 +255,7 @@ function Sidebar({
     <>
       {rail.items.filter((it) => it.isAction).map((it) => (
         <Button key={it.value} variant="secondary" data-testid={it.testId}
-          className="mb-3 min-h-11 w-full justify-start gap-3 rounded-xl border border-border bg-background px-3 text-sm font-medium shadow-sm"
+          className="mb-3 min-h-11 w-full justify-start gap-3 rounded-full border border-border bg-background px-3 text-sm font-medium shadow-sm"
           onPress={() => { it.onClick(); onNavigate?.(); }}>
           {it.icon}<span>{it.label}</span>
         </Button>

@@ -23,6 +23,7 @@
     "./text/vtt": { "types": "./src/utils/vtt.ts", "default": "./dist/utils/vtt.js" },
     "./concurrency": { "types": "./src/utils/concurrency.ts", "default": "./dist/utils/concurrency.js" },
     "./cancel": { "types": "./src/utils/cancel.ts", "default": "./dist/utils/cancel.js" },
+    "./chat-order": { "types": "./src/utils/chatOrder.ts", "default": "./dist/utils/chatOrder.js" },
     "./artifact-edit": { "types": "./src/utils/artifactEdit.ts", "default": "./dist/utils/artifactEdit.js" },
     "./materials/markdown": { "types": "./src/materials/md.ts", "default": "./dist/materials/md.js" },
     "./materials/docx": { "types": "./src/materials/docx.ts", "default": "./dist/materials/docx.js" },

@@ -5,8 +5,9 @@ import JsonDiagramBlock from './JsonDiagramBlock';
 import SvgBlock from './SvgBlock';
 import { diagramKindOf, fenceTitleOf } from './fence';
 import ArtifactEditor from '../ArtifactEditor';
-import StreamingHtmlPreview from '../StreamingHtmlPreview';
+import HtmlAnswer from '../HtmlAnswer';
 import { InlineWidget } from '../WidgetMessage';
+import { useMarkdownStreaming } from '../markdown/streaming';
 
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
 
@@ -31,21 +32,22 @@ function isWidgetFence(props: CodeLikeProps): boolean {
  * 那时图还没画完，所以标题是流式期间最早可见的那点信息。
  */
 export function MarkdownCode({ block, lang, streamStatus, className, children }: ComponentProps) {
+  const streaming = useMarkdownStreaming();
   if (isWidgetFence({ block, lang })) {
     return <InlineWidget reference={String(children ?? '')} closed={streamStatus !== 'loading'} />;
   }
-  if (isHtmlFence({ block, lang })) {
+  const kind = diagramKindOf({ block, lang, children });
+  if (!kind && isHtmlFence({ block, lang })) {
     const source = String(children ?? '').replace(/\s+$/, '');
     const closed = streamStatus !== 'loading';
     return <ArtifactEditor kind="html" source={source} closed={closed}>
-      <StreamingHtmlPreview html={source} isStreaming={!closed} statusText="正在解析 HTML" />
+      <HtmlAnswer source={source} streaming={!closed} />
     </ArtifactEditor>;
   }
-  const kind = diagramKindOf({ block, lang });
   if (kind) {
     const code = typeof children === 'string' ? children : String(children ?? '');
     // 未闭合（流式中）时只停在等待态，不解析半截内容 —— 见 MermaidBlock / SvgBlock 的说明
-    const closed = streamStatus !== 'loading';
+    const closed = streamStatus !== 'loading' && (kind !== 'svg' || !streaming || /<\/svg>\s*$/i.test(code));
     const title = fenceTitleOf(lang);
     const diagram = kind === 'mermaid' ? <MermaidBlock code={code} closed={closed} title={title} />
       : kind === 'diagram' ? <JsonDiagramBlock code={code} closed={closed} title={title} />

@@ -1,5 +1,6 @@
 /** Node execution consumes environment-neutral packages, never Web application sources. */
 import fs from 'node:fs/promises';
+import { compareChatRows, nextChatTurnTimes } from '@wangke/study-core/chat-order';
 import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '@wangke/study-core/model/client';
 import type { ModelOverrides } from '@wangke/study-core/model/meta';
 import type { ModelTarget } from '@wangke/study-core/model/types';
@@ -480,7 +481,7 @@ function libraryExecutor(context: TaskContext, session: Record<string, any> | nu
 function chatHistory(context: TaskContext, sessionId: number) {
   return taskRows(context, 'chats', 'sessionId', sessionId)
     .filter(row => row.role === 'user' || row.role === 'assistant')
-    .sort((a, b) => Number(a.createdAt ?? 0) - Number(b.createdAt ?? 0));
+    .sort(compareChatRows);
 }
 
 function addConversationMutations(
@@ -490,6 +491,11 @@ function addConversationMutations(
   assistantRow: Record<string, any>,
   sessionPatch?: Record<string, unknown>,
 ) {
+  // Read the latest committed timeline at commit time, not before the model request.
+  // IDs remain identities, never ordering keys for a new question/answer pair.
+  const times = nextChatTurnTimes(chatHistory(context, sessionId), Number(userRow.createdAt), Date.now());
+  userRow.createdAt = times.user;
+  assistantRow.createdAt = times.assistant;
   const mutations = [
     recordMutation('chats', userRow.id, null, userRow),
     recordMutation('chats', assistantRow.id, null, assistantRow),
@@ -528,6 +534,7 @@ async function qa(context: TaskContext) {
 }
 
 async function chat(context: TaskContext) {
+  const startedAt = Date.now();
   const input = context.task.input as Record<string, any>;
   const sessionId = Number(input.sessionId);
   if (!Number.isSafeInteger(sessionId)) throw new Error('聊天会话不存在');
@@ -544,7 +551,7 @@ async function chat(context: TaskContext) {
   const result = await runServerAgent(context, targetFor(context), messages, libraryTools(courses.length > 0), libraryExecutor(context, session));
   const userId = newRecordId();
   const assistantId = newRecordId();
-  const userRow = { id: userId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'user', content: text, createdAt: Date.now() };
+  const userRow = { id: userId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'user', content: text, createdAt: startedAt };
   const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, createdAt: Date.now(), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
   addConversationMutations(context, sessionId, userRow, assistantRow, title ? { title } : undefined);

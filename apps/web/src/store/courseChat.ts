@@ -3,7 +3,7 @@ import { cloud, remoteTasks } from '../cloud/state';
 import { cancelResourceTasks, commandChatTask, submitCloudTask } from '../cloud/tasks';
 import type { CloudTask } from '@wangke/contracts/cloud';
 import { useChatNotifications } from './chatNotifications';
-import { readChatPage } from './chatHistory';
+import { readChatPage, readChatHistory } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
 import type { ProcessPhase } from '../utils/responseProcess';
 import { catalogOf, decisionConfigOf, getSettings, modelOverridesOf } from './settings';
@@ -1643,7 +1643,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         });
       }
       const [history, skillMetas] = await Promise.all([
-        db.chats.where('sessionId').equals(turnKey).sortBy('createdAt'),
+        readChatHistory(turnKey),
         loadSessionSkillMeta(view.skillIds),
       ]);
       const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
@@ -2165,7 +2165,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       const user = messageIndex > 0 ? state.messages[messageIndex - 1] : undefined;
       if (!user || user.role !== 'user' || messageIndex !== state.messages.length - 1) return;
 
-      const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const rows = await readChatHistory(sessionId);
       const userRow = [...rows].reverse().find((row) =>
         row.role === 'user'
         && row.content === user.content
@@ -2196,7 +2196,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       const idx = state.messages.findIndex((m) => m.key === key);
       // 必须是「提问 + 它的回答」这样的一对，且这一对**就在末尾**
       if (state.messages[idx + 1]?.role !== 'ai' || idx !== state.messages.length - 2) return;
-      const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+      const rows = await readChatHistory(sessionId);
       const rowIdx = rows.findIndex((row) => row.id === message.rowId);
       if (rowIdx < 0) return;
       /**
@@ -2235,7 +2235,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 用户会看到一条会话凭空少了一段。要改历史中间的一步，正确动作是「分支」——
      * 原会话完全不动、新会话可对比（见 `forkSession`）。
      */
-    const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+    const rows = await readChatHistory(sessionId);
     const idx = rows.findIndex((row) => row.id === message.rowId);
     if (idx < 0 || idx !== rows.length - 1) return;
     let userIdx = -1;
@@ -2265,7 +2265,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     if (get().runningIds.includes(sessionId)) return null;
     const source = await db.chatSessions.get(sessionId);
     if (!source) return null;
-    const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+    const rows = await readChatHistory(sessionId);
     const cut = uptoRowId == null ? rows.length : rows.findIndex((row) => row.id === uptoRowId) + 1;
     const kept = cut > 0 ? rows.slice(0, cut) : [];
     // 空会话没有分支的意义（新会话里一个字都没有，Recent 又会多一个空壳）
@@ -2294,7 +2294,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           /**
            * `createdAt` **照抄原值**，不重新计时。
            *
-           * `sortBy('createdAt')` 是稳定排序，复制的顺序按新 id 递增，不会乱；
+           * 按统一历史顺序复制，保留时间戳，避免随机云端 id 颠倒问答；
            * 而重打时间戳会让「这条会话是什么时候聊的」变成假数据。
            */
           createdAt: row.createdAt,
@@ -2584,7 +2584,7 @@ async function continueInterrupted(
     useCourseChat.setState({ courseCount });
 
     const view = readView(sessionId);
-    const rows = await db.chats.where('sessionId').equals(sessionId).sortBy('createdAt');
+    const rows = await readChatHistory(sessionId);
     const idx = rows.findIndex((row) => row.id === rowId);
     // 历史只取到这条为止：它后面不该有东西，有也不能带进来（那些消息不在这条回答的上下文里）
     const history = idx >= 0 ? rows.slice(0, idx + 1) : rows;
