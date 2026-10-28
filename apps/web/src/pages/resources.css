@@ -6,12 +6,23 @@
 .resource-open > svg { width: 72px; height: 64px; color: var(--accent); flex-shrink: 0; }
 .resource-open > span { max-width: 100%; overflow-wrap: anywhere; text-align: center; font-size: .9rem; }
 .resource-open > small { color: var(--muted); font-size: .75rem; }
+.resource-open > .resource-file-icon { display: flex; align-items: center; justify-content: center; width: 128px; max-width: 100%; height: 112px; flex-shrink: 0; }
 .resource-more { position: absolute; right: 0; top: 0; }
 .resource-grid[data-view='list'] { display: flex; flex-direction: column; gap: 2px; }
 .resource-grid[data-view='list'] .resource-open { flex-direction: row; padding: 10px 44px 10px 12px; gap: 12px; }
 .resource-grid[data-view='list'] .resource-open > svg { width: 30px; height: 30px; }
 .resource-grid[data-view='list'] .resource-open > span { flex: 1; text-align: start; }
+.resource-grid[data-view='list'] .resource-open > .resource-file-icon { flex: 0 0 30px; width: 30px; height: 30px; }
+.resource-grid[data-view='list'] .resource-file-icon .finder-document { width: 18px; height: 24px; border-radius: 2px; }
+.resource-grid[data-view='list'] .resource-file-icon .finder-video { width: 26px; height: 19px; border-width: 1px; }
+.resource-grid[data-view='list'] .resource-file-icon .finder-document::after,
+.resource-grid[data-view='list'] .resource-file-icon .finder-file-extension,
+.resource-grid[data-view='list'] .resource-file-icon .finder-file-placeholder i { display: none; }
+.resource-grid[data-view='list'] .resource-file-icon .finder-file-placeholder { padding: 0; font-size: 16px; }
 .resource-grid[data-view='list'] .resource-more { top: 8px; }
+.resource-skeleton { pointer-events: none; }
+.resource-skeleton__icon { width: 72px; height: 64px; }
+.resource-grid[data-view='list'] .resource-skeleton__icon { width: 24px; height: 24px; }
 .resource-notice { padding: 12px 24px; }
 .resource-window .finder-path > span { display: inline-flex; align-items: center; }
 .resource-window .finder-status { display: flex; justify-content: space-between; gap: 12px; }

@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Button, Checkbox, Input, ListBox, SearchField, Select } from '@heroui/react';
 import { catalogOf, SLOT_LABEL, type ModelSlot, type SavedModel } from '../../store/settings';
 import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
-import { Field, LoadingButton, SectionCard, toast } from '../../ui';
+import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
+import { Collapse } from '../motion';
 import { getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
 import type { DiscoveredModel } from '../../api/modelDiscoveryData';
 import { ModelMetadataDetails } from '../ModelCapabilities';
@@ -30,6 +31,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
   const [query, setQuery] = useState('');
   const [discoveryQuery, setDiscoveryQuery] = useState('');
   const [discoveryOpen, setDiscoveryOpen] = useState(false);
+  const discoveryId = useId();
   const [editor, setEditor] = useState<{ original: SavedModel | null; draft: Draft; slotsEdited?: boolean } | null>(null);
   const [error, setError] = useState('');
   const filtered = saved.filter((m) => `${m.model} ${m.name}`.toLowerCase().includes(query.trim().toLowerCase()));
@@ -141,12 +143,17 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
         {!filtered.length && <p role="status" className="py-5 text-sm text-muted">{saved.length ? '没有匹配的已保存模型。' : '还没有添加模型，请从下方接口列表选择添加；接口不支持列出模型时，可点击“新模型”手动添加。'}</p>}
       </div>
       {!checking && !available.length && <p className="text-xs text-muted" data-testid="discovery-empty">{discovered.length ? '接口返回的模型均已添加。' : '暂无接口模型列表，可点击“查找模型”重试，或点击“新模型”手动添加。models.dev 仅补充模型参数，不提供此连接的可用模型列表。'}</p>}
-      {available.length > 0 && <details className="rounded-xl border border-border" data-testid="discovered-models" open={discoveryOpen} onToggle={(event) => {
-        setDiscoveryOpen(event.currentTarget.open);
-        if (!event.currentTarget.open) setDiscoveryQuery('');
-      }}>
-        <summary className="cursor-pointer px-3 py-3 text-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-focus" data-testid="discovered-model-select">可添加模型 · {available.length}</summary>
-        {discoveryOpen && <div className="flex flex-col gap-3 border-t border-border p-3">
+      {available.length > 0 && <div className="t-acc rounded-xl border border-border" data-testid="discovered-models" data-open={discoveryOpen}>
+        <button type="button" className="t-acc-head flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl px-3 py-3 text-left text-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-focus"
+          data-testid="discovered-model-select" aria-expanded={discoveryOpen} aria-controls={discoveryId} onClick={() => {
+            // Reset on the next open, keeping filtered content stable throughout the exit.
+            if (!discoveryOpen) setDiscoveryQuery('');
+            setDiscoveryOpen(open => !open);
+          }}>
+          可添加模型 · {available.length}<Sym name="keyboard_arrow_down" className="t-acc-chevron" />
+        </button>
+        <Collapse open={discoveryOpen} id={discoveryId}>
+          <div className="flex flex-col gap-3 border-t border-border p-3">
           <p className="text-xs text-pretty text-muted">候选模型仅来自当前供应商的 /models 接口（含接口缓存），列表不代表调用测试通过。手动配置优先，接口声明其次，models.dev 仅补全缺失参数。</p>
           <SearchField aria-label="搜索接口模型" value={discoveryQuery} onChange={setDiscoveryQuery}><SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索模型名称或 ID" /><SearchField.ClearButton /></SearchField.Group></SearchField>
           <ul className="m-0 max-h-64 list-none divide-y divide-border overflow-y-auto p-0" aria-label="接口模型结果">
@@ -159,8 +166,9 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
             </li>)}
             {!discoveryResults.length && <li role="status" className="py-3 text-sm text-muted">没有匹配的模型</li>}
           </ul>
-        </div>}
-      </details>}
+          </div>
+        </Collapse>
+      </div>}
     </div>
   </SectionCard>;
 }

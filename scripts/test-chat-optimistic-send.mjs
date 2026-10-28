@@ -82,7 +82,8 @@ await test('shows user + preparing state before sync or task acceptance; polls d
   assert.equal(store.getState().messages.length, 2, 'early poll must not duplicate the optimistic turn');
   network.post.resolve();
   await sending;
-  assert.deepEqual(store.getState().messages.map(m => m.key), [`cloud-user-${network.task.id}`, `cloud-answer-${network.task.id}`]);
+  assert(store.getState().messages.every(m => m.taskId === network.task.id));
+  assert(store.getState().messages.every(m => m.key.startsWith('cloud-pending-')));
   await reflectCloudTasks([{ ...network.task, status: 'running', progress: { content: '正在回答' } }]);
   assert.equal(store.getState().messages.length, 2);
   assert.equal(store.getState().messages[1].content, '正在回答');
@@ -149,6 +150,129 @@ await test('first message in a new session is visible while network is blocked',
   network.post.resolve();
   await sending;
   assert.equal(store.getState().messages.length, 2);
+});
+
+async function streamedTurn() {
+  const id = await fresh();
+  const task = { id: crypto.randomUUID(), kind: 'chat', resource: `session:${id}`, input: { sessionId: id, text: '同步不能清空回答' },
+    status: 'running', progress: { content: '已经显示的回答' }, result: null, error: null, createdAt: new Date().toISOString() };
+  await reflectCloudTasks([task]);
+  const userRowId = 100000 + id * 2;
+  const rowId = userRowId + 1;
+  return { id, task, completed: { ...task, status: 'completed', result: { content: '最终完整回答', rowId, userRowId } },
+    rows: [
+      { id: userRowId, taskId: task.id, sessionId: id, videoId: LIBRARY_ASSISTANT_ID, role: 'user', content: task.input.text, createdAt: 1 },
+      { id: rowId, taskId: task.id, sessionId: id, videoId: LIBRARY_ASSISTANT_ID, role: 'assistant', content: '最终完整回答', createdAt: 2 },
+    ] };
+}
+
+await test('completion before sync never exposes empty/loading UI; partial sync merges in place', async () => {
+  const { id, task, completed, rows } = await streamedTurn();
+  const keys = store.getState().messages.map(m => m.key);
+  const unsubscribe = store.subscribe(state => {
+    assert.equal(state.activeId, id);
+    assert.equal(state.loaded, true, 'background refresh must not enter initial loading');
+    assert(state.messages.length >= 2, 'no transient welcome screen');
+  });
+  try {
+    await reflectCloudTasks([completed]);
+    assert.equal(store.getState().loading, false);
+    assert.equal(store.getState().messages[1].streaming, false);
+    assert.equal(store.getState().messages[1].content, '最终完整回答');
+    await reflectCloudTasks([task]); // stale running snapshot cannot restart a finished turn
+    assert.equal(store.getState().loading, false);
+    assert.equal(store.getState().messages[1].content, '最终完整回答');
+    await db.chats.add(rows[0]);
+    await reflectCloudTasks([completed], true);
+    assert.equal(store.getState().messages.length, 2);
+    assert.equal(store.getState().messages[1].syncPending, true);
+    await db.chats.add(rows[1]);
+    await reflectCloudTasks([completed], true);
+    assert.deepEqual(store.getState().messages.map(m => m.key), keys);
+    assert(store.getState().messages.every(m => !m.syncPending));
+    await reflectCloudTasks([completed], true);
+    assert.equal(store.getState().messages.length, 2, 'duplicate completion is idempotent');
+  } finally { unsubscribe(); }
+});
+
+await test('background completion and delayed sync cannot switch the foreground session', async () => {
+  const { id, completed, rows } = await streamedTurn();
+  await store.getState().createSession();
+  store.getState().setDraft('正在写的新问题');
+  await reflectCloudTasks([completed]);
+  assert.equal(store.getState().activeId, null);
+  assert.equal(store.getState().draft, '正在写的新问题');
+  await db.chats.bulkAdd(rows);
+  await reflectCloudTasks([completed], true);
+  assert.equal(store.getState().activeId, null);
+  await store.getState().loadSession(id);
+  assert.equal(store.getState().messages.length, 2);
+  assert.equal(store.getState().messages[1].content, '最终完整回答');
+  assert.equal(store.getState().loading, false);
+});
+
+await test('failed/cancelled generation preserves partial output instead of returning home', async () => {
+  for (const status of ['failed', 'cancelled', 'interrupted']) {
+    const { task } = await streamedTurn();
+    await reflectCloudTasks([{ ...task, status, error: '连接中断' }]);
+    assert.equal(store.getState().loading, false);
+    assert.equal(store.getState().messages[1].content, '已经显示的回答');
+    assert.equal(store.getState().messages[1].interrupted, true);
+  }
+});
+
+await test('history read failure retains output and a later retry recovers', async () => {
+  const { completed, rows } = await streamedTurn();
+  const original = db.chats.bulkGet;
+  db.chats.bulkGet = async () => { throw new Error('模拟本地读取失败'); };
+  try { await reflectCloudTasks([completed]); }
+  finally { db.chats.bulkGet = original; }
+  assert.equal(store.getState().messages[1].content, '最终完整回答');
+  assert.match(store.getState().historyError, /模拟本地读取失败/);
+  await db.chats.bulkAdd(rows);
+  await reflectCloudTasks([completed], true);
+  assert.equal(store.getState().historyError, null);
+  assert.equal(store.getState().messages.length, 2);
+});
+
+await test('an older refresh cannot overwrite a newer message snapshot', async () => {
+  const { completed } = await streamedTurn();
+  const original = db.chats.bulkGet;
+  const reached = deferred(), release = deferred();
+  db.chats.bulkGet = async (...args) => { reached.resolve(); await release.promise; return original.apply(db.chats, args); };
+  const old = reflectCloudTasks([completed]);
+  await reached.promise;
+  db.chats.bulkGet = original;
+  store.setState(state => ({ messages: [...state.messages, { key: 'new-question', role: 'user', content: '较新的消息' }] }));
+  release.resolve();
+  await old;
+  assert.equal(store.getState().messages.at(-1).content, '较新的消息');
+});
+
+await test('late initial history cannot erase progress received while loading', async () => {
+  const id = await db.chatSessions.add({ videoId: LIBRARY_ASSISTANT_ID, title: '加载竞态', createdAt: Date.now() });
+  const original = db.chatSessions.get;
+  const reached = deferred(), release = deferred();
+  db.chatSessions.get = async (...args) => { reached.resolve(); await release.promise; return original.apply(db.chatSessions, args); };
+  const loading = store.getState().loadSession(id);
+  await reached.promise;
+  db.chatSessions.get = original;
+  await reflectCloudTasks([{ id: crypto.randomUUID(), kind: 'chat', status: 'running', input: { sessionId: id, text: '问题' },
+    progress: { content: '读取历史期间收到的新回答' }, createdAt: new Date().toISOString() }]);
+  release.resolve();
+  await loading;
+  assert.equal(store.getState().messages.at(-1).content, '读取历史期间收到的新回答');
+  assert.equal(store.getState().loading, true);
+});
+
+await test('confirmed deletion still removes persisted messages without replaying completed tasks', async () => {
+  const { completed, rows } = await streamedTurn();
+  await db.chats.bulkAdd(rows);
+  await reflectCloudTasks([completed], true);
+  await db.chats.delete(rows[1].id);
+  await reflectCloudTasks([completed], true);
+  assert.equal(store.getState().messages.length, 1);
+  assert.equal(store.getState().messages[0].role, 'user');
 });
 
 db.close();

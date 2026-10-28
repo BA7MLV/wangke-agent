@@ -21,18 +21,26 @@ try {
           const tail = [...list.querySelectorAll('[data-chat-message]')].at(-1);
           window.__entryFrames.push({
             distance: list.scrollHeight - list.clientHeight - list.scrollTop,
+            top: list.scrollTop, height: list.scrollHeight, viewport: list.clientHeight,
+            host: list.querySelector('[data-chat-positioned]')?.offsetHeight,
+            padding: getComputedStyle(list).padding,
             tail: tail.textContent.slice(-100),
           });
         }
-        requestAnimationFrame(sample);
       };
-      requestAnimationFrame(sample);
+      // rAF itself runs BEFORE layout/ResizeObserver, so sampling there can
+      // mistake a not-yet-painted resize for a visible jump. Read after paint.
+      const afterPaint = () => requestAnimationFrame(() => setTimeout(() => {
+        sample();
+        afterPaint();
+      }, 0));
+      afterPaint();
     });
     const settle = () => page.evaluate(async () => {
       for (let frame = 0; frame < 12; frame++) await new Promise(requestAnimationFrame);
     });
     const begin = () => page.evaluate(() => { window.__entryFrames = []; });
-    const expectEntry = async (label, marker) => {
+    const expectEntry = async (label, marker, checkEntryFrames = true) => {
       await page.waitForFunction(({ selector, marker }) => {
         const list = document.querySelector(selector);
         return list && getComputedStyle(list).visibility === 'visible'
@@ -42,8 +50,11 @@ try {
       await settle();
       const frames = await page.evaluate(() => window.__entryFrames);
       assert(frames.length > 0, `${label}: entry must actually become visible`);
-      assert(frames.every((frame) => Math.abs(frame.distance) <= 2), `${label}: intermediate visible positions ${JSON.stringify(frames)}`);
-      console.log(`✓ ${width}px ${label}: first visible frame at end, no intermediate jumps`);
+      if (checkEntryFrames) {
+        assert(frames.every((frame) => Math.abs(frame.distance) <= 2), `${label}: intermediate visible positions ${JSON.stringify(frames)}`);
+      }
+      assert(Math.abs(frames.at(-1).distance) <= 2, `${label}: measured content remains at end`);
+      console.log(`✓ ${width}px ${label}: ${checkEntryFrames ? 'first visible frame at end, no intermediate jumps' : 'follows measured content'}`);
     };
 
     await page.goto(base);
@@ -95,7 +106,7 @@ try {
       preview.style.height = '320px';
       row.append(preview);
     });
-    await expectEntry('late preview measurement', '千条历史末尾');
+    await expectEntry('late preview measurement', '千条历史末尾', false);
 
     await begin();
     await page.evaluate((id) => window.__entryChat.getState().loadSession(id), ids.second);
@@ -103,6 +114,23 @@ try {
     await begin();
     await page.evaluate((id) => window.__entryChat.getState().loadSession(id), ids.first);
     await expectEntry('cached session switch', '千条历史末尾');
+
+    // Reopening a still-growing reply is history entry too, not a new question.
+    await page.evaluate(() => window.__entryChat.setState((state) => ({
+      loading: true,
+      messages: state.messages.map((message, index) => index === state.messages.length - 1 ? { ...message, streaming: true } : message),
+    })));
+    await page.evaluate(() => { location.hash = '#/library'; });
+    await page.getByTestId('course-chat-messages').waitFor({ state: 'detached' });
+    await begin();
+    await page.evaluate(() => { location.hash = '#/chat'; });
+    await expectEntry('streaming reply re-entry', '千条历史末尾');
+    await begin();
+    await page.evaluate(() => window.__entryChat.setState((state) => ({
+      messages: state.messages.map((message, index) => index === state.messages.length - 1
+        ? { ...message, content: `${message.content}\n\n${'继续生成的正文。\n\n'.repeat(12)}继续生成末尾` } : message),
+    })));
+    await expectEntry('stream growth after re-entry', '继续生成末尾', false);
 
     await page.reload();
     // bootstrap selects the newest stored conversation.

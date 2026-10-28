@@ -235,16 +235,7 @@
   }
 }
 
-/* ── 导航圆形开关与返回键 ────────────────────────────────────────────────
-   宽屏收起按钮在侧栏顶部，展开入口与窄屏抽屉入口在顶栏最左边。
-   它们是全应用出现频率最高的键。它是主页
-   （`pages/course-chat.css`）里唯一定过圆形外观的键 —— 44px 触控目标 +
-   1px 描边 + 实底圆片 —— 其余页面都还是 HeroUI ghost 的裸图标，
-   切页面时同一颗键会「掉一层皮」。
-
-   所以这份样式住在共享外壳里而不是某个页面里。仍然写 CSS 而不是补
-   Tailwind 工具类：HeroUI 组件自身的 `[data-hovered]` 特异性更高，
-   工具类压不住它（见本文件开头的说明）。 */
+/* Logo 导航入口与返回键共享 44px 触控目标，跨页面位置与尺寸一致。 */
 [data-testid='nav-rail-toggle'],
 [data-testid='nav-rail-open'],
 [data-testid='nav-back'] {
@@ -252,10 +243,26 @@
   height: 44px;
   min-width: 44px;
   padding: 0;
-  border: 1px solid var(--border);
   border-radius: var(--radius-full);
-  background: var(--background);
   color: var(--foreground);
+}
+
+/* 品牌图形本身就是入口，不再叠圆形描边或另放一颗侧栏图标。 */
+.page-shell__nav-logo[data-testid] {
+  border: 0;
+  background: transparent;
+}
+
+/* Button 默认把内部 SVG 缩成 1em，品牌标记不跟随普通图标尺寸。 */
+.page-shell__nav-logo[data-testid] > svg {
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+[data-testid='nav-back'] {
+  border: 1px solid var(--border);
+  background: var(--background);
 }
 
 /* 导航红点完整落在圆形按钮内部，避开中央图标。
@@ -673,9 +680,14 @@
   border-radius: var(--radius-full);
 }
 
+/* 新会话是动作入口，默认即呈现对应 Button variant 的中性 hover 底色。 */
+.page-shell__new-chat {
+  --button-bg: var(--button-bg-hover);
+}
+
 .page-shell__rail-icon[aria-current='page'] {
-  background: var(--accent-soft);
-  color: var(--accent-soft-foreground);
+  background: var(--surface);
+  color: var(--foreground);
 }
 
 .page-shell__compact-footer { margin-top: auto; }

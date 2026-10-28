@@ -27,8 +27,8 @@
  *    （对比 `HtmlReader.tsx` 的阅读视图是反过来的：`allow-same-origin` 且不给
  *    `allow-scripts`。两个方向各自成立，别抄错。）
  * 2. **文档内 CSP**：`connect-src 'none'`、`img-src data:`、`frame-src 'none'`、
- *    `form-action 'none'`。sandbox 挡的是「访问宿主」，CSP 挡的是「往外发数据」——
- *    没有这一条，脚本仍能把字幕内容 fetch 到任意域名，两道闸就等于只挡了一半。
+ *    `form-action 'none'`。sandbox 挡的是「访问宿主」，CSP 限制资源与网络请求。
+ *    注意：navigate-to 支持不完整，不能宣称已彻底阻止所有 iframe 自导航/外发。
  * 3. **只内联自带库**：CDN 全部禁掉（`default-src 'none'` 且无任何外部来源），
  *    Chart.js 由宿主把源码**内联**进去。第三方 CDN 既是供应链面，也是绕过 CSP 的洞。
  *
@@ -39,6 +39,7 @@
 import { WIDGET_STYLES } from './widgetStyles.ts';
 import { normalizeWidgetState, type WidgetState } from './widgetState.ts';
 import type { WidgetTheme } from './widgetTheme.ts';
+import { MAX_WIDGET_DIAGNOSTICS } from './widgetDiagnostics.ts';
 
 /** widget 可以声明需要的宿主库；只有被声明的才会内联进去，避免每张图都背上 200KB */
 export type WidgetLib = 'chart.js';
@@ -75,6 +76,7 @@ export const WIDGET_MSG = {
   display: 'wbw:display',
   /** iframe → 宿主：文档就绪 */
   ready: 'wbw:ready',
+  diagnostic: 'wbw:diagnostic',
   state: 'wbw:state',
   sync: 'wbw:sync',
   persistent: 'wbw:persistent',
@@ -101,8 +103,33 @@ const BRIDGE = `
   var pending = new Map(), sequence = 0, saves = Promise.resolve();
   function copy(value) { return JSON.parse(JSON.stringify(value)); }
   var post = function (type, payload) {
-    try { parent.postMessage({ __wbw: type, payload: payload }, '*'); } catch (e) {}
+    try { parent.postMessage({ __wbw: type, instance: initial.instance, payload: payload }, '*'); } catch (e) {}
   };
+  var diagnostics = new Set();
+  function diagnostic(kind, message) {
+    message = String(message || '未知运行错误').slice(0, 500);
+    var key = kind + ':' + message;
+    if (diagnostics.has(key) || diagnostics.size >= ${MAX_WIDGET_DIAGNOSTICS}) return;
+    diagnostics.add(key);
+    post(${JSON.stringify(WIDGET_MSG.diagnostic)}, { kind: kind, message: message });
+  }
+  window.addEventListener('error', function (event) {
+    if (event.target && event.target !== window) {
+      var tag = event.target.tagName;
+      if (['SCRIPT', 'LINK', 'IMG'].includes(tag)) diagnostic('resource', tag + ' 资源未能加载；外部依赖可能被隔离策略阻止');
+    } else diagnostic('script', event.message || '脚本运行失败');
+  }, true);
+  window.addEventListener('unhandledrejection', function (event) {
+    var reason = event.reason;
+    diagnostic('promise', typeof reason === 'string' ? reason : reason && reason.message || '异步操作失败');
+  });
+  document.addEventListener('securitypolicyviolation', function (event) {
+    // Actual enforced violations only, not console warnings about unsupported directives.
+    if (event.disposition !== 'enforce') return;
+    var directive = event.effectiveDirective || '';
+    if (!/^(script-src|style-src|img-src|font-src|connect-src|frame-src|child-src|form-action|base-uri|object-src|navigate-to)/.test(directive)) return;
+    diagnostic('policy', '隔离策略阻止了 ' + directive + '；请使用内联代码、数据图片或宿主提供的库');
+  });
   function request(type, payload) {
     return new Promise(function (resolve, reject) {
       var id = ++sequence;
@@ -124,7 +151,7 @@ const BRIDGE = `
     window.dispatchEvent(new CustomEvent('wbw:themechange', { detail: { dark: dark } }));
   }
   window.addEventListener('message', function (event) {
-    if (event.source !== parent || !event.data) return;
+    if (event.source !== parent || !event.data || event.data.instance !== initial.instance) return;
     var data = event.data, value = data.payload;
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.theme)}) setTheme(value);
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.persistent)}) initial.persistent = value === true;
@@ -296,8 +323,8 @@ const CSP = [
   // 这条是「投毒的字幕不能把数据搬走」的最后一道闸。
   "connect-src 'none'",
   // connect-src 不管 document navigation；支持该 CSP 指令的浏览器也会禁止
-  // widget 自己导航到外部页面。参数校验还会在更早一层挡住导航 API。
-  "navigate-to 'none'",
+  // widget 自己导航到外部页面。工具参数的正则检测只是预检，不是完整的导航隔离。
+  "navigate-to 'none'", // Not implemented in all browsers; never a complete navigation boundary.
   "frame-src 'none'",
   "child-src 'none'",
   "form-action 'none'",
@@ -312,6 +339,7 @@ const CSP = [
  * 正文字号跟随宿主，次要标注不低于 11px，字重只有 400/500。
  */
 export async function buildWidgetDocument(payload: WidgetPayload, options: {
+  instance?: string;
   dark?: boolean; theme?: WidgetTheme; state?: WidgetState | null; persistent?: boolean;
   /** Only a draft, not a grading/persistence capability. Never include answer keys. */
   answerInput?: { answer: unknown; submitted: boolean; question?: unknown };
@@ -326,7 +354,7 @@ export async function buildWidgetDocument(payload: WidgetPayload, options: {
   );
 
   // Escape '<' as well as line separators: saved strings must never terminate the bootstrap script.
-  const initial = JSON.stringify({ dark: options.dark === true, theme: options.theme, persistent: options.persistent === true,
+  const initial = JSON.stringify({ instance: options.instance ?? '', dark: options.dark === true, theme: options.theme, persistent: options.persistent === true,
     answerInput: options.answerInput,
     state: options.state == null ? null : normalizeWidgetState(options.state) })
     .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');

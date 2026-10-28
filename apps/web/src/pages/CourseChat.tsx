@@ -30,6 +30,7 @@ import ChatMessageNav from '../components/ChatMessageNav';
 import { useMessageDeletion } from '../components/useMessageDeletion';
 import { useChatScroll } from '../components/useChatScroll';
 import ChatHistorySkeleton from '../components/ChatHistorySkeleton';
+import ChatSyncStatus from '../components/ChatSyncStatus';
 import { db } from '../store/db';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
@@ -491,6 +492,7 @@ function QueueBar({
 export default function CourseChat() {
   const isNarrow = useMediaQuery('(max-width: 900px)');
   const [welcomeGreeting] = useState(() => chatGreeting());
+  const [importDismissed, setImportDismissed] = useState(false);
   const navigate = useNavigate();
   const nav = useAppNav('chat');
   const listRef = useRef<HTMLDivElement | null>(null);
@@ -950,20 +952,6 @@ export default function CourseChat() {
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
                     <h2 className="t-stagger-line">{welcomeGreeting}</h2>
-                    {/* 导入入口从「唯一的出路」降级成「可选的增强」。空库时它是主按钮
-                        （那时库里确实没东西），有库时它只是标题下的一行小字。 */}
-                    {!hasCourses && (
-                      <Button
-                        className="course-chat__import"
-                        variant="tertiary"
-                        size="sm"
-                        onPress={() => navigate('/library')}
-                        data-testid="chat-go-import"
-                      >
-                        <Sym name="add" />
-                        导入课程，让回答有据可依
-                      </Button>
-                    )}
                   </>
                 )}
               </div>
@@ -1126,6 +1114,7 @@ export default function CourseChat() {
           {/* 正文独占上行；底部添加入口固定在左，发送操作固定在右。
               队列只在有待发消息时出现；长问题仍可自动增高。 */}
           <div className="course-chat__composer-wrap" ref={composerWrapRef}>
+            <ChatSyncStatus key={activeId ?? 'draft'} />
             {/* 回到底部：用户往上滚去读历史时，浮在输入卡正上方。
                 默认隐藏，显隐由消息流的 scroll 监听直接写 `data-show`（见组件里的
                 onScroll）—— 它每滚一下都在变，不挂 state、不带动整棵消息树重渲。
@@ -1171,6 +1160,31 @@ export default function CourseChat() {
                 <p id="chat-delivery-hint" className="course-chat__send-hint" role="status">
                   {sendMode === 'queue' ? '发送后排队，本轮结束自动发出' : '发送后停止当前回复，立即回答新消息'}
                 </p>
+              </div>
+            )}
+            {/* 空库导入入口与输入卡叠成一组；只改入口外观，不限制直接聊天。 */}
+            {welcomeReady && !hasCourses && !importDismissed && (
+              <div className="course-chat__import" data-testid="chat-import-strip">
+                <Button
+                  className="course-chat__import-label"
+                  variant="ghost"
+                  onPress={() => navigate('/library')}
+                  data-testid="chat-go-import"
+                >
+                  <Sym name="folder" aria-hidden="true" />
+                  <span>导入课程</span>
+                </Button>
+                <Button
+                  isIconOnly
+                  className="course-chat__import-close"
+                  variant="ghost"
+                  aria-label="关闭导入课程提示"
+                  data-testid="chat-import-close"
+                  onPress={() => {
+                    setImportDismissed(true);
+                    composerRef.current?.focus();
+                  }}
+                ><Sym name="close" /></Button>
               </div>
             )}
             <ChatComposer className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}

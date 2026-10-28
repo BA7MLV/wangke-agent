@@ -68,7 +68,16 @@ try {
     await systemFolder.waitFor();
     await page.screenshot({ path: path.join(output, `resources-${width}.png`) });
     await open(systemFolder);
-    await page.getByTestId('agent-instructions-file').waitFor();
+    const agentFile = page.getByTestId('agent-instructions-file');
+    await agentFile.waitFor();
+    const agentCover = agentFile.locator('.finder-document img');
+    await agentCover.waitFor();
+    await page.waitForFunction(() => {
+      const img = document.querySelector('[data-testid="agent-instructions-file"] .finder-document img');
+      return img?.complete && img.naturalWidth > 0;
+    });
+    assert.equal(await agentFile.locator('.finder-file-extension').innerText(), 'MD');
+    assert.equal(await agentFile.locator('.finder-document').evaluate(el => getComputedStyle(el).width), width < 600 ? '60px' : '74px', 'AGENTS.md keeps the original document shape on desktop and mobile');
     const memoryFolder = page.getByTestId('memory-folder');
     await memoryFolder.waitFor();
     assert.equal(projectListRequests, 0, 'system folders must not depend on the project directory API');
@@ -133,8 +142,18 @@ try {
     await settings.fill(`设置中即时修改 ${width}`);
     await page.getByTestId('agent-instructions-open-file').click();
     await reader.getByText(`设置中即时修改 ${width}`, { exact: true }).waitFor();
-    // Deep links from memory management and tools work without entering the directory first.
     await page.getByTestId('nav-back').click();
+    await agentCover.waitFor();
+    const initialAgentCover = await agentCover.getAttribute('src');
+    await page.evaluate(async () => {
+      const { useSettings } = await import('/src/store/settings.ts');
+      useSettings.getState().update({ agentInstructions: '# 新的封面标题\n\n指令变化会更新封面。' });
+    });
+    await page.waitForFunction(previous => {
+      const img = document.querySelector('[data-testid="agent-instructions-file"] .finder-document img');
+      return img?.src !== previous && img?.complete && img.naturalWidth > 0;
+    }, initialAgentCover);
+    // Deep links from memory management and tools work without entering the directory first.
     await page.getByRole('navigation', { name: '资料路径' }).getByRole('button', { name: '全部资料', exact: true }).click();
     await systemFolder.waitFor();
     await page.goto(`${origin}/#/library?file=${resource}`);

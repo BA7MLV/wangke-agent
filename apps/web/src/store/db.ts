@@ -283,6 +283,8 @@ export interface ChatToolCall {
 
 export interface ChatRow {
   id?: number;
+  /** Cloud turn identity shared by task progress and committed records. */
+  taskId?: string;
   videoId: string;
   sessionId: number;
   role: 'user' | 'assistant';

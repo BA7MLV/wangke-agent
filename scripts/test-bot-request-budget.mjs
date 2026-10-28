@@ -14,6 +14,9 @@ import { accountedFetch } from '../apps/api/src/agent/accounted-fetch.ts';
 import { StudyTools } from '../apps/api/src/agent/study.ts';
 import { ContextGovernor } from '../apps/api/src/agent/context-governor.ts';
 import { receiveFile } from '../apps/api/src/cloud/files.ts';
+import sharp from 'sharp';
+import { prepareVisionImage, visionTarget } from '../apps/api/src/agent/vision.ts';
+import { ToolRegistry } from '../apps/api/src/agent/tools/registry.ts';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-wire-budget-')), store = new DatabaseStore(path.join(root, 'db.sqlite'));
 try {
@@ -26,7 +29,12 @@ try {
   const run = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(m.id).id;
   store.db.prepare("UPDATE runs SET status='running' WHERE id=?").run(run);
   const a = { owner, run, purpose: 'bot', provider: 'fake', model: 'fake' }, ledger = new UsageLedger(store, config);
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII=', 'base64');
+  const png = await sharp({ create: { width: 1, height: 1, channels: 3, background: 'white' } }).png().toBuffer();
+  const large = await sharp({ create: { width: 3000, height: 4000, channels: 3, background: 'white' } }).png().toBuffer();
+  const normalized = await prepareVisionImage(large);
+  assert.equal(normalized.width, 1536); assert.equal(normalized.height, 2048);
+  assert.equal((await sharp(normalized.bytes).metadata()).format, 'jpeg');
+  await assert.rejects(prepareVisionImage(Buffer.from('corrupt')), /vision_image_invalid/);
   fs.mkdirSync(path.join(root, 'files'));
   const file = await receiveFile(store, path.join(root, 'files'), owner, Readable.from([png]), 'tiny.png', 'image/png', 1000);
   const chinese = '中文随机字符𠮷🧪'.repeat(5000);
@@ -41,6 +49,8 @@ try {
       assert.equal(body[field], 3000, `${protocol}: vision wire output is bounded to its reservation`);
       const record = requests().at(-1); assert.equal(record.status, 'inflight');
       const estimate = boundedRequest(body, String(url));
+      if (protocol === 'openai-chat') assert.equal(body.messages[0].content[0].image_url.detail, 'high');
+      if (protocol === 'openai-responses') assert.equal(body.input[0].content[0].detail, 'high');
       assert.equal(record.reserved_tokens, estimate.total); assert.ok(estimate.total < DEFAULT_BOT_BUDGET.contextTokens, 'small image is not treated as unbounded base64 text');
       return Response.json(protocol === 'anthropic-messages' ? { content: [{ type: 'text', text: 'image' }] } : protocol === 'openai-responses' ? { output: [{ content: [{ type: 'output_text', text: 'image' }] }] } : { choices: [{ message: { content: 'image' } }] });
     });
@@ -62,6 +72,21 @@ try {
     assert.deepEqual(JSON.parse(store.db.prepare('SELECT context_json FROM runs WHERE id=?').get(run).context_json), history);
   }
   configure('openai-chat');
+  const selected = config.get(owner, true);
+  assert.equal(visionTarget({ ...selected, visionModel: { providerId: '', model: '' } }).ref.model, 'fake');
+  assert.throws(() => visionTarget({ ...selected, visionModel: { providerId: 'missing', model: 'explicit' } }), /vision_model_not_configured/, 'explicit choices never silently fall back');
+  config.save(owner, { ...selected, visionModel: { providerId: '', model: '' } });
+  const context = { owner, thread: thread.id, run, step: 'vision-auto', signal: new AbortController().signal, checkActive() {}, append() {} };
+  const automatic = new StudyTools(store, config, path.join(root, 'files'), async () => Response.json({ choices: [{ message: { content: 'automatic image' } }] }));
+  assert.equal((await automatic.plugins.get('study_file').execute({ fileId: file.id }, context)).description, 'automatic image');
+  const empty = new StudyTools(store, config, path.join(root, 'files'), async () => Response.json({ choices: [] }));
+  await assert.rejects(empty.plugins.get('study_file').execute({ fileId: file.id }, context), /vision_empty_response/);
+  const registry = new ToolRegistry();
+  registry.register(empty.definitions().find(d => d.function.name === 'study_file'), 'read');
+  const failure = await registry.execute('study_file', { fileId: file.id }, context, async () => { throw new Error('model_auth_failed'); });
+  assert.equal(failure.error.code, 'model_auth_failed');
+  assert.match(failure.error.hint, /credentials/);
+  await assert.rejects(automatic.plugins.get('study_file').execute({ fileId: file.id }, { ...context, owner: 'another-owner' }), /file_not_found/);
   let seen;
   const wrapped = accountedFetch(ledger, a, config.get(owner, true).providers, async (_url, init) => { seen = JSON.parse(init.body); return Response.json({}); });
   await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","messages":[]}' });

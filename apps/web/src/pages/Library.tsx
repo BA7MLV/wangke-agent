@@ -74,6 +74,7 @@ import { useProjectLibrary } from '../projects/useProjectLibrary';
 import { cloud } from '../cloud/state';
 import ResourceLibrary from './ResourceLibrary';
 import { FOLDER_COLORS, FolderIcon } from '../components/FolderIcon';
+import { AgentInstructionsIcon } from '../components/AgentInstructionsIcon';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -1894,7 +1895,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
                 </ListBox.Item>}
                 {showAgentFile && <ListBox.Item id="system:agent-instructions" textValue="AGENTS.md" className="finder-item" data-testid="agent-instructions-file" data-system-file="AGENTS.md" data-selection-key="system:agent-instructions">
                   <span className="finder-item__content">
-                    <span className="finder-item__icon"><Sym name="description" className="text-6xl text-accent" /></span>
+                    <span className="finder-item__icon"><AgentInstructionsIcon /></span>
                     <span className="finder-item__name" title="AGENTS.md">AGENTS.md</span>
                     <span className="finder-item__meta">全局 Agent 指令</span>
                     <span className="finder-item__date">与设置实时同步</span>

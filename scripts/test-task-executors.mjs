@@ -109,6 +109,10 @@ try {
   const chatTask = await completed(enqueue('chat', { sessionId: 10, text: '你好' }, 'session:10'));
   assert.equal(chatTask.executor, 'node');
   assert.equal(chatTask.result.content, reply);
+  assert.ok(chatTask.result.userRowId, 'completion acknowledges both committed message identities');
+  for (const id of [chatTask.result.userRowId, chatTask.result.rowId]) {
+    assert.equal(records.get(owner, 'chats', id).taskId, chatTask.id, 'progress and committed rows share a turn identity');
+  }
   assert.equal(store.db.prepare("SELECT COUNT(*) AS count FROM cloud_records WHERE owner_id=? AND table_name='chats' AND value IS NOT NULL").get(owner).count, 2);
   reply = '字幕里提到了测试内容。';
   const qaTask = await completed(enqueue('qa', { videoId, sessionId: 10, text: '课程提到了什么？' }, 'session:10:qa'));

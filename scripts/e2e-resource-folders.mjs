@@ -29,6 +29,8 @@ try {
   await call('POST', '/cloud/records', { mutations: [{ id: 'language', table: 'preferences', key: 'uiLanguage', before: null, after: { id: 'uiLanguage', value: 'zh-CN' } }] });
   const fixture = await call('POST', '/resources/folders', { name: '设计资料' });
   await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('笔记.txt')}`, { text: '人和 Bot 读写同一份文件。', expectedRevision: null });
+  await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('资料.md')}`, { text: '# 学习资料\n\nMarkdown 继续使用原来的封面文件样式。', expectedRevision: null });
+  await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('空白.markdown')}`, { text: '', expectedRevision: null });
   process.env.WANGKE_API_PROXY = backend;
   vite = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { host: '127.0.0.1', port: process.env.RESOURCE_PREVIEW ? 5189 : 0 }, plugins: [{
     name: 'resource-test-login',
@@ -61,6 +63,17 @@ try {
     const created = (await call('GET', '/resources')).entries.find(e => e.name === '真实文件夹');
     assert.ok(fs.statSync(path.join(directory, 'files', created.scope.workspacePath)).isDirectory());
     await page.getByTestId('resource-entry').filter({ hasText: '设计资料' }).locator('.resource-open').click();
+    const material = page.getByTestId('resource-entry').filter({ hasText: '资料.md' });
+    const cover = material.locator('.finder-document img');
+    await cover.waitFor();
+    await page.waitForFunction(() => [...document.querySelectorAll('.finder-document img')].length === 2 && [...document.querySelectorAll('.finder-document img')].every(img => img.complete && img.naturalWidth > 0));
+    assert.equal(await material.locator('.finder-file-extension').innerText(), 'MD');
+    assert.equal(await page.getByTestId('resource-entry').filter({ hasText: '空白.markdown' }).locator('.finder-file-extension').innerText(), 'MD', 'long Markdown extensions use the original compact badge');
+    assert.equal(await material.locator('.finder-document').evaluate(el => getComputedStyle(el).width), '74px', 'restore the original document shape');
+    const originalCover = await cover.getAttribute('src');
+    await page.getByRole('button', { name: '切换显示方式' }).click();
+    assert.equal(await material.locator('.finder-document').evaluate(el => getComputedStyle(el).width), '18px', 'list view keeps a compact document thumbnail');
+    await page.getByRole('button', { name: '切换显示方式' }).click();
     const note = page.getByTestId('resource-entry').filter({ hasText: '笔记.txt' });
     await note.locator('.resource-open').click();
     await dialog.locator('textarea').fill('界面保存到真实磁盘，Bot 可以直接读取。');
@@ -68,6 +81,12 @@ try {
     await dialog.waitFor({ state: 'hidden' });
     const physical = path.join(directory, 'files', fixture.workspacePath);
     assert.equal(fs.readFileSync(path.join(physical, '笔记.txt'), 'utf8'), '界面保存到真实磁盘，Bot 可以直接读取。');
+    fs.writeFileSync(path.join(physical, '资料.md'), '# 更新后的资料封面\n\n文件变化后重新生成。');
+    await page.waitForFunction(old => {
+      const tile = [...document.querySelectorAll('[data-testid="resource-entry"]')].find(el => el.textContent.includes('资料.md'));
+      const img = tile?.querySelector('.finder-document img');
+      return img?.src !== old && img?.complete && img?.naturalWidth > 0;
+    }, originalCover, { timeout: 15000 });
     fs.writeFileSync(path.join(physical, 'Bot 创建的文件.txt'), 'Bot direct filesystem output');
     await page.getByTestId('resource-entry').filter({ hasText: 'Bot 创建的文件.txt' }).waitFor({ timeout: 15000 });
     await page.locator('input[type=file]').setInputFiles({ name: '上传.txt', mimeType: 'text/plain', buffer: Buffer.from('uploaded') });
@@ -78,9 +97,11 @@ try {
     await dialog.getByRole('button', { name: '保存', exact: true }).click();
     await page.getByTestId('resource-entry').filter({ hasText: '子文件夹' }).waitFor();
     assert.ok(fs.statSync(path.join(physical, '子文件夹')).isDirectory());
-    assert.equal(await page.locator('[data-testid="resource-entry"] > .resource-open > svg').count(), await page.getByTestId('resource-entry').count(), 'all files and folders have a visible icon');
+    assert.equal(await page.locator('[data-testid="resource-entry"] > .resource-open > :is(svg, .resource-file-icon)').count(), await page.getByTestId('resource-entry').count(), 'all files and folders have a visible icon');
     await page.screenshot({ path: path.join(screenshots, 'resources-desktop.png') });
     await page.setViewportSize({ width: 390, height: 844 });
+    assert.equal(await material.locator('.finder-document').evaluate(el => getComputedStyle(el).width), '60px', 'mobile retains the document shape');
+    assert.equal(await cover.evaluate(img => img.complete && img.naturalWidth > 0), true, 'mobile shows the Markdown cover');
     await page.screenshot({ path: path.join(screenshots, 'resources-mobile.png') });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'mobile must not overflow');
     await page.getByTestId('resource-entry').filter({ hasText: '子文件夹' }).locator('.resource-open').click();
@@ -134,7 +155,7 @@ try {
     await page.getByTestId('resource-entry').filter({ hasText: '笔记.txt' }).waitFor();
     assert.match(page.url(), /library\?folder=/, 'legacy project links open real folders');
     assert.deepEqual(errors, []);
-    console.log(`Resource UI: desktop/mobile, real mkdir/upload, shared external files, Markdown reader/edit/index/conflicts, directory return, Bilibili import entry, old links and no page errors OK. Screenshots: ${screenshots}`);
+    console.log(`Resource UI: desktop/mobile/list Markdown covers and live updates, real mkdir/upload, shared external files, Markdown reader/edit/index/conflicts, directory return, Bilibili import entry, old links and no page errors OK. Screenshots: ${screenshots}`);
   }
 } catch (error) {
   if (page && !page.isClosed()) {

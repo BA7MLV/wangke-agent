@@ -35,6 +35,7 @@ interface EditorProps {
   kind: ArtifactKind; source: string; location?: ArtifactLocation; closed?: boolean;
   children: ReactNode | ((actions: ArtifactActions | null) => ReactNode);
   libraries?: readonly WidgetLib[]; widgetId?: string; widgetRef?: string; widgetIndex?: number;
+  htmlContentType?: 'example' | 'interactive';
 }
 
 export default function ArtifactEditor({ closed = true, ...props }: EditorProps) {
@@ -43,7 +44,7 @@ export default function ArtifactEditor({ closed = true, ...props }: EditorProps)
   return <EditableArtifact {...props} scope={scope} />;
 }
 
-function EditableArtifact({ kind, source, location = 'fence', libraries, widgetId, widgetRef, widgetIndex, children, scope }: EditorProps & { scope: Scope }) {
+function EditableArtifact({ kind, source, location = 'fence', libraries, widgetId, widgetRef, widgetIndex, children, scope, htmlContentType }: EditorProps & { scope: Scope }) {
   const target: ArtifactTarget = { rowId: scope.rowId, kind, location, source, widgetId };
   const key = artifactDraftKey(target);
   const draft = useArtifactDrafts((state) => state.drafts[key] ?? EMPTY_ARTIFACT_DRAFT);
@@ -144,7 +145,7 @@ function EditableArtifact({ kind, source, location = 'fence', libraries, widgetI
         <div data-testid="artifact-edit-preview" className="min-w-0">
           <p role="status" className="mb-2 mt-0 text-pretty text-sm font-medium">{running ? '上次预览' : '修改后'} <span className="font-normal text-muted">· 尚未应用，原内容在上方</span></p>
           <Suspense fallback={<p role="status" className="text-sm text-muted">正在准备预览…</p>}>
-            <ArtifactPreview kind={kind} source={draft.next} location={location} libraries={libraries} dark={dark} />
+            <ArtifactPreview kind={kind} source={draft.next} location={location} libraries={libraries} dark={dark} htmlContentType={htmlContentType} />
           </Suspense>
         </div>
         <p className="m-0 text-pretty text-xs text-muted">请检查视觉与交互效果。预览操作不会保存到原图，应用后仍可撤销。</p>

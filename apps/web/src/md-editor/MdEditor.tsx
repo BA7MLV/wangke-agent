@@ -26,6 +26,7 @@ import { Compartment, EditorState, type Extension } from '@codemirror/state';
 import { EditorView, keymap } from '@codemirror/view';
 import { Button, ToggleButton, ToggleButtonGroup, Tooltip } from '@heroui/react';
 import { Sym } from '../ui';
+import { TextSwap } from '../components/motion';
 import { agentDiff } from './agentDiff';
 import { createMdEditorController, registerMdEditor, type MdEditorController } from './bridge';
 import { livePreview } from './livePreview';
@@ -417,8 +418,10 @@ export default function MdEditor({
                 : 'mr-edit-state'
           }
           data-testid="md-edit-state"
+          role="status"
+          aria-atomic="true"
         >
-          {mdSaveLabel(saveState)}
+          <TextSwap text={mdSaveLabel(saveState)} />
         </span>
         <div className="mr-bar__spacer" />
         {/* 灰着而不是藏起来：位置固定，用户才会认得「这里有个可以撤的东西」；

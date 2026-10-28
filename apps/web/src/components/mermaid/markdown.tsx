@@ -6,6 +6,7 @@ import SvgBlock from './SvgBlock';
 import { diagramKindOf, fenceTitleOf } from './fence';
 import ArtifactEditor from '../ArtifactEditor';
 import HtmlAnswer from '../HtmlAnswer';
+import { htmlFenceContentType } from '../../utils/htmlContent';
 import { InlineWidget } from '../WidgetMessage';
 import { useMarkdownStreaming } from '../markdown/streaming';
 
@@ -40,8 +41,8 @@ export function MarkdownCode({ block, lang, streamStatus, className, children }:
   if (!kind && isHtmlFence({ block, lang })) {
     const source = String(children ?? '').replace(/\s+$/, '');
     const closed = streamStatus !== 'loading';
-    return <ArtifactEditor kind="html" source={source} closed={closed}>
-      {(actions) => <HtmlAnswer source={source} streaming={!closed} editActions={actions} />}
+    return <ArtifactEditor kind="html" source={source} closed={closed} htmlContentType={htmlFenceContentType(String(lang ?? ''))}>
+      {(actions) => <HtmlAnswer source={source} contentType={htmlFenceContentType(String(lang ?? ''))} streaming={!closed} editActions={actions} />}
     </ArtifactEditor>;
   }
   if (kind) {

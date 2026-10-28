@@ -63,8 +63,9 @@ export function boundedRequest(payload: ObjectValue, endpoint: string, defaultOu
     if (['image_url', 'input_image'].includes(String(value.type))) {
       const url = object(value.image_url) ? value.image_url.url : value.image_url;
       if (typeof url !== 'string' || !/^data:image\/(png|jpeg|gif|webp);base64,/.test(url)) throw new Error('unsupported_budgeted_image');
-      // Force low-detail OpenAI image processing in the transmitted payload.
-      if (object(value.image_url)) value.image_url.detail = 'low'; else value.detail = 'low';
+      // The bounded 2048² raster reservation includes high-detail processing;
+      // low detail loses small text in screenshots and study material.
+      if (object(value.image_url)) value.image_url.detail = 'high'; else value.detail = 'high';
       return { ...value, image_url: image(url.slice(url.indexOf(',') + 1)) };
     }
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, estimateView(v)]));

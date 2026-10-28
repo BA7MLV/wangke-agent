@@ -1,5 +1,6 @@
 import { Ajv, type ValidateFunction } from 'ajv';
 import { BudgetBlocked } from '../budget.js';
+import { visionRecovery } from '../vision.js';
 
 export type Recovery = 'read' | 'idempotent' | 'uncertain';
 export type ToolDefinition = { type: string; function: { name: string; description: string; parameters: object } };
@@ -69,8 +70,9 @@ export class ToolRegistry {
       context.signal.throwIfAborted();
       context.checkActive();
       const safeCodes = ['skill_not_available', 'skill_reference_not_found', 'invalid_skill_reference', 'memory_revision_conflict', 'memory_not_found', 'memory_source_tombstoned', 'memory_source_changed', 'system_revision_conflict', 'system_file_changed', 'invalid_system_path', 'invalid_diary_date', 'edit_not_found', 'edit_ambiguous', 'edit_overlap', 'invalid_edit_mode', 'invalid_result_budget', 'invalid_result_offset', 'result_budget_too_small', 'invalid_search_query', 'invalid_search_cursor', 'search_cursor_expired', 'checkpoint_not_found', 'checkpoint_source_changed', 'sandbox_unavailable'];
-      const code = signal.aborted ? 'tool_timeout' : error instanceof Error && safeCodes.includes(error.message) ? error.message : 'tool_failed';
-      return { ok: false, error: { code, hint: entry.recovery === 'uncertain' ? 'Side effects may have occurred. Inspect evidence; do not automatically replay.' : 'Check current permissions and input before retrying.' } };
+      const recovery = name === 'study_file' && error instanceof Error ? visionRecovery[error.message] : undefined;
+      const code = signal.aborted ? 'tool_timeout' : error instanceof Error && (safeCodes.includes(error.message) || recovery) ? error.message : 'tool_failed';
+      return { ok: false, error: { code, hint: recovery ?? (entry.recovery === 'uncertain' ? 'Side effects may have occurred. Inspect evidence; do not automatically replay.' : 'Check current permissions and input before retrying.') } };
     } finally { if (abort) signal.removeEventListener('abort', abort); }
   }
 }

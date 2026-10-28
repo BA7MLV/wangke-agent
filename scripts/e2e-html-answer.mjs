@@ -33,11 +33,15 @@ try {
       directMarkdown ? React.createElement(Markdown, { content: source, components: { code: MarkdownCode, pre: MarkdownPre } })
         : React.createElement(AssistantContent, { content: source, streaming }, text => React.createElement(Markdown, { content: text }))));
   });
-  const source = '<!doctype html><html><head><style>body { color: rgb(12, 34, 56); } .example { display: grid; gap: 12px; background: rgb(225, 240, 250); padding: 24px; } h1 { font-size: 28px; }</style></head><body><main class="example"><h1>HTML 样式正常</h1><p>这是演示，不是真实课程数据。</p><button onclick="document.body.dataset.executed=1">普通代码不执行脚本</button><a href="https://blocked.test/">禁止外部导航</a></main><script>document.body.dataset.executed=1</script><meta http-equiv="refresh" content="0;url=https://blocked.test/"></body></html>';
-  const answer = `这里是 HTML 示例：\n\n\`\`\`html\n${source}\n\`\`\`\n\n后续说明不丢失。`;
+  const source = '<!doctype html><html><head><style>body { color: rgb(12, 34, 56); } .example { display: grid; gap: 12px; background: rgb(225, 240, 250); padding: 24px; } h1 { font-size: 28px; }</style></head><body><main class="example"><h1>HTML 样式正常</h1><p>这是演示，不是真实课程数据。</p><button onclick="document.body.dataset.executed=2">交互按钮</button><a href="https://blocked.test/">禁止外部导航</a></main><script>document.body.dataset.executed=1</script><meta http-equiv="refresh" content="0;url=https://blocked.test/"></body></html>';
+  const answer = `这里是 HTML 作品：\n\n\`\`\`html interactive\n${source}\n\`\`\`\n\n后续说明不丢失。`;
   await page.evaluate(source => window.renderHtmlAnswer(source, true), '```html\n<style>body{color:red}</style><main><h1>生成中的示例</h1>');
   await page.getByTestId('widget-stream-preview').getByText('生成中的示例').waitFor();
   assert.equal(await page.getByTestId('widget-frame').count(), 0, 'partial code is inert');
+  await page.evaluate(source => window.renderHtmlAnswer(source), `\`\`\`html\n${source}\n\`\`\``);
+  await page.getByTestId('widget-frame').contentFrame().getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
+  assert.equal(await page.getByTestId('widget-frame').contentFrame().locator('body').getAttribute('data-executed'), null, 'ordinary source examples do not auto-execute');
+  await page.getByRole('button', { name: '运行交互', exact: true }).waitFor();
   await page.evaluate(source => window.renderHtmlAnswer(source), answer);
   await page.getByText('后续说明不丢失。', { exact: true }).waitFor();
   const frame = page.getByTestId('html-answer').getByTestId('widget-frame');
@@ -48,9 +52,9 @@ try {
     const style = getComputedStyle(el);
     return [style.display, style.backgroundColor, style.padding, style.color];
   }), ['grid', 'rgb(225, 240, 250)', '24px', 'rgb(12, 34, 56)']);
-  assert.equal(await content.locator('body').getAttribute('data-executed'), null);
+  assert.equal(await content.locator('body').getAttribute('data-executed'), '1');
   await content.getByRole('button').click();
-  assert.equal(await content.locator('body').getAttribute('data-executed'), null);
+  assert.equal(await content.locator('body').getAttribute('data-executed'), '2');
   assert.equal(await content.locator('a').getAttribute('href'), null);
   assert.ok(await content.locator('body').evaluate(() => { try { return !parent.document.body; } catch { return true; } }));
   assert.notEqual(await page.locator('body').evaluate(el => getComputedStyle(el).color), 'rgb(12, 34, 56)', 'CSS cannot leak into host');
@@ -74,7 +78,7 @@ try {
   await popupFrame.getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
   await popup.getByRole('heading', { name: 'HTML 预览', exact: true }).waitFor();
   assert.equal(await popup.evaluate(() => window.opener), null);
-  assert.equal(await popupFrame.locator('body').getAttribute('data-executed'), null, 'popout also uses sanitized content');
+  assert.equal(await popupFrame.locator('body').getAttribute('data-executed'), '1', 'popout runs the same isolated work');
   assert.equal(await popupFrame.locator('a').getAttribute('href'), null);
   assert.ok(!popup.url().includes('doctype') && !popup.url().includes('HTML%20'), 'source is not exposed in the URL');
   await popup.close();
@@ -100,10 +104,10 @@ try {
   }
   if (process.env.SCREENSHOT_PATH) await page.screenshot({ path: process.env.SCREENSHOT_PATH });
   // The shared code renderer and raw HTML path must agree with the chat splitter.
-  await page.evaluate(source => window.renderHtmlAnswer(source, false, true), `\`\`\`html\n${source}\n\`\`\``);
+  await page.evaluate(source => window.renderHtmlAnswer(source, false, true), `\`\`\`html interactive\n${source}\n\`\`\``);
   await content.getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
   await page.evaluate(source => window.renderHtmlAnswer(source), source);
   await content.getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
   assert.deepEqual(errors, []);
-  console.log('PASS: full HTML styles, untouched source, inert streaming/scripts, isolated CSS/navigation, Markdown reasoning, raw/fenced renderers, mobile/desktop layout.');
+  console.log('PASS: explicit interactive works, inert examples/streaming/reasoning, untouched source, isolated CSS, raw/fenced/popout renderers, mobile/desktop layout.');
 } finally { await browser.close(); }

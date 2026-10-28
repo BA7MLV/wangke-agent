@@ -123,6 +123,11 @@ import { normalizeCourseContextIds } from '../harness/courseContext';
 
 /** 视图用的一条消息（比 `ChatRow` 多的是流式中间态） */
 export interface CourseChatMessage {
+  taskId?: string;
+  /** Generation may finish before the committed row reaches this device. */
+  syncPending?: boolean;
+  /** Server commit acknowledgement; rowId is exposed only once locally usable. */
+  committedRowId?: number;
   responseSegments?: ResponseSegment[];
   processPhase?: ProcessPhase;
   /** 本轮启动时刻，只用于实时「已用时」，不冒充纯思考耗时。 */
@@ -628,6 +633,58 @@ const parked = new Map<number, SessionView>();
 
 /** Local turns awaiting sync / task acceptance must survive activity polls. */
 const pendingCloudSubmissions = new Map<string, ViewKey>();
+let cloudReflection = 0;
+const finishedCloudTasks = new Set<string>();
+const historyLoads = new Map<number, symbol>();
+
+/** Background revalidation never tears down a ready timeline. Read older visible
+ * rows as well as the tail, so refreshing does not undo history pagination. */
+async function refreshCloudSession(id: number, reflection: number) {
+  const before = readView(id);
+  const ids = before.messages.flatMap(message => {
+    const id = message.rowId ?? message.committedRowId;
+    return id == null ? [] : [id];
+  });
+  try {
+    const [page, visible] = await Promise.all([readChatPage(id), db.chats.bulkGet(ids)]);
+    // A newer poll, a new turn or a user edit wins over this stale snapshot.
+    if (reflection !== cloudReflection || readView(id).messages !== before.messages) return;
+    const rows = new Map([...visible.filter((row): row is ChatRow => !!row && row.sessionId === id), ...page.rows]
+      .map(row => [row.id!, row]));
+    const byTask = new Map([...rows.values()].filter(row => row.taskId)
+      .map(row => [`${row.taskId}:${row.role}`, row]));
+    const messages: CourseChatMessage[] = [];
+    for (const message of before.messages) {
+      const rowId = message.rowId ?? message.committedRowId;
+      const row = (rowId == null ? undefined : rows.get(rowId))
+        ?? (message.taskId ? byTask.get(`${message.taskId}:${message.role === 'ai' ? 'assistant' : 'user'}`) : undefined);
+      if (row) {
+        messages.push({ ...toMessage(row), key: message.key, streaming: false, syncPending: false });
+        rows.delete(row.id!);
+      } else if (message.rowId == null || message.syncPending || message.streaming) {
+        // Missing unacknowledged rows mean sync lag, never deletion.
+        messages.push(message);
+      }
+    }
+    // Rows already matched through task identity must not appear a second time.
+    const seen = new Set(messages.flatMap(message => message.rowId == null ? [] : [message.rowId]));
+    for (const row of [...rows.values()].filter(row => !seen.has(row.id!)).sort((a, b) => a.createdAt - b.createdAt)) {
+      const index = messages.findIndex(message => (message.createdAt ?? Infinity) > row.createdAt);
+      messages.splice(index < 0 ? messages.length : index, 0, toMessage(row));
+    }
+    const includesEarlierHistory = page.rows.length > 0 && messages.some(message => message.createdAt != null && message.createdAt < page.rows[0].createdAt);
+    writeView(id, { messages, loaded: true, historyError: null, hasOlder: includesEarlierHistory ? before.hasOlder : page.hasOlder });
+  } catch (error) {
+    if (reflection === cloudReflection && readView(id).messages === before.messages) {
+      writeView(id, { historyError: `消息同步失败：${error instanceof Error ? error.message : String(error)}` });
+    }
+  }
+}
+
+export async function retryChatSync(id: number) {
+  await (await import('../cloud/sync')).flushCloud();
+  await refreshCloudSession(id, cloudReflection);
+}
 
 /**
  * 「正等着用户作答」的会话 id 集合 —— 是 `awaitingIds` 那格 state 的**真身**。
@@ -706,8 +763,12 @@ export function reflectArtifactEdit(row: ChatRow): void {
 /** Reconcile server-owned turns on every device, including reconnects. */
 export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false) {
   if (!remoteTasks()) return;
-  const active = tasks.filter(t => t.kind === 'chat' && ['queued', 'running', 'waiting_user'].includes(t.status));
+  const reflection = ++cloudReflection;
   const sessions = await unarchivedSessions();
+  if (reflection !== cloudReflection) return;
+  const terminal = tasks.filter(t => t.kind === 'chat' && !['queued', 'running', 'waiting_user'].includes(t.status));
+  for (const task of terminal) finishedCloudTasks.add(task.id);
+  const active = tasks.filter(t => t.kind === 'chat' && !finishedCloudTasks.has(t.id) && ['queued', 'running', 'waiting_user'].includes(t.status));
   const submittingIds = new Set(pendingCloudSubmissions.values());
   const runningIds = [...new Set([...active.map(t => Number(t.input.sessionId)), ...submittingIds].filter(id => id !== 0))];
   useCourseChat.setState({ runningIds, sessions });
@@ -738,11 +799,13 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
       const phase: ProcessPhase = progress.phase === 'thinking' || progress.phase === 'tool' || progress.phase === 'answer'
         ? (progress.phase === 'answer' ? 'answering' : progress.phase) : 'preparing';
       const messages = [...current.messages];
-      if (text && !messages.some((message) => message.key === userKey)) {
-        messages.push({ key: userKey, role: 'user', content: text, createdAt: Date.parse(task.createdAt) || Date.now() });
+      if (text && !messages.some((message) => message.key === userKey || message.taskId === task.id && message.role === 'user')) {
+        messages.push({ key: userKey, taskId: task.id, syncPending: true, role: 'user', content: text, createdAt: Date.parse(task.createdAt) || Date.now() });
       }
       const answer = {
         key: answerKey,
+        taskId: task.id,
+        syncPending: true,
         role: 'ai' as const,
         content,
         reasoning,
@@ -751,19 +814,44 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
         processPhase: phase,
         processStartedAt: Date.parse(task.createdAt) || Date.now(),
       };
-      const answerIndex = messages.findIndex((message) => message.key === answerKey);
+      const answerIndex = messages.findIndex((message) => message.key === answerKey || message.taskId === task.id && message.role === 'ai');
       if (answerIndex < 0) messages.push(answer);
-      else messages[answerIndex] = { ...messages[answerIndex], ...answer };
+      else messages[answerIndex] = { ...messages[answerIndex], ...answer, key: messages[answerIndex].key };
       writeView(id, { messages, loaded: true, loading: true });
     } else writeView(id, { loading: true });
   }
-  const id = useCourseChat.getState().activeId;
-  if (id != null && !runningIds.includes(id) && (dataChanged || useCourseChat.getState().loading)) {
-    parked.delete(id);
-    useCourseChat.setState({ loaded: false, loading: false });
-    await useCourseChat.getState().loadSession(id);
+  const refreshIds = new Set<number>();
+  for (const task of terminal) {
+    const id = Number(task.input.sessionId);
+    if (submittingIds.has(id)) continue;
+    const current = readView(id);
+    const result = task.result as { content?: string; reasoning?: string; tools?: ChatToolCall[]; rowId?: number; userRowId?: number } | null;
+    let changed = false;
+    const messages = current.messages.map(message => {
+      if (message.taskId !== task.id && message.key !== `cloud-user-${task.id}` && message.key !== `cloud-answer-${task.id}`) return message;
+      if (!message.streaming && message.role !== 'user') return message;
+      if (message.role === 'user' && (task.status === 'completed'
+        ? result?.userRowId == null || message.committedRowId === result.userRowId || message.rowId === result.userRowId
+        : !message.syncPending)) return message;
+      changed = true;
+      if (message.role === 'user') return { ...message, committedRowId: result?.userRowId ?? message.committedRowId,
+        syncPending: task.status === 'completed' ? message.syncPending : false };
+      return { ...message, streaming: false, hint: undefined,
+        syncPending: task.status === 'completed' ? message.syncPending : false,
+        committedRowId: result?.rowId ?? message.committedRowId,
+        content: result?.content ?? (message.content || task.error || (task.status === 'completed' ? '' : '生成已停止')),
+        reasoning: result?.reasoning ?? message.reasoning, tools: result?.tools ?? message.tools,
+        interrupted: task.status !== 'completed', interruptReason: task.error ?? undefined };
+    });
+    if (changed || current.loading && !runningIds.includes(id)) {
+      writeView(id, { messages, loading: runningIds.includes(id) });
+      refreshIds.add(id);
+    }
   }
-  if (dataChanged) for (const key of parked.keys()) if (!runningIds.includes(key)) parked.delete(key);
+  const ids = new Set([useCourseChat.getState().activeId, ...parked.keys()]);
+  await Promise.all([...ids].filter((id): id is number => id != null && !runningIds.includes(id)
+    && (dataChanged || refreshIds.has(id)))
+    .map(id => refreshCloudSession(id, reflection)));
 }
 
 /** 把当前顶层的活动视图存回它那条会话（切走前调）。草稿态不 park：它每次由「新会话」重开 */
@@ -898,6 +986,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       return;
     }
     // 没有缓存：先把视图置成「读取中」，再读库
+    const request = Symbol('history-load');
+    historyLoads.set(id, request);
     set({ activeId: id, ...EMPTY_VIEW, loaded: false });
     const [session, page] = await Promise.all([
       db.chatSessions.get(id),
@@ -909,6 +999,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       ? await db.videos.where('id').anyOf(contextIds).toArray()
       : [];
     const byId = new Map(contextRows.map((course) => [course.id, course.name]));
+    // Progress / background revalidation may have populated this session while
+    // IndexedDB was pending. Never replace that newer view with this snapshot.
+    if (historyLoads.get(id) !== request) return;
+    historyLoads.delete(id);
+    if (readView(id).loaded) return;
     const view: SessionView = {
       messages: rows.map(toMessage),
       hasOlder: page.hasOlder,
@@ -1221,10 +1316,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         if ((mode ?? state.sendMode) === 'steer') await cancelResourceTasks(`session:${id}`);
         const task = await submitCloudTask('chat', `session:${id}`, { sessionId: id, text, mode, resume, attachments, modelRef: getSettings().llmModel });
         consumeAttachments();
-        // Match reconciliation keys without inserting another copy of the turn.
+        // Bind server identity without changing React / reading-anchor keys.
         writeView(id, { messages: readView(id).messages.map(message => message.key === userKey
-          ? { ...message, key: `cloud-user-${task.id}` }
-          : message.key === answerKey ? { ...message, key: `cloud-answer-${task.id}` } : message) });
+          ? { ...message, taskId: task.id, syncPending: true }
+          : message.key === answerKey ? { ...message, taskId: task.id, syncPending: true } : message) });
       } catch (e) {
         const turnKey = id ?? key;
         const error = e instanceof Error ? e.message : String(e);
@@ -2801,6 +2896,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
   return {
     key: `stored-${row.id}`,
     rowId: row.id!,
+    taskId: row.taskId,
     role: row.role === 'assistant' ? 'ai' : 'user',
     content: row.content,
     attachments: row.attachments,

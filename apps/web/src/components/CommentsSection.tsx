@@ -16,7 +16,7 @@ import {
 import { fmtTime } from '../utils/vtt';
 import { formatCaughtError } from '../utils/errorText';
 import { LoadingButton, PanelProgress, CueSkeleton, SkeletonReveal, useSkeletonGate, Sym, alertDialog, toast } from '../ui';
-import { TextSwap } from './motion';
+import { Collapse, TextSwap } from './motion';
 import ModelPicker from './ModelPicker';
 import PersistentError from './PersistentError';
 import './comments.css';
@@ -146,10 +146,9 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
         <Sym name="keyboard_arrow_down" className="comments-toggle__chev" />
       </button>
 
-      {open && (
+      <Collapse open={open} id={`${commentsId}-panel`}>
         <div
           className="comments-panel"
-          id={`${commentsId}-panel`}
           role="region"
           aria-labelledby={`${commentsId}-toggle`}
         >
@@ -230,7 +229,7 @@ export default function CommentsSection({ videoId, playerRef, hasSubtitles, onOp
             </SkeletonReveal>
           </div>
         </div>
-      )}
+      </Collapse>
     </section>
   );
 }

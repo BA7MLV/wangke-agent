@@ -38,18 +38,19 @@
   background: transparent;
 }
 
-/* 空会话使用同一条正常布局流：输入增高时只推开下方入口，不再重叠或跳位。
+/* 空会话使用同一条正常布局流：导入条与输入卡保持一组，输入增高时不重叠或跳位。
    保留输入框 DOM，切换到消息态时不会丢失焦点。 */
 .course-chat--empty .course-chat__main {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  /* 空首页是一组完整的首屏引导，不要像消息列表一样从顶端开始堆。
-     把整组内容放在可视区中间，输入框自然成为首屏的主操作。 */
-  align-content: center;
-  gap: 20px;
+  /* 标题与输入栏作为一组，落在视觉中心略偏上，而不是被顶部留白推到下半屏。
+     用实际可视高度计算底部留白，键盘弹出也会收回；空间不足时 safe center
+     退回从头排布，长草稿仍能向下滚动，不会把标题裁到屏幕外。 */
+  align-content: safe center;
+  gap: 24px;
   overflow-y: auto;
-  padding: clamp(84px, 11dvh, 140px) max(20px, calc((100% - var(--course-chat-column)) / 2))
-    max(24px, env(safe-area-inset-bottom));
+  padding: calc(var(--app-bar-h, 60px) + 24px) max(20px, calc((100% - var(--course-chat-column)) / 2))
+    max(48px, min(calc(var(--vvh, 100dvh) * 0.24), 240px), env(safe-area-inset-bottom));
 }
 
 .course-chat--empty .course-chat__timeline,
@@ -65,6 +66,22 @@
   text-align: center;
 }
 
+.course-chat__sync-status {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.5rem;
+  color: var(--muted);
+  font-size: 0.75rem;
+  padding-block: 0.25rem;
+}
+.course-chat__sync-status button {
+  color: inherit;
+  text-decoration: underline;
+  cursor: pointer;
+}
+.course-chat__sync-status button:disabled { cursor: wait; }
+
 .course-chat--empty .course-chat__composer-wrap {
   position: relative;
   grid-row: 2;
@@ -76,16 +93,15 @@
    但仍沿用消息态的色板和焦点反馈，不制造第二套组件语言。 */
 .course-chat--empty .course-chat__composer {
   padding: 10px 14px;
-  border-radius: 28px;
+  border-radius: 24px;
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.04),
     0 12px 32px rgb(0 0 0 / 0.07);
 }
 
-.course-chat--empty .course-chat__import {
-  grid-row: 3;
-  justify-self: center;
-  margin: 0;
+/* 键盘缩小可视区时，长草稿也要给欢迎标题和导入条留出空间。 */
+.course-chat--empty .course-chat__input {
+  max-height: min(180px, calc(var(--vvh, 100dvh) * 0.25));
 }
 
 /* ── 会话主区 ───────────────────────────────────────────────────────────── */
@@ -325,8 +341,113 @@
   .course-chat__starter.t-learn:hover .t-learn-arm { transform: none; }
 }
 
-.course-chat__import {
-  margin-top: 24px;
+/* 文件夹条从输入卡背后露出：两侧内收，卡片盖住下缘，成为同一组输入入口。 */
+.course-chat__composer-wrap .course-chat__import {
+  display: flex;
+  position: relative;
+  width: calc(100% - 32px);
+  max-width: calc(var(--course-chat-column) - 32px);
+  height: auto;
+  min-height: 60px;
+  margin: 0 auto -16px;
+  padding: 8px 20px 24px;
+  justify-content: flex-start;
+  align-items: center;
+  gap: 10px;
+  border: 0;
+  border-radius: 22px 22px 0 0;
+  background: color-mix(in oklch, var(--default) 96%, var(--foreground));
+  color: var(--foreground);
+  box-shadow: none;
+  font-size: 0.875rem;
+  line-height: 24px;
+  font-weight: 400;
+}
+
+.course-chat__import-label > svg {
+  width: 18px;
+  height: 18px;
+  flex: none;
+}
+
+.course-chat__import .course-chat__import-label {
+  width: auto;
+  min-width: 0;
+  height: 32px;
+  min-height: 32px;
+  padding: 0 8px;
+  margin-inline-start: -8px;
+  gap: 8px;
+  border: 0;
+  border-radius: 10px;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.course-chat__import .course-chat__import-label[data-hovered='true'],
+.course-chat__import .course-chat__import-label[data-focus-visible='true'] {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+}
+
+/* 连续曲率圆角让直边自然过渡到转角，避免输入卡像半圆封口的药丸。
+   不支持 corner-shape 的浏览器仍保留常规圆角、边框和阴影。 */
+@supports (corner-shape: squircle) {
+  .course-chat__composer,
+  .course-chat__composer-wrap .course-chat__import,
+  .course-chat__import .course-chat__import-label {
+    corner-shape: squircle;
+  }
+}
+
+.course-chat__import .course-chat__import-close {
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  min-height: 32px;
+  margin-left: auto;
+  padding: 0;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+}
+
+.course-chat__import:hover .course-chat__import-close,
+.course-chat__import:focus-within .course-chat__import-close {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.course-chat__import .course-chat__import-close[data-hovered='true'] {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
+  color: var(--foreground);
+}
+
+.course-chat__import-label[data-focus-visible='true'],
+.course-chat__import-close[data-focus-visible='true'] {
+  outline: 2px solid var(--foreground);
+  outline-offset: 3px;
+}
+
+/* 触屏没有悬停，关闭入口常显；键盘聚焦任一入口时也会显形。 */
+@media (hover: none), (pointer: coarse), (max-width: 760px) {
+  .course-chat__import .course-chat__import-label,
+  .course-chat__import .course-chat__import-close {
+    height: 44px;
+    min-height: 44px;
+  }
+
+  .course-chat__import .course-chat__import-close {
+    width: 44px;
+    min-width: 44px;
+    opacity: 1;
+    pointer-events: auto;
+  }
 }
 
 /* ── 数课程期间的骨架 ────────────────────────────────────────────────────
@@ -1158,8 +1279,7 @@
 
   .course-chat--empty .course-chat__main {
     gap: 20px;
-    /* 窄屏优先保证标题、输入框和快捷入口在键盘未弹出时完整可见。 */
-    padding: clamp(56px, 8dvh, 96px) 10px max(20px, env(safe-area-inset-bottom));
+    padding-inline: 16px;
   }
 
   .course-chat__empty {
@@ -1201,6 +1321,13 @@
   .course-chat--empty .course-chat__composer {
     padding: 8px;
     border-radius: 24px;
+  }
+
+  .course-chat__composer-wrap .course-chat__import {
+    width: calc(100% - 24px);
+    padding-inline: 16px;
+    gap: 8px;
+    border-radius: 20px 20px 0 0;
   }
 
   .course-chat__composer-tools {

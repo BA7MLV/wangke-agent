@@ -9,6 +9,7 @@ import type { ArtifactActions } from './ArtifactEditor';
 import WidgetStateSummary from './WidgetStateSummary';
 import { readWidgetHeight, rememberWidgetHeight, widgetRevision, WIDGET_SCROLL_INTENT } from '../harness/widgetReading';
 import './widget-block.css';
+import { MAX_WIDGET_DIAGNOSTICS, readWidgetDiagnostic, WIDGET_READY_TIMEOUT_MS, type WidgetDiagnostic } from '../harness/widgetDiagnostics';
 
 /**
  * 沙箱 widget 的宿主壳：一个 `sandbox="allow-scripts"` 的 iframe。
@@ -89,6 +90,7 @@ function createPreviewToken(): string {
 const MIN_H = 80;
 
 export default function WidgetBlock(props: Props) {
+  const [run, setRun] = useState(0);
   // A new source revision owns a new bridge and pending requests. State/theme updates do not remount it.
   const libsKey = JSON.stringify(props.payload.libs ?? []);
   const owner = useRef({ rowId: props.rowId, key: props.rowId });
@@ -98,10 +100,14 @@ export default function WidgetBlock(props: Props) {
     owner.current.rowId = props.rowId;
   }
   const key = JSON.stringify([owner.current.key ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey]);
-  return <WidgetSessionBlock key={key} {...props} />;
+  return <WidgetSessionBlock key={`${key}:${run}`} {...props} onRerun={() => setRun((value) => value + 1)} />;
 }
 
-function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, htmlActions, appearance, answerInput }: Props) {
+function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, htmlActions, appearance, answerInput, onRerun }: Props & { onRerun(): void }) {
+  const [instance] = useState(createPreviewToken);
+  const [diagnostics, setDiagnostics] = useState<WidgetDiagnostic[]>([]);
+  const diagnosticKeys = useRef(new Set<string>());
+  const readyRef = useRef(false);
   const htmlSurface = !!htmlActions;
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -143,8 +149,8 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   const [question, setQuestion] = useState('');
 
   const post = useCallback((type: string, value: unknown) => {
-    frameRef.current?.contentWindow?.postMessage({ __wbw: type, payload: value }, '*');
-  }, []);
+    frameRef.current?.contentWindow?.postMessage({ __wbw: type, instance, payload: value }, '*');
+  }, [instance]);
   const syncDisplay = useCallback(() => {
     const host = hostRef.current;
     if (!host) return;
@@ -180,10 +186,14 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
     activeRef.current = true;
     if (rowId == null) return () => { activeRef.current = false; };
     let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) { cancelled = true; setFailed('准备运行环境超时，请重新运行'); }
+    }, WIDGET_READY_TIMEOUT_MS);
     let subscription: { unsubscribe(): void } | undefined;
     void openWidgetSession(rowId, payload).then(async (binding) => {
       const state = await readWidgetState(binding);
       if (cancelled) return;
+      clearTimeout(timer);
       stateRef.current = state;
       setSession(binding);
       subscription = observeWidgetState(binding).subscribe({
@@ -194,10 +204,11 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
         },
         error: (error) => { if (!cancelled) setFailed(String(error instanceof Error ? error.message : error)); },
       });
-    }).catch((error) => { if (!cancelled) setFailed(error instanceof Error ? error.message : String(error)); });
+    }).catch((error) => { clearTimeout(timer); if (!cancelled) setFailed(error instanceof Error ? error.message : String(error)); });
     return () => {
       cancelled = true;
       activeRef.current = false;
+      clearTimeout(timer);
       subscription?.unsubscribe();
     };
     // Source identity is the enclosing component key; callback and theme changes must not reopen it.
@@ -207,17 +218,29 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   useEffect(() => {
     if (!sessionReady) return;
     let cancelled = false;
+    const timer = setTimeout(() => {
+      if (!cancelled) { cancelled = true; setFailed('准备运行环境超时，请重新运行'); }
+    }, WIDGET_READY_TIMEOUT_MS);
     setDoc('');
     setFailed('');
     if (!appearance && hostRef.current) themeRef.current = readWidgetTheme(hostRef.current, darkRef.current);
-    buildWidgetDocument(payload, { dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null,
+    buildWidgetDocument(payload, { instance, dark: darkRef.current, theme: themeRef.current, state: stateRef.current, persistent: session != null,
       answerInput: answerInputRef.current ? { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted, question: answerInputRef.current.question } : undefined })
-      .then((d) => !cancelled && setDoc(d))
-      .catch((e) => !cancelled && setFailed(e instanceof Error ? e.message : String(e)));
+      .then((d) => { clearTimeout(timer); if (!cancelled) setDoc(d); })
+      .catch((e) => { clearTimeout(timer); if (!cancelled) setFailed(e instanceof Error ? e.message : String(e)); });
     return () => {
       cancelled = true;
+      clearTimeout(timer);
     };
   }, [sessionReady, payload.html]);
+
+  useEffect(() => {
+    if (!doc || ready) return;
+    const timer = setTimeout(() => {
+      if (!readyRef.current) setFailed('初始化超时，脚本可能未完成或页面已离开运行环境。请重新运行');
+    }, WIDGET_READY_TIMEOUT_MS);
+    return () => clearTimeout(timer);
+  }, [doc, ready]);
 
   useEffect(() => {
     post(WIDGET_MSG.persistent, session != null);
@@ -238,11 +261,12 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
       themeRef.current = next;
       post(WIDGET_MSG.theme, next);
       previewChannelRef.current?.postMessage({ type: WIDGET_PREVIEW_MSG.payload, payload: payloadRef.current,
-        dark: darkRef.current, appearance: next, rowId, canPrompt: !!onPromptRef.current && !disabledRef.current } satisfies WidgetPreviewMessage);
+        dark: darkRef.current, appearance: next, rowId, canPrompt: !!onPromptRef.current && !disabledRef.current,
+        ...(htmlSurface ? { surface: 'html' as const } : {}) } satisfies WidgetPreviewMessage);
     };
     sync();
     return appearance ? undefined : observeWidgetTheme(host, sync);
-  }, [dark, appearance, post, rowId, doc]);
+  }, [dark, appearance, post, rowId, doc, htmlSurface]);
 
   // 新窗口本身只拿到随机 token；它准备好后向这里请求 payload。这样既不把源码放进
   // URL，也不需要给新窗口 opener，展开后的 widget 仍然可以通过同一条桥接继续提问。
@@ -328,14 +352,21 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   const onMessage = useCallback(
     (e: MessageEvent) => {
       // 只认「自己那个 iframe」发来的消息，且只认 opaque origin。
-      // 只校验 source 不够：iframe 自己导航到外部页面后 contentWindow
-      // 仍然相同，外部页面可能伪造同名消息；opaque sandbox 的 origin 必须是 "null"。
+      // WindowProxy may survive a navigation and sandboxed pages can remain opaque.
+      // Also bind every message to this source revision/run; origin alone is insufficient.
       if (e.origin !== 'null' || !frameRef.current || e.source !== frameRef.current.contentWindow) return;
-      const d = e.data as { __wbw?: string; payload?: unknown } | null;
-      if (!d || typeof d.__wbw !== 'string') return;
+      const d = e.data as { __wbw?: string; instance?: unknown; payload?: unknown } | null;
+      if (!d || typeof d.__wbw !== 'string' || d.instance !== instance) return;
 
       if (!activeRef.current) return;
-      if (d.__wbw === WIDGET_MSG.height) {
+      if (d.__wbw === WIDGET_MSG.diagnostic) {
+        const diagnostic = readWidgetDiagnostic(d.payload);
+        if (!diagnostic || diagnosticKeys.current.size >= MAX_WIDGET_DIAGNOSTICS) return;
+        const key = `${diagnostic.kind}:${diagnostic.message}`;
+        if (diagnosticKeys.current.has(key)) return;
+        diagnosticKeys.current.add(key);
+        setDiagnostics((current) => [...current, diagnostic]);
+      } else if (d.__wbw === WIDGET_MSG.height) {
         const h = Number(d.payload);
         if (Number.isFinite(h)) setHeight(rememberWidgetHeight(heightKey, h));
       } else if (d.__wbw === WIDGET_MSG.scroll) {
@@ -374,6 +405,8 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
           }
         })();
       } else if (d.__wbw === WIDGET_MSG.ready) {
+        if (d.payload !== 1) return;
+        readyRef.current = true;
         setReady(true);
         syncDisplay();
         post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
@@ -409,7 +442,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
       }
       // ready / theme 之外的一律忽略：widget 不能借消息通道做别的事
     },
-    [session, post, reply, requestFollowUp, syncDisplay, heightKey],
+    [session, post, reply, requestFollowUp, syncDisplay, heightKey, instance],
   );
 
   useEffect(() => {
@@ -458,14 +491,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
     }
   };
 
-  if (failed) {
-    return (
-      <div ref={hostRef} className="md-embedded-ui widget-block widget-block--error" data-testid="widget-error">
-        这个图形没能加载起来：{failed}
-      </div>
-    );
-  }
-  if (!doc) {
+  if (!doc && !failed) {
     return (
       <div ref={hostRef} style={{ minHeight: height }} className="md-embedded-ui widget-block widget-block--loading" data-testid="widget-loading" role="status">
         正在准备图形…
@@ -475,7 +501,14 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
 
   return (
     <div ref={hostRef} className="md-embedded-ui widget-block" data-testid="widget-block" data-h={Math.round(height)}>
-      <iframe
+      {(failed || diagnostics.length > 0) && <div className="widget-block--error" role="alert" data-testid="widget-error">
+        <p className="m-0">{failed || (diagnostics.some((item) => item.kind === 'script' || item.kind === 'promise')
+          ? '交互脚本运行出错，部分功能可能不可用。' : '部分资源被限制或未能加载，内容可能不完整。')}</p>
+        <details><summary>运行详情</summary><ul>{diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul></details>
+        <p className="m-0 text-xs">外部脚本、网络请求和动态求值不受支持。重新运行不会调用 AI，也不会修复源码错误。</p>
+        <Button size="sm" variant="tertiary" onPress={onRerun}>重新运行</Button>
+      </div>}
+      {doc && <iframe
         ref={frameRef}
         className="widget-block__frame"
         title="交互图形"
@@ -485,7 +518,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
         srcDoc={doc}
         style={{ height, visibility: ready ? 'visible' : 'hidden', colorScheme: dark ? 'dark' : 'light', background: 'transparent' }}
         data-testid="widget-frame"
-      />
+      />}
       {selection && onPrompt && !disabled && <div className="widget-block__selection">
         <span className="wbw-muted">已选：{selection.text.slice(0, 80)}</span>
         <Button size="sm" variant="tertiary" onPress={() => {

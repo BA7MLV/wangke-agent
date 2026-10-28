@@ -47,10 +47,13 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     // last row at all). Keep it unpainted until the measured tail is committed.
     virtualizer.scrollToEnd();
     const tailMounted = host.querySelector(`[data-index="${items.length - 1}"]`) != null;
-    if (tailMounted && Math.abs(host.getBoundingClientRect().height - virtualizer.getTotalSize()) < 1) {
+    if (tailMounted && Math.abs(host.offsetHeight - virtualizer.getTotalSize()) < 1) {
       setPositioned(true);
     }
   });
+  // Virtualizer commits can adjust the offset without changing total height.
+  // Reassert the reading mode after those commits too, not only on resize.
+  useLayoutEffect(onResize);
   useLayoutEffect(() => {
     const host = hostRef.current;
     const scroll = scrollRef.current;

@@ -13,6 +13,7 @@
  */
 
 import { artifactFences, isSvgCode } from './artifactEdit';
+import { htmlFenceContentType } from './htmlContent';
 
 const VOID_TAGS = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',
@@ -31,7 +32,7 @@ const HTML_ROOT_TAGS = new Set([
   'col', 'colgroup', 'dd', 'details', 'dialog', 'div', 'dl', 'dt', 'em', 'fieldset',
   'figure', 'footer', 'form', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'head', 'header',
   'hr', 'html', 'img', 'input', 'label', 'li', 'main', 'nav', 'ol', 'p', 'pre',
-  'section', 'select', 'small', 'span', 'strong', 'summary', 'table', 'tbody', 'td',
+  'section', 'select', 'small', 'span', 'strong', 'style', 'summary', 'table', 'tbody', 'td',
   'textarea', 'tfoot', 'th', 'thead', 'tr', 'ul',
 ]);
 
@@ -72,6 +73,7 @@ export interface AssistantContentBlock {
   end: number;
   location?: 'html' | 'fence';
   closed: boolean;
+  htmlContentType?: 'example' | 'interactive';
 }
 
 /** Split visual blocks without letting one HTML answer consume later prose or questions. */
@@ -96,7 +98,8 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
         markdown(cursor);
         const body = source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, '');
         blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : isSvgCode(fence[2], body) ? 'svg' : 'html', source: body,
-          start: cursor, end, location: 'fence', closed: !!match });
+          start: cursor, end, location: 'fence', closed: !!match,
+          htmlContentType: htmlFenceContentType(line.slice(line.indexOf(fence[1]) + fence[1].length)) });
         markdownStart = end;
       }
       // Never interpret HTML examples inside another language's code fence.
@@ -110,9 +113,9 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
       markdownStart = cursor;
     } else if (/^ {0,3}</.test(line) && looksLikeRawHtml(line.trimStart())) {
       markdown(cursor);
-      const end = rawHtmlEnd(source, cursor);
+      const end = rawHtmlWorkEnd(source, cursor);
       blocks.push({ kind: 'html', source: source.slice(cursor, end ?? source.length), start: cursor,
-        end: end ?? source.length, location: 'html', closed: end !== undefined });
+        end: end ?? source.length, location: 'html', closed: end !== undefined, htmlContentType: 'interactive' });
       cursor = end ?? source.length;
       markdownStart = cursor;
     } else {
@@ -129,6 +132,25 @@ export function nextVisualRound(source: string, hasWidgets = false): string {
     || artifactFences(source).some((fence) => fence.kind === 'svg' || isSvgCode(fence.kind, fence.source))
     || /^ {0,3}(?:`{3,}|~{3,})wbw-widget[ \t]*$/m.test(source);
   return visual && source.trim() ? `${source.trimEnd()}\n\n` : '';
+}
+
+/** Read exactly one root, respecting quoted attributes, comments and raw-text elements. */
+function rawHtmlWorkEnd(source: string, start: number): number | undefined {
+  let end = rawHtmlEnd(source, start);
+  if (end == null) return undefined;
+  let needsRoot = /^\s*<style(?:\s|>)/i.test(source.slice(start));
+  while (end < source.length) {
+    const next = source.slice(end).match(/^\s*(<(?:script|style)(?:\s|>))/i);
+    const nextStart = end + (source.slice(end).match(/^\s*/)?.[0].length ?? 0);
+    const tail = source.slice(nextStart);
+    // Attach local scripts/styles to their work, rather than silently rendering trailing JS as Markdown.
+    if (!next && !(needsRoot && looksLikeRawHtml(tail))) break;
+    const nextEnd = rawHtmlEnd(source, nextStart);
+    if (nextEnd == null) return undefined;
+    if (!/^<style(?:\s|>)/i.test(tail)) needsRoot = false;
+    end = nextEnd;
+  }
+  return end;
 }
 
 /** Read exactly one root, respecting quoted attributes, comments and raw-text elements. */

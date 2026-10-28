@@ -103,8 +103,18 @@ try {
     await settle();
     const anchorTop = await list.locator(`[data-chat-message="${anchor.key}"]`).evaluate((node) => node.parentElement.getBoundingClientRect().top);
     assert(Math.abs(anchorTop - anchor.top) < 2, 'prepending preserves the reading anchor');
+    const jumpFrom = (await metrics()).top;
+    await list.evaluate((element) => {
+      window.__jumpOffsets = [];
+      const record = () => window.__jumpOffsets.push(element.scrollTop);
+      element.addEventListener('scroll', record);
+      window.__stopJumpRecord = () => element.removeEventListener('scroll', record);
+    });
     await page.getByTestId('chat-scroll-bottom').click();
     await expectBottom('jump restores following');
+    const jumpEnd = (await metrics()).top;
+    const jumpOffsets = await page.evaluate(() => { window.__stopJumpRecord(); return window.__jumpOffsets; });
+    assert(jumpOffsets.some((top) => top > jumpFrom + 10 && top < jumpEnd - 10), 'explicit jumps remain smooth, unlike initial positioning');
 
     await page.evaluate(() => window.__scrollChat.setState((state) => ({
       loading: true,

@@ -15,7 +15,7 @@ import { Sym } from './icons';
 import BrandLogo from './BrandLogo';
 import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
-import { DotBadge, IconSwap, MatrixDots } from '../components/motion';
+import { DotBadge, MatrixDots } from '../components/motion';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import { useChatNotifications } from '../store/chatNotifications';
 import { observeBrowserChrome } from './browserChrome';
@@ -49,9 +49,8 @@ function useIsNarrow(): boolean {
  * 侧栏、顶栏、内容列会跟着令牌一起变，不需要逐条改 CSS。
  *
  * 侧栏宽屏可折叠、窄屏走抽屉，两条路径各只有一个入口：
- *   - 宽屏：侧栏顶部的 `panel_left` 收起，收起后顶栏提供展开入口；**整块隐藏**、内容区铺满（不另做图标窄条态 ——
- *     收成窄条要额外一整套收起态样式，而内容一窄对阅读页反而更差）；
- *   - 窄屏：顶栏汉堡，弹 Drawer。
+ *   - 宽屏：侧栏顶部的品牌 Logo 收起 / 展开，收起后保留图标导航；
+ *   - 窄屏：顶栏品牌 Logo 弹出 Drawer。
  * 折叠状态见 `ui/rail.ts`（全局一份 + 记本机）。
  *
  * 结构：
@@ -77,8 +76,8 @@ export interface NavItem {
   /**
    * 这一项是**动作**（「新会话」）而不是目的地，因此**永不进入选中态**。
    *
-   * 导航栏里混一个动作是刻意的：它是这一页唯一的「从头开始」入口，和别的项长得
-   * 一样（同一套圆角 pill 与 hover），但「选中」对它没有意义 —— 高亮的含义是
+   * 导航栏里混一个动作是刻意的：它是这一页唯一的「从头开始」入口，默认就有
+   * 中性 hover 底色，但「选中」对它没有意义 —— 高亮的含义是
    * 「你现在在哪」，而动作不是一个地方。所以它被排除在 `selectedKeys` 之外：
    * 点它不留下高亮，草稿态下侧栏也不会出现「好像选中了新会话」的假象。
    *
@@ -255,8 +254,8 @@ function Sidebar({
   return (
     <>
       {rail.items.filter((it) => it.isAction).map((it) => (
-        <Button key={it.value} variant="secondary" data-testid={it.testId}
-          className="mb-3 min-h-11 w-full justify-start gap-3 rounded-full border border-border bg-background px-3 text-sm font-medium shadow-sm"
+        <Button key={it.value} variant="outline" data-testid={it.testId}
+          className="page-shell__new-chat mb-3 min-h-11 w-full justify-start gap-3 rounded-full border border-border px-3 text-sm font-medium text-foreground shadow-sm"
           onPress={() => { it.onClick(); onNavigate?.(); }}>
           {it.icon}<span>{it.label}</span>
         </Button>
@@ -303,7 +302,7 @@ function Sidebar({
                试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
                ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
                留着只会让后来的人以为它在生效。 */
-            className="min-h-11 gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-accent-soft data-[selected=true]:font-medium data-[selected=true]:text-accent-soft-foreground"
+            className="min-h-11 gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
           >
             <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
               {it.icon}
@@ -340,9 +339,7 @@ function Sidebar({
                   `disallowEmptySelection` 必需：RAC 把「再点一次已选中项」当成取消选中，
                   不设它的话点当前会话会把高亮弄没，而页面并没有切走。
 
-                  选中态用 `bg-surface` 而不是主导航的 `bg-accent-soft`：
-                  导航项是「目的地」，会话项是「同一目的地下的一个实例」，两处都用主色
-                  会让人以为侧栏里同时选中了两处。
+                  选中态和主导航统一用中性色 `bg-surface`，不使用强调色。
 
                   ⚠️ 也不能用看起来更对味的 `bg-default`（中性灰）：浅色主题下
                   `--default` 与侧栏底色是**同一个值**（实测两处都是 oklch(0.94) / #ebebeb），
@@ -641,13 +638,14 @@ export function PageShell({
     <Button
       isIconOnly
       variant="ghost"
-      className="relative shrink-0 rounded-full"
+      className="page-shell__nav-logo relative shrink-0 rounded-full"
       data-testid="nav-rail-toggle"
       aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+      aria-expanded={!railCollapsed}
       aria-pressed={railCollapsed}
       onPress={toggleRail}
     >
-      <IconSwap active={railCollapsed ? 'b' : 'a'} a={<Sym name="panel_left" />} b={<Sym name="menu" />} />
+      <BrandLogo />
       <DotBadge open={hasUnread} className="nav-unread"
         label="有已完成的会话未查看" testId="nav-unread-dot" />
     </Button>
@@ -676,14 +674,13 @@ export function PageShell({
             aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
             <div className="page-shell__rail-header">
               <div className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand">
-                <BrandLogo />
+                {railToggle}
                 {!railCollapsed && <span>DeepStudent Go</span>}
               </div>
-              {railToggle}
             </div>
             {railCollapsed ? <>{rail.items.map(item => (
               <span key={item.value} title={item.label}>
-                <Button isIconOnly variant="ghost" className="page-shell__rail-icon"
+                <Button isIconOnly variant="ghost" className={`page-shell__rail-icon${item.isAction ? ' page-shell__new-chat' : ''}`}
                   aria-label={item.label} aria-current={!item.isAction && item.value === rail.value ? 'page' : undefined}
                   data-testid={item.testId} onPress={item.onClick}>{item.icon}</Button>
               </span>
@@ -748,18 +745,17 @@ export function PageShell({
               <span />
               <span />
             </div>
-            {/* 窄屏在顶栏开抽屉；宽屏展开时开关在侧栏内，收起后才在顶栏提供展开入口。
-                圆形键的共享外观见 layout.css 的导航按钮规则。 */}
+            {/* Logo 同时承担品牌与导航入口；宽屏收放、窄屏开抽屉。 */}
             {rail && isNarrow && (
               <Button
                 isIconOnly
                 variant="ghost"
-                className="relative shrink-0 rounded-full"
+                className="page-shell__nav-logo relative shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
                 onPress={() => setDrawerOpen(true)}
               >
-                <Sym name="menu" />
+                <BrandLogo />
                 <DotBadge open={hasUnread} className="nav-unread"
                   label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>

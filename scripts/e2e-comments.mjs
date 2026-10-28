@@ -196,7 +196,7 @@ async function seedComments(page, videoId) {
 
   console.log('7. 收起 → 列表消失、折叠条计数仍在');
   await page.click('[data-testid="comments-toggle"]');
-  await page.waitForSelector('[data-testid="comments-list"]', { state: 'detached', timeout: 8000 });
+  await page.waitForFunction(() => document.querySelector('[data-testid="comments"] .t-acc-panel')?.getBoundingClientRect().height === 0, null, { timeout: 8000 });
   const count2 = (await page.locator('[data-testid="comments-count"]').textContent())?.trim();
   if (count2 === '2 条讨论 · 5 条发言') ok('收起后计数保持');
   else fail(`收起后计数不符：${count2}`);

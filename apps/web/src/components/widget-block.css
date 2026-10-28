@@ -35,4 +35,7 @@
 .widget-block--error {
   color: var(--danger);
   background: var(--danger-soft);
+  overflow-wrap: anywhere;
 }
+
+.widget-block--error details { max-height: 12rem; overflow: auto; }

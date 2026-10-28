@@ -129,6 +129,12 @@ export function TextSwap({
   useEffect(() => {
     const el = ref.current;
     if (!el || text === shownRef.current) return;
+    // Reduced motion must not leave the old label invisible during the swap delay.
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      el.textContent = text;
+      shownRef.current = text;
+      return;
+    }
     const dur = ms('--text-swap-dur', 150);
     el.classList.add('is-exit');
     const t = window.setTimeout(() => {
@@ -696,7 +702,7 @@ export function Collapse({
   children: ReactNode;
 }) {
   return (
-    <div id={id} className="t-acc t-acc-panel" data-open={open ? 'true' : 'false'}>
+    <div id={id} className="t-acc t-acc-panel" data-open={open ? 'true' : 'false'} aria-hidden={!open} inert={!open}>
       <div
         ref={innerRef}
         className={innerClassName ? `t-acc-panel-inner ${innerClassName}` : 't-acc-panel-inner'}

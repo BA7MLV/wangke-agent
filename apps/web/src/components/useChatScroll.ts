@@ -25,6 +25,7 @@ export function useChatScroll(
   const modeRef = useRef<'start' | 'manual' | 'end'>('end');
   const viewRef = useRef<{ sessionKey: unknown; turnKey: string | undefined } | null>(null);
   const frameRef = useRef(0);
+  const jumpTargetRef = useRef<number | null>(null);
   const lastTopRef = useRef(0);
   const lastBottomRef = useRef(0);
   const latestRef = useRef({ key: '', index: 0 });
@@ -58,6 +59,11 @@ export function useChatScroll(
       const element = scrollRef.current;
       if (element && element.clientHeight > 0 && modeRef.current !== 'manual') {
         const bottom = Math.max(0, element.scrollHeight - element.clientHeight);
+        // Scroll-only virtual commits must not turn an explicit smooth jump
+        // into an instant one. Resume layout following once its target lands.
+        const jumpTarget = jumpTargetRef.current;
+        if (jumpTarget != null && Math.abs(element.scrollTop - jumpTarget) > 1 && bottom - element.scrollTop > 1) return;
+        jumpTargetRef.current = null;
         let target = bottom;
         if (modeRef.current === 'start' && latestRef.current.key) {
           const { key, index } = latestRef.current;
@@ -89,6 +95,7 @@ export function useChatScroll(
 
   const pauseFollowing = useCallback(() => {
     modeRef.current = 'manual';
+    jumpTargetRef.current = null;
     virtualRef.current?.cancelScroll();
     cancelAnimationFrame(frameRef.current);
     frameRef.current = 0;
@@ -101,7 +108,9 @@ export function useChatScroll(
     modeRef.current = 'end';
     virtualRef.current?.cancelScroll();
     lastTopRef.current = element.scrollTop;
-    element.scrollTo({ top: element.scrollHeight, behavior: prefersReducedMotion() ? 'auto' : 'smooth' });
+    const reduced = prefersReducedMotion();
+    jumpTargetRef.current = reduced ? null : Math.max(0, element.scrollHeight - element.clientHeight);
+    element.scrollTo({ top: element.scrollHeight, behavior: reduced ? 'auto' : 'smooth' });
     syncButton();
   }, [scrollRef, syncButton, virtualRef]);
 
@@ -110,10 +119,13 @@ export function useChatScroll(
     if (!historyReady) {
       viewRef.current = null;
       modeRef.current = 'end';
+      jumpTargetRef.current = null;
     } else {
       const entering = !previous || !Object.is(previous.sessionKey, sessionKey);
-      if (entering) modeRef.current = 'end';
-      else if (turnKey !== undefined && previous.turnKey !== turnKey) modeRef.current = 'start';
+      if (entering || turnKey !== undefined && previous?.turnKey !== turnKey) {
+        modeRef.current = entering ? 'end' : 'start';
+        jumpTargetRef.current = null;
+      }
       viewRef.current = { sessionKey, turnKey };
     }
     lastTopRef.current = scrollRef.current?.scrollTop ?? 0;

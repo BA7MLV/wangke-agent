@@ -30,11 +30,12 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  width: 100%;
+  width: calc(100% + 8px);
   min-height: 40px;
-  padding: 8px 0;
+  padding: 8px;
+  margin-inline-start: -8px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -43,8 +44,17 @@
   cursor: pointer;
 }
 
-.reasoning-chain__toggle:hover {
+.reasoning-chain .reasoning-chain__toggle:hover,
+.reasoning-chain .reasoning-chain__toggle[data-hovered='true'] {
+  background: color-mix(in oklch, var(--foreground) 8%, transparent);
   color: var(--foreground);
+}
+
+/* 与导入课程入口保持相同的连续曲率；不支持时回退为常规圆角。 */
+@supports (corner-shape: squircle) {
+  .reasoning-chain .reasoning-chain__toggle {
+    corner-shape: squircle;
+  }
 }
 
 .reasoning-chain__title,

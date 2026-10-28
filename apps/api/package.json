@@ -10,12 +10,12 @@
     "start": "node dist/apps/api/src/server.js"
   },
   "dependencies": {
-    "@wangke/contracts": "0.1.0",
-    "@wangke/study-core": "0.1.0",
     "@fastify/helmet": "^13.2.0",
     "@larksuiteoapi/node-sdk": "^1.76.0",
     "@modelcontextprotocol/sdk": "1.32.2",
     "@simplewebauthn/server": "^13.2.2",
+    "@wangke/contracts": "0.1.0",
+    "@wangke/study-core": "0.1.0",
     "ajv": "8.17.1",
     "argon2": "^0.44.0",
     "better-sqlite3": "^12.11.1",
@@ -23,8 +23,9 @@
     "fastify": "^5.12.7",
     "fflate": "^0.8.3",
     "lossless-json": "4.3.3",
+    "pdfjs-dist": "^4.10.38",
     "qrcode": "^1.5.4",
-    "pdfjs-dist": "^4.10.38"
+    "sharp": "^0.35.5"
   },
   "devDependencies": {
     "@types/better-sqlite3": "^9.6.0",

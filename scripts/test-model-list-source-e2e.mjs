@@ -24,8 +24,8 @@ let browser, web;
 let page;
 const errors = [];
 const openResults = async () => {
-  const results = page.getByTestId('discovered-models');
-  if (await results.getAttribute('open') === null) await page.getByTestId('discovered-model-select').click();
+  const toggle = page.getByTestId('discovered-model-select');
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
 };
 const assertNoCatalogCandidates = async () => {
   assert.equal(await page.getByRole('button', { name: '添加 catalog-only-model', exact: true }).count(), 0);

@@ -497,8 +497,8 @@ function addConversationMutations(
   userRow.createdAt = times.user;
   assistantRow.createdAt = times.assistant;
   const mutations = [
-    recordMutation('chats', userRow.id, null, userRow),
-    recordMutation('chats', assistantRow.id, null, assistantRow),
+    recordMutation('chats', userRow.id, null, { ...userRow, taskId: context.task.id }),
+    recordMutation('chats', assistantRow.id, null, { ...assistantRow, taskId: context.task.id }),
   ];
   if (sessionPatch) {
     const current = context.records.get(context.owner, 'chatSessions', sessionId);
@@ -530,7 +530,7 @@ async function qa(context: TaskContext) {
   const assistantRow = { id: assistantId, videoId, sessionId, role: 'assistant', content: result.content, createdAt: Date.now(), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
   addConversationMutations(context, sessionId, userRow, assistantRow, title ? { title } : undefined);
-  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId };
+  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
 }
 
 async function chat(context: TaskContext) {
@@ -555,7 +555,7 @@ async function chat(context: TaskContext) {
   const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, createdAt: Date.now(), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
   addConversationMutations(context, sessionId, userRow, assistantRow, title ? { title } : undefined);
-  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId };
+  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
 }
 
 async function artifactEdit(context: TaskContext) {

@@ -217,6 +217,7 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
       '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 mermaid 源码、diagram JSON 或 SVG 源码，' +
       '通过后会把一段可直接放进回答正文的 ```mermaid / ```diagram / ```svg 围栏原样返回给你（带了 title 就会写成 ```diagram title="…"）；' +
       'format="html" 会返回不含源码的 wbw-widget 引用围栏，将引用原样放在正文需要看图的位置；多次调用不会覆盖前图，不要贴 HTML 源码。' +
+      '若必须直接输出 HTML 作品，使用 ```html interactive 围栏以声明隔离运行；普通 ```html 是默认不执行脚本的源码示例。不要把课程引用、导入材料或思考中的代码标为 interactive。' +
       '不通过会告诉你具体哪里不合规，改完再试。svg / mermaid / diagram 仍必须把返回的围栏放进正文，且要放在它解释的那句话旁边、前后各配一句说明。',
     parameters: {
       type: 'object',
