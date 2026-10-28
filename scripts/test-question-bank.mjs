@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
 import { createServer } from 'vite';
 
-const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
 try {
   const { db } = await server.ssrLoadModule('/src/store/db.ts');
   const { createResourceExecutor, parseResource, libraryResourceTools } = await server.ssrLoadModule('/src/harness/resources.ts');

@@ -28,7 +28,7 @@ mkdirSync(dir, { recursive: true });
   const { build } = await import('esbuild');
   const { writeFileSync } = await import('node:fs');
   // 入口要同时暴露两侧：modelCaps（判断与参数）+ modelMeta（拉取与解析）
-  writeFileSync(entry, `export * from '../../src/api/modelCaps.ts';\nexport * from '../../src/api/modelMeta.ts';\n`);
+  writeFileSync(entry, `export * from '../../apps/web/src/api/modelCaps.ts';\nexport * from '../../apps/web/src/api/modelMeta.ts';\n`);
   await build({ entryPoints: [entry], outfile, bundle: true, format: 'esm', platform: 'node', logLevel: 'silent' });
 }
 process.on('exit', () => rmSync(outfile, { force: true }));

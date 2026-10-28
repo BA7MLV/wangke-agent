@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { htmlPreviewSource, looksLikeStreamingHtml, nextVisualRound, readPartialWidgetArguments, splitAssistantContent, splitStreamingHtml } from '../src/utils/streamingHtml.ts';
+import { htmlPreviewSource, looksLikeStreamingHtml, nextVisualRound, readPartialWidgetArguments, splitAssistantContent, splitStreamingHtml } from '../apps/web/src/utils/streamingHtml.ts';
 
 const source = '<section><h2>收入</h2><p>同比增长 <strong>12%</strong></p></section><div>尾部';
 const split = splitStreamingHtml(source);

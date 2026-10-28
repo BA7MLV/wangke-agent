@@ -11,7 +11,7 @@ for (const [file, expected] of [
   ['thanos_fragment.glsl', '0e9afc1d977429b85277b88021e9d3b54f97be23'],
 ]) {
   // Upstream files have no final newline; retain all other bytes, including spaces.
-  const source = (await readFile(new URL(`../src/third-party/telegram-thanos/${file}`, import.meta.url), 'utf8')).replace(/\n$/, '');
+  const source = (await readFile(new URL(`../apps/web/src/third-party/telegram-thanos/${file}`, import.meta.url), 'utf8')).replace(/\n$/, '');
   const bytes = Buffer.from(source);
   const hash = createHash('sha1').update(`blob ${bytes.length}\0`).update(bytes).digest('hex');
   assert.equal(hash, expected, `${file} must match the pinned upstream Git blob`);

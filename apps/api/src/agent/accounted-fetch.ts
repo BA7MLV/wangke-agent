@@ -1,4 +1,4 @@
-import type { CloudProvider } from '../../../../packages/contracts/src/cloud.js';
+import type { CloudProvider } from '@wangke/contracts/cloud';
 import { BudgetBlocked, UsageLedger, type RequestAttribution } from './budget.js';
 import { modelUsage } from './model-client.js';
 import { boundedRequest, checkRequestCapacity } from './request-budget.js';

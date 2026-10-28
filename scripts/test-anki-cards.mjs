@@ -5,7 +5,7 @@
  * Node ≥22.18 原生运行 TS（类型擦除），无需额外依赖。
  */
 import assert from 'node:assert/strict';
-import { cleanCard, dedupeCards, extractJsonArray, CARD_LIMITS } from '../src/harness/ankiCard.ts';
+import { cleanCard, dedupeCards, extractJsonArray, CARD_LIMITS } from '../apps/web/src/harness/ankiCard.ts';
 
 let passed = 0;
 const failures = [];

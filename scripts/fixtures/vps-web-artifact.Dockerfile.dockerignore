@@ -1,0 +1,8 @@
+**
+!acceptance-web/
+!acceptance-web/dist/
+!acceptance-web/dist/**
+!infra/
+!infra/docker/
+!infra/docker/Caddyfile.web
+!infra/docker/web-entrypoint.sh

@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 import initSqlJs from 'sql.js';
 import { unzipSync, strFromU8 } from 'fflate';
-import { buildApkgBytes } from '../src/anki/apkgCore.ts';
+import { buildApkgBytes } from '../apps/web/src/anki/apkgCore.ts';
 
 let passed = 0;
 const failures = [];

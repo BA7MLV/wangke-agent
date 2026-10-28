@@ -3,10 +3,11 @@ import { Readable } from 'node:stream';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { DatabaseStore } from '../storage/database.js';
 import { CloudRecords, CloudConflict } from './records.js';
-import { CloudConfiguration } from './config.js';
+import { CloudConfiguration, ModelConfigurationError } from './config.js';
 import { CloudTaskRunner, taskDto, TASK_KINDS, workerIdentity } from './tasks.js';
 import { workerTokens, workerTokenHash, renewWorker } from './workerAuth.js';
-import type { CloudConfig, CloudMutation } from '../../../../packages/contracts/src/cloud.js';
+import type { CloudConfig, CloudMutation } from '@wangke/contracts/cloud';
+import type { ModelSettingsUpdate, ProviderSettingsUpdate } from '@wangke/contracts/model-settings';
 import { accountedFetch } from '../agent/accounted-fetch.js';
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 
@@ -15,12 +16,17 @@ interface Dependencies {
   requireAuth: (request: FastifyRequest, reply: FastifyReply) => any;
   checkOrigin: (request: FastifyRequest, reply: FastifyReply) => boolean;
   filesDir: string; maxFileBytes: number; fetch?: typeof fetch;
+  syncResources?: (owner: string) => void;
+  canStart?: () => boolean;
 }
 
 export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
   const { store, records, configuration, requireAuth, checkOrigin } = deps;
   const runner = new CloudTaskRunner(store, { records, configuration, filesDir: deps.filesDir, fetch: deps.fetch });
   const fail = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
+  const configurationError = (reply: FastifyReply, e: unknown) => e instanceof ModelConfigurationError
+    ? reply.code(e.status).send({ error: e.message, issues: e.issues })
+    : fail(reply, 400, e instanceof Error ? e.message : 'invalid_config');
   const ownedTask = (owner: string, id: string) => store.db.prepare('SELECT * FROM cloud_tasks WHERE id=? AND owner_id=?').get(id, owner) as any;
   const authorize = (request: FastifyRequest, reply: FastifyReply, admin = false) => {
     if (!['GET', 'HEAD'].includes(request.method) && !checkOrigin(request, reply)) return null;
@@ -29,7 +35,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     return user;
   };
   app.addHook('onListen', async () => {
-    if (process.env.CLOUD_WORKER_DISABLED === '1') return;
+    if (process.env.CLOUD_WORKER_DISABLED === '1' || deps.canStart?.() === false) return;
     const address = app.server.address();
     if (address && typeof address === 'object') runner.start(`http://127.0.0.1:${address.port}`);
   });
@@ -43,12 +49,23 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
   app.put<{ Body: CloudConfig }>('/api/v1/cloud/config', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
     try { return configuration.save(user.id, request.body); }
-    catch (e) { return fail(reply, 400, e instanceof Error ? e.message : 'invalid_config'); }
+    catch (e) { return configurationError(reply, e); }
+  });
+  app.put<{ Body: ModelSettingsUpdate }>('/api/v1/cloud/model-settings', async (request, reply) => {
+    const user = authorize(request, reply, true); if (!user) return;
+    try { return configuration.saveModels(user.id, request.body); }
+    catch (e) { return configurationError(reply, e); }
+  });
+  app.put<{ Params: { id: string }; Body: ProviderSettingsUpdate }>('/api/v1/cloud/providers/:id', async (request, reply) => {
+    const user = authorize(request, reply, true); if (!user) return;
+    try { return configuration.saveProvider(user.id, request.params.id, request.body); }
+    catch (e) { return configurationError(reply, e); }
   });
   app.get<{ Querystring: { after?: string } }>('/api/v1/cloud/records', async (request, reply) => {
     const user = authorize(request, reply); if (!user) return;
     const after = Number(request.query.after ?? 0);
     if (!Number.isSafeInteger(after) || after < 0) return fail(reply, 400, 'invalid_cursor');
+    deps.syncResources?.(user.id);
     const result = records.list(user.id, after);
     return { records: result, cursor: result.at(-1)?.revision ?? after, more: result.length === 200 };
   });
@@ -120,7 +137,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       const disconnected = new AbortController();
       request.raw.once('aborted', () => disconnected.abort());
       reply.raw.once('close', () => { if (!reply.raw.writableEnded) disconnected.abort(); });
-      const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(300000), disconnected.signal]) };
+      const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(endpoint === 'models' ? 20000 : 300000), disconnected.signal]) };
       if (request.method === 'POST') {
         if (request.body instanceof Readable) { init.body = request.body as any; init.duplex = 'half'; }
         else init.body = JSON.stringify(request.body);
@@ -138,7 +155,12 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
         const task = worker ? ownedTask(user.id, worker.taskId) : undefined;
         const fetcher = task?.parent_run_id ? accountedFetch(new UsageLedger(store, configuration), { owner: user.id, run: task.parent_run_id, step: task.parent_step_id, task: task.id, purpose: `study:${task.kind}` }, [provider], deps.fetch ?? fetch) : deps.fetch ?? fetch;
         const response = await fetcher(`${provider.baseUrl}/${endpoint}${pagination.size ? `?${pagination}` : ''}`, init);
-        if (!response.ok) return fail(reply, response.status, `model_http_${response.status}`);
+        if (!response.ok) {
+          const retryAfter = response.headers.get('retry-after');
+          if (retryAfter) reply.header('retry-after', retryAfter);
+          await response.body?.cancel();
+          return fail(reply, response.status, `model_http_${response.status}`);
+        }
         reply.header('content-type', response.headers.get('content-type') ?? 'application/json');
         reply.header('cache-control', 'no-store');
         return response.body ? reply.send(Readable.fromWeb(response.body as any)) : reply.send('');

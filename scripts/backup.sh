@@ -21,6 +21,7 @@ while [ "$#" -gt 0 ]; do
     *) echo "unknown option: $1" >&2; usage >&2; exit 2 ;;
   esac
 done
+if [ -f "$DATA_DIR/releases/last-success.json" ]; then echo "Managed installation: use wangke-agent backup for the writer/lease-coordinated restore point." >&2; exit 2; fi
 
 DATA_DIR="$(cd -- "$DATA_DIR" 2>/dev/null && pwd -P || true)"
 [ -n "$DATA_DIR" ] || { echo "data directory does not exist" >&2; exit 1; }

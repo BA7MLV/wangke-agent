@@ -44,7 +44,7 @@ globalThis.localStorage = {
        mergeImportedProviders, migrateSettings, nextProviderId, providerOf,
        providersForSlot, sameRef, targetOfSlot, targetOrNull, catalogOf,
        SLOT_LABEL, DEFAULT_MODELS,
-     } from '../../src/store/settings.ts';
+     } from '../../apps/web/src/store/settings.ts';
      export {
        mergeImportedProviders, migrateSettings, nextProviderId, providerOf,
        providersForSlot, sameRef, targetOfSlot, targetOrNull, catalogOf,

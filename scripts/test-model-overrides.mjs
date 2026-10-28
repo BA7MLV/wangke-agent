@@ -1,12 +1,12 @@
 import assert from 'node:assert/strict';
-import { getModelMeta, refreshModelMeta } from '../src/api/modelMeta.ts';
-import { effectiveContextWindow, isVisionModel, outputLimitOf, supportsThinking, thinkingControlOf, thinkingParams } from '../src/api/modelCaps.ts';
-import { editModelPatch } from '../src/store/modelLibrary.ts';
-import { chatOnce } from '../src/api/siliconflow.ts';
+import { getModelMeta, refreshModelMeta } from '../apps/web/src/api/modelMeta.ts';
+import { effectiveContextWindow, isVisionModel, outputLimitOf, supportsThinking, thinkingControlOf, thinkingParams } from '../apps/web/src/api/modelCaps.ts';
+import { editModelPatch } from '../apps/web/src/store/modelLibrary.ts';
+import { chatOnce } from '../apps/web/src/api/siliconflow.ts';
 
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-const { getSettings, modelOverridesOf, targetOfSlot, targetOrNull, useSettings, visionTargetOrNull } = await import('../src/store/settings.ts');
-const { attachmentsForModel, messageForModel } = await import('../src/chat/attachmentModel.ts');
+const { getSettings, modelOverridesOf, targetOfSlot, targetOrNull, useSettings, visionTargetOrNull } = await import('../apps/web/src/store/settings.ts');
+const { attachmentsForModel, messageForModel } = await import('../apps/web/src/chat/attachmentModel.ts');
 const entry = { modalities: { input: ['text'], output: ['text'] }, limit: { context: 128000, output: 8192 }, reasoning: false, tool_call: false };
 globalThis.fetch = async () => new Response(JSON.stringify({ test: { models: { shared: entry } } }));
 await refreshModelMeta(['test']);

@@ -35,5 +35,5 @@ test('不支持的响应类型抛出诊断错误，不伪装为空响应', async
 });
 
 test('安装入口与源脚本保持一致', () => {
-  assert.equal(fs.readFileSync(new URL('../public/wangke-bili-bridge.user.js', import.meta.url), 'utf8'), script);
+  assert.equal(fs.readFileSync(new URL('../apps/web/public/wangke-bili-bridge.user.js', import.meta.url), 'utf8'), script);
 });

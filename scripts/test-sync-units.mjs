@@ -33,7 +33,7 @@ import {
   parseUnit,
   partCount,
   pickSyncSettings,
-} from '../src/sync/units.ts';
+} from '../apps/web/src/sync/units.ts';
 
 let passed = 0;
 const failures = [];

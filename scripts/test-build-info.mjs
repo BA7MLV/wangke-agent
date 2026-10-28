@@ -15,7 +15,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = path.join(os.tmpdir(), `test-build-info-${Date.now()}.mjs`);
 
 execSync(
-  `node_modules/.bin/esbuild src/utils/buildInfo.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
+  `node_modules/.bin/esbuild apps/web/src/utils/buildInfo.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
   { cwd: root, stdio: 'inherit' },
 );
 

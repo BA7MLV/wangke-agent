@@ -70,7 +70,7 @@ check(
 // ── 4. 时间是构建期常量，不是运行时取的 ───────────────────────────────────
 if (!IS_DEV) {
   const timeText = text.match(/\d{4}-\d{2}-\d{2} \d{2}:\d{2}/)?.[0] ?? '';
-  const assetsDir = path.join(root, 'dist/assets');
+  const assetsDir = path.join(root, 'apps/web/dist/assets');
   let inlined = false;
   if (timeText && existsSync(assetsDir)) {
     for (const f of readdirSync(assetsDir)) {

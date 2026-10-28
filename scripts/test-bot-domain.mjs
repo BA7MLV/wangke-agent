@@ -14,7 +14,7 @@ import { receiveFile } from '../apps/api/src/cloud/files.ts';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-domain-'));
 const store = new DatabaseStore(path.join(root, 'db.sqlite'));
-const link = path.resolve('src/skills/builtin/course-handout/references/review-probe.md');
+const link = path.resolve('packages/study-core/assets/builtin/course-handout/references/review-probe.md');
 try {
   const owner = 'domain-owner', other = 'domain-other', at = new Date().toISOString();
   for (const id of [owner, other]) store.db.prepare('INSERT INTO users VALUES(?,?,?)').run(id, id, at);

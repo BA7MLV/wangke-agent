@@ -6,7 +6,7 @@
 import assert from 'node:assert/strict';
 
 const { PRESET_RATES, MIN_RATE, MAX_RATE, normalizeRate, sameRate, formatRate, mergeRates, nextRateOf } =
-  await import('../src/utils/rate.ts');
+  await import('../apps/web/src/utils/rate.ts');
 
 let passed = 0;
 const failures = [];

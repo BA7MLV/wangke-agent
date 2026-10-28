@@ -22,9 +22,9 @@ const build = (entry, name) => {
   return out;
 };
 
-const wire = await import(build('src/bilibili/wire.ts', 'wire'));
-const dmview = await import(build('src/bilibili/dmview.ts', 'dmview'));
-const subtitle = await import(build('src/bilibili/subtitle.ts', 'subtitle'));
+const wire = await import(build('apps/web/src/bilibili/wire.ts', 'wire'));
+const dmview = await import(build('apps/web/src/bilibili/dmview.ts', 'dmview'));
+const subtitle = await import(build('apps/web/src/bilibili/subtitle.ts', 'subtitle'));
 
 let passed = 0;
 let failed = 0;

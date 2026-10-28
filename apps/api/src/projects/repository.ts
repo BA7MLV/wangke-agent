@@ -1,6 +1,6 @@
 import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
-import type { ProjectDetailDto, ProjectDto, ProjectGrantDto, ProjectPolicy, ProjectRole } from '../../../../packages/contracts/src/projects.js';
+import type { ProjectDetailDto, ProjectDto, ProjectGrantDto, ProjectPolicy, ProjectRole } from '@wangke/contracts/projects';
 import { ProjectError, ProjectFiles } from './files.js';
 
 interface ProjectRow {
@@ -19,6 +19,7 @@ const nameOf = (value: unknown) => {
 export class ProjectRepository {
   readonly files: ProjectFiles;
   isActive: (id: string) => boolean = () => false;
+  onChange: (owner: string, id: string) => void = () => {};
   constructor(readonly store: DatabaseStore, directory: string) { this.files = new ProjectFiles(directory); }
 
   list(owner: string): ProjectDto[] {
@@ -38,9 +39,9 @@ export class ProjectRepository {
     return project;
   }
 
-  create(owner: string, name: unknown, agentId: string, role: ProjectRole = 'write'): ProjectDetailDto {
+  create(owner: string, name: unknown, agentId?: string, role: ProjectRole = 'write'): ProjectDetailDto {
     const cleanName = nameOf(name);
-    this.agent(owner, agentId);
+    if (agentId !== undefined) this.agent(owner, agentId);
     const id = crypto.randomUUID();
     // Create the directory before committing the row: a visible project always
     // has a workspace. A failed DB commit may leave an unreferenced empty UUID directory.
@@ -48,7 +49,7 @@ export class ProjectRepository {
     const now = timestamp();
     this.store.transaction(() => {
       this.store.db.prepare('INSERT INTO projects(id,owner_id,name,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, owner, cleanName, now, now);
-      this.store.db.prepare('INSERT INTO project_agents(project_id,agent_id,role) VALUES(?,?,?)').run(id, agentId, role);
+      if (agentId) this.store.db.prepare('INSERT INTO project_agents(project_id,agent_id,role) VALUES(?,?,?)').run(id, agentId, role);
     });
     return this.get(owner, id);
   }
@@ -62,6 +63,7 @@ export class ProjectRepository {
     if (!policy || !['allow', 'ask', 'deny'].includes(policy.shell) || !['allow', 'deny'].includes(policy.network)) throw new ProjectError('invalid_project_policy');
     this.store.db.prepare('UPDATE projects SET name=?,instructions=?,archived=?,shell_policy=?,network_policy=?,updated_at=? WHERE id=? AND owner_id=?')
       .run(name, instructions, Number(input.archived ?? project.archived), policy.shell, policy.network, timestamp(), id, owner);
+    this.onChange(owner, id);
     return this.get(owner, id);
   }
 

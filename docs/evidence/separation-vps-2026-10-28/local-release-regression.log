@@ -1,0 +1,69 @@
+
+> wangke-agent@0.1.0 test:release-recovery
+> npm run build:api && tsx --test scripts/test-release-recovery.mjs scripts/test-release-docker.mjs && tsx scripts/test-release-staging.mjs
+
+
+> wangke-agent@0.1.0 build:api
+> npm run check:boundaries && turbo run build --filter=@wangke/api
+
+
+> wangke-agent@0.1.0 check:boundaries
+> node scripts/check-boundaries.mjs
+
+Application/shared source boundaries passed (AST imports, types, dynamic loading and resource URLs).
+
+   • turbo 2.11.10
+   • Packages in scope: @wangke/api
+   • Running build in 1 package
+   • Remote caching disabled
+
+@wangke/contracts:build: cache hit, replaying logs 869b9f29380e6fa5
+@wangke/study-core:build: cache hit, replaying logs 0130f64b46d8e86a
+@wangke/contracts:build: 
+@wangke/contracts:build: > @wangke/contracts@0.1.0 build
+@wangke/contracts:build: > tsc -p tsconfig.json
+@wangke/contracts:build: 
+@wangke/study-core:build: 
+@wangke/study-core:build: > @wangke/study-core@0.1.0 build
+@wangke/study-core:build: > tsc -p tsconfig.json
+@wangke/study-core:build: 
+@wangke/api:build: cache hit, replaying logs 2d4323488bb355f8
+@wangke/api:build: 
+@wangke/api:build: > @wangke/api@0.1.0 build
+@wangke/api:build: > tsc -p tsconfig.json && tsc -p tsconfig.runtime.json && node scripts/build-runtime.mjs && node scripts/database-identity.mjs
+@wangke/api:build: 
+
+ Tasks:    3 successful, 3 total
+Cached:    3 cached, 3 total
+  Time:    25ms >>> FULL TURBO
+
+✔ barrier stops only own writable sandbox executions, never stable edge/web (5.141417ms)
+✔ unknown writable bind or still-running API refuses barrier without killing foreign work (2.683541ms)
+✔ failed recreate with no API container still allows the rollback writer barrier (0.949708ms)
+✔ snapshot uses previous immutable image, no network, actual bind paths and explicit UID (0.986417ms)
+✔ recreate uses no dependencies/build; local authenticated control keeps secrets out of args (0.924375ms)
+✔ readiness checks actual image IDs and health, not configured tag text (1.086584ms)
+✔ preflight refuses uncovered DB/file paths, nested mounts and UID mismatches before pull/stop (0.993417ms)
+✔ running-container storage drift cannot be hidden by a correct Compose file (1.107666ms)
+✔ explicit preloaded transport resolves exact digest locally and never silently pulls or substitutes a tag (0.68775ms)
+✔ consistent point includes late rename/deletion, empty dirs, secrets and fenced browser leases (192.841291ms)
+✔ partial destructive migration restores DB AND files before previous single instance starts (192.044208ms)
+✔ lost activation ack NEVER restores accepted data; forward recovery promotes only after ready (177.936875ms)
+✔ restore verification failure stays offline; recover resumes completed swap idempotently (195.001167ms)
+✔ corrupt snapshot refuses recovery without starting the old binary against migrated data (272.233125ms)
+✔ web-only release does not stop API or snapshot; failed build/readiness never advances baseline (152.56275ms)
+✔ stale baseline, wrong scope, live lock and unsafe snapshots fail before deployment (56.485834ms)
+✔ full artifact manifests never enable optional sandbox services on a standard installation (31.359584ms)
+✔ backup fences writers and returns a sealed point without promoting/changing the deployed baseline (102.933083ms)
+✔ recovery after a crash between data-directory renames completes the swap before startup (167.011542ms)
+✔ explicit data-loss restore uses matching old DB/files, but snapshots current data first (323.312ms)
+✔ same-commit tampered baseline and incompatible restore point are rejected before pull/stop (129.039625ms)
+ℹ tests 21
+ℹ suites 0
+ℹ pass 21
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 2124.589542
+Release staging: no external/read-side/worker/scheduler admission, local authenticated control, real Bot activation, stale-token rejection and durable restart passed

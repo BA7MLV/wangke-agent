@@ -13,7 +13,7 @@
  * 运行：node scripts/test-chat-sources.mjs
  */
 import assert from 'node:assert/strict';
-import { extractChatSources, MAX_SOURCE_REFS } from '../src/utils/chatSources.ts';
+import { extractChatSources, MAX_SOURCE_REFS } from '../apps/web/src/utils/chatSources.ts';
 
 let passed = 0;
 const failures = [];

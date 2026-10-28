@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict';
-import { getModelMeta, refreshModelMeta } from '../src/api/modelMeta.ts';
-import { editModelPatch, modelsForSlot, suggestedModelSlots } from '../src/store/modelLibrary.ts';
-import { createPresetProvider, PROVIDER_PRESETS, providerCatalogId } from '../src/store/providerPresets.ts';
+import { getModelMeta, refreshModelMeta } from '../apps/web/src/api/modelMeta.ts';
+import { editModelPatch, modelsForSlot, suggestedModelSlots } from '../apps/web/src/store/modelLibrary.ts';
+import { createPresetProvider, PROVIDER_PRESETS, providerCatalogId } from '../apps/web/src/store/providerPresets.ts';
 
 globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: () => {} };
-const { catalogOf, getSettings, providersForSlot, targetOfSlot, targetOrNull, visionTargetOrNull } = await import('../src/store/settings.ts');
+const { catalogOf, getSettings, providersForSlot, targetOfSlot, targetOrNull, visionTargetOrNull } = await import('../apps/web/src/store/settings.ts');
 const entry = (input, output = ['text']) => ({ modalities: { input, output } });
 globalThis.fetch = async () => new Response(JSON.stringify({
   'siliconflow-cn': { models: { shared: entry(['text', 'image']), speech: entry(['audio']), text: entry(['text']) } },

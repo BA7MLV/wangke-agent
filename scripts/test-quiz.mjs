@@ -5,10 +5,10 @@
  * Node ≥22.18 原生运行 TS（类型擦除），无需额外依赖。
  */
 import assert from 'node:assert/strict';
-import { canGradeQuizQuestion, canUpdateQuizPick, gradeQuizAnswer, isQuizAnswered, parseQuestionBank, quizPickResult, validateQuiz } from '../src/harness/quiz.ts';
-import { detectQuestionRegions } from '../src/materials/pdfQuestionRegions.ts';
-import { parseMaterialImageHref } from '../src/materials/imageRefs.ts';
-import { linkifyTimestamps } from '../src/utils/linkify.ts';
+import { canGradeQuizQuestion, canUpdateQuizPick, gradeQuizAnswer, isQuizAnswered, parseQuestionBank, quizPickResult, validateQuiz } from '../apps/web/src/harness/quiz.ts';
+import { detectQuestionRegions } from '../apps/web/src/materials/pdfQuestionRegions.ts';
+import { parseMaterialImageHref } from '../apps/web/src/materials/imageRefs.ts';
+import { linkifyTimestamps } from '../apps/web/src/utils/linkify.ts';
 
 let passed = 0;
 const failures = [];
@@ -300,7 +300,7 @@ export const MarkdownPre = () => null;
   writeFileSync(
     entry,
     `import { renderToStaticMarkup } from 'react-dom/server';
-import QuizCard from ${JSON.stringify(join(here, '../src/components/QuizCard.tsx'))};
+import QuizCard from ${JSON.stringify(join(here, '../apps/web/src/components/QuizCard.tsx'))};
 const quiz = { questions: [
   { stem: '题干一', options: ['甲', '乙', '丙', '丁'], answer: 1, explanation: '解析一 [03:25]', time: '03:25' },
   { stem: '题干二', options: ['甲', '乙', '丙', '丁'], answer: 2, explanation: '解析二' },

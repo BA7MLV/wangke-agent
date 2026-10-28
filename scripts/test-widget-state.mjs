@@ -1,11 +1,11 @@
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { db } from '../src/store/db.ts';
-import { normalizeWidgetState, widgetFollowUp } from '../src/harness/widgetState.ts';
-import { buildWidgetDocument } from '../src/harness/widgetRuntime.ts';
-import { openWidgetSession, readWidgetState, saveWidgetState } from '../src/store/widgetState.ts';
-import { persistArtifactEdit } from '../src/store/artifactEdit.ts';
-import { layoutWidgets, messageWidgets, widgetReference } from '../src/harness/widgetLayout.ts';
+import { db } from '../apps/web/src/store/db.ts';
+import { normalizeWidgetState, widgetFollowUp } from '../apps/web/src/harness/widgetState.ts';
+import { buildWidgetDocument } from '../apps/web/src/harness/widgetRuntime.ts';
+import { openWidgetSession, readWidgetState, saveWidgetState } from '../apps/web/src/store/widgetState.ts';
+import { persistArtifactEdit } from '../apps/web/src/store/artifactEdit.ts';
+import { layoutWidgets, messageWidgets, widgetReference } from '../apps/web/src/harness/widgetLayout.ts';
 
 const state = { modelContent: { a: -2, step: 1 }, privateContent: { panel: 'PRIVATE_UI_ONLY' } };
 assert.deepEqual(normalizeWidgetState({ modelContent: 0 }), { modelContent: 0, privateContent: null });

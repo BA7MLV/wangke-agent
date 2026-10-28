@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="public/icon.svg" width="88" alt="网课学习助手" />
+<img src="apps/web/public/icon.svg" width="88" alt="网课学习助手" />
 
 # 网课学习助手
 
@@ -33,7 +33,7 @@
 4. **API 费用自担** —— 转写、讲义与问答均调用第三方模型 API（默认硅基流动），产生的费用与账号风险由使用者承担。
 5. **按原样提供** —— 本软件按「原样」提供，不附带任何明示或默示担保；因使用本软件造成的直接或间接损失，作者不承担责任。
 
-> 原创部分保留 [MIT](LICENSE) 声明；聊天删除动画现包含 Telegram Android 的 GPL-2.0 源码移植，组合应用对外分发须满足 GPL-2.0（含完整对应源码与构建脚本）。详见 [来源及许可说明](src/third-party/telegram-thanos/NOTICE.md) 和 [完整 GPL 文本](public/licenses/telegram-thanos-GPL-2.0.txt)。许可不覆盖第三方内容、模型权重或平台数据。
+> 原创部分保留 [MIT](LICENSE) 声明；聊天删除动画现包含 Telegram Android 的 GPL-2.0 源码移植，组合应用对外分发须满足 GPL-2.0（含完整对应源码与构建脚本）。详见 [来源及许可说明](apps/web/src/third-party/telegram-thanos/NOTICE.md) 和 [完整 GPL 文本](apps/web/public/licenses/telegram-thanos-GPL-2.0.txt)。许可不覆盖第三方内容、模型权重或平台数据。
 
 ---
 
@@ -158,14 +158,16 @@ npm run dev:api    # 另一个终端启动 API（开发时使用）
 iPad 访问 `http://<Mac 的局域网 IP>:5173` 即可（同一 Wi-Fi）。
 
 ```bash
-npm run build      # tsc -b + vite build → dist/
+npm run build      # 两端独立构建 → apps/web/dist 和 apps/api/dist
+npm run build:web  # 只构建 Web 及其共享依赖，不构建 API
+npm run build:api  # 只构建 API 及其共享依赖，不构建 Web
 npm run preview    # 本地预览生产构建（端口 4173）
 ```
 
 服务端构建和启动：
 
 ```bash
-docker compose up -d --build
+docker compose -f compose.yaml -f compose.build.yaml up -d --build
 curl http://localhost:3000/api/v1/health
 ```
 
@@ -198,7 +200,7 @@ curl http://localhost:3000/api/v1/health
 ./install.sh --data-dir "$HOME/.wangke-agent" --port 3000 --max-file-mb 512
 ```
 
-也可在安装目录 `.env` 设置 `MAX_FILE_BYTES` 后通过管理命令 `update` 重建容器。安装脚本等待健康检查通过才报告成功。开发环境需要连接 API 时，使用 `WANGKE_API_PROXY=http://127.0.0.1:3000 npm run dev`，并将 API 的 `PUBLIC_ORIGIN` 设置为实际前端地址；未设置代理时保持纯前端本机存储模式。
+也可在安装目录 `.env` 设置 `MAX_FILE_BYTES`；它需要受控替换 API 后才生效，目前不能用 Web-only 更新应用该配置。安装脚本等待健康检查通过才报告成功。开发环境需要连接 API 时，使用 `WANGKE_API_PROXY=http://127.0.0.1:3000 npm run dev`，并将 API 的 `PUBLIC_ORIGIN` 设置为实际前端地址；未设置代理时保持纯前端本机存储模式。
 
 ### 首次配置（必做）
 
@@ -217,20 +219,21 @@ curl http://localhost:3000/api/v1/health
 
 ### 部署
 
-生产部署使用 Linux Docker Compose，有两种形态，完整说明见 [docs/deployment.md](docs/deployment.md)：
+部署使用 Linux Docker Compose，完整说明及验收限制见 [docs/deployment.md](docs/deployment.md)：
 
-- **一体化**（默认，`compose.yaml`）：一个容器同时提供 API 和前端静态文件。
-- **前后端分离**（`compose.split.yaml`）：`api` 容器只提供 API 与鉴权，`web` 容器只提供浏览器前端；iOS / macOS 原生壳层用 `POST /api/v1/auth/token` 直接登录 API。
+- **默认严格分离**（`compose.yaml`）：稳定 `proxy` 将 `/api/*` 直接转发至 `api`，其余路径发往静态 `web`；API 不托管页面。
+- `compose.split.yaml` 只是默认拓扑的兼容入口，不再存在一体化选项；iOS / macOS 原生壳层继续用 `POST /api/v1/auth/token` 登录 API。
 
-无论哪种形态，模型密钥都只在 API 容器里，浏览器不直连模型服务。
+模型密钥只在 API 容器里，浏览器不直连模型服务。恢复点、单实例更新/回退及 CI 清单已有实现和本地故障测试，但 Linux Docker/真实更新验收与远端 CI 运行尚未完成；不要在现有生产实例上直接切换。默认生产模式只拉已发布的独立镜像，必须配置可达的 `WANGKE_API_IMAGE` / `WANGKE_WEB_IMAGE`（推荐 digest）；本仓库没有替你发布镜像。纳管后的 `update {web|api|full} --manifest`、`release-recover`、备份和兼容回退见 [部署文档](docs/deployment.md#不可变清单发布实现已本测linux-实机仍待验收)。
 
 > [!IMPORTANT]
-> 应用依赖 `Cross-Origin-Opener-Policy` + `Cross-Origin-Embedder-Policy` 才能拿到 `crossOriginIsolated`（VAD 用 SharedArrayBuffer 多线程跑）。仓库里 `public/_headers` 已写好这两条。
+> 应用依赖 `Cross-Origin-Opener-Policy` + `Cross-Origin-Embedder-Policy` 才能拿到 `crossOriginIsolated`（VAD 用 SharedArrayBuffer 多线程跑）。仓库里 `apps/web/public/_headers` 已写好这两条。
 >
 > HTTPS 反向代理（Caddy/Nginx）应放在 Docker 服务前面；公网启用 Passkey 前必须配置 HTTPS `PUBLIC_ORIGIN`。
 
 ```bash
-docker compose up -d --build
+docker compose pull
+docker compose up -d --no-build --wait
 ```
 
 公网 HTTPS 可在 DNS 已指向服务器后使用 Caddy 覆盖配置：
@@ -240,7 +243,7 @@ DOMAIN=agent.example.com \
 PUBLIC_ORIGIN=https://agent.example.com \
 WEBAUTHN_RP_ID=agent.example.com \
 WANGKE_BIND_HOST=127.0.0.1 \
-docker compose -f compose.yaml -f compose.prod.yaml up -d --build
+docker compose -f compose.yaml -f compose.prod.yaml up -d --no-build --wait
 ```
 
 或者用安装脚本一步完成（会写好上面这些变量，并让之后的 `wangke-agent update/restart` 一直带上 `compose.prod.yaml`）：
@@ -249,7 +252,7 @@ docker compose -f compose.yaml -f compose.prod.yaml up -d --build
 ./install.sh --domain agent.example.com
 ```
 
-Caddy 会自动申请和续期证书；公网部署不要把 Passkey 配置成 HTTP Origin。`WANGKE_BIND_HOST=127.0.0.1` 让 `app` 只绑定本机回环地址，外部流量只能经 HTTPS 代理进入（`--domain` 会自动设置）。
+Caddy 会自动申请和续期证书；公网部署不要把 Passkey 配置成 HTTP Origin。API/Web 只暴露容器网络端口，外部流量经稳定入口进入。
 
 iPad 上 **「分享」→「添加到主屏幕」**，得到独立窗口的 PWA，离线外壳才生效。
 

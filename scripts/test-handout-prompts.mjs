@@ -5,7 +5,7 @@
  * 运行：node scripts/test-handout-prompts.mjs
  */
 import assert from 'node:assert/strict';
-import { PROMPTS } from '../src/harness/prompts.ts';
+import { PROMPTS } from '../apps/web/src/harness/prompts.ts';
 
 let passed = 0;
 const failures = [];

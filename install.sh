@@ -8,10 +8,11 @@ PORT="${WANGKE_PORT:-3000}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 NO_START=0
 AGENT=0
+BUILD_FROM_SOURCE=0
 MAX_FILE_MB=""
 PUBLIC_URL=""
 DOMAIN=""
-usage() { echo "Usage: ./install.sh [--data-dir DIR] [--port PORT] [--public-url https://host] [--domain host] [--max-file-mb 1..512] [--agent] [--version VERSION] [--no-start]"; }
+usage() { echo "Usage: ./install.sh [--data-dir DIR] [--port PORT] [--public-url https://host] [--domain host] [--max-file-mb 1..512] [--agent] [--version VERSION] [--build-from-source] [--no-start]"; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --version) [ "$#" -ge 2 ] || { echo "--version requires a value" >&2; exit 2; }; VERSION="$2"; VERSION_SET=1; shift 2 ;;
@@ -23,9 +24,27 @@ while [ "$#" -gt 0 ]; do
     -h|--help) usage; exit 0 ;;
     --no-start) NO_START=1; shift ;;
     --agent) AGENT=1; shift ;;
+    --build-from-source) BUILD_FROM_SOURCE=1; shift ;;
     *) echo "unknown option: $1" >&2; exit 2 ;;
   esac
 done
+install_management() {
+  mkdir -p "$DATA_DIR/bin/lib"
+  sed "s|__DEFAULT_COMPOSE_FILE__|$SCRIPT_DIR/compose.yaml|" "$SCRIPT_DIR/scripts/wangke-agent" > "$DATA_DIR/bin/wangke-agent"
+  chmod 700 "$DATA_DIR/bin/wangke-agent"
+  cp -f "$SCRIPT_DIR/scripts/backup.sh" "$SCRIPT_DIR/scripts/restore.sh" "$SCRIPT_DIR/scripts/release-deploy.mjs" "$SCRIPT_DIR/scripts/release-plan.mjs" "$DATA_DIR/bin/"
+  cp -f "$SCRIPT_DIR/scripts/lib/release-storage.mjs" "$SCRIPT_DIR/scripts/lib/release-transaction.mjs" "$SCRIPT_DIR/scripts/lib/release-docker.mjs" "$DATA_DIR/bin/lib/"
+  chmod 700 "$DATA_DIR/bin/backup.sh" "$DATA_DIR/bin/restore.sh"
+}
+if [ -f "$DATA_DIR/releases/last-success.json" ]; then
+  if [ "$NO_START" -ne 1 ]; then
+    echo "Installation is managed by immutable release manifests. Use wangke-agent update --manifest, or --no-start to refresh management scripts only." >&2; exit 2
+  fi
+  [ ! -e "$DATA_DIR/releases/release.lock" ] || { echo "Release is locked; do not replace management scripts during a transaction." >&2; exit 2; }
+  install_management
+  echo "Management scripts refreshed only; configuration, baseline and containers were not changed."
+  exit 0
+fi
 INSTALL_STEP=0
 INSTALL_COMPLETED=0
 INSTALL_TOTAL=7
@@ -88,7 +107,8 @@ if [ ! -f "$DATA_DIR/.env" ]; then
   umask 077
   cat > "$DATA_DIR/.env" <<EOF
 APP_VERSION=$VERSION
-WANGKE_IMAGE=wangke-agent:$VERSION
+WANGKE_API_IMAGE=${WANGKE_API_IMAGE:-wangke-agent-api:$VERSION}
+WANGKE_WEB_IMAGE=${WANGKE_WEB_IMAGE:-wangke-agent-web:$VERSION}
 PORT=$PORT
 WANGKE_BIND_HOST=0.0.0.0
 DATA_DIR=/data
@@ -109,14 +129,15 @@ CLOUD_CONCURRENCY=2
 EOF
 elif [ "$VERSION_SET" -eq 1 ]; then
   echo "检测到已有配置，仅更新指定版本及本次显式传入的选项。"
-  # An explicit --version changes only the two release-controlled keys.
+  # Only rewrite local development tags; never overwrite an immutable deployment digest.
   tmp="$(mktemp "$DATA_DIR/.env.XXXXXX")"
   awk -v version="$VERSION" '
-    BEGIN { app=0; image=0 }
+    BEGIN { app=0 }
     /^APP_VERSION=/ { print "APP_VERSION=" version; app=1; next }
-    /^WANGKE_IMAGE=/ { print "WANGKE_IMAGE=wangke-agent:" version; image=1; next }
+    /^WANGKE_API_IMAGE=wangke-agent-api:/ { print "WANGKE_API_IMAGE=wangke-agent-api:" version; next }
+    /^WANGKE_WEB_IMAGE=wangke-agent-web:/ { print "WANGKE_WEB_IMAGE=wangke-agent-web:" version; next }
     { print }
-    END { if (!app) print "APP_VERSION=" version; if (!image) print "WANGKE_IMAGE=wangke-agent:" version }
+    END { if (!app) print "APP_VERSION=" version }
   ' "$DATA_DIR/.env" > "$tmp"
   chmod 600 "$tmp"
   mv -f "$tmp" "$DATA_DIR/.env"
@@ -124,6 +145,13 @@ else
   echo "检测到已有配置，保留现有设置，仅应用本次显式传入的选项。"
 fi
 chmod 600 "$DATA_DIR/.env"
+release_version="$(sed -n 's/^APP_VERSION=//p' "$DATA_DIR/.env" | tail -1)"
+if ! grep -q '^WANGKE_API_IMAGE=' "$DATA_DIR/.env"; then
+  printf '\nWANGKE_API_IMAGE=%s\n' "${WANGKE_API_IMAGE:-wangke-agent-api:${release_version:-$VERSION}}" >> "$DATA_DIR/.env"
+fi
+if ! grep -q '^WANGKE_WEB_IMAGE=' "$DATA_DIR/.env"; then
+  printf '\nWANGKE_WEB_IMAGE=%s\n' "${WANGKE_WEB_IMAGE:-wangke-agent-web:${release_version:-$VERSION}}" >> "$DATA_DIR/.env"
+fi
 if [ -n "$MAX_FILE_MB" ]; then
   tmp="$(mktemp "$DATA_DIR/.env.XXXXXX")"
   awk -v bytes="$((MAX_FILE_MB * 1024 * 1024))" '
@@ -157,34 +185,43 @@ step_done
 step "安装管理与备份命令"
 # The API creates the one-time secret on first startup, not before a long build.
 mkdir -p "$DATA_DIR/bin"
-sed "s|__DEFAULT_COMPOSE_FILE__|$SCRIPT_DIR/compose.yaml|" "$SCRIPT_DIR/scripts/wangke-agent" > "$DATA_DIR/bin/wangke-agent"
-chmod 700 "$DATA_DIR/bin/wangke-agent"
-cp -f "$SCRIPT_DIR/scripts/backup.sh" "$DATA_DIR/bin/backup.sh"
-cp -f "$SCRIPT_DIR/scripts/restore.sh" "$DATA_DIR/bin/restore.sh"
-chmod 700 "$DATA_DIR/bin/backup.sh" "$DATA_DIR/bin/restore.sh"
+install_management
 echo "Management command: $DATA_DIR/bin/wangke-agent {status|logs|stop|start|restart|update|backup}"
 step_done
 if [ "$NO_START" -eq 0 ]; then
   EXTRA=()
+  if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
+    EXTRA+=(-f "$SCRIPT_DIR/compose.build.yaml")
+  fi
   if grep -q '^DOMAIN=.' "$DATA_DIR/.env"; then
     EXTRA+=(-f "$SCRIPT_DIR/compose.prod.yaml")
   fi
   if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
     EXTRA+=(-f "$SCRIPT_DIR/compose.agent.yaml")
+    if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then EXTRA+=(-f "$SCRIPT_DIR/compose.agent.build.yaml"); fi
   fi
   compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$SCRIPT_DIR/compose.yaml" ${EXTRA[@]+"${EXTRA[@]}"} "$@"; }
 
-  step "构建服务镜像"
-  echo "首次构建可能耗时较长，以下为 Docker 实时输出（下载依赖、编译与打包）。"
-  if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
+  # Do not start a second SQLite scheduler alongside the old integrated service.
+  if compose ps --all --services --filter status=running | grep -qx app; then
+    echo "检测到旧 app 实例。请先完成恢复点与单实例迁移演练，再受控停止旧实例；不能并行启动 api。" >&2
+    exit 1
+  fi
+  step "准备独立服务镜像"
+  if [ "$BUILD_FROM_SOURCE" -eq 1 ] && grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
     echo "正在构建 Agent 沙盒镜像…"
     docker build -t wangke-sandbox:0.1.0 -f "$SCRIPT_DIR/infra/sandbox/Dockerfile" "$SCRIPT_DIR"
     echo "Agent 沙盒镜像构建完成。"
   else
     echo "未启用 Agent 沙盒，跳过沙盒镜像。"
   fi
-  echo "正在构建应用镜像…"
-  compose build
+  if [ "$BUILD_FROM_SOURCE" -eq 1 ]; then
+    echo "显式源码模式：独立构建 API 和 Web。"
+    compose build
+  else
+    echo "拉取已构建镜像；请在 .env 配置可达的 WANGKE_API_IMAGE/WANGKE_WEB_IMAGE（生产使用 digest）。"
+    compose pull
+  fi
   step_done
 
   step "启动服务并等待健康检查"
@@ -194,7 +231,7 @@ if [ "$NO_START" -eq 0 ]; then
 
   step "读取初始化入口"
   url="$(sed -n 's/^PUBLIC_ORIGIN=//p' "$DATA_DIR/.env" | tail -1)"
-  compose exec -T app node -e '
+  compose exec -T api node -e '
     const fs = require("node:fs");
     (async () => {
       const status = await (await fetch("http://127.0.0.1:3000/api/v1/bootstrap/status")).json();
@@ -207,7 +244,7 @@ if [ "$NO_START" -eq 0 ]; then
         console.log("Setup link expires at: " + status.expiresAt);
       } else {
         console.log("Setup URL: " + url.href);
-        if (!status.initialized) console.log("Bootstrap secret expired. Stop app, remove data/config/bootstrap-secret, then start app to renew it.");
+        if (!status.initialized) console.log("Bootstrap secret expired. Stop api, remove data/config/bootstrap-secret, then start api to renew it.");
       }
     })().catch(error => { console.error("Cannot read setup link: " + error.message); process.exitCode = 1; });
   ' "${url:-http://localhost:$PORT}"

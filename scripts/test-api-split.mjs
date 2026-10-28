@@ -15,13 +15,13 @@ process.env.NODE_ENV = 'test';
 process.env.CORS_ORIGINS = 'https://app.example.com, https://other.example.com/';
 process.env.SERVE_WEB = 'false';
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath: path.join(dir, 'db/wangke.sqlite'), staticDir: web });
+const app = buildServer({ dbPath: path.join(dir, 'db/wangke.sqlite') });
 const password = 'a-secure-test-password';
 try {
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   assert.equal((await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: password } })).statusCode, 201);
 
-  // SERVE_WEB=false：不托管前端，未知路径返回 404 而不是 index.html。
+  // API never hosts pages: unknown paths return JSON 404, not index.html.
   const page = await app.inject({ method: 'GET', url: '/library' });
   assert.equal(page.statusCode, 404);
 

@@ -13,7 +13,7 @@
  * 结果差一个采样点就会在跳变处放大成整幅偏差，量出来的是假阳性。
  */
 import assert from 'node:assert/strict';
-import { resampleTo16kS16 } from '../src/media/pcm.ts';
+import { resampleTo16kS16 } from '../apps/web/src/media/pcm.ts';
 
 const SR = 44100;
 const FRAME = 1024; // AAC-LC 一帧

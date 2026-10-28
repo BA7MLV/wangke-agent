@@ -10,7 +10,7 @@
  * 运行：node scripts/test-qa-skill-scope.mjs
  */
 import assert from 'node:assert/strict';
-import { isSkillLimited, intersectSkillIds, isSkillAllowed } from '../src/skills/scope.ts';
+import { isSkillLimited, intersectSkillIds, isSkillAllowed } from '../apps/web/src/skills/scope.ts';
 
 let passed = 0;
 const failures = [];

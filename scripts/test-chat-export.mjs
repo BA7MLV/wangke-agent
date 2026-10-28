@@ -8,7 +8,7 @@
  * 运行：node scripts/test-chat-export.mjs
  */
 import assert from 'node:assert/strict';
-import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../src/utils/chatExport.ts';
+import { buildSessionMarkdown, exportFileName, markdownToPlainText } from '../apps/web/src/utils/chatExport.ts';
 
 let passed = 0;
 const failures = [];

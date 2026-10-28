@@ -11,7 +11,7 @@ import { BotRunner } from '../apps/api/src/agent/runner.ts';
 import { StudyTools } from '../apps/api/src/agent/study.ts';
 import { CloudTaskRunner } from '../apps/api/src/cloud/tasks.ts';
 import { CloudRecords } from '../apps/api/src/cloud/records.ts';
-import { readDocxUnits } from '../src/materials/docx.ts';
+import { readDocxUnits } from '@wangke/study-core/materials/docx';
 import { receiveFile } from '../apps/api/src/cloud/files.ts';
 import { GatewayCore } from '../apps/api/src/gateway/core.ts';
 import { DeliveryError } from '../apps/api/src/gateway/plugin.ts';

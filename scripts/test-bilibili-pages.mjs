@@ -10,7 +10,7 @@ import os from 'node:os';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = path.join(os.tmpdir(), `test-bili-pages-${Date.now()}.mjs`);
 execSync(
-  `node_modules/.bin/esbuild src/bilibili/pages.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
+  `node_modules/.bin/esbuild apps/web/src/bilibili/pages.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
   { cwd: root, stdio: 'inherit' },
 );
 const { defaultPagesFor, pageVideoTitle, pageLabel, selectedDuration, resolveSelectedPages, formatTotalDuration } =

@@ -13,8 +13,8 @@ import {
   unitNoun,
   clampUnit,
   readRatio,
-} from '../src/materials/units.ts';
-import { linkifyUnits, linkifyTimestamps, UNIT_LINK_PREFIX } from '../src/utils/linkify.ts';
+} from '../apps/web/src/materials/units.ts';
+import { linkifyUnits, linkifyTimestamps, UNIT_LINK_PREFIX } from '../apps/web/src/utils/linkify.ts';
 
 let passed = 0;
 const failures = [];

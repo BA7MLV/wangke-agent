@@ -14,7 +14,7 @@ import {
   cleanSelectionText,
   MIN_REGION_SIDE,
   MIN_SELECTION_CHARS,
-} from '../src/materials/region.ts';
+} from '../apps/web/src/materials/region.ts';
 
 let passed = 0;
 const failures = [];

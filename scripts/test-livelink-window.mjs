@@ -19,7 +19,7 @@
  * 背压、钳制、防重叠）；请求发出后的重组、MSE append、在途登记是 Task 6（mse.ts）的事。
  */
 import assert from 'node:assert/strict';
-import { planFetches } from '../src/livelink/window.ts';
+import { planFetches } from '../apps/web/src/livelink/window.ts';
 
 const CHUNK = 300, WIN = 500;
 const full = { chunk: CHUNK, windowBytes: WIN, inflight: 0, maxInflight: 4 };

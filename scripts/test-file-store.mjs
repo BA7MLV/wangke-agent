@@ -6,7 +6,7 @@ import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-const server = await createServer({ server: { host: '127.0.0.1', port: 0 } });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { host: '127.0.0.1', port: 0 } });
 server.middlewares.use('/__file_test', (_req, res) => {
   res.setHeader('Content-Type', 'text/html');
   res.end('<!doctype html><title>File storage regression</title>');

@@ -13,8 +13,8 @@
  */
 import assert from 'node:assert/strict';
 
-const { validateAskUser, validateAskAnswer, askAnswerText, askUserToolResult, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../src/harness/askUser.ts');
-const { validateFolderPlan, MAX_PLAN_FOLDERS } = await import('../src/harness/folderPlan.ts');
+const { validateAskUser, validateAskAnswer, askAnswerText, askUserToolResult, MIN_ASK_OPTIONS, MAX_ASK_OPTIONS } = await import('../apps/web/src/harness/askUser.ts');
+const { validateFolderPlan, MAX_PLAN_FOLDERS } = await import('../apps/web/src/harness/folderPlan.ts');
 
 let passed = 0;
 const failures = [];

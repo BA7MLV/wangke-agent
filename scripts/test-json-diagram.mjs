@@ -16,14 +16,14 @@
  * 运行：node scripts/test-json-diagram.mjs
  */
 import assert from 'node:assert/strict';
-import { compileExpression } from '../src/components/mermaid/expr.ts';
+import { compileExpression } from '../apps/web/src/components/mermaid/expr.ts';
 import {
   validateDiagram,
   DiagramSchemaError,
-} from '../src/components/mermaid/diagramSchema.ts';
-import { renderDiagram } from '../src/components/mermaid/diagramRender.ts';
-import { peekDiagramProgress } from '../src/components/mermaid/diagramStream.ts';
-import { diagramKindOf } from '../src/components/mermaid/fence.ts';
+} from '../apps/web/src/components/mermaid/diagramSchema.ts';
+import { renderDiagram } from '../apps/web/src/components/mermaid/diagramRender.ts';
+import { peekDiagramProgress } from '../apps/web/src/components/mermaid/diagramStream.ts';
+import { diagramKindOf } from '../apps/web/src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];

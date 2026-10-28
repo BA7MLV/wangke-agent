@@ -1,4 +1,4 @@
-import type { AgentPolicy } from '../../../../packages/contracts/src/cloud.js';
+import type { AgentPolicy } from '@wangke/contracts/cloud';
 
 /** Defense in depth for obvious destructive commands, not a shell security boundary.
  * Arbitrary code can hide its effects; host isolation remains enforced by the broker.

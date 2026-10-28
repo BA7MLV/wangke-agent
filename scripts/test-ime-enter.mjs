@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isImeKeyEvent } from '../src/utils/imeEnter.ts';
+import { isImeKeyEvent } from '../apps/web/src/utils/imeEnter.ts';
 
 const key = (native) => ({ key: 'Enter', shiftKey: false, nativeEvent: { isComposing: false, keyCode: 13, ...native } });
 

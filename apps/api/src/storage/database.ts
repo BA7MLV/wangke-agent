@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { SystemFiles } from './system-files.js';
 
 const MIGRATIONS: Array<[number, string]> = [
   [1, `
@@ -332,6 +333,31 @@ const MIGRATIONS: Array<[number, string]> = [
     ALTER TABLE gateway_inbox ADD COLUMN received_at INTEGER NOT NULL DEFAULT 0;
     UPDATE gateway_inbox SET received_at=CAST(strftime('%s','now') AS INTEGER)*1000;
   `],
+  [18, `
+    CREATE TABLE system_file_entries (
+      owner_id TEXT NOT NULL REFERENCES users(id), path TEXT NOT NULL,
+      memory_id TEXT UNIQUE REFERENCES bot_memories(id), pending INTEGER NOT NULL DEFAULT 0,
+      content TEXT, expected TEXT, PRIMARY KEY(owner_id,path)
+    );
+  `],
+  [19, `
+    CREATE TABLE resource_roots (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL UNIQUE
+    );
+    CREATE TABLE resource_folders (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      folder_id INTEGER NOT NULL, project_id TEXT NOT NULL, path TEXT NOT NULL,
+      PRIMARY KEY(owner_id,folder_id)
+    );
+    CREATE TABLE resource_files (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      course_id TEXT NOT NULL, project_id TEXT NOT NULL, path TEXT NOT NULL,
+      identity TEXT NOT NULL, revision TEXT NOT NULL, source_file TEXT,
+      PRIMARY KEY(owner_id,course_id), UNIQUE(owner_id,project_id,path)
+    );
+    CREATE INDEX resource_files_identity ON resource_files(owner_id,project_id,identity);
+  `],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -384,10 +410,12 @@ const LEASE_MIGRATION = `
 
 export class DatabaseStore {
   readonly db: Database.Database;
+  readonly systemFiles: SystemFiles;
 
-  constructor(filename = process.env.DB_PATH ?? '/data/db/wangke.sqlite') {
+  constructor(filename = process.env.DB_PATH ?? '/data/db/wangke.sqlite', systemFilesDir = path.join(path.dirname(filename), 'system-files')) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new Database(filename);
+    this.systemFiles = new SystemFiles(systemFilesDir, this.db);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
@@ -421,6 +449,8 @@ export class DatabaseStore {
           { version: 16, tables: ['bot_requests', 'bot_artifacts', 'bot_summaries', 'bot_operations', 'bot_memories', 'bot_memory_versions', 'bot_memory_jobs'], extra: [['threads', 'skill_ids'], ['runs', 'active_ms'], ['runs', 'budget_json']], sql: MIGRATIONS.find(([v]) => v === 16)![1] },
           { version: 18, tables: ['projects', 'project_executions', 'project_agents'], extra: [['threads', 'project_id'], ['threads', 'agent_id'], ['threads', 'archived']], sql: PROJECT_MIGRATION },
           { version: 19, tables: [], extra: [['cloud_tasks', 'worker_id'], ['cloud_tasks', 'lease_expires_at']], sql: LEASE_MIGRATION },
+          { version: 20, tables: ['system_file_entries'], extra: [], sql: MIGRATIONS.find(([v]) => v === 18)![1] },
+          { version: 21, tables: ['resource_roots', 'resource_folders', 'resource_files'], extra: [], sql: MIGRATIONS.find(([v]) => v === 19)![1] },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -458,12 +488,16 @@ export class DatabaseStore {
         // in the gateway line, so add them without advancing the watermark.
         if (!present[4]) this.db.exec(groups[4].sql);
         if (!present[5]) this.db.exec(groups[5].sql);
+        apply(18, groups[6], 6);
+        apply(19, groups[7], 7);
       } finally { expected.close(); }
     })();
   }
 
   transaction<T>(fn: () => T): T {
-    return this.db.transaction(fn)();
+    const result = this.db.transaction(fn)();
+    this.systemFiles.flush();
+    return result;
   }
 
   /** Remove all application data while retaining the schema for a fresh bootstrap. */

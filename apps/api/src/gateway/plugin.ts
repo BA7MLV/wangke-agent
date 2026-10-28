@@ -1,4 +1,4 @@
-import type { GatewayEnvelope, GatewayManifest, GatewayPayload } from '../../../../packages/contracts/src/gateway.js';
+import type { GatewayEnvelope, GatewayManifest, GatewayPayload } from '@wangke/contracts/gateway';
 export type { GatewayEnvelope, GatewayManifest, GatewayPayload };
 export interface ChannelContext {
   signal: AbortSignal;

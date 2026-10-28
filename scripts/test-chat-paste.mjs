@@ -1,7 +1,7 @@
 // npx tsx --test scripts/test-chat-paste.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { pastedTextAttachment } from '../src/chat/paste.ts';
+import { pastedTextAttachment } from '../apps/web/src/chat/paste.ts';
 
 test('empty and short text stay in the composer', () => {
   for (const text of ['', 'hello', '中文🙂', 'a'.repeat(3999)]) {

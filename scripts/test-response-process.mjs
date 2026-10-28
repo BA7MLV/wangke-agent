@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { processSteps, processTitle } from '../src/utils/responseProcess.ts';
+import { processSteps, processTitle } from '../apps/web/src/utils/responseProcess.ts';
 
 test('分析与重复工具按真实先后交错，连续工具不生成空分析', () => {
   const calls = [

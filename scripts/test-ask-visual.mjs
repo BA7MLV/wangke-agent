@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
-import { askAnswerText, askUserToolResult, normalizeAskDraft, validateAskAnswer, validateAskUser } from '../src/harness/askUser.ts';
-import { readWidgetHeight, rememberWidgetHeight } from '../src/harness/widgetReading.ts';
+import { askAnswerText, askUserToolResult, normalizeAskDraft, validateAskAnswer, validateAskUser } from '../apps/web/src/harness/askUser.ts';
+import { readWidgetHeight, rememberWidgetHeight } from '../apps/web/src/harness/widgetReading.ts';
 
 const original = { question: '选择学习路线', options: [{ id: 'short', label: '快速回顾' }, { id: 'deep', label: '深入练习' }], allowCustom: false };
 const valid = validateAskUser({ ...original, presentation: { html: '<p>对比</p>' } });

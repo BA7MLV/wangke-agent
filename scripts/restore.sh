@@ -15,6 +15,7 @@ while [ "$#" -gt 0 ]; do
     *) [ -z "$ARCHIVE" ] || { echo "only one backup may be supplied" >&2; exit 2; }; ARCHIVE=$1; shift ;;
   esac
 done
+if [ -f "$DATA_DIR/releases/last-success.json" ]; then echo "Managed installation: use wangke-agent restore-release POINT --allow-data-loss; legacy archive restore would bypass the release transaction." >&2; exit 2; fi
 [ -n "$DATA_DIR" ] && [ -n "$ARCHIVE" ] || { usage >&2; exit 2; }
 [ -f "$ARCHIVE" ] || { echo "backup file not found" >&2; exit 1; }
 case "$DATA_DIR" in /|""|.) echo "refusing unsafe data directory" >&2; exit 1;; esac

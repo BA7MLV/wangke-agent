@@ -1,9 +1,9 @@
 // 用法：npx tsx --test scripts/test-bilibili-season.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { fetchVideoView } from '../src/bilibili/api.ts';
-import { resolveBiliTarget, fetchPageSubtitles, importBiliPages } from '../src/bilibili/index.ts';
-import { pageLabel, pageVideoTitle } from '../src/bilibili/pages.ts';
+import { fetchVideoView } from '../apps/web/src/bilibili/api.ts';
+import { resolveBiliTarget, fetchPageSubtitles, importBiliPages } from '../apps/web/src/bilibili/index.ts';
+import { pageLabel, pageVideoTitle } from '../apps/web/src/bilibili/pages.ts';
 
 const first = 'BV1Jft366E7W';
 const second = 'BV1QMtJ62EWj';

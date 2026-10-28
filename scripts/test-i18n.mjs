@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { test, after } from 'node:test';
 import 'fake-indexeddb/auto';
-import { normalizeUiLanguage, resolveLocale } from '../src/i18n/locale.ts';
+import { normalizeUiLanguage, resolveLocale } from '../apps/web/src/i18n/locale.ts';
 
 const storage = new Map();
 globalThis.localStorage = {
@@ -10,8 +10,8 @@ globalThis.localStorage = {
   removeItem: key => storage.delete(key),
 };
 globalThis.window = Object.assign(new EventTarget(), { localStorage: globalThis.localStorage });
-const { useSettings, migrateSettings, getSettings } = await import('../src/store/settings.ts');
-const { pickSyncSettings } = await import('../src/sync/units.ts');
+const { useSettings, migrateSettings, getSettings } = await import('../apps/web/src/store/settings.ts');
+const { pickSyncSettings } = await import('../apps/web/src/sync/units.ts');
 const initial = getSettings();
 
 test('new installs follow system; supported languages are resolved in preference order', () => {
@@ -61,7 +61,7 @@ test('persist merge and all update/import paths normalize the language', () => {
 });
 
 test('both bundled namespaces translate immediately without a network request', async () => {
-  const { default: i18n } = await import('../src/i18n/index.ts');
+  const { default: i18n } = await import('../apps/web/src/i18n/index.ts');
   assert.equal(i18n.isInitialized, true);
   assert.equal(i18n.t('settings'), '设置');
   await i18n.changeLanguage('en-US');
@@ -75,7 +75,7 @@ test('store + system-language sync updates HTML and title, with explicit prefere
   const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, 'navigator');
   Object.defineProperty(globalThis, 'navigator', { configurable: true, value: { languages: ['en-GB'], language: 'en-GB' } });
   globalThis.document = { documentElement: { lang: '', dir: '' }, title: '' };
-  const { startLocaleSync } = await import('../src/i18n/settings.ts');
+  const { startLocaleSync } = await import('../apps/web/src/i18n/settings.ts');
   useSettings.getState().update({ uiLanguage: 'auto' });
   const stop = startLocaleSync();
   try {
@@ -99,9 +99,9 @@ test('store + system-language sync updates HTML and title, with explicit prefere
 });
 
 test('cloud preferences validate incoming values and store the auto sentinel', async () => {
-  const { db } = await import('../src/store/db.ts');
-  const { cloud } = await import('../src/cloud/state.ts');
-  const { loadPreferences, startPreferences, flushPreferences } = await import('../src/cloud/preferences.ts');
+  const { db } = await import('../apps/web/src/store/db.ts');
+  const { cloud } = await import('../apps/web/src/cloud/state.ts');
+  const { loadPreferences, startPreferences, flushPreferences } = await import('../apps/web/src/cloud/preferences.ts');
   await db.table('preferences').put({ id: 'uiLanguage', value: 'en-US' });
   await loadPreferences();
   assert.equal(getSettings().uiLanguage, 'en-US');

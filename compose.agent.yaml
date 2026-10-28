@@ -1,6 +1,6 @@
 # Optional autonomous execution layer. The Docker socket belongs only to the broker.
 services:
-  app:
+  api:
     environment:
       SANDBOX_URL: http://sandbox-broker:3001
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
@@ -9,13 +9,11 @@ services:
       sandbox-broker:
         condition: service_healthy
   sandbox-broker:
-    build:
-      context: .
-      dockerfile: infra/sandbox/broker.Dockerfile
+    image: "${WANGKE_BROKER_IMAGE:-wangke-sandbox-broker:0.1.0}"
     restart: unless-stopped
     environment:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
-      SANDBOX_IMAGE: wangke-sandbox:0.1.0
+      SANDBOX_IMAGE: "${WANGKE_SANDBOX_IMAGE:-wangke-sandbox:0.1.0}"
       SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
       SANDBOX_PROJECTS_DIR: /data/files/projects
       SANDBOX_UID: ${WANGKE_UID:-1000}
@@ -32,8 +30,5 @@ services:
       timeout: 3s
       retries: 3
   sandbox-image:
-    build:
-      context: .
-      dockerfile: infra/sandbox/Dockerfile
-    image: wangke-sandbox:0.1.0
+    image: "${WANGKE_SANDBOX_IMAGE:-wangke-sandbox:0.1.0}"
     profiles: [build]

@@ -1,15 +1,2 @@
-import { build } from 'esbuild';
-import { cpSync } from 'node:fs';
-
-cpSync('src/skills/builtin', 'dist-api/src/skills/builtin', { recursive: true });
-
-const result = await build({
-  entryPoints: ['apps/api/runtime/node.ts'],
-  outfile: 'dist-api/apps/api/runtime/node.mjs',
-  bundle: true, platform: 'node', format: 'esm', target: 'node22',
-  packages: 'external', sourcemap: true, metafile: true,
-});
-// Fail the build rather than silently reintroducing browser storage/UI into Node execution.
-const forbidden = Object.keys(result.metafile.inputs).filter(file =>
-  /^src\/(?:cloud\/|store\/(?:db|courseChat|settings)\.|components\/|md-editor\/)/.test(file));
-if (forbidden.length) throw new Error(`Browser dependency in Node runtime: ${forbidden.join(', ')}`);
+// Compatibility command; implementation and configuration belong to the API.
+await import('../apps/api/scripts/build-runtime.mjs');

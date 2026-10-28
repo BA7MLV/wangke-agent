@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from '../cloud/config.js';
-import type { McpServer, McpServerInput } from '../../../../packages/contracts/src/mcp.js';
+import type { McpServer, McpServerInput } from '@wangke/contracts/mcp';
 import type { OAuthData } from './oauth.js';
 import { parseMcpImport } from './import.js';
 

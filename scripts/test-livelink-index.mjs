@@ -28,7 +28,7 @@ import {
   buildContentUnit,
   coverUnitFromBlob,
   bytesToBase64,
-} from '../src/livelink/payloads.ts';
+} from '../apps/web/src/livelink/payloads.ts';
 
 // ---------- 1. 索引：fileDeleted 也要给 guest，其余本机事实不带 ----------
 

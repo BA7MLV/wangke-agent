@@ -1,4 +1,4 @@
-import type { McpServerInput } from '../../../../packages/contracts/src/mcp.js';
+import type { McpServerInput } from '@wangke/contracts/mcp';
 
 /** Explicitly supported formats: Claude mcpServers and VS Code mcp.servers/servers. */
 export function parseMcpImport(value: unknown): McpServerInput[] {

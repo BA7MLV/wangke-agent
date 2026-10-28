@@ -68,7 +68,7 @@ export class ToolRegistry {
       if (error instanceof BudgetBlocked) throw error;
       context.signal.throwIfAborted();
       context.checkActive();
-      const safeCodes = ['skill_not_available', 'skill_reference_not_found', 'invalid_skill_reference', 'memory_revision_conflict', 'memory_not_found', 'memory_source_tombstoned', 'sandbox_unavailable'];
+      const safeCodes = ['skill_not_available', 'skill_reference_not_found', 'invalid_skill_reference', 'memory_revision_conflict', 'memory_not_found', 'memory_source_tombstoned', 'memory_source_changed', 'system_revision_conflict', 'system_file_changed', 'invalid_system_path', 'invalid_diary_date', 'edit_not_found', 'edit_ambiguous', 'edit_overlap', 'invalid_edit_mode', 'invalid_result_budget', 'invalid_result_offset', 'result_budget_too_small', 'invalid_search_query', 'invalid_search_cursor', 'search_cursor_expired', 'checkpoint_not_found', 'checkpoint_source_changed', 'sandbox_unavailable'];
       const code = signal.aborted ? 'tool_timeout' : error instanceof Error && safeCodes.includes(error.message) ? error.message : 'tool_failed';
       return { ok: false, error: { code, hint: entry.recovery === 'uncertain' ? 'Side effects may have occurred. Inspect evidence; do not automatically replay.' : 'Check current permissions and input before retrying.' } };
     } finally { if (abort) signal.removeEventListener('abort', abort); }

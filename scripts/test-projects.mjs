@@ -66,7 +66,7 @@ const sandbox = async (request, signal) => {
 };
 let cleanupAvailable = true;
 const cleanups = [];
-const options = { dbPath: path.join(directory, 'db/app.sqlite'), staticDir: path.join(directory, 'empty'), fetch: fetcher, sandbox,
+const options = { dbPath: path.join(directory, 'db/app.sqlite'), fetch: fetcher, sandbox,
   sandboxCleanup: async executionId => { if (!cleanupAvailable) throw new Error('broker offline'); cleanups.push(executionId); },
 };
 let app;

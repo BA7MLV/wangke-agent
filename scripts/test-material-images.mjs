@@ -3,7 +3,7 @@ import 'fake-indexeddb/auto';
 import { zipSync, strToU8 } from 'fflate';
 import { createServer } from 'vite';
 
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { middlewareMode: true }, appType: 'custom' });
 try {
   const { db } = await server.ssrLoadModule('/src/store/db.ts');
   const refs = await server.ssrLoadModule('/src/materials/imageRefs.ts');

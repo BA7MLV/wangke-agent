@@ -1,0 +1,9 @@
+services:
+  sandbox-broker:
+    build:
+      context: .
+      dockerfile: infra/sandbox/broker.Dockerfile
+  sandbox-image:
+    build:
+      context: .
+      dockerfile: infra/sandbox/Dockerfile

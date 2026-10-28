@@ -95,10 +95,10 @@ const OUT = mkdtempSync(join(tmpdir(), 'live-host-wiring-'));
 const entry = join(OUT, 'entry.ts');
 writeFileSync(
   entry,
-  `export { LiveHost, HostCore, ackFrameFor, chatEvFor, chatDoneFor } from '${join(ROOT, 'src/livelink/host.ts')}';
-   export * from '${join(ROOT, 'src/livelink/protocol.ts')}';
-   export { db } from '${join(ROOT, 'src/store/db.ts')}';
-   export { useSettings } from '${join(ROOT, 'src/store/settings.ts')}';
+  `export { LiveHost, HostCore, ackFrameFor, chatEvFor, chatDoneFor } from '${join(ROOT, 'apps/web/src/livelink/host.ts')}';
+   export * from '${join(ROOT, 'apps/web/src/livelink/protocol.ts')}';
+   export { db } from '${join(ROOT, 'apps/web/src/store/db.ts')}';
+   export { useSettings } from '${join(ROOT, 'apps/web/src/store/settings.ts')}';
   `,
 );
 await build({

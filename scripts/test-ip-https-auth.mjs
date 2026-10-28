@@ -15,7 +15,7 @@ Object.assign(process.env, {
 });
 delete process.env.ALLOW_INSECURE_CSRF;
 const { buildServer } = await import('../apps/api/src/server.ts');
-const options = { dbPath: path.join(directory, 'db.sqlite'), staticDir: path.join(directory, 'empty') };
+const options = { dbPath: path.join(directory, 'db.sqlite') };
 let app = buildServer(options);
 const password = 'disposable-ip-login-test-only';
 try {

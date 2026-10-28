@@ -28,9 +28,9 @@ globalThis.indexedDB = indexedDB;
 globalThis.IDBKeyRange = IDBKeyRange;
 
 // db 与 ops 必须来自同一份源码（同一份 db 单例），否则测试会假绿
-const { db } = await import('../src/store/db.ts');
+const { db } = await import('../apps/web/src/store/db.ts');
 const { applyPosition, applyStudyAdd, applyCardDecide, applyChatStop, createLruDedup, OpQueue } =
-  await import('../src/livelink/ops.ts');
+  await import('../apps/web/src/livelink/ops.ts');
 
 let passed = 0;
 const failures = [];

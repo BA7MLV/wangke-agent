@@ -5,7 +5,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import 'fake-indexeddb/auto';
 import Dexie from 'dexie';
-import { installCloudCache, markCloudApply } from '../src/cloud/cache.ts';
+import { installCloudCache, markCloudApply } from '../apps/web/src/cloud/cache.ts';
 import { DatabaseStore } from '../apps/api/src/storage/database.ts';
 import { CloudRecords, CloudConflict } from '../apps/api/src/cloud/records.ts';
 import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';

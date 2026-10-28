@@ -3,8 +3,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
 
-const layout = await readFile(new URL('../src/ui/layout.css', import.meta.url), 'utf8');
-const transitions = await readFile(new URL('../src/transitions.css', import.meta.url), 'utf8');
+const layout = await readFile(new URL('../apps/web/src/ui/layout.css', import.meta.url), 'utf8');
+const transitions = await readFile(new URL('../apps/web/src/transitions.css', import.meta.url), 'utf8');
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   const page = await browser.newPage();

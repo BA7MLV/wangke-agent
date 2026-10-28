@@ -12,7 +12,7 @@
  */
 import assert from 'node:assert/strict';
 
-const { progressRatio, MIN_VISIBLE_RATIO } = await import('../src/utils/videoProgress.ts');
+const { progressRatio, MIN_VISIBLE_RATIO } = await import('../apps/web/src/utils/videoProgress.ts');
 
 let passed = 0;
 const failures = [];

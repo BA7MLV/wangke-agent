@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { EditorState } from '@codemirror/state';
 import { history, undo } from '@codemirror/commands';
-import { formatMarkdown, MD_FORMAT_ACTIONS } from '../src/md-editor/format.ts';
+import { formatMarkdown, MD_FORMAT_ACTIONS } from '../apps/web/src/md-editor/format.ts';
 
 function apply(doc, action, from = 0, to = doc.length) {
   const state = EditorState.create({ doc, selection: { anchor: from, head: to }, extensions: [history()] });

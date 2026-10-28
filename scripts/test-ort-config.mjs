@@ -14,7 +14,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = path.join(os.tmpdir(), `test-ort-config-${Date.now()}.mjs`);
 
 execSync(
-  `node_modules/.bin/esbuild src/media/ortConfig.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
+  `node_modules/.bin/esbuild apps/web/src/media/ortConfig.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
   { cwd: root, stdio: 'inherit' },
 );
 
@@ -42,7 +42,7 @@ test('mjs/wasm 指向非 jsep 文件名', () => {
 });
 
 test('public/ort 存在对应文件', () => {
-  const dir = path.join(root, 'public/ort');
+  const dir = path.join(root, 'apps/web/public/ort');
   for (const name of ['ort-wasm-simd-threaded.mjs', 'ort-wasm-simd-threaded.wasm']) {
     const p = path.join(dir, name);
     assert.equal(fs.existsSync(p), true, `missing ${name}`);
@@ -50,12 +50,12 @@ test('public/ort 存在对应文件', () => {
 });
 
 test('托管 wasm 不超过 Cloudflare Pages 单文件上限', () => {
-  const wasm = path.join(root, 'public/ort/ort-wasm-simd-threaded.wasm');
+  const wasm = path.join(root, 'apps/web/public/ort/ort-wasm-simd-threaded.wasm');
   assert.ok(fs.statSync(wasm).size < CF_MAX);
 });
 
 test('public/ort 不含超限的 jsep wasm', () => {
-  const jsep = path.join(root, 'public/ort/ort-wasm-simd-threaded.jsep.wasm');
+  const jsep = path.join(root, 'apps/web/public/ort/ort-wasm-simd-threaded.jsep.wasm');
   assert.equal(fs.existsSync(jsep), false);
 });
 
@@ -74,13 +74,13 @@ test('隔离环境下仍强制非 jsep 路径且不强制单线程', () => {
 });
 
 test('vite 把 onnxruntime-web 精确别名到非 jsep 的 wasm 构建', () => {
-  const cfg = fs.readFileSync(path.join(root, 'vite.config.ts'), 'utf8');
+  const cfg = fs.readFileSync(path.join(root, 'apps/web/vite.config.ts'), 'utf8');
   assert.match(cfg, /find:\s*\/\^onnxruntime-web\(\?:\\\/wasm\)\?\$\//);
   assert.match(cfg, /ort\.wasm\.min\.mjs/);
   assert.match(cfg, /Cross-Origin-Embedder-Policy/);
 });
 
-const headersPath = path.join(root, 'public/_headers');
+const headersPath = path.join(root, 'apps/web/public/_headers');
 test('Cloudflare Pages 下发 COOP/COEP', () => {
   const text = fs.readFileSync(headersPath, 'utf8');
   assert.match(text, /Cross-Origin-Opener-Policy:\s*same-origin/);

@@ -76,10 +76,10 @@ const OUT = mkdtempSync(join(tmpdir(), 'qa-runner-'));
 const entry = join(OUT, 'entry.ts');
 writeFileSync(
   entry,
-  `export { runQa, qaToolHint } from '${join(ROOT, 'src/harness/qaRunner.ts')}';
-   export { useSettings } from '${join(ROOT, 'src/store/settings.ts')}';
-   export { db } from '${join(ROOT, 'src/store/db.ts')}';
-   export { messageDefects } from '${join(ROOT, 'src/api/messageHygiene.ts')}';
+  `export { runQa, qaToolHint } from '${join(ROOT, 'apps/web/src/harness/qaRunner.ts')}';
+   export { useSettings } from '${join(ROOT, 'apps/web/src/store/settings.ts')}';
+   export { db } from '${join(ROOT, 'apps/web/src/store/db.ts')}';
+   export { messageDefects } from '${join(ROOT, 'apps/web/src/api/messageHygiene.ts')}';
   `,
 );
 await build({

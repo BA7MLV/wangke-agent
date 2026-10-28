@@ -1,12 +1,13 @@
 import path from 'node:path';
 import type { DatabaseStore } from '../storage/database.js';
-import type { CloudTask, CloudTaskKind } from '../../../../packages/contracts/src/cloud.js';
+import type { CloudTask, CloudTaskKind } from '@wangke/contracts/cloud';
 import { CloudConfiguration } from './config.js';
 import { CloudRecords } from './records.js';
 import { executeMediaTask } from './media.js';
 import { executorFor, type TaskContext, type TaskExecutor } from './execution.js';
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 import { accountedFetch } from '../agent/accounted-fetch.js';
+import { settleWithin } from '../lifecycle.js';
 export { workerIdentity } from './workerAuth.js';
 
 export const TASK_KINDS: CloudTaskKind[] = ['chat', 'qa', 'transcribe', 'handout', 'cards', 'comments', 'danmaku', 'material', 'cover', 'artifactEdit', 'handoutEdit', 'modelOnce'];
@@ -19,7 +20,7 @@ export function taskDto(row: any): CloudTask {
 let nativeRuntime: Promise<{ executeNodeTask: TaskExecutor }> | undefined;
 const executeNodeTask: TaskExecutor = async context => {
   const runtime = new URL(import.meta.url.endsWith('.ts')
-    ? '../../../../dist-api/apps/api/runtime/node.mjs' : '../../runtime/node.mjs', import.meta.url);
+    ? '../../dist/apps/api/runtime/node.mjs' : '../../runtime/node.mjs', import.meta.url);
   nativeRuntime ??= import(runtime.href);
   return (await nativeRuntime!).executeNodeTask(context);
 };
@@ -36,6 +37,7 @@ interface RunnerOptions {
 /** Single-instance durable scheduler; execution backends do not own queue state. */
 export class CloudTaskRunner {
   private stopped = false;
+  private quiescing = false;
   private active = new Map<string, AbortController>();
   private draining = false;
   private resetting = false;
@@ -50,7 +52,7 @@ export class CloudTaskRunner {
   }
 
   start(origin: string) {
-    if (this.timer || this.stopped) return;
+    if (this.timer || this.stopped || this.quiescing) return;
     this.timer = setInterval(() => this.schedule(origin), 1000);
     this.timer.unref();
     this.schedule(origin);
@@ -60,7 +62,7 @@ export class CloudTaskRunner {
     console.error('cloud_task_scheduler_unavailable');
   }
   private schedule(origin: string) {
-    if (this.stopped || Date.now() < this.retryAt) return;
+    if (this.stopped || this.quiescing || Date.now() < this.retryAt) return;
     void this.drain(origin).catch(() => this.schedulerFailure());
   }
   async cancel(id: string) { this.active.get(id)?.abort(); await this.running.get(id); }
@@ -70,14 +72,21 @@ export class CloudTaskRunner {
     await Promise.allSettled(this.running.values());
     this.resetting = false;
   }
+  /** Native work can finish; browser leases retain their restart recovery rules. */
+  async quiesce(milliseconds: number) {
+    this.quiescing = true;
+    clearInterval(this.timer);
+    return settleWithin(this.running.values(), milliseconds);
+  }
   async close() {
+    this.quiescing = true;
     this.stopped = true;
     clearInterval(this.timer);
     for (const controller of this.active.values()) controller.abort();
     await Promise.allSettled(this.running.values());
   }
   private async drain(origin: string) {
-    if (this.stopped || this.resetting || this.draining) return;
+    if (this.stopped || this.quiescing || this.resetting || this.draining) return;
     this.draining = true;
     try {
       if (!this.recovered) {

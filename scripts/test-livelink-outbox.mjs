@@ -24,7 +24,7 @@
  */
 import assert from 'node:assert/strict';
 
-const { Outbox, OUTBOX_STORAGE_KEY, createLocalStorageOutbox } = await import('../src/livelink/outbox.ts');
+const { Outbox, OUTBOX_STORAGE_KEY, createLocalStorageOutbox } = await import('../apps/web/src/livelink/outbox.ts');
 
 let passed = 0;
 const failures = [];

@@ -32,19 +32,19 @@ async function test(name, run) {
 try {
   const entry = join(out, 'entry.ts');
   writeFileSync(entry, `
-    export * from '${join(root, 'src/api/typesafe.ts')}';
-    export * from '${join(root, 'src/harness/jevContext.ts')}';
-    export { fitHistoryToBudget } from '${join(root, 'src/harness/context.ts')}';
-    export * from '${join(root, 'src/store/contextCompression.ts')}';
-    export { routeSkillsWithJev } from '${join(root, 'src/skills/jevRoute.ts')}';
-    export { routeHandoutSkills } from '${join(root, 'src/skills/router.ts')}';
-    export { loadEnabledSkillMeta } from '${join(root, 'src/skills/store.ts')}';
-    export { useSettings, getSettings, defaultJevSettings, migrateSettings, decisionConfigOf } from '${join(root, 'src/store/settings.ts')}';
-    export { editModelPatch, modelsForSlot, suggestedModelSlots } from '${join(root, 'src/store/modelLibrary.ts')}';
-    export { refreshModelMeta, parseModelMeta } from '${join(root, 'src/api/modelMeta.ts')}';
-    export { pickSyncSettings } from '${join(root, 'src/sync/units.ts')}';
-    export { exportMigrationZip } from '${join(root, 'src/store/migration.ts')}';
-    export { db } from '${join(root, 'src/store/db.ts')}';
+    export * from '${join(root, 'apps/web/src/api/typesafe.ts')}';
+    export * from '${join(root, 'apps/web/src/harness/jevContext.ts')}';
+    export { fitHistoryToBudget } from '${join(root, 'apps/web/src/harness/context.ts')}';
+    export * from '${join(root, 'apps/web/src/store/contextCompression.ts')}';
+    export { routeSkillsWithJev } from '${join(root, 'apps/web/src/skills/jevRoute.ts')}';
+    export { routeHandoutSkills } from '${join(root, 'apps/web/src/skills/router.ts')}';
+    export { loadEnabledSkillMeta } from '${join(root, 'apps/web/src/skills/store.ts')}';
+    export { useSettings, getSettings, defaultJevSettings, migrateSettings, decisionConfigOf } from '${join(root, 'apps/web/src/store/settings.ts')}';
+    export { editModelPatch, modelsForSlot, suggestedModelSlots } from '${join(root, 'apps/web/src/store/modelLibrary.ts')}';
+    export { refreshModelMeta, parseModelMeta } from '${join(root, 'apps/web/src/api/modelMeta.ts')}';
+    export { pickSyncSettings } from '${join(root, 'apps/web/src/sync/units.ts')}';
+    export { exportMigrationZip } from '${join(root, 'apps/web/src/store/migration.ts')}';
+    export { db } from '${join(root, 'apps/web/src/store/db.ts')}';
   `);
   await build({ entryPoints: [entry], outfile: join(out, 'bundle.mjs'), bundle: true, format: 'esm', platform: 'node', logLevel: 'silent', loader: { '.md': 'text' }, define: { 'import.meta.env': '{}' } });
   const api = await import(pathToFileURL(join(out, 'bundle.mjs')).href);

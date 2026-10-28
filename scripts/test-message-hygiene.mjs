@@ -20,7 +20,7 @@
 import assert from 'node:assert/strict';
 
 const { assertRequestSafe, describeMessage, isUnreplayable, messageDefects, sanitizeMessages, syntheticToolResult } =
-  await import('../src/api/messageHygiene.ts');
+  await import('../apps/web/src/api/messageHygiene.ts');
 // diagnose400 住在 siliconflow.ts（那里才有 textOf / ApiError）；esbuild 打一遍 bundle 拿它
 const { diagnose400 } = await (async () => {
   const { build } = await import('esbuild');
@@ -30,7 +30,7 @@ const { diagnose400 } = await (async () => {
   const { pathToFileURL } = await import('node:url');
   const out = mkdtempSync(join(tmpdir(), 'hygiene-diag-'));
   await build({
-    entryPoints: [join(new URL('..', import.meta.url).pathname, 'src/api/siliconflow.ts')],
+    entryPoints: [join(new URL('..', import.meta.url).pathname, 'apps/web/src/api/siliconflow.ts')],
     outdir: out,
     bundle: true,
     format: 'esm',

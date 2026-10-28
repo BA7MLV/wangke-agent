@@ -4,7 +4,7 @@ import { appendAudit } from '../storage/audit.js';
 
 export type BotLifecycleEvent = {
   id: string; at: string; owner: string; thread?: string; run?: string; step?: string; requestId?: string;
-  type: 'run.started' | 'run.paused' | 'run.finished' | 'model.started' | 'model.finished' | 'tool.started' | 'tool.finished' | 'approval.waiting' | 'compaction.saved' | 'memory.saved' | 'delivery.finished';
+  type: 'run.started' | 'run.paused' | 'run.finished' | 'model.started' | 'model.finished' | 'tool.started' | 'tool.finished' | 'approval.waiting' | 'compaction.saved' | 'memory.saved' | 'memory.deleted' | 'delivery.finished';
   status?: string;
 };
 export type BotEventHook = (event: Readonly<BotLifecycleEvent>) => void | Promise<void>;

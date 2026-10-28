@@ -1,18 +1,18 @@
-/** Bundled for Node, reusing the same client, prompts, parsers and generators as the UI. */
+/** Node execution consumes environment-neutral packages, never Web application sources. */
 import fs from 'node:fs/promises';
-import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '../../../src/api/modelClient';
-import type { ModelOverrides } from '../../../src/api/modelMeta';
-import type { ModelTarget } from '../../../src/store/settings';
-import { generateText, type TextSegment } from '../../../src/pipelines/textGeneration';
-import { rewriteBlock, type RewriteContext } from '../../../src/handout/rewrite';
-import type { Block } from '../../../src/handout/ir';
-import { PROMPTS } from '../../../src/harness/prompts';
-import { lexicalSearch } from '../../../src/harness/lexical';
-import { fmtTime } from '../../../src/utils/vtt';
-import { extractMdUnits, readMdText } from '../../../src/materials/md';
-import { readDocxUnits } from '../../../src/materials/docx';
-import { chunkUnits, countChars, judgeMaterialText } from '../../../src/materials/chunk';
-import { applyArtifactReply, MAX_ARTIFACT_LENGTH, parseArtifactReply, type ArtifactKind } from '../../../src/utils/artifactEdit';
+import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '@wangke/study-core/model/client';
+import type { ModelOverrides } from '@wangke/study-core/model/meta';
+import type { ModelTarget } from '@wangke/study-core/model/types';
+import { generateText, type TextSegment } from '@wangke/study-core/generation/text';
+import { rewriteBlock, type RewriteContext } from '@wangke/study-core/handout/rewrite';
+import type { Block } from '@wangke/study-core/handout/ir';
+import { PROMPTS } from '@wangke/study-core/prompts';
+import { lexicalSearch } from '@wangke/study-core/search';
+import { fmtTime } from '@wangke/study-core/text/vtt';
+import { extractMdUnits, readMdText } from '@wangke/study-core/materials/markdown';
+import { readDocxUnits } from '@wangke/study-core/materials/docx';
+import { chunkUnits, countChars, judgeMaterialText } from '@wangke/study-core/materials/chunk';
+import { applyArtifactReply, MAX_ARTIFACT_LENGTH, parseArtifactReply, type ArtifactKind } from '@wangke/study-core/artifact-edit';
 import { commitTask, newRecordId, recordMutation, taskCourseFile, taskRows, type TaskContext } from '../src/cloud/execution';
 import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
 import { receiveFile } from '../src/cloud/files';
@@ -580,11 +580,15 @@ async function material(context: TaskContext) {
   const format = context.task.input.format as 'md' | 'docx';
   const video = context.records.get(context.owner, 'videos', id);
   if (!video) throw new Error('材料不存在');
-  const filename = taskCourseFile(context, id);
-  if (!filename) throw new Error('材料文件不存在');
-  context.report({ phase: 'parse', done: 0, total: 1, message: '正在解析材料…' });
-  if ((await fs.stat(filename)).size > 128 * 1024 * 1024) throw new Error('材料超过原生解析的 128 MiB 限制，请拆分后重新导入');
-  const data = await fs.readFile(filename, { signal: context.signal });
+  const file = taskCourseFile(context, id);
+  if (!file) throw new Error('材料文件不存在');
+  let data: Buffer;
+  try {
+    context.report({ phase: 'parse', done: 0, total: 1, message: '正在解析材料…' });
+    if (file.size > 128 * 1024 * 1024) throw new Error('材料超过原生解析的 128 MiB 限制，请拆分后重新导入');
+    data = await fs.readFile(file.filename, { signal: context.signal });
+    file.assertCurrent();
+  } finally { file.close(); }
   context.checkActive();
   const blob = new Blob([new Uint8Array(data)]);
   const units = format === 'md' ? extractMdUnits(await readMdText(blob)) : await readDocxUnits(blob, 32 * 1024 * 1024);
@@ -592,6 +596,7 @@ async function material(context: TaskContext) {
   const totalChars = countChars(blocks);
   const unitCount = new Set(blocks.map(block => block.unit)).size;
   const { scanned, empty } = judgeMaterialText(format, totalChars, unitCount);
+  file.assertCurrent();
   // Re-read the video at commit time, retaining concurrently changed playback/title fields.
   const current = context.records.get(context.owner, 'videos', id);
   if (!current) throw new Error('材料已删除');

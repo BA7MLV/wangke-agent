@@ -11,7 +11,7 @@ globalThis.fetch = async () => {
   fetchAttempts++;
   throw new Error('Skill catalog regression: network deliberately blocked');
 };
-const server = await createServer({ server: { middlewareMode: true, hmr: false }, appType: 'custom' });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { middlewareMode: true, hmr: false }, appType: 'custom' });
 let db;
 let failures = 0;
 let passed = 0;

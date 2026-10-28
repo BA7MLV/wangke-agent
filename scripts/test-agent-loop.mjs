@@ -53,9 +53,9 @@ globalThis.localStorage = { getItem: () => null, setItem: () => {}, removeItem: 
 const entry = join(OUT, 'entry.ts');
 writeFileSync(
   entry,
-  `export { runAgentLoop } from '${join(ROOT, 'src/harness/agent.ts')}';
-   export { messageDefects, sanitizeMessages } from '${join(ROOT, 'src/api/messageHygiene.ts')}';
-   export { useSettings } from '${join(ROOT, 'src/store/settings.ts')}';
+  `export { runAgentLoop } from '${join(ROOT, 'apps/web/src/harness/agent.ts')}';
+   export { messageDefects, sanitizeMessages } from '${join(ROOT, 'apps/web/src/api/messageHygiene.ts')}';
+   export { useSettings } from '${join(ROOT, 'apps/web/src/store/settings.ts')}';
   `,
 );
 await build({

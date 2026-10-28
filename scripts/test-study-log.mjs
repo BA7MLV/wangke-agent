@@ -24,7 +24,7 @@ import {
   splitByDay,
   toSecondsMap,
   weekStart,
-} from '../src/utils/studyLog.ts';
+} from '../apps/web/src/utils/studyLog.ts';
 
 let passed = 0;
 const failures = [];

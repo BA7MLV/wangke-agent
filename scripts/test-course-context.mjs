@@ -4,7 +4,7 @@ import {
   MAX_COURSE_CONTEXT,
   normalizeCourseContextIds,
   resolveCourseSearchScope,
-} from '../src/harness/courseContext.ts';
+} from '../apps/web/src/harness/courseContext.ts';
 
 let passed = 0;
 const failures = [];

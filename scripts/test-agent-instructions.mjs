@@ -8,7 +8,7 @@ globalThis.localStorage = {
   setItem: (key, value) => storage.set(key, value),
   removeItem: key => storage.delete(key),
 };
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { middlewareMode: true }, appType: 'custom' });
 globalThis.window = Object.assign(new EventTarget(), { localStorage: globalThis.localStorage });
 try {
   const { normalizeAgentInstructions, withAgentInstructions } = await server.ssrLoadModule('/src/harness/agentInstructions.ts');
@@ -85,7 +85,8 @@ try {
   assert.equal(parseResource('/system/../AGENTS.md'), undefined);
   assert.match(await library('read', { path: '/system' }), /\/system\/AGENTS\.md/);
   assert.match(await course('read', { path: '/system' }), /\/system\/AGENTS\.md/);
-  assert.match(await library('read', { path: '/system', offset: 1 }), /末尾/);
+  assert.match(await library('read', { path: '/system', offset: 1 }), /\/system\/memory/);
+  assert.match(await library('read', { path: '/system', offset: 2 }), /末尾/);
   assert.match(await library('edit', { path: '/system', create: true, content: '禁止覆盖目录' }), /目录只支持 read/);
   // 旧路径仅作为兼容别名，输出始终指向新位置。
   assert.deepEqual(parseResource('/AGENTS.md'), { type: 'markdown', id: 'AGENTS.md' });

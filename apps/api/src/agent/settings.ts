@@ -1,5 +1,5 @@
 import crypto from 'node:crypto';
-import type { AgentPolicy, CloudConfig } from '../../../../packages/contracts/src/cloud.js';
+import type { AgentPolicy, CloudConfig } from '@wangke/contracts/cloud';
 import type { CloudConfiguration } from '../cloud/config.js';
 import type { ProjectRepository, ProjectThread } from '../projects/repository.js';
 import { ProjectError } from '../projects/files.js';

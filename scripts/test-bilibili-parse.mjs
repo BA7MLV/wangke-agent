@@ -13,7 +13,7 @@ const tmp = path.join(os.tmpdir(), `test-bilibili-parse-${Date.now()}.mjs`);
 
 // 用 esbuild 把 TS 转成可直跑的 ESM
 execSync(
-  `node_modules/.bin/esbuild src/bilibili/parse.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
+  `node_modules/.bin/esbuild apps/web/src/bilibili/parse.ts --bundle --platform=node --format=esm --outfile=${tmp}`,
   { cwd: root, stdio: 'inherit' },
 );
 

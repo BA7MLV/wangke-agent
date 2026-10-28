@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { ASSISTANT_DEFAULT_SIZE, ASSISTANT_RESIZE_EDGES, getAssistantLayout, resizeAssistantLayout } from '../src/components/assistantGeometry.ts';
+import { ASSISTANT_DEFAULT_SIZE, ASSISTANT_RESIZE_EDGES, getAssistantLayout, resizeAssistantLayout } from '../apps/web/src/components/assistantGeometry.ts';
 
 test('默认尺寸适中，四角展开不移动入口且不覆盖入口', () => {
   assert.deepEqual(ASSISTANT_DEFAULT_SIZE, { width: 420, height: 520 });

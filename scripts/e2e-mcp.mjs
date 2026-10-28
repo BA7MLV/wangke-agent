@@ -48,7 +48,7 @@ const fixture = http.createServer(async (req, res) => {
 await new Promise(r => fixture.listen(0, '127.0.0.1', r));
 const endpoint = `http://127.0.0.1:${fixture.address().port}/mcp`;
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath: path.join(dir, 'app.sqlite'), staticDir: path.resolve('dist'), fetch: async (_url, init) => {
+const app = buildServer({ dbPath: path.join(dir, 'app.sqlite'), fetch: async (_url, init) => {
   const body = JSON.parse(init.body);
   const tool = body.tools?.find(t => t.function?.name.startsWith('mcp_'));
   const hasResult = body.messages.some(m => m.role === 'tool' && String(m.content).includes('MCP verified learning fact'));
@@ -59,10 +59,12 @@ const app = buildServer({ dbPath: path.join(dir, 'app.sqlite'), staticDir: path.
   const frame = data => `data: ${JSON.stringify(data)}\n\n`;
   return new Response(frame({ choices: [{ index: 0, delta, finish_reason: null }] }) + frame({ choices: [{ index: 0, delta: {}, finish_reason: tool && !hasResult ? 'tool_calls' : 'stop' }] }) + 'data: [DONE]\n\n', { headers: { 'content-type': 'text/event-stream' } });
 } });
-let browser, store;
+let browser, store, web;
 try {
   await app.listen({ port: 0, host: '127.0.0.1' });
-  const base = `http://127.0.0.1:${app.server.address().port}`;
+  const { startWebFixture } = await import('./lib/web-fixture.mjs');
+  web = await startWebFixture(`http://127.0.0.1:${app.server.address().port}`);
+  const base = web.origin;
   const secret = fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim();
   await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': secret }, payload: { adminPassword: 'test-password-long-enough' } });
   const login = await app.inject({ method: 'POST', url: '/api/v1/auth/password/login', payload: { password: 'test-password-long-enough' } });
@@ -197,7 +199,7 @@ try {
   for (const context of browser?.contexts() ?? []) for (const page of context.pages()) console.error('Page:', page.url(), await page.locator('body').innerText().catch(() => 'unavailable'));
   throw error;
 } finally {
-  await browser?.close(); await app.close(); store?.close();
+  await browser?.close(); await web?.close(); await app.close(); store?.close();
   fixture.closeAllConnections(); await new Promise(r => fixture.close(r));
   fs.rmSync(dir, { recursive: true, force: true });
 }

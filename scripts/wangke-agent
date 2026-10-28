@@ -5,11 +5,15 @@ DATA_DIR="${WANGKE_DATA_DIR:-${HOME:?}/.wangke-agent}"
 DEFAULT_COMPOSE_FILE="${WANGKE_DEFAULT_COMPOSE_FILE:-__DEFAULT_COMPOSE_FILE__}"
 COMPOSE_FILE="${WANGKE_COMPOSE_FILE:-$DEFAULT_COMPOSE_FILE}"
 SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-usage() { echo "Usage: wangke-agent [--data-dir DIR] [--compose-file FILE] {status|logs|stop|start|restart|update|backup} [args...]"; }
+SOURCE_BUILD=0
+TRANSPORT=()
+usage() { echo "Usage: wangke-agent [--data-dir DIR] [--compose-file FILE] [--build-from-source] [--preloaded] {status|logs|stop|start|restart|update web|update {web|api|full} --manifest FILE|release-adopt FILE|release-recover|rollback|restore-release POINT --allow-data-loss|backup}"; }
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --data-dir) DATA_DIR=$2; shift 2;;
     --compose-file) COMPOSE_FILE=$2; shift 2;;
+    --build-from-source) SOURCE_BUILD=1; shift;;
+    --preloaded) TRANSPORT=(--preloaded); shift;;
     -h|--help) usage; exit 0;;
     *) break;;
   esac
@@ -18,6 +22,9 @@ command=${1:-}; [ -n "$command" ] && shift || { usage >&2; exit 2; }
 [ -n "$COMPOSE_FILE" ] && [ -f "$COMPOSE_FILE" ] || { echo "compose file is not configured or missing" >&2; exit 1; }
 [ -f "$DATA_DIR/.env" ] || { echo "missing $DATA_DIR/.env" >&2; exit 1; }
 EXTRA=()
+if [ "$SOURCE_BUILD" -eq 1 ]; then
+  EXTRA+=(-f "$(dirname "$COMPOSE_FILE")/compose.build.yaml")
+fi
 # 安装时用了 --domain，就一直带上 compose.prod.yaml；以前 update/restart 会把 Caddy 和
 # 生产环境的必填校验一起丢掉，HTTPS 入口在第一次 update 后就消失了。
 if grep -q '^DOMAIN=.' "$DATA_DIR/.env"; then
@@ -25,19 +32,63 @@ if grep -q '^DOMAIN=.' "$DATA_DIR/.env"; then
 fi
 if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
   EXTRA+=(-f "$(dirname "$COMPOSE_FILE")/compose.agent.yaml")
+  if [ "$SOURCE_BUILD" -eq 1 ]; then EXTRA+=(-f "$(dirname "$COMPOSE_FILE")/compose.agent.build.yaml"); fi
 fi
-compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$COMPOSE_FILE" ${EXTRA[@]+"${EXTRA[@]}"} "$@"; }
+if grep -q '^PUBLIC_IP=.' "$DATA_DIR/.env"; then
+  EXTRA+=(-f "$(dirname "$COMPOSE_FILE")/compose.ip.yaml")
+fi
+MANAGED=()
+if [ -f "$DATA_DIR/deployment-images.json" ]; then MANAGED=(-f "$DATA_DIR/deployment-images.json"); fi
+compose() { WANGKE_HOST_DATA_DIR="$DATA_DIR/data" WANGKE_UID="$(id -u)" WANGKE_GID="$(id -g)" docker compose --env-file "$DATA_DIR/.env" -f "$COMPOSE_FILE" ${EXTRA[@]+"${EXTRA[@]}"} ${MANAGED[@]+"${MANAGED[@]}"} "$@"; }
+release() {
+  [ "$SOURCE_BUILD" -eq 0 ] || { echo "Transactional releases require prebuilt immutable images; source builds are not a release input." >&2; exit 2; }
+  command -v node >/dev/null && node -e 'process.exit(Number(process.versions.node.split(".")[0])>=22?0:1)' || { echo "Transactional releases require existing Node.js 22+ on the management host; nothing was stopped or installed." >&2; exit 2; }
+  node "$SCRIPT_DIR/release-deploy.mjs" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" ${EXTRA[@]+"${EXTRA[@]}"} ${TRANSPORT[@]+"${TRANSPORT[@]}"} "$@"
+}
 case "$command" in
   status) compose ps "$@";;
   logs) compose logs "$@";;
-  stop|start|restart) compose "$command" "$@";;
-  update)
-    "$SCRIPT_DIR/backup.sh" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" >/dev/null
-    if grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
-      docker build -t wangke-sandbox:0.1.0 -f "$(dirname "$COMPOSE_FILE")/infra/sandbox/Dockerfile" "$(dirname "$COMPOSE_FILE")"
+  stop|start|restart)
+    if [ -f "$DATA_DIR/releases/last-success.json" ]; then
+      release service "$command" "$@"; exit $?
     fi
-    compose up -d --build "$@"
+    compose "$command" "$@";;
+  release-adopt) release adopt "$@";;
+  release-recover) release recover "$@";;
+  rollback) release rollback "$@";;
+  restore-release) release restore "$@";;
+  update)
+    target="${1:-}"
+    if [ "$#" -eq 3 ] && [ "${2:-}" = --manifest ]; then
+      case "$target" in web|api|full) release "$target" "$3"; exit $?;; esac
+    fi
+    [ -z "${TRANSPORT[0]:-}" ] || { echo "--preloaded requires an immutable release manifest; refusing a legacy tag pull." >&2; exit 2; }
+    if [ -f "$DATA_DIR/releases/last-success.json" ]; then echo "Managed releases require update {web|api|full} --manifest FILE; refusing baseline drift." >&2; exit 2; fi
+    [ "$target" = web ] || {
+      echo "Specify 'update web' for an isolated UI update. API/full releases require the verified single-instance migration/restore-point workflow; refusing an implicit all-service replacement." >&2
+      exit 2
+    }
+    shift
+    [ "$#" -eq 0 ] || { echo "update web accepts no extra Compose flags" >&2; exit 2; }
+    container="$(compose ps -q web)"
+    previous=""
+    if [ -n "$container" ]; then previous="$(docker inspect --format '{{.Image}}' "$container")"; fi
+    if [ "$SOURCE_BUILD" -eq 1 ]; then compose build web; else compose pull web; fi
+    # Explicit target and --no-deps are the isolation contract: no backup/API/edge restart.
+    if ! compose up -d --no-deps --no-build --wait --wait-timeout 180 web; then
+      if [ -n "$previous" ]; then
+        rollback="$(mktemp "$DATA_DIR/web-rollback.XXXXXX.yaml")"
+        printf 'services:\n  web:\n    image: "%s"\n' "$previous" > "$rollback"
+        if ! compose -f "$rollback" up -d --no-deps --no-build --wait --wait-timeout 180 web; then
+          echo "Web rollback failed; inspect the web container. API and edge were not replaced." >&2
+        fi
+        rm -f "$rollback"
+      fi
+      exit 1
+    fi
     ;;
-  backup) "$SCRIPT_DIR/backup.sh" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" "$@";;
+  backup)
+    if [ -f "$DATA_DIR/releases/last-success.json" ]; then [ "$#" -eq 0 ] || { echo "Managed backup takes no flags; returns a verified restore-point directory." >&2; exit 2; }; release snapshot;
+    else "$SCRIPT_DIR/backup.sh" --data-dir "$DATA_DIR" --compose-file "$COMPOSE_FILE" "$@"; fi;;
   *) usage >&2; exit 2;;
 esac

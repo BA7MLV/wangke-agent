@@ -2,14 +2,14 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { biliVideoSource } from '../src/bilibili/source.ts';
-import { loadBiliSubtitles } from '../src/bilibili/loadSubtitles.ts';
-import { resolveBiliVideoSource } from '../src/bilibili/resolveSource.ts';
-import { encodeMessage, fieldBytes, fieldVarint, utf8, decodeFields, getNumber } from '../src/bilibili/wire.ts';
-import { unframeGrpc } from '../src/bilibili/dmview.ts';
-import { db } from '../src/store/db.ts';
-import { saveImportedSubtitles } from '../src/store/subtitles.ts';
-import { VIDEO_META_FIELDS } from '../src/sync/units.ts';
+import { biliVideoSource } from '../apps/web/src/bilibili/source.ts';
+import { loadBiliSubtitles } from '../apps/web/src/bilibili/loadSubtitles.ts';
+import { resolveBiliVideoSource } from '../apps/web/src/bilibili/resolveSource.ts';
+import { encodeMessage, fieldBytes, fieldVarint, utf8, decodeFields, getNumber } from '../apps/web/src/bilibili/wire.ts';
+import { unframeGrpc } from '../apps/web/src/bilibili/dmview.ts';
+import { db } from '../apps/web/src/store/db.ts';
+import { saveImportedSubtitles } from '../apps/web/src/store/subtitles.ts';
+import { VIDEO_META_FIELDS } from '../apps/web/src/sync/units.ts';
 
 after(() => db.close());
 

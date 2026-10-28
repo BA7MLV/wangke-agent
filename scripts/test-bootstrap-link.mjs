@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import vm from 'node:vm';
-import { consumeBootstrapLink, readBootstrapLink } from '../src/cloud/bootstrapLink.ts';
+import { consumeBootstrapLink, readBootstrapLink } from '../apps/web/src/cloud/bootstrapLink.ts';
 
 const origin = 'https://learn.example.com';
 const secret = 'a+b/c=d_-';

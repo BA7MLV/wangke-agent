@@ -41,13 +41,9 @@ try {
   const note = page.getByTestId('provider-note-sf');
   const find = page.getByTestId('btn-check-models');
   await find.waitFor();
-  await page.waitForTimeout(200);
   assert.equal(await find.innerText(), '查找模型');
-  assert.equal(calls, 0, 'opening a configured provider does not fetch');
-  assert.equal(await page.getByTestId('discovered-models').count(), 0);
-  await find.click();
   await note.filter({ hasText: '93 个可用模型' }).waitFor();
-  assert.equal(calls, 1);
+  assert.equal(calls, 1, 'opening a configured provider automatically fetches /models');
   assert.equal(await page.getByRole('list', { name: '接口模型结果', exact: true }).count(), 0, 'results remain collapsed');
   assert.equal(await page.getByRole('button', { name: /^添加 model-/ }).count(), 0, 'no expanded add-button list');
   const beforeModels = (await state()).savedModels;
@@ -90,14 +86,16 @@ try {
   await page.screenshot({ path: 'scripts/out/model-discovery-dropdown-desktop.png' });
   await picker.click();
   await page.getByTestId('provider-back').click();
+  const revalidated = page.waitForResponse('https://discovery.test/**');
   await page.getByTestId('provider-summary-sf').click();
-  await note.waitFor();
-  assert.equal(calls, 1, 'reopening only reads the cache');
+  await revalidated;
+  await note.filter({ hasText: '93 个可用模型' }).waitFor();
+  assert.equal(calls, 2, 'reopening revalidates the interface cache');
 
   mode = 'fail';
   await page.getByTestId('btn-check-models').click();
   await note.filter({ hasText: '拉取失败' }).waitFor();
-  assert.equal(calls, 2, '401 is not retried');
+  assert.equal(calls, 3, '401 is not retried');
   const count = await page.getByTestId('provider-summary-sf').innerText();
   assert.match(count, /93\s*个模型/, 'failed refresh keeps the previous list');
 
@@ -105,7 +103,7 @@ try {
   const pendingRequest = page.waitForRequest((request) => request.url().includes('discovery.test') && request.headers().authorization === 'Bearer key-b');
   await updateKey('key-b');
   await page.waitForTimeout(200);
-  assert.equal(calls, 2, 'changing credentials does not fetch automatically');
+  assert.equal(calls, 3, 'typing credentials does not fetch automatically');
   assert.equal(await note.count(), 0, 'new credential does not inherit old result/error');
   assert.equal(await page.getByTestId('discovered-models').count(), 0);
   await find.click();
@@ -118,10 +116,8 @@ try {
   await page.getByTestId('provider-summary-sf').click();
   await page.waitForFunction(() => !document.querySelector('[data-testid="btn-check-models"]')?.disabled);
   assert.equal(await page.getByTestId('btn-check-models').isEnabled(), true, 'cancellation does not leave loading stuck');
-  assert.equal(calls, 3, 'returning after cancellation does not retry automatically');
-  await find.click();
   await note.filter({ hasText: '1 个可用模型' }).waitFor();
-  assert.equal(calls, 4);
+  assert.equal(calls, 5, 'returning after cancellation automatically starts a fresh request');
   const cache = await page.evaluate(() => localStorage.getItem('wangke-model-list'));
   assert.ok(!cache.includes('key-a') && !cache.includes('key-b'));
 
@@ -130,14 +126,24 @@ try {
     for (const entry of Object.values(cache.entries)) entry.updatedAt = Date.now() - 48 * 3600 * 1000;
     localStorage.setItem('wangke-model-list', JSON.stringify(cache));
   });
+  mode = 'hold';
+  release = undefined;
   await page.reload();
+  const staleRequest = page.waitForRequest('https://discovery.test/**');
   await page.getByTestId('provider-summary-sf').click();
   await note.filter({ hasText: '过期缓存' }).waitFor();
-  assert.equal(calls, 4, 'stale cache never triggers background discovery');
+  await staleRequest;
+  // The cache remains visible while the default refresh is in flight.
+  assert.equal(await find.isEnabled(), false);
+  mode = 'success';
+  release?.();
+  await note.filter({ hasText: '1 个可用模型' }).waitFor();
+  assert.equal(calls, 6, 'stale cache is revalidated on entry');
   await picker.click();
   await page.getByRole('button', { name: '添加 model-b', exact: true }).waitFor();
   await picker.click();
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByTestId('settings-nav-models').click();
   await page.getByTestId('provider-summary-sf').click();
   await picker.click();
   await page.getByRole('button', { name: '添加 model-b', exact: true }).waitFor();
@@ -151,7 +157,7 @@ try {
   assert.equal(await page.getByTestId('discovered-models').count(), 0, 'empty results leave manual model creation available');
   assert.equal(await page.getByRole('button', { name: '新模型', exact: true }).isEnabled(), true);
   assert.deepEqual(errors, []);
-  console.log('PASS: manual-only discovery, 93 collapsed results, searchable dropdown, keyboard selection, draft import, cache/stale-cache reuse, failed-refresh fallback, credential isolation, cancellation, loading recovery, empty results and mobile width');
+  console.log('PASS: default interface discovery, 93 collapsed results, searchable dropdown, keyboard selection, draft import, cache revalidation, failed-refresh retention, credential isolation, cancellation, loading recovery, empty results and mobile width');
 } catch (error) {
   console.error(await page.locator('body').innerText());
   throw error;

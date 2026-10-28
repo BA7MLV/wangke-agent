@@ -1,8 +1,3 @@
 {
-  "compilerOptions": {
-    "target": "ES2022", "module": "NodeNext", "moduleResolution": "NodeNext",
-    "outDir": "dist-api", "rootDir": ".", "strict": true, "esModuleInterop": true,
-    "skipLibCheck": true, "types": ["node"], "composite": true
-  },
-  "include": ["apps/api/src/**/*.ts", "packages/contracts/src/**/*.ts", "src/skills/scope.ts", "src/skills/types.ts"]
+  "extends": "./apps/api/tsconfig.json"
 }

@@ -1,0 +1,22 @@
+.resource-grid { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(128px, 1fr)); gap: 24px 16px; align-content: start; }
+.resource-tile { position: relative; min-width: 0; border-radius: 12px; }
+.resource-tile:hover, .resource-tile:focus-within { background: var(--surface-secondary); }
+.resource-open { width: 100%; padding: 16px 8px 12px; display: flex; align-items: center; flex-direction: column; gap: 6px; cursor: pointer; min-width: 0; border-radius: 12px; }
+.resource-open:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+.resource-open > svg { width: 72px; height: 64px; color: var(--accent); flex-shrink: 0; }
+.resource-open > span { max-width: 100%; overflow-wrap: anywhere; text-align: center; font-size: .9rem; }
+.resource-open > small { color: var(--muted); font-size: .75rem; }
+.resource-more { position: absolute; right: 0; top: 0; }
+.resource-grid[data-view='list'] { display: flex; flex-direction: column; gap: 2px; }
+.resource-grid[data-view='list'] .resource-open { flex-direction: row; padding: 10px 44px 10px 12px; gap: 12px; }
+.resource-grid[data-view='list'] .resource-open > svg { width: 30px; height: 30px; }
+.resource-grid[data-view='list'] .resource-open > span { flex: 1; text-align: start; }
+.resource-grid[data-view='list'] .resource-more { top: 8px; }
+.resource-notice { padding: 12px 24px; }
+.resource-window .finder-path > span { display: inline-flex; align-items: center; }
+.resource-window .finder-status { display: flex; justify-content: space-between; gap: 12px; }
+.resource-window .resource-count { flex-shrink: 0; white-space: nowrap; }
+.resource-window .finder-status code { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: .75rem; }
+.resource-window[data-mobile='true'] .resource-more { position: static; display: flex; justify-content: flex-end; }
+.resource-window[data-mobile='true'] .resource-grid[data-view='list'] .resource-tile { display: flex; }
+.resource-window[data-mobile='true'] .resource-grid[data-view='list'] .resource-open { padding-right: 8px; }

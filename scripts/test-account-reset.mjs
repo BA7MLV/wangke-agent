@@ -13,7 +13,7 @@ Object.assign(process.env, {
   CLOUD_WORKER_DISABLED: '1',
 });
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath, staticDir: path.join(directory, 'no-web') });
+const app = buildServer({ dbPath });
 const password = 'reset-current-password-2026';
 let db;
 try {

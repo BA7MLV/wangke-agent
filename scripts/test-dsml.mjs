@@ -48,10 +48,10 @@ const ROOT = new URL('..', import.meta.url).pathname;
 const OUT = mkdtempSync(join(tmpdir(), 'dsml-'));
 
 // 还原器本身可以直接 import（Node 去类型）；chatStream 要连 store 一起打包
-const { createDsmlRecoverer, recoverDsmlText } = await import('../src/api/dsml.ts');
+const { createDsmlRecoverer, recoverDsmlText } = await import('../apps/web/src/api/dsml.ts');
 
 const entry = join(OUT, 'entry.ts');
-writeFileSync(entry, `export { chatStream } from '${join(ROOT, 'src/api/siliconflow.ts')}';`);
+writeFileSync(entry, `export { chatStream } from '${join(ROOT, 'apps/web/src/api/siliconflow.ts')}';`);
 await build({
   entryPoints: [entry],
   outfile: join(OUT, 'bundle.mjs'),

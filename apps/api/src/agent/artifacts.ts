@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
+import { boundedText } from './result-budget.js';
 
 export class BotArtifacts {
   constructor(readonly store: DatabaseStore) {}
@@ -16,10 +17,10 @@ export class BotArtifacts {
     });
     return { artifactId: id, sizeBytes: size, preview: content.slice(0, 1500), read: 'artifact_read(artifactId, offset, length); offsets are UTF-16 characters' };
   }
-  read(owner: string, id: string, offset = 0, length = 8000) {
+  read(owner: string, id: string, offset = 0, length = 8000, maxTokens = 4096) {
     if (!Number.isSafeInteger(offset) || offset < 0 || !Number.isSafeInteger(length) || length < 1 || length > 12000) throw new Error('invalid_artifact_range');
     const row = this.store.db.prepare('SELECT content,size_bytes FROM bot_artifacts WHERE id=? AND owner_id=?').get(id, owner) as { content: string; size_bytes: number } | undefined;
     if (!row) throw new Error('artifact_not_found');
-    return { artifactId: id, text: row.content.slice(offset, offset + length), nextOffset: offset + length < row.content.length ? offset + length : null, totalChars: row.content.length, sizeBytes: row.size_bytes };
+    return boundedText({ artifactId: id, sizeBytes: row.size_bytes }, row.content, offset, maxTokens, length);
   }
 }

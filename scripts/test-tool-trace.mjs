@@ -20,7 +20,7 @@ import {
   toolHint,
   summarizeToolResult,
   isToolFailure,
-} from '../src/utils/toolTrace.ts';
+} from '../apps/web/src/utils/toolTrace.ts';
 
 let passed = 0;
 const failures = [];

@@ -210,7 +210,7 @@ try {
   assert.equal(get(interrupted).status, 'interrupted');
   block = false; reply = 'after restart';
   const queued = enqueue('modelOnce', { providerId: 'p0', model: 'x', options: { messages: [] } });
-  const { CloudTaskRunner: ProductionRunner } = await import('../dist-api/apps/api/src/cloud/tasks.js');
+  const { CloudTaskRunner: ProductionRunner } = await import('../apps/api/dist/apps/api/src/cloud/tasks.js');
   runner = new ProductionRunner(store, { records, configuration, filesDir, fetch: mockFetch });
   runner.start('http://127.0.0.1:1');
   await completed(queued);

@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudRecords } from '../cloud/records.js';
 import { workerIdentity } from '../cloud/workerAuth.js';
-import type { McpContext, McpServerInput } from '../../../../packages/contracts/src/mcp.js';
+import type { McpContext, McpServerInput } from '@wangke/contracts/mcp';
 import { McpManager, mcpError } from './manager.js';
 
 export function registerMcpRoutes(app: FastifyInstance, deps: {

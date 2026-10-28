@@ -12,7 +12,7 @@ process.env.NODE_ENV = 'test';
 delete process.env.BOOTSTRAP_TTL_MS;
 delete process.env.MODEL_API_KEY;
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath: path.join(dir, 'db/wangke.sqlite'), staticDir: path.join(dir, 'empty') });
+const app = buildServer({ dbPath: path.join(dir, 'db/wangke.sqlite') });
 try {
   const health = await app.inject({ method: 'GET', url: '/api/v1/health' });
   assert.equal(health.statusCode, 200);

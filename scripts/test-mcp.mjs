@@ -45,7 +45,7 @@ process.env.NODE_ENV = 'test'; process.env.DATA_DIR = dir;
 process.env.BOOTSTRAP_SECRET_FILE = path.join(dir, 'config/bootstrap-secret');
 process.env.CLOUD_WORKER_DISABLED = '1'; delete process.env.MODEL_API_KEY;
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath: path.join(dir, 'api.sqlite'), staticDir: path.join(dir, 'empty') });
+const app = buildServer({ dbPath: path.join(dir, 'api.sqlite') });
 const store = new DatabaseStore(path.join(dir, 'unit.sqlite'));
 const owner = crypto.randomUUID(), other = crypto.randomUUID();
 for (const id of [owner, other]) store.db.prepare('INSERT INTO users(id,name,created_at) VALUES(?,?,?)').run(id, id, new Date().toISOString());

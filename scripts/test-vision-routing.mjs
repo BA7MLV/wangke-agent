@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 
 globalThis.localStorage = { getItem: () => null, setItem() {}, removeItem() {} };
-const { getSettings, visionTargetOrNull, useSettings } = await import('../src/store/settings.ts');
-const { attachmentsForModel, messageForModel } = await import('../src/chat/attachmentModel.ts');
+const { getSettings, visionTargetOrNull, useSettings } = await import('../apps/web/src/store/settings.ts');
+const { attachmentsForModel, messageForModel } = await import('../apps/web/src/chat/attachmentModel.ts');
 const provider = (id, apiKey = 'test') => ({ id, name: id, apiKey, baseUrl: `https://${id}.test/v1`, protocol: 'openai-chat', serves: ['chat', 'vision'], catalogId: '' });
 const text = { providerId: 'main', model: 'custom-text', name: '', slots: ['chat'], inputCapabilities: ['text'] };
 const vision = { providerId: 'reader', model: 'custom-reader', name: '', slots: ['vision'], inputCapabilities: ['text', 'image'] };

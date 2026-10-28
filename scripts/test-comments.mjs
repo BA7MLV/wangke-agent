@@ -19,8 +19,8 @@ import {
   normalizeRole,
   orderThreads,
   parseCommentThreads,
-} from '../src/harness/comments.ts';
-import { PROMPTS } from '../src/harness/prompts.ts';
+} from '../apps/web/src/harness/comments.ts';
+import { PROMPTS } from '../apps/web/src/harness/prompts.ts';
 
 let passed = 0;
 const failures = [];

@@ -17,7 +17,7 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 // 下面要手写一份模型元数据缓存塞进 localStorage，版本号得跟源码一致（modelMeta 无 import，可直接引）
-import { MODEL_META_CACHE_VERSION } from '../src/api/modelMeta.ts';
+import { MODEL_META_CACHE_VERSION } from '../apps/web/src/api/modelMeta.ts';
 
 const BASE = process.env.BASE_URL || 'http://localhost:4173';
 /** 假的 OpenAI 兼容端点：请求打到这里就被脚本接管 */

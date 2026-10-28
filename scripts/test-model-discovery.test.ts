@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import { afterEach, beforeEach, test } from 'node:test';
-import { discoverModels } from '../src/api/modelDiscovery';
-import { listModels } from '../src/api/siliconflow';
-import { MODEL_LIST_CACHE_VERSION, __resetModelListCacheForTest, modelListCacheKey, readModelList, writeModelList } from '../src/api/modelListCache';
+import { discoverModels } from '../apps/web/src/api/modelDiscovery';
+import { listModels } from '../apps/web/src/api/siliconflow';
+import { MODEL_LIST_CACHE_VERSION, __resetModelListCacheForTest, modelListCacheKey, readModelList, writeModelList } from '../apps/web/src/api/modelListCache';
 
 const connection = { baseUrl: 'https://models.test/v1/', apiKey: 'secret-account-a', protocol: 'openai-chat' as const };
 const storage = new Map<string, string>();

@@ -5,7 +5,7 @@ import { chromium } from 'playwright';
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const shots = new URL('../e2e-shots/', import.meta.url);
 await mkdir(shots, { recursive: true });
-const examples = await readFile(new URL('../src/skills/builtin/interactive-explainer/references/examples.md', import.meta.url), 'utf8');
+const examples = await readFile(new URL('../packages/study-core/assets/builtin/interactive-explainer/references/examples.md', import.meta.url), 'utf8');
 const html = examples.match(/```html\n([\s\S]*?)\n```/)[1]
   .replace('const api = window.__wbw;', `const api = window.__wbw;
     root.dataset.runToken = String(Math.random());

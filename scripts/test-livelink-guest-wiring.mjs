@@ -67,10 +67,10 @@ const OUT = mkdtempSync(join(tmpdir(), 'live-guest-wiring-'));
 const entry = join(OUT, 'entry.ts');
 writeFileSync(
   entry,
-  `export { GuestCore, LiveGuest, opFrameFor, chatReqFor, resolveGuestId, GUEST_ID_STORAGE_KEY, VERSION_MISMATCH_TEXT } from '${join(ROOT, 'src/livelink/guest.ts')}';
-   export * from '${join(ROOT, 'src/livelink/protocol.ts')}';
-   export { Outbox, OUTBOX_STORAGE_KEY } from '${join(ROOT, 'src/livelink/outbox.ts')}';
-   export { ackFrameFor } from '${join(ROOT, 'src/livelink/host.ts')}';
+  `export { GuestCore, LiveGuest, opFrameFor, chatReqFor, resolveGuestId, GUEST_ID_STORAGE_KEY, VERSION_MISMATCH_TEXT } from '${join(ROOT, 'apps/web/src/livelink/guest.ts')}';
+   export * from '${join(ROOT, 'apps/web/src/livelink/protocol.ts')}';
+   export { Outbox, OUTBOX_STORAGE_KEY } from '${join(ROOT, 'apps/web/src/livelink/outbox.ts')}';
+   export { ackFrameFor } from '${join(ROOT, 'apps/web/src/livelink/host.ts')}';
   `,
 );
 await build({

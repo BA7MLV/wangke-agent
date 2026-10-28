@@ -1,8 +1,8 @@
 import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
-import { db } from '../src/store/db.ts';
-import { folderAncestors, validFolderDrop, moveLibraryItems, undoLibraryMove } from '../src/materials/libraryFolders.ts';
+import { db } from '../apps/web/src/store/db.ts';
+import { folderAncestors, validFolderDrop, moveLibraryItems, undoLibraryMove } from '../apps/web/src/materials/libraryFolders.ts';
 
 after(() => db.close());
 test('nested mixed moves preserve descendants and reject cycles atomically', async () => {

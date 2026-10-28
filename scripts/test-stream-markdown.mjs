@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { Marked } from 'marked';
-import { COMPLETE_MARKDOWN, STREAMING_MARKDOWN, protectMath } from '../src/components/markdown/math.ts';
+import { COMPLETE_MARKDOWN, STREAMING_MARKDOWN, protectMath } from '../apps/web/src/components/markdown/math.ts';
 
 const final = new Marked(COMPLETE_MARKDOWN);
 const stream = new Marked(STREAMING_MARKDOWN);

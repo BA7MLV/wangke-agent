@@ -1,12 +1,10 @@
 services:
-  app:
+  api:
     user: "${WANGKE_UID:-1000}:${WANGKE_GID:-1000}"
-    build:
-      context: .
-      dockerfile: Dockerfile
-    image: "${WANGKE_IMAGE:-wangke-agent:0.1.0}"
+    image: "${WANGKE_API_IMAGE:-wangke-agent-api:0.1.0}"
     restart: unless-stopped
     init: true
+    stop_grace_period: 65s
     environment:
       APP_VERSION: "${APP_VERSION:-0.1.0}"
       PORT: "3000"
@@ -22,15 +20,15 @@ services:
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       COOKIE_SAMESITE: "${COOKIE_SAMESITE:-lax}"
       TOKEN_TTL_MS: "${TOKEN_TTL_MS:-7776000000}"
-      SERVE_WEB: "${SERVE_WEB:-true}"
       MODEL_BASE_URL: "${MODEL_BASE_URL:-https://api.openai.com/v1}"
       MODEL_API_KEY: "${MODEL_API_KEY:-}"
       MODEL_NAME: "${MODEL_NAME:-gpt-4o-mini}"
       MODEL_TIMEOUT_MS: "${MODEL_TIMEOUT_MS:-30000}"
       MAX_FILE_BYTES: "${MAX_FILE_BYTES:-536870912}"
       CLOUD_CONCURRENCY: "${CLOUD_CONCURRENCY:-2}"
-    ports:
-      - "${WANGKE_BIND_HOST:-0.0.0.0}:${PORT:-3000}:3000"
+      API_DRAIN_MS: "30000"
+    expose:
+      - "3000"
     volumes:
       - "${WANGKE_HOST_DATA_DIR:-./data}:/data"
     read_only: true
@@ -39,8 +37,45 @@ services:
     security_opt:
       - no-new-privileges:true
     healthcheck:
-      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      test: ["CMD", "node", "-e", "fetch('http://127.0.0.1:3000/api/v1/ready').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  web:
+    image: "${WANGKE_WEB_IMAGE:-wangke-agent-web:0.1.0}"
+    restart: unless-stopped
+    environment:
+      API_BASE_URL: "${API_BASE_URL:-}"
+    volumes:
+      - web_assets:/srv/assets
+    expose:
+      - "8080"
+    security_opt:
+      - no-new-privileges:true
+
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8080/config.js"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  proxy:
+    image: caddy:2.10-alpine
+    restart: unless-stopped
+    ports:
+      - "${WANGKE_BIND_HOST:-0.0.0.0}:${PORT:-3000}:8080"
+    volumes:
+      - ./infra/docker/Caddyfile.local:/etc/caddy/Caddyfile:ro
+    depends_on:
+      api:
+        condition: service_healthy
+      web:
+        condition: service_healthy
+    security_opt:
+      - no-new-privileges:true
+
+volumes:
+  # Never prune retained hashed chunks during a release.
+  web_assets:

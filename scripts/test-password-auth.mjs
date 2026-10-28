@@ -10,7 +10,7 @@ const dbPath = path.join(directory, 'db/wangke.sqlite');
 Object.assign(process.env, { NODE_ENV: 'test', DATA_DIR: directory, DB_PATH: dbPath, BOOTSTRAP_SECRET_FILE: path.join(directory, 'config/bootstrap-secret'), FILES_DIR: path.join(directory, 'files'), PUBLIC_ORIGIN: 'https://learn.example.com' });
 delete process.env.ALLOW_INSECURE_CSRF;
 const { buildServer } = await import('../apps/api/src/server.ts');
-let app = buildServer({ dbPath, staticDir: path.join(directory, 'no-web') });
+let app = buildServer({ dbPath });
 let db;
 const oldPassword = 'old-custom-admin-password';
 const newPassword = '新的安全访问密码-password-2026';
@@ -83,7 +83,7 @@ try {
   db.prepare('DELETE FROM password_credentials WHERE user_id=?').run('second');
   db.prepare('DELETE FROM users WHERE id=?').run('second');
   await app.close();
-  app = buildServer({ dbPath, staticDir: path.join(directory, 'no-web') });
+  app = buildServer({ dbPath });
   assert.equal((await login({ password: newPassword })).statusCode, 200, 'new password persists after restart');
   assert.equal(fs.existsSync(process.env.BOOTSTRAP_SECRET_FILE), false, 'recovery never reopens bootstrap');
   assert.equal((await app.inject({ method: 'GET', url: '/api/v1/bootstrap/status' })).json().initialized, true);

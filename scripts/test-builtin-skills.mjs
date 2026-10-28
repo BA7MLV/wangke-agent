@@ -5,10 +5,10 @@
  */
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
-import { parseSkillMarkdown } from '../src/skills/types.ts';
-import { isLegacyHandoutSkill } from '../src/skills/catalog.ts';
+import { parseSkillMarkdown } from '../apps/web/src/skills/types.ts';
+import { isLegacyHandoutSkill } from '../apps/web/src/skills/catalog.ts';
 
-const DIR = 'src/skills/builtin';
+const DIR = 'packages/study-core/assets/builtin';
 let passed = 0;
 const failures = [];
 function test(name, fn) {

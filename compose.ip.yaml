@@ -1,7 +1,7 @@
 # Optional IP HTTPS entry, in addition to the original domain:
 # docker compose --env-file .env -f compose.yaml -f compose.prod.yaml -f compose.ip.yaml up -d --no-build --wait
 services:
-  app:
+  api:
     environment:
       # Keep PUBLIC_ORIGIN / the domain's Passkeys intact. Only allow the exact
       # additional HTTPS origin; do not disable CSRF checks or secure cookies.

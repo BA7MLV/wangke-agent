@@ -1,7 +1,7 @@
 // npx tsx scripts/test-player-shortcuts.mjs
 import assert from 'node:assert/strict';
-import { defaultShortcutSettings, normalizeShortcutSettings, recordedShortcut, shortcutConflict, formatShortcut, toMediaShortcutKeys } from '../src/utils/shortcutSettings.ts';
-import { createBilibiliKeyboard, BOOST_DELAY } from '../src/utils/playerKeys.ts';
+import { defaultShortcutSettings, normalizeShortcutSettings, recordedShortcut, shortcutConflict, formatShortcut, toMediaShortcutKeys } from '../apps/web/src/utils/shortcutSettings.ts';
+import { createBilibiliKeyboard, BOOST_DELAY } from '../apps/web/src/utils/playerKeys.ts';
 
 const defaults = defaultShortcutSettings();
 assert.deepEqual(normalizeShortcutSettings(null), defaults);

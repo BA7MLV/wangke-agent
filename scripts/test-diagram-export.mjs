@@ -14,9 +14,9 @@
  * 运行：node scripts/test-diagram-export.mjs
  */
 import assert from 'node:assert/strict';
-import { toStandaloneSvg, svgIntrinsicSize } from '../src/components/mermaid/mermaidRender.ts';
-import { renderDiagram } from '../src/components/mermaid/diagramRender.ts';
-import { validateDiagram } from '../src/components/mermaid/diagramSchema.ts';
+import { toStandaloneSvg, svgIntrinsicSize } from '../apps/web/src/components/mermaid/mermaidRender.ts';
+import { renderDiagram } from '../apps/web/src/components/mermaid/diagramRender.ts';
+import { validateDiagram } from '../apps/web/src/components/mermaid/diagramSchema.ts';
 
 let passed = 0;
 const failures = [];

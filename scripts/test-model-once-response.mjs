@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { chatOnce, textOf } from '../src/api/modelClient.ts';
+import { chatOnce, textOf } from '../apps/web/src/api/modelClient.ts';
 
 const target = { baseUrl: 'https://models.test/v1', apiKey: 'test', model: 'test', protocol: 'openai-chat' };
 const options = { messages: [{ role: 'user', content: 'edit' }] };

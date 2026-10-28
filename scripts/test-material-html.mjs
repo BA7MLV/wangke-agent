@@ -26,7 +26,7 @@ import { build } from 'esbuild';
 import { chromium } from 'playwright';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const entry = path.join(here, '../src/materials/html.ts');
+const entry = path.join(here, '../apps/web/src/materials/html.ts');
 const bundle = await build({
   entryPoints: [entry],
   bundle: true,

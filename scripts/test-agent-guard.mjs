@@ -13,7 +13,7 @@
 import assert from 'node:assert/strict';
 
 // 只导入纯模块：agent.ts 本身带运行时依赖（api / store），Node 里解析不了
-const { CallLedger, answerReserve, callKey, CONTEXT_BUFFER, isUnreplayableTurn, resolveMaxRounds, roundMaxTokens, truncatedByTokenLimit, truncatedToolResult, UNLIMITED_ROUNDS } = await import('../src/harness/loopGuard.ts');
+const { CallLedger, answerReserve, callKey, CONTEXT_BUFFER, isUnreplayableTurn, resolveMaxRounds, roundMaxTokens, truncatedByTokenLimit, truncatedToolResult, UNLIMITED_ROUNDS } = await import('../apps/web/src/harness/loopGuard.ts');
 
 let passed = 0;
 const failures = [];

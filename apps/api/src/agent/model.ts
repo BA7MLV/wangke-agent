@@ -1,7 +1,7 @@
-import type { CloudProvider } from '../../../../packages/contracts/src/cloud.js';
+import type { CloudProvider } from '@wangke/contracts/cloud';
 
 export type ModelCall = { id: string; type: 'function'; function: { name: string; arguments: string } };
-export type ModelMessage = { role: string; content: string | null; tool_call_id?: string; tool_calls?: ModelCall[]; response_items?: object[] };
+export type ModelMessage = { role: string; content: string | null; tool_call_id?: string; tool_calls?: ModelCall[]; response_items?: object[]; checkpoint_id?: string; runtime_notice?: boolean };
 type Tool = { type: string; function: { name: string; description: string; parameters: object } };
 
 /** The Bot uses the same configured protocol as ordinary cloud chat. */
@@ -27,7 +27,7 @@ export function botRequest(provider: Pick<CloudProvider, 'protocol' | 'apiKey'>,
       : [ ...(m.response_items ?? []), ...(m.content ? [{ role: m.role, content: m.content }] : []), ...(m.tool_calls ?? []).map(c => ({ type: 'function_call', call_id: c.id, name: c.function.name, arguments: c.function.arguments })) ]),
     tools: tools.map(t => ({ type: 'function', ...t.function, strict: false })), tool_choice: 'required', parallel_tool_calls: false,
   } };
-  return { path: 'chat/completions', headers, body: { model, messages: messages.map(({ response_items: _items, ...m }) => m), tools, tool_choice: 'required', parallel_tool_calls: false, max_tokens: 4096 } };
+  return { path: 'chat/completions', headers, body: { model, messages: messages.map(({ response_items: _items, checkpoint_id: _checkpoint, runtime_notice: _notice, ...m }) => m), tools, tool_choice: 'required', parallel_tool_calls: false, max_tokens: 4096 } };
 }
 
 export function responseContinuation(protocol: CloudProvider['protocol'], body: unknown): object[] | undefined {

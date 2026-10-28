@@ -1,13 +1,13 @@
-import type { AgentPolicy } from '../../../../packages/contracts/src/cloud.js';
+import type { AgentPolicy } from '@wangke/contracts/cloud';
 import type { ProjectThread, ProjectRepository } from './repository.js';
 import { ProjectError } from './files.js';
 
 const tool = (name: string, description: string, properties: object, required: string[]) => ({ type: 'function' as const, function: { name, description, parameters: { type: 'object', additionalProperties: false, properties, required } } });
-const workspaceTool = tool('workspace', 'Access ONLY this project workspace. list/read are read-only. write creates or replaces a UTF-8 file; expectedRevision must be null to create, or the revision returned by read to replace. mkdir creates one directory. remove requires the revision from list and only removes files or empty directories. Paths are relative; use path="" to list the root. read/list support offset for pagination. Files are shared by all project sessions; chat histories are separate.', {
+const workspaceTool = tool('workspace', 'Access ONLY the current resource folder: these are real files, shared with the resource browser and shell /workspace. list/read are read-only. write creates or replaces a UTF-8 file; expectedRevision must be null to create, or the revision returned by read to replace. mkdir creates one real directory. remove requires the revision from list and only removes files or empty directories. Paths are relative; use path="" to list the root. read/list support offset for pagination. Folder sessions share files; chat histories are separate.', {
   action: { type: 'string', enum: ['list', 'read', 'write', 'mkdir', 'remove'] }, path: { type: 'string' },
   text: { type: 'string' }, expectedRevision: { type: ['string', 'null'] }, offset: { type: 'integer', minimum: 0 },
 }, ['action', 'path']);
-const projectsTool = tool('projects', 'List authorized projects, create a project (name required), or rename a project with a manage grant. A created project grants this Bot manage access and returns a link for the user to open its workspace. Renaming never changes its ID or workspace path. To work with project files, the user opens a session in that project.', {
+const projectsTool = tool('projects', 'Manage resource folders (the tool name projects is retained for compatibility). List authorized real folders, create a folder (name required), or rename a folder with a manage grant. A created folder grants this Bot manage access and returns its resource browser link. Renaming never changes its ID or physical workspace path. The user can open a Bot session from the folder to work on its files.', {
   action: { type: 'string', enum: ['list', 'create', 'rename'] }, projectId: { type: 'string' }, name: { type: 'string' },
 }, ['action']);
 
@@ -50,7 +50,7 @@ export class ProjectTools {
     if (name === 'projects') {
       if (args.action === 'create') {
         const project = this.projects.create(thread.owner_id, args.name, thread.agent_id!, 'manage');
-        return JSON.stringify({ ...project, url: `#/projects/${project.id}` });
+        return JSON.stringify({ ...project, url: `#/library?folder=${project.id}` });
       }
       if (args.action === 'rename') return JSON.stringify(this.projects.update(thread.owner_id, String(args.projectId), { name: args.name }));
       return JSON.stringify(this.projects.list(thread.owner_id).filter(p => !p.archived && this.projects.get(thread.owner_id, p.id).grants.some(g => g.agentId === thread.agent_id)).map(({ id, name, workspacePath }) => ({ id, name, workspacePath })));

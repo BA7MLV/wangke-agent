@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 import { build } from 'esbuild';
 
-const bundled = await build({ entryPoints: ['src/bilibili/wire.ts'], bundle: true, platform: 'node', format: 'esm', write: false });
+const bundled = await build({ entryPoints: ['apps/web/src/bilibili/wire.ts'], bundle: true, platform: 'node', format: 'esm', write: false });
 const { encodeMessage, fieldBytes, utf8 } = await import(`data:text/javascript;base64,${Buffer.from(bundled.outputFiles[0].text).toString('base64')}`);
 const message = encodeMessage([fieldBytes(3, encodeMessage(['ai-zh', 'ai-en'].map(lan => fieldBytes(3, encodeMessage([
   fieldBytes(3, utf8(lan)), fieldBytes(4, utf8(lan)), fieldBytes(5, utf8(`https://aisubtitle.hdslb.com/${lan}`)),

@@ -1,7 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { ProjectFileDto, ProjectTextDto } from '../../../../packages/contracts/src/projects.js';
+import type { ProjectFileDto, ProjectTextDto } from '@wangke/contracts/projects';
 
 export class ProjectError extends Error {
   constructor(public code: string, public status = 400) { super(code); }
@@ -145,6 +145,40 @@ export class ProjectFiles {
       this.workspaceOwner(temporary);
       fs.renameSync(temporary, file);
     });
+  }
+
+  identity(id: string, value: string) {
+    const file = this.open(id, value);
+    try { const stat = fs.fstatSync(file.fd); return `${stat.dev}:${stat.ino}`; }
+    finally { fs.closeSync(file.fd); }
+  }
+
+  /** Copy migration input, never link it: a sandbox must not mutate old backups. */
+  copy(id: string, value: string, source: string, expected: string | null = null) {
+    return this.parent(id, value, file => {
+      let stat: fs.Stats | undefined;
+      try { stat = this.stat(file); } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      if (stat?.isDirectory() || (stat ? revision(stat) !== expected : expected !== null)) throw new ProjectError('project_file_conflict', 409);
+      const input = fs.lstatSync(source);
+      if (!input.isFile() || input.nlink !== 1) throw new ProjectError('project_path_denied', 403);
+      const temporary = path.join(path.dirname(file), `.write-${crypto.randomUUID()}`);
+      try {
+        fs.copyFileSync(source, temporary, fs.constants.COPYFILE_EXCL);
+        fs.chmodSync(temporary, 0o600); this.workspaceOwner(temporary);
+        fs.renameSync(temporary, file);
+      } finally { fs.rmSync(temporary, { force: true }); }
+    });
+  }
+
+  move(id: string, value: string, targetId: string, target: string, expected: string) {
+    if (id === targetId && (target === value || target.startsWith(`${value}/`))) throw new ProjectError('invalid_project_path');
+    this.parent(id, value, source => this.parent(targetId, target, destination => {
+      const stat = this.stat(source);
+      if (revision(stat) !== expected) throw new ProjectError('project_file_conflict', 409);
+      try { fs.lstatSync(destination); throw new ProjectError('project_file_exists', 409); }
+      catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+      fs.renameSync(source, destination);
+    }));
   }
 
   remove(id: string, value: string, expected: string) {

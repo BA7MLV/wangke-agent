@@ -1,8 +1,8 @@
 import assert from 'node:assert/strict';
 import 'fake-indexeddb/auto';
-import { db } from '../src/store/db.ts';
-import { persistArtifactEdit } from '../src/store/artifactEdit.ts';
-import { applyArtifactReply, artifactFences, parseArtifactReply, replaceArtifactFence } from '../src/utils/artifactEdit.ts';
+import { db } from '../apps/web/src/store/db.ts';
+import { persistArtifactEdit } from '../apps/web/src/store/artifactEdit.ts';
+import { applyArtifactReply, artifactFences, parseArtifactReply, replaceArtifactFence } from '../apps/web/src/utils/artifactEdit.ts';
 
 const old = '{"type":"plot","curves":[{"fn":"x^2"}]}';
 const next = '{"type":"plot","curves":[{"fn":"sin(x)"}]}';

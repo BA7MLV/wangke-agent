@@ -16,7 +16,7 @@ import {
   countChars,
   MAX_BLOCK_CHARS,
   SCAN_CHARS_PER_UNIT_MIN,
-} from '../src/materials/chunk.ts';
+} from '../apps/web/src/materials/chunk.ts';
 
 let passed = 0;
 const failures = [];

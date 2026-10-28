@@ -12,7 +12,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 
-const OUTPUT = path.resolve('src/api/catalog/models.generated.json');
+const OUTPUT = path.resolve('apps/web/src/api/catalog/models.generated.json');
 const SOURCE = 'https://models.dev/api.json?type=all';
 
 /**

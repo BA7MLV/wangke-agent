@@ -13,7 +13,7 @@
  * 运行：node scripts/test-skill-parse.mjs
  */
 import assert from 'node:assert/strict';
-import { parseSkillMarkdown, serializeSkillMarkdown } from '../src/skills/types.ts';
+import { parseSkillMarkdown, serializeSkillMarkdown } from '../apps/web/src/skills/types.ts';
 
 let passed = 0;
 const failures = [];

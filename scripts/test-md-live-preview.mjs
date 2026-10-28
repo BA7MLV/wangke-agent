@@ -8,7 +8,7 @@
  */
 import assert from 'node:assert/strict';
 import { parser } from '@lezer/markdown';
-import { planDecorations } from '../src/md-editor/hideRanges.ts';
+import { planDecorations } from '../apps/web/src/md-editor/hideRanges.ts';
 
 let passed = 0;
 const failures = [];

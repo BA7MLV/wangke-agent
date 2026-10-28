@@ -4,7 +4,7 @@ import path from 'node:path';
 import { Readable, Transform } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import type { ProjectRole } from '../../../../packages/contracts/src/projects.js';
+import type { ProjectRole } from '@wangke/contracts/projects';
 import { ProjectError } from './files.js';
 import { ProjectRepository } from './repository.js';
 

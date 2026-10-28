@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { groupMessages, formatListTime } from '../src/pages/botMessages.ts';
+import { groupMessages, formatListTime } from '../apps/web/src/pages/botMessages.ts';
 
 const at = (minutes) => new Date(Date.UTC(2026, 9, 24, 8, 0) + minutes * 60_000).toISOString();
 const msg = (id, role, minutes) => ({ id, threadId: 't', clientNonce: id, seq: 0, role, kind: 'text', content: id, replyTo: null, createdAt: at(minutes) });

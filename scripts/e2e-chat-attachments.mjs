@@ -15,7 +15,7 @@ process.env.PUBLIC_ORIGIN = new URL(base).origin;
 process.env.MAX_FILE_BYTES = '1048576';
 delete process.env.MODEL_API_KEY;
 const { buildServer } = await import('../apps/api/src/server.ts');
-let app = buildServer({ staticDir: path.join(dir, 'empty') });
+let app = buildServer();
 let address = await app.listen({ host: '127.0.0.1', port: 0 });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
@@ -105,7 +105,7 @@ try {
   await page.getByRole('button', { name: '下载附件 课程笔记.txt' }).click();
   assert.equal(await (await download).suggestedFilename(), '课程笔记.txt');
   await app.close();
-  app = buildServer({ staticDir: path.join(dir, 'empty') });
+  app = buildServer();
   address = await app.listen({ host: '127.0.0.1', port: 0 });
   assert.equal(await page.evaluate(async (id) => (await fetch(`/api/v1/files/${id}`)).text(), file.serverId), 'ATTACHMENT_BODY_42：知识点是向量检索。');
   await page.reload();

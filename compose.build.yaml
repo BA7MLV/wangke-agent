@@ -1,0 +1,10 @@
+# Explicit local/offline source build. Production compose.yaml only pulls images.
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+  web:
+    build:
+      context: .
+      dockerfile: infra/docker/web.Dockerfile

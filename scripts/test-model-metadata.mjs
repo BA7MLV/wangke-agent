@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
-import { catalogModels, modelProviderMeta, parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../src/api/modelMeta.ts';
-import { parseDiscoveredModel } from '../src/api/modelDiscoveryData.ts';
-import { readModelList, writeModelList, __resetModelListCacheForTest } from '../src/api/modelListCache.ts';
-import { modelKind, capabilityLabel } from '../src/api/modelPresentation.ts';
-import { getProviderPresets } from '../src/store/providerPresets.ts';
+import { catalogModels, modelProviderMeta, parseModelMeta, refreshModelMeta, getModelMeta, isModelMetaStale, matchModelMeta } from '../apps/web/src/api/modelMeta.ts';
+import { parseDiscoveredModel } from '../apps/web/src/api/modelDiscoveryData.ts';
+import { readModelList, writeModelList, __resetModelListCacheForTest } from '../apps/web/src/api/modelListCache.ts';
+import { modelKind, capabilityLabel } from '../apps/web/src/api/modelPresentation.ts';
+import { getProviderPresets } from '../apps/web/src/store/providerPresets.ts';
 
 const storage = new Map();
 globalThis.localStorage = { getItem: (key) => storage.get(key) ?? null, setItem: (key, value) => storage.set(key, value) };

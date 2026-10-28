@@ -65,10 +65,10 @@ const entry = join(OUT, 'entry.ts');
 writeFileSync(
   entry,
   [
-    `export { useCourseChat } from '${ROOT}src/store/courseChat.ts';`,
-    `export { useSettings } from '${ROOT}src/store/settings.ts';`,
-    `export { db } from '${ROOT}src/store/db.ts';`,
-    `export { LIBRARY_ASSISTANT_ID } from '${ROOT}src/harness/libraryAssistant.ts';`,
+     `export { useCourseChat } from '${ROOT}apps/web/src/store/courseChat.ts';`,
+     `export { useSettings } from '${ROOT}apps/web/src/store/settings.ts';`,
+     `export { db } from '${ROOT}apps/web/src/store/db.ts';`,
+     `export { LIBRARY_ASSISTANT_ID } from '${ROOT}apps/web/src/harness/libraryAssistant.ts';`,
   ].join('\n'),
 );
 await build({

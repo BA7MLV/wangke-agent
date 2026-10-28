@@ -53,7 +53,7 @@ writeFileSync(
   dropModelList,
   pruneModelLists,
   __resetModelListCacheForTest,
-} from '../../src/api/modelListCache';
+} from '../../apps/web/src/api/modelListCache';
 `,
 );
 

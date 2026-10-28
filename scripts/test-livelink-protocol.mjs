@@ -37,9 +37,9 @@ import {
   joinUnit,
   encodeUnitPayload,
   decodeUnitPayload,
-} from '../src/livelink/protocol.ts';
-import { PART_BYTES } from '../src/sync/units.ts';
-import { uuid } from '../src/utils/uuid.ts';
+} from '../apps/web/src/livelink/protocol.ts';
+import { PART_BYTES } from '../apps/web/src/sync/units.ts';
+import { uuid } from '../apps/web/src/utils/uuid.ts';
 
 let passed = 0;
 const failures = [];

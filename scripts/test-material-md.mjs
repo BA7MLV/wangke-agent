@@ -11,7 +11,7 @@ import {
   isMarkdownFile,
   mdCoverText,
   MD_MIME,
-} from '../src/materials/md.ts';
+} from '../apps/web/src/materials/md.ts';
 
 let passed = 0;
 const failures = [];

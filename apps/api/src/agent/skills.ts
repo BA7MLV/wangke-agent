@@ -1,12 +1,12 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { intersectSkillMetaIds } from '../../../../src/skills/scope.js';
-import { parseSkillMarkdown } from '../../../../src/skills/types.js';
+import { intersectSkillMetaIds } from '@wangke/study-core/skills/scope';
+import { parseSkillMarkdown } from '@wangke/study-core/skills/parser';
 import type { DatabaseStore } from '../storage/database.js';
 
 type Skill = { id: number; name: string; description: string; body: string; enabled: number; updatedAt: number; mcpRequired?: string[] };
-const builtinRoot = fileURLToPath(new URL('../../../../src/skills/builtin/', import.meta.url));
+const builtinRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve('@wangke/study-core/skills/assets'))), '..');
 // Filesystem capabilities never travel in synchronized JSON, even when it
 // claims to be a builtin. Only this module can populate the trusted map.
 const builtinPaths = new Map<Skill, string>();

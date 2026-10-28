@@ -1,0 +1,67 @@
+/* The model picker is an opaque overlay, including inside a settings drawer. */
+.model-picker-popover {
+  background: var(--overlay);
+  color: var(--overlay-foreground);
+}
+
+@media (max-width: 640px) {
+  /* Connected providers and suggested connections share a readable, touch-sized row. */
+  .provider-overview-grid > button,
+  .provider-overview-grid [data-testid^='provider-summary-'] {
+    display: grid;
+    grid-template-columns: 44px minmax(0, 1fr);
+    align-items: center;
+    gap: 4px 12px;
+    min-height: 88px;
+    padding: 14px;
+    text-align: left;
+  }
+
+  .provider-overview-grid > button > :first-child,
+  .provider-overview-grid [data-testid^='provider-summary-'] > :first-child {
+    grid-column: 1;
+    grid-row: 1 / span 2;
+  }
+
+  .provider-overview-grid > button > :not(:first-child),
+  .provider-overview-grid [data-testid^='provider-summary-'] > :not(:first-child) {
+    grid-column: 2;
+    min-width: 0;
+  }
+
+  .provider-overview-grid > button > :nth-child(2) {
+    align-self: center;
+  }
+
+  .provider-overview-grid > button > :nth-child(2),
+  .provider-overview-grid > button > :nth-child(2) > :first-child,
+  .provider-overview-grid [data-testid^='provider-summary-'] > :nth-child(2) {
+    font-size: 0.9375rem;
+  }
+
+  .provider-overview-grid > button > :nth-child(3),
+  .provider-overview-grid > button > :nth-child(2) > :nth-child(2),
+  .provider-overview-grid [data-testid^='provider-summary-'] > :nth-child(3) {
+    font-size: 0.8125rem;
+  }
+
+  .provider-overview-grid [data-testid^='provider-summary-'] {
+    padding-right: 56px;
+  }
+
+  .provider-overview-grid [data-testid^='provider-card-'] {
+    min-height: 0;
+  }
+
+  .provider-overview-grid [data-testid^='provider-summary-'] > :first-child > :not(:first-child) {
+    display: none;
+  }
+
+  .provider-overview-grid [data-testid^='provider-remove-'] {
+    width: 44px;
+    height: 44px;
+    top: 50%;
+    right: 6px;
+    transform: translateY(-50%);
+  }
+}

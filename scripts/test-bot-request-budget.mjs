@@ -20,7 +20,7 @@ try {
   const owner = 'wire-owner', at = new Date().toISOString();
   store.db.prepare('INSERT INTO users VALUES(?,?,?)').run(owner, owner, at);
   const config = new CloudConfiguration(store, path.join(root, 'config')), defaults = config.get(owner, true);
-  const configure = (protocol, budget = {}) => { const p = { id: 'fake', name: 'Fake', baseUrl: 'https://fake.invalid/v1', protocol, apiKey: 'fake', catalogId: '', serves: ['chat', 'vision'] }; config.save(owner, { ...defaults, providers: [p], llmModel: { providerId: p.id, model: 'fake' }, visionModel: { providerId: p.id, model: 'fake' }, botBudget: { ...DEFAULT_BOT_BUDGET, ...budget } }); return p; };
+  const configure = (protocol, budget = {}) => { const p = { id: 'fake', name: 'Fake', baseUrl: 'https://fake.invalid/v1', protocol, apiKey: 'fake', catalogId: '', serves: ['chat', 'vision'] }; config.save(owner, { ...defaults, modelRevision: config.get(owner, true).modelRevision, providers: [p], llmModel: { providerId: p.id, model: 'fake' }, visionModel: { providerId: p.id, model: 'fake' }, botBudget: { ...DEFAULT_BOT_BUDGET, ...budget } }); return p; };
   const service = new BotApplicationService(store, { enqueue() {} }), thread = service.create(owner, 'bot', 'Wire');
   const m = service.send(owner, thread.id, { clientNonce: 'wire', content: '保留中文约束' });
   const run = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(m.id).id;

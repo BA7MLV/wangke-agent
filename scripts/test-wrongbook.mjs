@@ -3,10 +3,10 @@ import 'fake-indexeddb/auto';
 import assert from 'node:assert/strict';
 import { after, test } from 'node:test';
 import { createEmptyCard, fsrs } from 'ts-fsrs';
-import { applyAttempt, dueQuestions, EMPTY_WRONGBOOK, migrateWrongbook, parseWrongbook, questionId, Rating, writeQuestion } from '../src/study/wrongbook.ts';
-import { db } from '../src/store/db.ts';
-import { ensureWrongbookMaterial, importWrongbook, readWrongbook, recordWrongbookAttempt, saveWrongbookMarkdown, setWrongbookStatus } from '../src/store/wrongbook.ts';
-import { extractMdUnits, mdCoverText } from '../src/materials/md.ts';
+import { applyAttempt, dueQuestions, EMPTY_WRONGBOOK, migrateWrongbook, parseWrongbook, questionId, Rating, writeQuestion } from '../apps/web/src/study/wrongbook.ts';
+import { db } from '../apps/web/src/store/db.ts';
+import { ensureWrongbookMaterial, importWrongbook, readWrongbook, recordWrongbookAttempt, saveWrongbookMarkdown, setWrongbookStatus } from '../apps/web/src/store/wrongbook.ts';
+import { extractMdUnits, mdCoverText } from '../apps/web/src/materials/md.ts';
 
 const question = { stem: '1 + 1 = ?', options: ['1', '2', '3', '4'], answer: 1, explanation: '相加得 2。\n```js\n1 + 1\n```' };
 const source = { courseId: 'test-course', page: 12 };

@@ -1,5 +1,5 @@
 services:
-  app:
+  api:
     environment:
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:?Set PUBLIC_ORIGIN to the public HTTPS URL}"
       WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:?Set WEBAUTHN_RP_ID to the public hostname}"
@@ -7,7 +7,7 @@ services:
     image: caddy:2.10-alpine
     restart: unless-stopped
     depends_on:
-      app:
+      api:
         condition: service_healthy
     environment:
       DOMAIN: "${DOMAIN:?Set DOMAIN to the public hostname}"
@@ -19,8 +19,6 @@ services:
       - ./infra/docker/Caddyfile:/etc/caddy/Caddyfile:ro
       - caddy_data:/data
       - caddy_config:/config
-    security_opt:
-      - no-new-privileges:true
 
 volumes:
   caddy_data:

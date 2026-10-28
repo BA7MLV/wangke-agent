@@ -8,7 +8,7 @@ import { DatabaseStore } from '../apps/api/src/storage/database.ts';
 import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';
 import { McpRepository } from '../apps/api/src/mcp/repository.ts';
 import { McpManager } from '../apps/api/src/mcp/manager.ts';
-import { parseSkillMarkdown, serializeSkillMarkdown } from '../src/skills/types.ts';
+import { parseSkillMarkdown, serializeSkillMarkdown } from '../apps/web/src/skills/types.ts';
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-compat-'));
 const store = new DatabaseStore(path.join(dir, 'db.sqlite'));
@@ -129,7 +129,7 @@ try {
   process.env.BOOTSTRAP_SECRET_FILE = path.join(dir, 'api/config/bootstrap-secret');
   process.env.CLOUD_WORKER_DISABLED = '1'; delete process.env.MODEL_API_KEY;
   const { buildServer } = await import('../apps/api/src/server.ts');
-  const app = buildServer({ dbPath: path.join(dir, 'api.sqlite'), staticDir: path.join(dir, 'none') });
+  const app = buildServer({ dbPath: path.join(dir, 'api.sqlite') });
   try {
     await app.listen({ port: 0, host: '127.0.0.1' });
     process.env.MCP_PUBLIC_ORIGIN = `http://127.0.0.1:${app.server.address().port}`;

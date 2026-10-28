@@ -11,8 +11,8 @@
  * 运行：node scripts/test-course-chat-tools.mjs 之外单独跑：node scripts/test-widget.mjs
  */
 import assert from 'node:assert/strict';
-import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } from '../src/harness/widget.ts';
-import { fenceTitleOf, MAX_FENCE_TITLE } from '../src/components/mermaid/fence.ts';
+import { validateWidgetArgs, widgetAcceptedText, widgetRejectedText } from '../apps/web/src/harness/widget.ts';
+import { fenceTitleOf, MAX_FENCE_TITLE } from '../apps/web/src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];

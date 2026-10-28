@@ -8,9 +8,9 @@
  * 运行：node scripts/test-chat-frames.mjs
  */
 import assert from 'node:assert/strict';
-import { linkifyFrames, linkifyTimestamps, formatFrameList } from '../src/utils/linkify.ts';
-import { PROMPTS } from '../src/harness/prompts.ts';
-import { diagramKindOf, fenceTitleOf, MAX_FENCE_TITLE } from '../src/components/mermaid/fence.ts';
+import { linkifyFrames, linkifyTimestamps, formatFrameList } from '../apps/web/src/utils/linkify.ts';
+import { PROMPTS } from '../apps/web/src/harness/prompts.ts';
+import { diagramKindOf, fenceTitleOf, MAX_FENCE_TITLE } from '../apps/web/src/components/mermaid/fence.ts';
 
 let passed = 0;
 const failures = [];

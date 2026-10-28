@@ -23,10 +23,12 @@ let stage = 'check';
 if (args[0] === 'info') stage = 'info';
 else if (args[0] === 'build') stage = 'sandbox';
 else if (args.includes('build')) stage = 'build';
+else if (args.includes('pull')) stage = 'pull';
 else if (args.includes('up')) stage = 'wait';
 else if (args.includes('exec')) stage = 'link';
 if (stage === process.env.MOCK_FAIL) { console.error('mock Docker failure: ' + stage); process.exit(23); }
 if (stage === 'build') console.log('mock: application build output');
+if (stage === 'pull') console.log('mock: independent image pull output');
 if (stage === 'sandbox') console.log('mock: sandbox build output');
 if (stage === 'wait') console.log('mock: containers healthy');
 if (stage === 'link') console.log('Setup URL: http://localhost:3000/#/setup');
@@ -66,19 +68,34 @@ test('prints completed-step percentages, seven stages, timing and live Docker lo
   assert.match(output, /\[\d{2}:\d{2}:\d{2}\]/);
   assert.match(output, /耗时 \d+s/);
   assert.match(output, /安装完成（总耗时 \d+s）/);
-  assert.ok(output.indexOf('构建服务镜像…') < output.indexOf('mock: application build output'));
-  assert.ok(output.indexOf('mock: application build output') < output.indexOf('启动服务并等待健康检查…'));
+  assert.ok(output.indexOf('准备独立服务镜像…') < output.indexOf('mock: independent image pull output'));
+  assert.ok(output.indexOf('mock: independent image pull output') < output.indexOf('启动服务并等待健康检查…'));
   assert.ok(output.indexOf('mock: containers healthy') < output.indexOf('读取初始化入口…'));
   assert.match(output, /跳过沙盒镜像/);
   const calls = f.calls();
-  const build = calls.find(c => c.args[0] === 'compose' && c.args.at(-1) === 'build');
+  const build = calls.find(c => c.args[0] === 'compose' && c.args.at(-1) === 'pull');
   const up = calls.find(c => c.args.includes('up'));
   assert.ok(build);
+  assert.ok(!calls.some(c => c.args.includes('build')), 'default installation never builds on the server');
   assert.deepEqual(up.args.slice(up.args.indexOf('up')), ['up', '-d', '--no-build', '--wait', '--wait-timeout', '180']);
   assert.equal(build.dataDir, path.join(f.dataDir, 'data'));
   assert.equal(up.dataDir, build.dataDir);
   assert.ok(build.uid && build.gid);
   assert.ok(fs.existsSync(path.join(f.dataDir, 'bin/wangke-agent')));
+});
+
+test('managed installation refuses implicit replacement; script refresh does not rewrite config or invoke Docker', async t => {
+  const f = fixture(t);
+  fs.mkdirSync(path.join(f.dataDir, 'releases'), { recursive: true });
+  const baseline = '{"success":"preserve"}\n', environment = 'WANGKE_API_IMAGE=registry.invalid/api@sha256:preserve\nSECRET=keep\n';
+  fs.writeFileSync(path.join(f.dataDir, 'releases/last-success.json'), baseline);
+  fs.writeFileSync(path.join(f.dataDir, '.env'), environment);
+  const denied = await f.run(); assert.equal(denied.code, 2);
+  const refreshed = await f.run(['--no-start']); assert.equal(refreshed.code, 0, refreshed.output);
+  assert.deepEqual(f.calls(), []);
+  assert.equal(fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8'), environment);
+  assert.equal(fs.readFileSync(path.join(f.dataDir, 'releases/last-success.json'), 'utf8'), baseline);
+  assert.ok(fs.existsSync(path.join(f.dataDir, 'bin/lib/release-transaction.mjs')));
 });
 
 test('--no-start prints only four preparation stages and clearly states what was skipped', async t => {
@@ -95,12 +112,13 @@ test('--no-start prints only four preparation stages and clearly states what was
 
 test('Agent and HTTPS configuration are passed to build, startup and setup-link commands', async t => {
   const f = fixture(t);
-  const { code, output } = await f.run(['--agent', '--domain', 'learn.example.com']);
+  const { code, output } = await f.run(['--build-from-source', '--agent', '--domain', 'learn.example.com']);
   assert.equal(code, 0, output);
   assert.ok(output.indexOf('mock: sandbox build output') < output.indexOf('mock: application build output'));
   for (const call of f.calls().filter(c => c.args.some(arg => ['build', 'up', 'exec'].includes(arg)) && c.args[0] === 'compose')) {
     assert.ok(call.args.includes(path.join(root, 'compose.prod.yaml')));
     assert.ok(call.args.includes(path.join(root, 'compose.agent.yaml')));
+    assert.ok(call.args.includes(path.join(root, 'compose.build.yaml')));
   }
   const env = fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8');
   const token = env.match(/^SANDBOX_TOKEN=(.+)$/m)[1];
@@ -115,21 +133,26 @@ test('rerunning keeps existing configuration and never prints its credentials', 
   fs.writeFileSync(path.join(f.dataDir, '.env'), env);
   const { code, output } = await f.run(['--no-start']);
   assert.equal(code, 0, output);
-  assert.equal(fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8'), env);
+  const updated = fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8');
+  assert.ok(updated.startsWith(env));
+  assert.match(updated, /^WANGKE_API_IMAGE=wangke-agent-api:custom$/m);
+  assert.match(updated, /^WANGKE_WEB_IMAGE=wangke-agent-web:custom$/m);
   assert.match(output, /检测到已有配置/);
   assert.ok(!output.includes('private-fixture-key'));
 });
 
 for (const [stage, step, name] of [
   ['info', 1, '检查安装参数与运行环境'],
-  ['sandbox', 5, '构建服务镜像'],
-  ['build', 5, '构建服务镜像'],
+  ['sandbox', 5, '准备独立服务镜像'],
+  ['build', 5, '准备独立服务镜像'],
+  ['pull', 5, '准备独立服务镜像'],
   ['wait', 6, '启动服务并等待健康检查'],
   ['link', 7, '读取初始化入口'],
 ]) {
   test(`failure at ${stage} reports the exact stage and never prints success`, async t => {
     const f = fixture(t);
-    const { code, output } = await f.run(stage === 'sandbox' ? ['--agent'] : [], { MOCK_FAIL: stage });
+    const args = stage === 'sandbox' ? ['--build-from-source', '--agent'] : stage === 'build' ? ['--build-from-source'] : [];
+    const { code, output } = await f.run(args, { MOCK_FAIL: stage });
     assert.equal(code, stage === 'info' ? 1 : 23, output);
     assert.ok(output.includes(`安装未完成：停在 [${step}/7] ${name}`), output);
     assert.ok(output.includes(`[${Math.floor((step - 1) * 100 / 7)}%] 安装未完成`), 'failures retain the last completed-step percentage');

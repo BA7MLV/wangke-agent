@@ -10,10 +10,10 @@ import os from 'node:os';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const tmp = path.join(os.tmpdir(), `test-bilibili-index-${Date.now()}.mjs`);
 execSync(
-  `node_modules/.bin/esbuild src/bilibili/index.ts --bundle --platform=node --format=esm --packages=external --outfile=${tmp}`,
+  `node_modules/.bin/esbuild apps/web/src/bilibili/index.ts --bundle --platform=node --format=esm --packages=external --outfile=${tmp}`,
   { cwd: root, stdio: 'inherit' },
 );
-const { sanitizeFileName } = await import(path.join(root, 'src/bilibili/parse.ts'));
+const { sanitizeFileName } = await import(path.join(root, 'apps/web/src/bilibili/parse.ts'));
 
 let passed = 0;
 let failed = 0;

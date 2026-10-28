@@ -1,10 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
-import type { CloudTask, CloudMutation } from '../../../../packages/contracts/src/cloud.js';
+import type { CloudTask, CloudMutation } from '@wangke/contracts/cloud';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from './config.js';
 import type { CloudRecords } from './records.js';
+import { ProjectError, ProjectFiles } from '../projects/files.js';
 
 export type ExecutorKind = 'node' | 'media' | 'browser';
 export interface TaskContext {
@@ -73,10 +74,35 @@ export function taskFile(context: TaskContext, reference: unknown): string {
   } catch { throw new Error('文件不可用'); }
 }
 
-/** Match getCourseFile: an edited copy wins over the original streaming upload. */
-export function taskCourseFile(context: TaskContext, id: string): string | null {
-  const edited = context.records.get(context.owner, 'files', id);
-  if (edited) return taskFile(context, edited.blob);
-  const original = context.records.get(context.owner, 'courseFiles', id);
-  return original ? taskFile(context, { $file: original.fileId }) : null;
+/** Pin the authoritative file, including across parent renames/symlink swaps.
+ * Callers close the descriptor; subprocesses inherit it rather than reopening
+ * a mutable workspace path. Legacy blobs are only used for unmigrated courses. */
+export function taskCourseFile(context: TaskContext, id: string) {
+  const mapped = context.store.db.prepare('SELECT f.project_id,f.path FROM resource_files f JOIN projects p ON p.id=f.project_id AND p.owner_id=f.owner_id WHERE f.owner_id=? AND f.course_id=?')
+    .get(context.owner, id) as { project_id: string; path: string } | undefined;
+  let opened: { fd: number; size: number; revision: string };
+  let files: ProjectFiles | undefined;
+  if (mapped) {
+    if (process.platform !== 'linux' && context.store.db.prepare('SELECT 1 FROM project_executions WHERE project_id=?').get(mapped.project_id)) throw new ProjectError('project_busy', 409);
+    files = new ProjectFiles(path.join(context.filesDir, 'projects'));
+    try { opened = files.open(mapped.project_id, mapped.path); }
+    catch (error) { if (error instanceof ProjectError && error.status === 404) return null; throw error; }
+  } else {
+    const edited = context.records.get(context.owner, 'files', id);
+    const original = context.records.get(context.owner, 'courseFiles', id);
+    if (!edited && !original) return null;
+    const filename = taskFile(context, edited ? edited.blob : { $file: original!.fileId });
+    const fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+    opened = { fd, size: fs.fstatSync(fd).size, revision: '' };
+  }
+  let closed = false;
+  return { fd: opened.fd, size: opened.size, filename: `${process.platform === 'linux' ? '/proc/self/fd' : '/dev/fd'}/${opened.fd}`,
+    assertCurrent() {
+      if (!mapped || !files) return;
+      const current = files.open(mapped.project_id, mapped.path);
+      try { if (current.revision !== opened.revision) throw new ProjectError('project_file_conflict', 409); }
+      finally { fs.closeSync(current.fd); }
+    },
+    close() { if (!closed) { closed = true; fs.closeSync(opened.fd); } },
+  };
 }

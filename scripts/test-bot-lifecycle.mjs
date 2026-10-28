@@ -22,7 +22,7 @@ async function fixture(test) {
     store.db.prepare('INSERT INTO users VALUES(?,?,?)').run(owner, owner, at);
     const config = new CloudConfiguration(store, path.join(root, 'config'));
     const defaults = config.get(owner, true);
-    const configure = (policy = {}) => config.save(owner, { ...defaults, providers: [{ id: 'fake', name: 'Fake', baseUrl: 'https://fake.invalid/v1', protocol: 'openai-chat', apiKey: 'fake', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'fake', model: 'fake' }, botBudget: DEFAULT_BOT_BUDGET, policy: { ...defaults.policy, shell: 'allow', ...policy } });
+    const configure = (policy = {}) => config.save(owner, { ...defaults, modelRevision: config.get(owner, true).modelRevision, providers: [{ id: 'fake', name: 'Fake', baseUrl: 'https://fake.invalid/v1', protocol: 'openai-chat', apiKey: 'fake', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'fake', model: 'fake' }, botBudget: DEFAULT_BOT_BUDGET, policy: { ...defaults.policy, shell: 'allow', ...policy } });
     configure();
     const proxy = { enqueue: () => runner?.enqueue(), cancel: id => runner?.cancel(id) };
     const service = new BotApplicationService(store, proxy), thread = service.create(owner, 'bot', 'Lifecycle');

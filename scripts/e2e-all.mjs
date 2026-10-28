@@ -557,7 +557,7 @@ function resolveVideo(preferred) {
  * 端口上做的决定（也可能他就是要跑旧产物做对照），但「正在测哪一版」不该靠猜。
  */
 async function warnIfPreviewStale(port) {
-  const html = join(ROOT, 'dist', 'index.html');
+  const html = join(ROOT, 'apps/web/dist', 'index.html');
   if (!existsSync(html)) return;
   const entryOf = (s) => (s.match(/assets\/index-[A-Za-z0-9_-]+\.js/g) || []).sort().join(',');
   let served;

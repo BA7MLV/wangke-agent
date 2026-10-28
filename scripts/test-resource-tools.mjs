@@ -4,7 +4,7 @@ import 'fake-indexeddb/auto';
 import { createServer } from 'vite';
 
 // Vite resolves the same TS and asset imports as the app; all data stays in fake IndexedDB.
-const server = await createServer({ server: { middlewareMode: true }, appType: 'custom' });
+const server = await createServer({ root: new URL('../apps/web', import.meta.url).pathname, server: { middlewareMode: true }, appType: 'custom' });
 try {
   const { db } = await server.ssrLoadModule('/src/store/db.ts');
   const { createResourceExecutor, courseResourceTools, libraryResourceTools, parseResource, skillPath } = await server.ssrLoadModule('/src/harness/resources.ts');

@@ -1,0 +1,158 @@
+name: Independent release candidates
+on:
+  workflow_dispatch:
+    inputs:
+      baseline_json:
+        description: 'Exact releases/last-success.json from the target installation; empty means FULL build, never HEAD^'
+        type: string
+        required: false
+      image_prefix:
+        description: 'Registry/repository prefix, e.g. ghcr.io/owner/wangke (must be tested from the deployment host)'
+        type: string
+        required: true
+      publish:
+        description: 'Explicitly authorize registry push (also requires RELEASE_PUBLISH_ENABLED=true and release-artifacts environment approval)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  group: independent-release-${{ github.repository }}
+  cancel-in-progress: false
+jobs:
+  plan:
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.plan.outputs.matrix }}
+      services: ${{ steps.plan.outputs.services }}
+      registry: ${{ steps.plan.outputs.registry }}
+      epoch: ${{ steps.plan.outputs.epoch }}
+      source: ${{ steps.plan.outputs.source }}
+      build: ${{ steps.plan.outputs.build }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+      - id: plan
+        run: node scripts/release-ci.mjs prepare
+        env:
+          RELEASE_OUTPUT: ${{ runner.temp }}/release-plan
+          RELEASE_BASELINE_JSON: ${{ inputs.baseline_json }}
+          RELEASE_IMAGE_PREFIX: ${{ inputs.image_prefix }}
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: release-plan-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-plan/*.json
+          if-no-files-found: error
+  verify:
+    needs: plan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run check:boundaries && npm run test:boundaries && npm run test:release-plan && node scripts/test-release-ci.mjs
+      - if: contains(fromJSON(needs.plan.outputs.services), 'api')
+        run: npm run test:release-recovery && npm run test:release-drain && npm run test:memory-context && npm run verify:api-isolation
+        env:
+          TURBO_TOKEN: ${{ secrets.TURBO_TOKEN }}
+          TURBO_TEAM: ${{ vars.TURBO_TEAM }}
+      - if: contains(fromJSON(needs.plan.outputs.services), 'web')
+        run: npm run verify:web-isolation
+  images:
+    needs: [plan, verify]
+    if: needs.plan.outputs.build == 'true'
+    runs-on: ubuntu-latest
+    environment: release-artifacts
+    permissions:
+      contents: read
+      packages: write
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - name: Check explicit publication authorization
+        if: inputs.publish
+        env:
+          ENABLED: ${{ vars.RELEASE_PUBLISH_ENABLED }}
+        run: test "$ENABLED" = true
+      - uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6
+        if: inputs.publish
+        with:
+          registry: ${{ needs.plan.outputs.registry }}
+          username: ${{ secrets.RELEASE_REGISTRY_USER || github.actor }}
+          password: ${{ secrets.RELEASE_REGISTRY_TOKEN || (needs.plan.outputs.registry == 'ghcr.io' && github.token) || '' }}
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069
+      - id: build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          tags: ${{ matrix.image }}:sha-${{ needs.plan.outputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+          push: ${{ inputs.publish }}
+          load: ${{ !inputs.publish }}
+          labels: org.opencontainers.image.revision=${{ needs.plan.outputs.source }}
+          build-args: |
+            SOURCE_COMMIT=${{ needs.plan.outputs.source }}
+            SOURCE_DATE_EPOCH=${{ needs.plan.outputs.epoch }}
+          cache-from: type=gha,scope=release-${{ matrix.service }}-amd64
+          cache-to: type=gha,mode=max,scope=release-${{ matrix.service }}-amd64
+          provenance: mode=max
+      - name: Record immutable build result
+        if: inputs.publish
+        env:
+          SERVICE: ${{ matrix.service }}
+          IMAGE: ${{ matrix.image }}
+          DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE: ${{ needs.plan.outputs.source }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/result"
+          node --input-type=module -e '
+            import fs from "node:fs";
+            const {SERVICE,IMAGE,DIGEST,SOURCE,RUNNER_TEMP}=process.env;
+            if(!/^(api|web|sandbox|broker)$/.test(SERVICE)||!/^sha256:[a-f0-9]{64}$/.test(DIGEST))throw Error("invalid_build_result");
+            fs.writeFileSync(`${RUNNER_TEMP}/result/build-${SERVICE}.json`,JSON.stringify({service:SERVICE,image:`${IMAGE}@${DIGEST}`,sourceCommit:SOURCE}));
+          '
+          if [ "$SERVICE" = api ]; then
+            docker run --rm --network none --entrypoint node "$IMAGE@$DIGEST" /app/apps/api/scripts/deployment-maintenance.mjs metadata > "$RUNNER_TEMP/result/database.json"
+          fi
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        if: inputs.publish
+        with:
+          name: release-build-${{ matrix.service }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/result/*.json
+          if-no-files-found: error
+  manifest:
+    needs: [plan, verify, images]
+    if: ${{ always() && inputs.publish && needs.plan.result == 'success' && needs.verify.result == 'success' && (needs.images.result == 'success' || needs.images.result == 'skipped') }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1
+        with:
+          node-version: '22'
+      - name: Collect only this run and attempt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: gh run download "$GITHUB_RUN_ID" --pattern "release-*-$GITHUB_RUN_ATTEMPT" --dir "$RUNNER_TEMP/release-inputs"
+      - run: node scripts/release-ci.mjs assemble "$RUNNER_TEMP/release-inputs" "$RUNNER_TEMP/release-manifest.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: candidate-manifest-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/release-manifest.json
+          if-no-files-found: error
+      # Intentionally NO deployment, SSH, mutable baseline artifact, or promotion.
+      # Only the host transaction updates releases/last-success.json after readiness.

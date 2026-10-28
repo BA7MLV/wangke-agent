@@ -8,7 +8,7 @@ const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-cloud-files-'));
 Object.assign(process.env, { DATA_DIR: dir, FILES_DIR: path.join(dir, 'files'), BOOTSTRAP_SECRET_FILE: path.join(dir, 'config/bootstrap-secret'), NODE_ENV: 'test', CLOUD_WORKER_DISABLED: '1' });
 delete process.env.MAX_FILE_BYTES;
 const { buildServer } = await import('../apps/api/src/server.ts');
-const app = buildServer({ dbPath: path.join(dir, 'db.sqlite'), staticDir: path.join(dir, 'empty') });
+const app = buildServer({ dbPath: path.join(dir, 'db.sqlite') });
 try {
   const origin = await app.listen({ host: '127.0.0.1', port: 0 });
   await app.inject({ method: 'POST', url: '/api/v1/bootstrap/initialize', headers: { 'x-bootstrap-secret': fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim() }, payload: { adminPassword: 'streaming-test-password' } });

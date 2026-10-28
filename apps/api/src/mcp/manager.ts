@@ -7,8 +7,8 @@ import { SSEClientTransport } from '@modelcontextprotocol/sdk/client/sse.js';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { McpOAuthProvider } from './oauth.js';
 import { ToolRegistry } from '../agent/tools/registry.js';
-import type { McpCallResult, McpCatalog, McpServer, McpTool } from '../../../../packages/contracts/src/mcp.js';
-import { mcpResultText } from '../../../../packages/contracts/src/mcp.js';
+import type { McpCallResult, McpCatalog, McpServer, McpTool } from '@wangke/contracts/mcp';
+import { mcpResultText } from '@wangke/contracts/mcp';
 import { McpRepository, type StoredServer } from './repository.js';
 
 type Connection = { client: Client; transport: StreamableHTTPClientTransport | SSEClientTransport | StdioClientTransport; revision: string; tools: McpTool[]; touched: number; active: number; controller: AbortController };

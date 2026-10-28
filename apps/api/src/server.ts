@@ -4,10 +4,9 @@ import path from 'node:path';
 import { Readable } from 'node:stream';
 import Fastify, { type FastifyReply, type FastifyRequest } from 'fastify';
 import helmet from '@fastify/helmet';
-import fastifyStatic from '@fastify/static';
 import argon2 from 'argon2';
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
-import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '../../../packages/contracts/src/index.js';
+import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '@wangke/contracts';
 import { DatabaseStore } from './storage/database.js';
 import { BootstrapRepository } from './storage/bootstrapRepository.js';
 import { BotRunner } from './agent/runner.js';
@@ -23,6 +22,8 @@ import { CloudRecords } from './cloud/records.js';
 import { CloudConfiguration } from './cloud/config.js';
 import { receiveFile, byteRange } from './cloud/files.js';
 import { registerCloudRoutes } from './cloud/routes.js';
+import { SystemMaterials } from './storage/system-materials.js';
+import { registerSystemRoutes } from './storage/system-routes.js';
 import { workerIdentity } from './cloud/tasks.js';
 import { workerTokens } from './cloud/workerAuth.js';
 import { McpRepository } from './mcp/repository.js';
@@ -31,7 +32,11 @@ import { registerMcpRoutes } from './mcp/routes.js';
 import { ProjectRepository } from './projects/repository.js';
 import { ProjectError } from './projects/files.js';
 import { registerProjectRoutes } from './projects/routes.js';
+import { ResourceFiles } from './projects/resources.js';
+import { registerResourceRoutes } from './projects/resource-routes.js';
 import type { SandboxCleanup, SandboxExecutor } from './agent/sandbox.js';
+import { settleWithin } from './lifecycle.js';
+import { inspectDatabase } from './storage/release.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -87,8 +92,13 @@ function webauthnChallengeFromResponse(body: unknown): string | null {
   }
 }
 
-export function buildServer(options: { dbPath?: string; staticDir?: string; fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxCleanup?: SandboxCleanup } = {}) {
+export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxCleanup?: SandboxCleanup } = {}) {
   const secretFile = process.env.BOOTSTRAP_SECRET_FILE ?? path.join(defaultDataDir, 'config/bootstrap-secret');
+  const releaseId = process.env.API_RELEASE_ID;
+  const releaseToken = process.env.API_RELEASE_TOKEN ?? '';
+  if (releaseId && (!/^[a-f0-9-]{36}$/.test(releaseId) || !/^[a-f0-9]{64}$/.test(releaseToken))) throw new Error('invalid_release_control');
+  const activationFile = releaseId ? path.join(path.dirname(secretFile), `release-activated-${releaseId}`) : null;
+  let held = Boolean(releaseId && (!fs.existsSync(activationFile!) || fs.readFileSync(activationFile!, 'utf8') !== hashToken(releaseToken)));
   const dbPath = options.dbPath ?? process.env.DB_PATH ?? path.join(defaultDataDir, 'db/wangke.sqlite');
   const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 24 * 60 * 60 * 1000);
   const sessionTtlMs = Number(process.env.SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
@@ -96,12 +106,15 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const configuredMaxFileBytes = Number(process.env.MAX_FILE_BYTES ?? 512 * 1024 * 1024);
   const maxFileBytes = Number.isFinite(configuredMaxFileBytes) ? Math.max(1, Math.min(512 * 1024 * 1024, Math.floor(configuredMaxFileBytes))) : 512 * 1024 * 1024;
   fs.mkdirSync(filesDir, { recursive: true });
-  const store = new DatabaseStore(dbPath);
+  const store = new DatabaseStore(dbPath, path.join(filesDir, 'system-files'));
+  const systemMaterials = new SystemMaterials(store);
+  systemMaterials.migrate();
   const cloudRecords = new CloudRecords(store);
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
   const mcp = new McpManager(new McpRepository(store, cloudConfig));
   const projects = new ProjectRepository(store, path.join(filesDir, 'projects'));
+  const resources = new ResourceFiles(projects, filesDir);
   const study = new StudyTools(store, cloudConfig, filesDir, options.fetch);
   const runner = new BotRunner(store, { fetch: options.fetch, sandbox: options.sandbox, sandboxCleanup: options.sandboxCleanup, configuration: cloudConfig, mcp, projects, study });
   projects.isActive = id => runner.isProjectActive(id);
@@ -120,15 +133,33 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   let bootstrap = repo.isInitialized() ? { secret: '', createdAt: 0 } : loadOrCreateSecret(secretFile);
   if (repo.isInitialized()) fs.rmSync(secretFile, { force: true });
   const app = Fastify({ logger: process.env.NODE_ENV !== 'test', bodyLimit: 16 * 1024 * 1024 });
+  let draining = false;
+  let drainTask: Promise<boolean> | undefined;
+  const writes = new Set<Promise<void>>();
+  // Register before any routes: stop external writes/claims, but let scoped
+  // active native workers finish their loopback HTTP reports during the grace.
+  app.addHook('onRequest', async (request, reply) => {
+    const url = request.url.split('?')[0];
+    if (held && !['/api/v1/health', '/api/v1/ready', '/api/v1/deployment/status', '/api/v1/deployment/activate'].includes(url)) return reply.code(503).send({ error: 'release_staged' });
+    const write = !['GET', 'HEAD', 'OPTIONS'].includes(request.method);
+    if (draining && write && !workerIdentity(request)) {
+      return reply.header('retry-after', '5').code(503).send({ error: 'api_draining' });
+    }
+    if (!write) return;
+    let resolve!: () => void;
+    const done = new Promise<void>(yes => { resolve = yes; });
+    writes.add(done);
+    const finished = () => { writes.delete(done); resolve(); };
+    reply.raw.once('finish', finished);
+    reply.raw.once('close', finished);
+  });
   app.setErrorHandler((error, _request, reply) => {
     if (error instanceof ProjectError) return reply.code(error.status).send({ error: error.code });
     return reply.send(error);
   });
   app.addContentTypeParser('application/octet-stream', (_request, stream, done) => done(null, stream));
   app.addContentTypeParser(/^multipart\/form-data/, (_request, stream, done) => done(null, stream));
-  runner.start();
-  memoryWorker.start();
-  gateway.start();
+  if (!held) { runner.start(); memoryWorker.start(); gateway.start(); }
   const attempts = new Map<string, { count: number; until: number; seen: number }>();
   const dummyHash = argon2.hash('unusable-login-dummy', { type: argon2.argon2id });
   const secureCookie = (process.env.PUBLIC_ORIGIN ?? '').startsWith('https://');
@@ -147,8 +178,6 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     if (value === 'strict') return 'Strict';
     return 'Lax';
   })();
-  /** SERVE_WEB=false 时只提供 API，不托管前端静态文件（前端由独立的 web 容器或 CDN 提供）。 */
-  const serveWeb = !['false', '0', 'no'].includes((process.env.SERVE_WEB ?? 'true').toLowerCase());
   const tokenTtlMs = Number(process.env.TOKEN_TTL_MS ?? 90 * 24 * 60 * 60 * 1000);
 
   app.register(helmet, {
@@ -157,9 +186,6 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
     // 放行了跨域前端时，文件下载等响应要允许被别的 origin 读取。
     crossOriginResourcePolicy: { policy: corsOrigins.size ? 'cross-origin' : 'same-origin' },
   });
-  const staticDir = options.staticDir ?? path.resolve(process.cwd(), 'dist');
-  const hasWeb = serveWeb && fs.existsSync(staticDir);
-  if (hasWeb) app.register(fastifyStatic, { root: staticDir, wildcard: false });
 
   // CORS：只对 CORS_ORIGINS 里列出的 origin 回写允许头；预检请求在这里直接结束。
   app.addHook('onRequest', async (request, reply) => {
@@ -217,19 +243,64 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   const bad = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
-   const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch });
+   const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch,
+     canStart: () => !held && !draining,
+     syncResources: owner => { if (store.db.prepare('SELECT 1 FROM resource_roots WHERE owner_id=?').get(owner)) resources.migrate(owner); } });
+   registerResourceRoutes(app, resources, requireAuth, checkOrigin);
+   registerSystemRoutes(app, systemMaterials, cloudConfig, requireAuth, checkOrigin);
    registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
    registerProjectRoutes(app, { projects, requireAuth, checkOrigin, maxFileBytes, stopProject: (id) => {
      const runs = store.db.prepare("SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.project_id=? AND r.status IN ('queued','running','waiting_user')").all(id) as Array<{ id: string }>;
      for (const run of runs) { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=?").run(now(), run.id); runner.cancel(run.id); }
    } });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
+  app.get('/api/v1/ready', async (_request, reply) => {
+    if (draining) return reply.code(503).send({ status: 'draining' });
+    if (held) return reply.code(503).send({ status: 'staged' });
+    return { status: 'ready' };
+  });
+  const deploymentAuthorized = (request: FastifyRequest, reply: FastifyReply) => {
+    const token = request.headers['x-deployment-token'];
+    if (!releaseId || !['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(request.raw.socket.remoteAddress ?? '') || typeof token !== 'string' || !crypto.timingSafeEqual(Buffer.from(hashToken(token)), Buffer.from(hashToken(releaseToken)))) {
+      reply.code(403).send({ error: 'deployment_control_denied' }); return false;
+    }
+    return true;
+  };
+  const deploymentDatabase = () => {
+    const metadataFile = [new URL('../../../database-identity.json', import.meta.url), new URL('../dist/database-identity.json', import.meta.url)].find(url => fs.existsSync(url));
+    if (!metadataFile) throw new Error('database_metadata_missing');
+    const database = JSON.parse(fs.readFileSync(metadataFile, 'utf8'));
+    if (inspectDatabase(store.db).schemaHash !== database.schemaHash) throw new Error('database_schema_identity_mismatch');
+    return database;
+  };
+  app.get('/api/v1/deployment/status', async (request, reply) => {
+    if (!deploymentAuthorized(request, reply)) return;
+    return { releaseId, held, draining, database: deploymentDatabase() };
+  });
+  app.post('/api/v1/deployment/activate', async (request, reply) => {
+    if (!deploymentAuthorized(request, reply)) return;
+    if (draining) return reply.code(409).send({ error: 'api_draining' });
+    deploymentDatabase();
+    if (held) {
+      // Durable before admitting any request or scheduler. A restarted container
+      // cannot silently fall back to staged after a successful activation.
+      const fd = fs.openSync(activationFile!, 'w', 0o600);
+      try { fs.writeFileSync(fd, hashToken(releaseToken)); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
+      const directory = fs.openSync(path.dirname(activationFile!), 'r');
+      try { fs.fsyncSync(directory); } finally { fs.closeSync(directory); }
+      held = false;
+      runner.start(); memoryWorker.start(); gateway.start();
+      const address = app.server.address();
+      if (process.env.CLOUD_WORKER_DISABLED !== '1' && address && typeof address === 'object') cloudRunner.start(`http://127.0.0.1:${address.port}`);
+    }
+    return { releaseId, activated: true };
+  });
   app.addHook('onRequest', async (request, reply) => {
     const worker = workerIdentity(request);
     if (worker && request.url.startsWith('/api/')) {
       const url = request.url.split('?')[0];
-      const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status'].includes(url) || /^\/api\/v1\/files\/[^/]+$/.test(url));
-      const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/complete`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+       const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status', '/api/v1/system/file', '/api/v1/system/files'].includes(url) || /^\/api\/v1\/(files|resources\/courses)\/[^/]+$/.test(url));
+       const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call', '/api/v1/system/file'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/complete`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });
@@ -711,11 +782,47 @@ export function buildServer(options: { dbPath?: string; staticDir?: string; fetc
   app.get<{ Params: { id: string } }>('/api/v1/runs/:id', async (request, reply) => { const user = requireAuth(request, reply); if (!user) return; const run = store.db.prepare('SELECT r.* FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(request.params.id, user.id) as any; if (!run) return bad(reply, 404, 'run_not_found'); return { id: run.id, threadId: run.thread_id, mode: run.mode, status: run.status, createdAt: run.created_at, startedAt: run.started_at ?? null, completedAt: run.completed_at ?? null, errorCode: run.error_code ?? null }; });
   app.post<{ Params: { id: string } }>('/api/v1/runs/:id/cancel', async (request, reply) => { if (!checkOrigin(request, reply)) return; const user = requireAuth(request, reply); if (!user) return; return botService.cancelRun(user.id, request.params.id) ?? bad(reply, 404, 'run_not_found'); });
 
-  if (hasWeb) app.setNotFoundHandler((request, reply) => request.method === 'GET' && !request.url.startsWith('/api/') ? reply.sendFile('index.html') : reply.code(404).send({ error: 'not_found' }));
+  app.setNotFoundHandler((_request, reply) => reply.code(404).send({ error: 'not_found' }));
   registerGatewayRoutes(app, gateway, requireAuth, checkOrigin);
   registerBotManagement(app, store, cloudConfig, runner, memoryWorker, requireAuth, checkOrigin);
+  function drainForRelease(milliseconds: number) {
+    if (!Number.isFinite(milliseconds) || milliseconds < 0) return Promise.reject(new Error('invalid_drain_deadline'));
+    if (drainTask) return drainTask;
+    draining = true;
+    // Calling each operation before awaiting closes all admission paths at once.
+    // A false deadline result is NOT a snapshot or proof that writers stopped.
+    const bot = runner.quiesce(milliseconds);
+    const cloud = cloudRunner.quiesce(milliseconds);
+    const background = [gateway.close(), memoryWorker.close()];
+    drainTask = Promise.all([
+      bot, cloud, settleWithin([...background, ...writes], milliseconds),
+    ]).then(results => results.every(Boolean));
+    return drainTask;
+  }
+  app.addHook('preClose', async () => { await drainForRelease(0); });
   app.addHook('onClose', async () => { await gateway.close(); await memoryWorker.close(); await cloudRunner.close(); await runner.close(); await mcp.close(); store.close(); });
-  return app;
+  return Object.assign(app, { drainForRelease });
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) { const app = buildServer(); app.listen({ host: process.env.HOST ?? '0.0.0.0', port: Number(process.env.PORT ?? 3000) }).catch((error) => { app.log.error(error); process.exit(1); }); }
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const grace = Number(process.env.API_DRAIN_MS ?? 30_000);
+  if (!Number.isFinite(grace) || grace < 0 || grace > 300_000) throw new Error('invalid_API_DRAIN_MS');
+  const app = buildServer();
+  let stopping = false;
+  const shutdown = async () => {
+    if (stopping) return;
+    stopping = true;
+    // A stuck executor must not leave a second deployment thinking shutdown
+    // succeeded. Forced exit is nonzero; restart recovery owns unfinished work.
+    const timeout = setTimeout(() => { app.log.error('api_shutdown_timeout'); process.exit(1); }, grace + 30_000);
+    try {
+      const finished = await app.drainForRelease(grace);
+      app.log.info({ finished }, 'api_drained');
+      await app.close();
+    } catch (error) { app.log.error(error); process.exit(1); }
+    finally { clearTimeout(timeout); }
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
+  app.listen({ host: process.env.HOST ?? '0.0.0.0', port: Number(process.env.PORT ?? 3000) }).catch((error) => { app.log.error(error); process.exit(1); });
+}

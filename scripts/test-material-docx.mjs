@@ -14,7 +14,7 @@ import {
   isDocxFile,
   looksLikeLegacyDoc,
   DOCX_MIME,
-} from '../src/materials/docx.ts';
+} from '../apps/web/src/materials/docx.ts';
 
 let passed = 0;
 const failures = [];

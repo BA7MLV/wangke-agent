@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import catalogData from '../src/api/catalog/models.generated.json' with { type: 'json' };
-import { errorKey, initialStep, previousStep, SETUP_STEPS, STEP_FIGURE, stepForError, stepIndex } from '../src/cloud/onboarding/flow.ts';
-import { applyChoice, slotRef } from '../src/cloud/onboarding/models.ts';
-import { fitsSlot, modelsForSlot, providersForSlot } from '../src/api/catalog/index.ts';
+import catalogData from '../apps/web/src/api/catalog/models.generated.json' with { type: 'json' };
+import { errorKey, initialStep, previousStep, SETUP_STEPS, STEP_FIGURE, stepForError, stepIndex } from '../apps/web/src/cloud/onboarding/flow.ts';
+import { applyChoice, slotRef } from '../apps/web/src/cloud/onboarding/models.ts';
+import { fitsSlot, modelsForSlot, providersForSlot } from '../apps/web/src/api/catalog/index.ts';
 
 test('first deploy starts at welcome, later visits go straight to login', () => {
   assert.equal(initialStep({ initialized: false, authenticated: false }), 'welcome');

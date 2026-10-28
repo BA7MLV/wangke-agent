@@ -75,7 +75,7 @@ function buildFixtures() {
 async function bundle() {
   fs.mkdirSync(CACHE, { recursive: true });
   await esbuild.build({
-    entryPoints: [path.join(ROOT, 'src/media/audio.ts')],
+    entryPoints: [path.join(ROOT, 'apps/web/src/media/audio.ts')],
     bundle: true,
     format: 'esm',
     platform: 'browser',

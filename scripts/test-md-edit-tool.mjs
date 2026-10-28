@@ -11,7 +11,7 @@
  * 也被当成不变量来断言，而不是只断言 `ok === false`。
  */
 import assert from 'node:assert/strict';
-import { planAgentEdits } from '../src/md-editor/edits.ts';
+import { planAgentEdits } from '../apps/web/src/md-editor/edits.ts';
 
 let passed = 0;
 const failures = [];

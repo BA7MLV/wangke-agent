@@ -1,0 +1,18 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "globalEnv": ["NODE_ENV"],
+  "tasks": {
+    "build": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!dist/**"],
+      "outputs": ["dist/**"],
+      "env": ["APP_VERSION", "SOURCE_COMMIT", "SOURCE_DATE_EPOCH", "VITE_API_BASE_URL"]
+    },
+    "typecheck": {
+      "dependsOn": ["^build"],
+      "inputs": ["$TURBO_DEFAULT$", "!dist/**"],
+      "outputs": []
+    },
+    "dev": { "cache": false, "persistent": true }
+  }
+}

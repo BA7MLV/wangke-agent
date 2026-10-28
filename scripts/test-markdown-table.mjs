@@ -9,16 +9,16 @@
 import assert from 'node:assert/strict';
 import { createElement as h } from 'react';
 import { Marked } from 'marked';
-import { tableCellMarkdown, tableCellText } from '../src/utils/tableCell.ts';
-import { protectMath } from '../src/components/markdown/math.ts';
-import { tableExtension } from '../src/components/markdown/table.ts';
+import { tableCellMarkdown, tableCellText } from '../apps/web/src/utils/tableCell.ts';
+import { protectMath } from '../apps/web/src/components/markdown/math.ts';
+import { tableExtension } from '../apps/web/src/components/markdown/table.ts';
 import {
   columnWidthsPx,
   escapeMarkdownCell,
   tableToCsv,
   tableToMarkdown,
   visualLength,
-} from '../src/utils/markdownTable.ts';
+} from '../apps/web/src/utils/markdownTable.ts';
 
 let passed = 0;
 const failures = [];

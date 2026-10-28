@@ -1,0 +1,372 @@
+
+> wangke-agent@0.1.0 build:web
+> npm run check:boundaries && turbo run build --filter=@wangke/web
+
+
+> wangke-agent@0.1.0 check:boundaries
+> node scripts/check-boundaries.mjs
+
+Application/shared source boundaries passed (AST imports, types, dynamic loading and resource URLs).
+
+   • turbo 2.11.10
+   • Packages in scope: @wangke/web
+   • Running build in 1 package
+   • Remote caching disabled
+
+@wangke/contracts:build: cache hit, replaying logs 869b9f29380e6fa5
+@wangke/study-core:build: cache hit, replaying logs 0130f64b46d8e86a
+@wangke/contracts:build: 
+@wangke/contracts:build: > @wangke/contracts@0.1.0 build
+@wangke/contracts:build: > tsc -p tsconfig.json
+@wangke/contracts:build: 
+@wangke/study-core:build: 
+@wangke/study-core:build: > @wangke/study-core@0.1.0 build
+@wangke/study-core:build: > tsc -p tsconfig.json
+@wangke/study-core:build: 
+@wangke/web:build: cache hit, replaying logs d5959989e595992c
+@wangke/web:build: 
+@wangke/web:build: > @wangke/web@0.1.0 build
+@wangke/web:build: > npm run check:i18n && tsc -b && vite build
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: > @wangke/web@0.1.0 check:i18n
+@wangke/web:build: > node scripts/check-i18n.mjs
+@wangke/web:build: 
+@wangke/web:build: i18n resources OK: 5 namespaces × 2 languages (/Users/ba7mlv/Downloads/wangke-520/apps/web/src/i18n/locales/)
+@wangke/web:build: vite v5.4.21 building for production...
+@wangke/web:build: transforming...
+@wangke/web:build: ✓ 10901 modules transformed.
+@wangke/web:build: rendering chunks...
+@wangke/web:build: [plugin:vite:reporter] [plugin vite:reporter] 
+@wangke/web:build: (!) /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/md.ts is dynamically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/images.ts but also statically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/MdReader.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/markdownFile.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/parse.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/systemFiles.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/cover.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/store/wrongbook.ts, dynamic import will not move module into another chunk.
+@wangke/web:build: 
+@wangke/web:build: warnings when minifying css:
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:149718:
+@wangke/web:build:       1402 │ ...lider .slider__thumb:after:is(){transition-property:none}@med...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:149821:
+@wangke/web:build:       1402 │ ... .slider__thumb:after:not(:is()){transition-property:none}}.s...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:150019:
+@wangke/web:build:       1402 │ ...[data-dragging=true]:after:is(){--tw-scale-x:100%;--tw-scale-...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:150213:
+@wangke/web:build:       1402 │ ...-dragging=true]:after:not(:is()){--tw-scale-x:100%;--tw-scale...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:208477:
+@wangke/web:build:       1402 │ ...}.checkbox__control:before:is(){transition-property:none}@med...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:208577:
+@wangke/web:build:       1402 │ ...ckbox__control:before:not(:is()){transition-property:none}}.c...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:260796:
+@wangke/web:build:       1402 │ ...io__indicator:empty:before:is(){transition-property:none}@med...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:260901:
+@wangke/web:build:       1402 │ ...ndicator:empty:before:not(:is()){transition-property:none}}.r...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: ▲ [WARNING] Unexpected ")" [css-syntax-error]
+@wangke/web:build: 
+@wangke/web:build:     <stdin>:1402:451241:
+@wangke/web:build:       1402 │ ...e\=\"tabpanel\"\]\:visible:is(){visibility:visible}@media not...
+@wangke/web:build:            ╵                                  ^
+@wangke/web:build: 
+@wangke/web:build: 
+@wangke/web:build: [plugin:vite:reporter] [plugin vite:reporter] 
+@wangke/web:build: (!) /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/tasks.ts is dynamically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/api/siliconflow.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/ChatPanel.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/cover.ts but also statically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/harness/qaRunner.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/artifactEdit.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/cards.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/comments.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/danmaku.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/handout.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/handoutEdit.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/materialJob.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/transcribe.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pipelines/transcribeQueue.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/store/courseChat.ts, dynamic import will not move module into another chunk.
+@wangke/web:build: 
+@wangke/web:build: [plugin:vite:reporter] [plugin vite:reporter] 
+@wangke/web:build: (!) /Users/ba7mlv/Downloads/wangke-520/apps/web/src/skills/store.ts is dynamically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/harness/tools.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/mcp/client.ts but also statically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/ChatPanel.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/SkillPicker.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/SkillsCard.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/harness/qaRunner.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/harness/resources.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pages/CourseChat.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/skills/handout.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/skills/router.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/store/courseChat.ts, dynamic import will not move module into another chunk.
+@wangke/web:build: 
+@wangke/web:build: [plugin:vite:reporter] [plugin vite:reporter] 
+@wangke/web:build: (!) /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/sync.ts is dynamically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/state.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/components/ChatPanel.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/systemFiles.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/systemFiles.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/store/courseChat.ts but also statically imported by /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/Activity.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/BotSettings.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/DataSettings.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/Gate.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/Models.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/migrate.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/tasks.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/cloud/worker.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/main.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/materials/markdownFile.ts, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/pages/ResourceLibrary.tsx, /Users/ba7mlv/Downloads/wangke-520/apps/web/src/store/fileStore.ts, dynamic import will not move module into another chunk.
+@wangke/web:build: 
+@wangke/web:build: computing gzip size...
+@wangke/web:build: dist/registerSW.js                                        0.13 kB
+@wangke/web:build: dist/manifest.webmanifest                                 0.45 kB
+@wangke/web:build: dist/assets/fileWriter.worker-ChF2Zj_8.js                 0.83 kB
+@wangke/web:build: dist/index.html                                           1.18 kB │ gzip:   0.73 kB
+@wangke/web:build: dist/assets/KaTeX_Size3-Regular-CTq5MqoE.woff             4.42 kB
+@wangke/web:build: dist/assets/KaTeX_Size4-Regular-Dl5lxZxV.woff2            4.93 kB
+@wangke/web:build: dist/assets/KaTeX_Size2-Regular-Dy4dx90m.woff2            5.21 kB
+@wangke/web:build: dist/assets/KaTeX_Size1-Regular-mCD8mA8B.woff2            5.47 kB
+@wangke/web:build: dist/assets/KaTeX_Size4-Regular-BF-4gkZK.woff             5.98 kB
+@wangke/web:build: dist/assets/KaTeX_Size2-Regular-oD1tc_U0.woff             6.19 kB
+@wangke/web:build: dist/assets/KaTeX_Size1-Regular-C195tn64.woff             6.50 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Regular-Di6jR-x-.woff2      6.91 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Bold-Dq_IR9rO.woff2         6.91 kB
+@wangke/web:build: dist/assets/KaTeX_Size3-Regular-DgpXs0kz.ttf              7.59 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Regular-CTRA-rTL.woff       7.66 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Bold-BEiXGLvX.woff          7.72 kB
+@wangke/web:build: dist/assets/KaTeX_Script-Regular-D3wIWfF6.woff2           9.64 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Regular-DDBCnlJ7.woff2       10.34 kB
+@wangke/web:build: dist/assets/KaTeX_Size4-Regular-DWFBv043.ttf             10.36 kB
+@wangke/web:build: dist/assets/KaTeX_Script-Regular-D5yQViql.woff           10.59 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Regular-CTYiF6lA.woff2         11.32 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Bold-CL6g_b3V.woff2            11.35 kB
+@wangke/web:build: dist/assets/KaTeX_Size2-Regular-B7gKUWhC.ttf             11.51 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Italic-C3H0VqGB.woff2        12.03 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Bold-D1sUS0GD.woff2          12.22 kB
+@wangke/web:build: dist/assets/KaTeX_Size1-Regular-Dbsnue_I.ttf             12.23 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Regular-CS6fqUqJ.woff        12.32 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Regular-wX97UBjC.ttf       12.34 kB
+@wangke/web:build: dist/assets/KaTeX_Caligraphic-Bold-ATXxdsX0.ttf          12.37 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Regular-Dxdc4cR9.woff          13.21 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Bold-BsDP51OF.woff             13.30 kB
+@wangke/web:build: dist/assets/KaTeX_Typewriter-Regular-CO6r4hn1.woff2      13.57 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Italic-DN2j7dab.woff         14.11 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Bold-DbIhKOiC.woff           14.41 kB
+@wangke/web:build: dist/assets/KaTeX_Typewriter-Regular-C0xS9mPB.woff       16.03 kB
+@wangke/web:build: dist/assets/KaTeX_Math-BoldItalic-CZnvNsCZ.woff2         16.40 kB
+@wangke/web:build: dist/assets/KaTeX_Math-Italic-t53AETM-.woff2             16.44 kB
+@wangke/web:build: dist/assets/KaTeX_Script-Regular-C5JkGWo-.ttf            16.65 kB
+@wangke/web:build: dist/assets/KaTeX_Main-BoldItalic-DxDJ3AOS.woff2         16.78 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Italic-NWA7e6Wa.woff2             16.99 kB
+@wangke/web:build: dist/assets/KaTeX_Math-BoldItalic-iY-2wyZ7.woff          18.67 kB
+@wangke/web:build: dist/assets/KaTeX_Math-Italic-DA0__PXp.woff              18.75 kB
+@wangke/web:build: dist/assets/KaTeX_Main-BoldItalic-SpSLRI95.woff          19.41 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Regular-BNo7hRIc.ttf         19.44 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Regular-CB_wures.ttf           19.57 kB
+@wangke/web:build: dist/assets/KaTeX_Fraktur-Bold-BdnERNNW.ttf              19.58 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Italic-BMLOBm91.woff              19.68 kB
+@wangke/web:build: dist/assets/roboto-latin-400-normal-D27F5sTu.woff        21.06 kB
+@wangke/web:build: dist/assets/roboto-latin-500-normal-fsTFPL3E.woff        21.17 kB
+@wangke/web:build: dist/assets/roboto-latin-400-normal-BqEyEoaF.woff2       21.88 kB
+@wangke/web:build: dist/assets/roboto-latin-500-normal-7RbcRiD8.woff2       22.20 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Italic-YYjJ1zSn.ttf          22.36 kB
+@wangke/web:build: dist/assets/KaTeX_SansSerif-Bold-CFMepnvq.ttf            24.50 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Bold-Cx986IdX.woff2               25.32 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Regular-B22Nviop.woff2            26.27 kB
+@wangke/web:build: dist/assets/KaTeX_Typewriter-Regular-D3Ib7_Hf.ttf        27.56 kB
+@wangke/web:build: dist/assets/KaTeX_AMS-Regular-BQhdFMY1.woff2             28.08 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Bold-Jm3AIy58.woff                29.91 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Regular-Dr94JaBh.woff             30.77 kB
+@wangke/web:build: dist/assets/KaTeX_Math-BoldItalic-B3XSjfu4.ttf           31.20 kB
+@wangke/web:build: dist/assets/KaTeX_Math-Italic-flOr_0UB.ttf               31.31 kB
+@wangke/web:build: dist/assets/KaTeX_Main-BoldItalic-DzxPMmG6.ttf           32.97 kB
+@wangke/web:build: dist/assets/KaTeX_AMS-Regular-DMm9YOAa.woff              33.52 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Italic-3WenGoN9.ttf               33.58 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Bold-waoOVXN0.ttf                 51.34 kB
+@wangke/web:build: dist/assets/KaTeX_Main-Regular-ypZvNtVU.ttf              53.58 kB
+@wangke/web:build: dist/assets/KaTeX_AMS-Regular-DRggAlZN.ttf               63.63 kB
+@wangke/web:build: dist/assets/extractWorker-BFsR0mdl.js                   421.47 kB
+@wangke/web:build: dist/assets/sql-wasm-DfANybxk.wasm                      658.41 kB
+@wangke/web:build: dist/assets/pdf.worker.min-yatZIOMy.mjs               1,375.84 kB
+@wangke/web:build: dist/assets/WidgetPreview-TpGyZG_q.css                    1.13 kB │ gzip:   0.47 kB
+@wangke/web:build: dist/assets/ModelsModule-eZ2Itml0.css                     1.45 kB │ gzip:   0.45 kB
+@wangke/web:build: dist/assets/LiveGuest-e9sBXjX-.css                        2.22 kB │ gzip:   0.73 kB
+@wangke/web:build: dist/assets/projects-CAigRM_T.css                         3.13 kB │ gzip:   0.96 kB
+@wangke/web:build: dist/assets/StudyDashboard-BHwFE4sa.css                   4.12 kB │ gzip:   1.29 kB
+@wangke/web:build: dist/assets/cards-CR7w_DuY.css                            6.57 kB │ gzip:   1.91 kB
+@wangke/web:build: dist/assets/BotWorkspace-B-ghl0VJ.css                    11.94 kB │ gzip:   3.07 kB
+@wangke/web:build: dist/assets/Library-CwN1wNK0.css                         19.55 kB │ gzip:   3.94 kB
+@wangke/web:build: dist/assets/MathFormula-BYZTj3zW.css                     29.29 kB │ gzip:   8.07 kB
+@wangke/web:build: dist/assets/App-BX4fPE3c.css                             68.39 kB │ gzip:  12.68 kB
+@wangke/web:build: dist/assets/Player-BniUu-sG.css                          98.29 kB │ gzip:  18.25 kB
+@wangke/web:build: dist/assets/index-BY2Ehtlz.css                          501.32 kB │ gzip:  54.94 kB
+@wangke/web:build: dist/assets/pdf.worker.min-ocdtAcA3.js                    0.07 kB │ gzip:   0.09 kB
+@wangke/web:build: dist/assets/errorText-BXg7nspw.js                         0.11 kB │ gzip:   0.12 kB
+@wangke/web:build: dist/assets/channel-DoxK9Vht.js                           0.11 kB │ gzip:   0.13 kB
+@wangke/web:build: dist/assets/format-Bxx6ZWAX.js                            0.15 kB │ gzip:   0.12 kB
+@wangke/web:build: dist/assets/init-Gi6I4Gst.js                              0.15 kB │ gzip:   0.13 kB
+@wangke/web:build: dist/assets/chunk-2Q5K7J3B-C1s2YKh4.js                    0.19 kB │ gzip:   0.16 kB
+@wangke/web:build: dist/assets/chunk-JWPE2WC7-BszfZDRf.js                    0.23 kB │ gzip:   0.17 kB
+@wangke/web:build: dist/assets/chunk-XXDRQBXY-B0WEBi2k.js                    0.23 kB │ gzip:   0.21 kB
+@wangke/web:build: dist/assets/ModelSetup-D8GRgW37.js                        0.30 kB │ gzip:   0.21 kB
+@wangke/web:build: dist/assets/rate-DSJEzcZ8.js                              0.36 kB │ gzip:   0.26 kB
+@wangke/web:build: dist/assets/chunk-5VM5RSS4-Cz7-Cgi0.js                    0.37 kB │ gzip:   0.27 kB
+@wangke/web:build: dist/assets/wakeLock-BYvI7jXU.js                          0.44 kB │ gzip:   0.26 kB
+@wangke/web:build: dist/assets/MathFormula-qpjymQCk.js                       0.50 kB │ gzip:   0.44 kB
+@wangke/web:build: dist/assets/chunk-POPQ4Y6H-CJb_tSvu.js                    0.51 kB │ gzip:   0.35 kB
+@wangke/web:build: dist/assets/srt-parser-U8sNOyJE.js                        0.51 kB │ gzip:   0.34 kB
+@wangke/web:build: dist/assets/stateDiagram-v2-MP3YSRHH-BT9ORJpE.js          0.52 kB │ gzip:   0.35 kB
+@wangke/web:build: dist/assets/classDiagram-ZZMXUADV-DNXcnQ06.js             0.56 kB │ gzip:   0.36 kB
+@wangke/web:build: dist/assets/classDiagram-v2-VYDZK3BY-DNXcnQ06.js          0.56 kB │ gzip:   0.36 kB
+@wangke/web:build: dist/assets/swimlanesDiagram-VR7AAH4N-D4sQukI8.js         0.64 kB │ gzip:   0.42 kB
+@wangke/web:build: dist/assets/infoDiagram-27XIBGKW-DWf0apWb.js              0.67 kB │ gzip:   0.45 kB
+@wangke/web:build: dist/assets/vidstack-Dy74GavT-LG92pB9m.js                 0.70 kB │ gzip:   0.45 kB
+@wangke/web:build: dist/assets/reindex-BvYPKDNe.js                           0.70 kB │ gzip:   0.42 kB
+@wangke/web:build: dist/assets/danmaku-Bnzpgokq.js                           0.75 kB │ gzip:   0.49 kB
+@wangke/web:build: dist/assets/workerClient-B6c0M43F.js                      0.75 kB │ gzip:   0.45 kB
+@wangke/web:build: dist/assets/cards-CM-dSVJp.js                             0.77 kB │ gzip:   0.51 kB
+@wangke/web:build: dist/assets/parse-DO2I49R1.js                             0.82 kB │ gzip:   0.62 kB
+@wangke/web:build: dist/assets/BotRich-DkWT0DIf.js                           0.83 kB │ gzip:   0.49 kB
+@wangke/web:build: dist/assets/Study-GeUFF14I.js                             0.88 kB │ gzip:   0.54 kB
+@wangke/web:build: dist/assets/coverQueue-DwCSPfFh.js                        0.91 kB │ gzip:   0.59 kB
+@wangke/web:build: dist/assets/ArtifactPreview-_d_ssSHn.js                   0.97 kB │ gzip:   0.56 kB
+@wangke/web:build: dist/assets/sizeCapture-INFHLROL-wrBztTby.js              1.05 kB │ gzip:   0.58 kB
+@wangke/web:build: dist/assets/vidstack-C0fPJIzs-cl_EEhe2.js                 1.05 kB │ gzip:   0.60 kB
+@wangke/web:build: dist/assets/index-tn7MR_Td.js                             1.13 kB │ gzip:   0.53 kB
+@wangke/web:build: dist/assets/comments-CRnLXYQi.js                          1.15 kB │ gzip:   0.69 kB
+@wangke/web:build: dist/assets/errors-__78kTEd.js                            1.17 kB │ gzip:   0.38 kB
+@wangke/web:build: dist/assets/ordinal-Cboi1Yqb.js                           1.19 kB │ gzip:   0.57 kB
+@wangke/web:build: dist/assets/vidstack-CHcsWfRV-vHhyKaI2.js                 1.43 kB │ gzip:   0.79 kB
+@wangke/web:build: dist/assets/pdfQuestionRegions-DdgFB0v1.js                1.44 kB │ gzip:   0.75 kB
+@wangke/web:build: dist/assets/chunk-CZkKYqCu.js                             1.50 kB │ gzip:   0.82 kB
+@wangke/web:build: dist/assets/artifactEdit-DdLDLz_a.js                      1.50 kB │ gzip:   1.34 kB
+@wangke/web:build: dist/assets/controls-CYUvfzxO.js                          1.50 kB │ gzip:   0.69 kB
+@wangke/web:build: dist/assets/agentInstructionsResource-CRRxNfFq.js         1.56 kB │ gzip:   1.18 kB
+@wangke/web:build: dist/assets/markdownFile-1TAehtHh.js                      1.57 kB │ gzip:   1.01 kB
+@wangke/web:build: dist/assets/index-CJ5rQ9Ry.js                             1.65 kB │ gzip:   0.68 kB
+@wangke/web:build: dist/assets/vidstack-CQuJTPFJ-crkxXnec.js                 1.67 kB │ gzip:   0.87 kB
+@wangke/web:build: dist/assets/migrate-CGd9xqIF.js                           1.67 kB │ gzip:   1.02 kB
+@wangke/web:build: dist/assets/PlaybackModule-BChHiPpZ.js                    1.68 kB │ gzip:   0.95 kB
+@wangke/web:build: dist/assets/railroadDiagram-O6MQD6OU-CIMsZTSD.js          1.70 kB │ gzip:   0.80 kB
+@wangke/web:build: dist/assets/client-Cbnb3QgQ.js                            1.80 kB │ gzip:   0.97 kB
+@wangke/web:build: dist/assets/concurrency-KXJRMzur.js                       1.81 kB │ gzip:   0.94 kB
+@wangke/web:build: dist/assets/chunk-F27PBJKO-DMJSoR8J.js                    1.85 kB │ gzip:   0.82 kB
+@wangke/web:build: dist/assets/textGeneration-CfN4ss7E.js                    1.87 kB │ gzip:   1.15 kB
+@wangke/web:build: dist/assets/abnfDiagram-VCTEODGH-DBXxdCBg.js              1.90 kB │ gzip:   0.94 kB
+@wangke/web:build: dist/assets/AgentModule-Byui8hBk.js                       1.96 kB │ gzip:   0.99 kB
+@wangke/web:build: dist/assets/pegDiagram-XKGWAZYB-BJFrX2XO.js               2.05 kB │ gzip:   0.97 kB
+@wangke/web:build: dist/assets/ebnfDiagram-PWID7BFC-uTH4tSi3.js              2.10 kB │ gzip:   0.93 kB
+@wangke/web:build: dist/assets/StudyModule-Daare4_R.js                       2.57 kB │ gzip:   1.51 kB
+@wangke/web:build: dist/assets/edits-Bgk7acxD.js                             2.78 kB │ gzip:   1.99 kB
+@wangke/web:build: dist/assets/pdf-lNS-qO6t.js                               2.82 kB │ gzip:   1.52 kB
+@wangke/web:build: dist/assets/LiveModule-2FiiIr43.js                        2.83 kB │ gzip:   1.47 kB
+@wangke/web:build: dist/assets/markdownResource-BjdWbUxi.js                  2.83 kB │ gzip:   1.80 kB
+@wangke/web:build: dist/assets/materialJob-Cu8UgQH7.js                       2.83 kB │ gzip:   1.59 kB
+@wangke/web:build: dist/assets/WidgetPreview-DiIQucAv.js                     2.83 kB │ gzip:   1.58 kB
+@wangke/web:build: dist/assets/handoutEdit-BSyzdAEG.js                       2.93 kB │ gzip:   1.74 kB
+@wangke/web:build: dist/assets/projects-BrCgKrcU.js                          3.15 kB │ gzip:   1.44 kB
+@wangke/web:build: dist/assets/docx-DoMsmrDw.js                              3.17 kB │ gzip:   1.67 kB
+@wangke/web:build: dist/assets/arc-D5Acriqq.js                               3.43 kB │ gzip:   1.45 kB
+@wangke/web:build: dist/assets/ShortcutsModule-AYpagEKL.js                   3.50 kB │ gzip:   1.92 kB
+@wangke/web:build: dist/assets/SourcesModule-YU7CpGOY.js                     3.88 kB │ gzip:   2.25 kB
+@wangke/web:build: dist/assets/fileStore-YoQiMUyZ.js                         4.23 kB │ gzip:   1.95 kB
+@wangke/web:build: dist/assets/diagram-Z3DM3KII-DbqKol_u.js                  4.31 kB │ gzip:   1.87 kB
+@wangke/web:build: dist/assets/startRegistration-D2m-Va7e.js                 4.37 kB │ gzip:   1.82 kB
+@wangke/web:build: dist/assets/DataSettings-YOTvWA-4.js                      4.48 kB │ gzip:   2.31 kB
+@wangke/web:build: dist/assets/api-AGDFVz4O.js                               4.51 kB │ gzip:   2.40 kB
+@wangke/web:build: dist/assets/defaultLocale-DX6XiGOO.js                     4.69 kB │ gzip:   2.17 kB
+@wangke/web:build: dist/assets/qaRunner-BCiT2vH4.js                          4.71 kB │ gzip:   2.27 kB
+@wangke/web:build: dist/assets/vidstack-Di0HObvT-BL6RTira.js                 4.90 kB │ gzip:   2.32 kB
+@wangke/web:build: dist/assets/ssa-parser-sjGDhQyN.js                        4.94 kB │ gzip:   2.17 kB
+@wangke/web:build: dist/assets/worker-BlPztivS.js                            5.15 kB │ gzip:   2.02 kB
+@wangke/web:build: dist/assets/Models-Be1UYBnn.js                            5.18 kB │ gzip:   2.64 kB
+@wangke/web:build: dist/assets/cover-Cdt6gVGN.js                             5.44 kB │ gzip:   2.53 kB
+@wangke/web:build: dist/assets/linear-CrFr3uef.js                            5.66 kB │ gzip:   2.32 kB
+@wangke/web:build: dist/assets/frames-C56hJ_ER.js                            5.75 kB │ gzip:   2.37 kB
+@wangke/web:build: dist/assets/subtitles-Ng1rRSQ6.js                         6.13 kB │ gzip:   3.02 kB
+@wangke/web:build: dist/assets/diagram-UQ7AKVKN-DI_SFPez.js                  6.17 kB │ gzip:   2.66 kB
+@wangke/web:build: dist/assets/pieDiagram-E7YTZNPT-BhlCD_p4.js               6.40 kB │ gzip:   2.68 kB
+@wangke/web:build: dist/assets/vidstack-BmcqUMKx-Bp1ookUu.js                 6.76 kB │ gzip:   2.74 kB
+@wangke/web:build: dist/assets/handout-Bh99D7ny.js                           6.81 kB │ gzip:   3.59 kB
+@wangke/web:build: dist/assets/renderer-BSUpqxgx.js                          6.93 kB │ gzip:   2.88 kB
+@wangke/web:build: dist/assets/StudyDashboard-DRhRAutW.js                    6.95 kB │ gzip:   3.32 kB
+@wangke/web:build: dist/assets/dayjs.min-kBat1fpx.js                         7.10 kB │ gzip:   3.07 kB
+@wangke/web:build: dist/assets/html-XEluymgy.js                              8.09 kB │ gzip:   3.52 kB
+@wangke/web:build: dist/assets/diagram-S7CK7UJ4-ARvlbO1p.js                  8.25 kB │ gzip:   3.71 kB
+@wangke/web:build: dist/assets/vidstack-DiaLSJYx-BbANqYF4.js                 8.36 kB │ gzip:   3.46 kB
+@wangke/web:build: dist/assets/images-D6swGFqP.js                            9.40 kB │ gzip:   5.13 kB
+@wangke/web:build: dist/assets/SkillsModule-Dkly5cBf.js                     10.17 kB │ gzip:   4.44 kB
+@wangke/web:build: dist/assets/cynefinDiagram-5FMLGOSQ-SK3MiOAY.js          10.17 kB │ gzip:   3.65 kB
+@wangke/web:build: dist/assets/vidstack-GkTzay8D-CPyY9SWi.js                10.44 kB │ gzip:   3.75 kB
+@wangke/web:build: dist/assets/stateDiagram-D77RDMKH-D-FlYzJe.js            10.46 kB │ gzip:   3.67 kB
+@wangke/web:build: dist/assets/dagre-GXQ25YYZ-C6-i4syL.js                   10.80 kB │ gzip:   4.09 kB
+@wangke/web:build: dist/assets/diagram-VSXAHHWV-BC7AAxOA.js                 10.83 kB │ gzip:   4.20 kB
+@wangke/web:build: dist/assets/vidstack-D2vrrUMs-BiGvMxih.js                11.64 kB │ gzip:   4.02 kB
+@wangke/web:build: dist/assets/McpSettings-CjUSL3HB.js                      12.45 kB │ gzip:   3.86 kB
+@wangke/web:build: dist/assets/index-Cs9OzAhw.js                            13.73 kB │ gzip:   5.42 kB
+@wangke/web:build: dist/assets/GatewaySettings-Bie8czAt.js                  14.19 kB │ gzip:   4.81 kB
+@wangke/web:build: dist/assets/chunk-SVP7TREG-C6xtJQ63.js                   15.73 kB │ gzip:   4.41 kB
+@wangke/web:build: dist/assets/diagram-VX7I27RA-2OvlqbGX.js                 16.06 kB │ gzip:   5.75 kB
+@wangke/web:build: dist/assets/BotSettings-wPSwUjoV.js                      16.52 kB │ gzip:   5.39 kB
+@wangke/web:build: dist/assets/cards-P-Vpft6Q.js                            16.80 kB │ gzip:   6.89 kB
+@wangke/web:build: dist/assets/DataModule-DnWVoAdl.js                       17.22 kB │ gzip:   7.43 kB
+@wangke/web:build: dist/assets/ishikawaDiagram-5VMMS53U-MR_Cm1f0.js         17.57 kB │ gzip:   6.65 kB
+@wangke/web:build: dist/assets/prod-DdiiXJ7R.js                             17.91 kB │ gzip:   7.04 kB
+@wangke/web:build: dist/assets/kanban-definition-UXKFOSKX-CECqWGA6.js       20.38 kB │ gzip:   7.18 kB
+@wangke/web:build: dist/assets/typesafe-DWz29cy-.js                         21.84 kB │ gzip:   8.99 kB
+@wangke/web:build: dist/assets/mindmap-definition-YA3MSWOX-Ck4qjS_-.js      23.26 kB │ gzip:   7.80 kB
+@wangke/web:build: dist/assets/sankeyDiagram-P5KCCOFB-BoYZB-PH.js           23.29 kB │ gzip:   8.56 kB
+@wangke/web:build: dist/assets/journeyDiagram-3NMN7TZE-BmGEHjzk.js          23.68 kB │ gzip:   8.36 kB
+@wangke/web:build: dist/assets/wardleyDiagram-VM6X3IG4-CVdSITXG.js          25.59 kB │ gzip:   6.80 kB
+@wangke/web:build: dist/assets/gitGraphDiagram-WWUBYQGX-w2AavFzA.js         29.51 kB │ gzip:   8.72 kB
+@wangke/web:build: dist/assets/erDiagram-RLTQ6QDP-XhQK-wvB.js               30.88 kB │ gzip:  10.53 kB
+@wangke/web:build: dist/assets/timeline-definition-24CTP7MA-BM5e9PN4.js     30.93 kB │ gzip:  10.15 kB
+@wangke/web:build: dist/assets/requirementDiagram-BXWQKSXE-DVs7f88v.js      31.09 kB │ gzip:   9.66 kB
+@wangke/web:build: dist/assets/wrongbook-Dyas_-Qg.js                        33.03 kB │ gzip:  11.84 kB
+@wangke/web:build: dist/assets/quadrantDiagram-AXDQQJYC-CnzD19R0.js         34.09 kB │ gzip:   9.90 kB
+@wangke/web:build: dist/assets/figures-Cy0NYAo3.js                          34.80 kB │ gzip:  15.58 kB
+@wangke/web:build: dist/assets/layout-Rgz8p6IN.js                           35.44 kB │ gzip:  12.72 kB
+@wangke/web:build: dist/assets/chunk-IMKFNOWR-BOAuBqh-.js                   38.09 kB │ gzip:  12.40 kB
+@wangke/web:build: dist/assets/marked.esm-DweX3G3F.js                       39.44 kB │ gzip:  12.06 kB
+@wangke/web:build: dist/assets/blockDiagram-I7D4REHJ-CQoisQ1D.js            41.87 kB │ gzip:  13.49 kB
+@wangke/web:build: dist/assets/vennDiagram-4TSXK5OY-BkmfcC6z.js             42.05 kB │ gzip:  15.60 kB
+@wangke/web:build: dist/assets/LiveGuest-DBeeNFhD.js                        42.85 kB │ gzip:  16.41 kB
+@wangke/web:build: dist/assets/BotWorkspace-D9D2P18D.js                     43.88 kB │ gzip:  15.14 kB
+@wangke/web:build: dist/assets/xychartDiagram-S5SC5T6Z-CM8eS2b5.js          44.60 kB │ gzip:  12.55 kB
+@wangke/web:build: dist/assets/apkg-KB_tBz2F.js                             45.48 kB │ gzip:  16.70 kB
+@wangke/web:build: dist/assets/chunk-TICWLB2K-J9xnnEE1.js                   49.22 kB │ gzip:  15.57 kB
+@wangke/web:build: dist/assets/AppearanceModule-tq0HIAH_.js                 56.34 kB │ gzip:  16.69 kB
+@wangke/web:build: dist/assets/flowDiagram-HODETNUW-DRW3GFvV.js             61.90 kB │ gzip:  19.63 kB
+@wangke/web:build: dist/assets/c4Diagram-7LVT6UL2-7-FouszP.js               65.56 kB │ gzip:  18.66 kB
+@wangke/web:build: dist/assets/ModelsModule-Dy2pn-1T.js                     66.36 kB │ gzip:  23.98 kB
+@wangke/web:build: dist/assets/ModelCapabilities-DZoxoHrA.js                66.43 kB │ gzip:  20.91 kB
+@wangke/web:build: dist/assets/ganttDiagram-EL5Y4UJY-BoCnQ0ZW.js            69.53 kB │ gzip:  23.24 kB
+@wangke/web:build: dist/assets/cose-bilkent-JH36ORCC-BLaQI4YM.js            81.62 kB │ gzip:  22.41 kB
+@wangke/web:build: dist/assets/swimlanes-42K2YHIH-OonisOZA.js              115.90 kB │ gzip:  42.22 kB
+@wangke/web:build: dist/assets/sequenceDiagram-WJ2MYXX4-DRu6NwWm.js        117.03 kB │ gzip:  30.91 kB
+@wangke/web:build: dist/assets/architectureDiagram-5GKGNRK7-C9Z3TP2P.js    151.71 kB │ gzip:  42.82 kB
+@wangke/web:build: dist/assets/docx-preview-DgCL_od3.js                    173.59 kB │ gzip:  50.88 kB
+@wangke/web:build: dist/assets/Library-BtrTvy6W.js                         204.86 kB │ gzip:  62.81 kB
+@wangke/web:build: dist/assets/chart.umd-Clj_iaPv.js                       208.64 kB │ gzip:  70.70 kB
+@wangke/web:build: dist/assets/katex-HP8lGamR.js                           258.47 kB │ gzip:  77.25 kB
+@wangke/web:build: dist/assets/MdEditor-B44zuApI.js                        291.82 kB │ gzip: 106.50 kB
+@wangke/web:build: dist/assets/bridge-D7_5QlhV.js                          334.62 kB │ gzip: 109.47 kB
+@wangke/web:build: dist/assets/App-D2NLaDy-.js                             335.03 kB │ gzip: 115.44 kB
+@wangke/web:build: dist/assets/ir-JTt66LxT.js                              346.22 kB │ gzip:  98.29 kB
+@wangke/web:build: dist/assets/pdf-C9f1iiyp.js                             359.60 kB │ gzip: 105.72 kB
+@wangke/web:build: dist/assets/jobs-Qb0WW18O.js                            360.38 kB │ gzip: 173.30 kB
+@wangke/web:build: dist/assets/cytoscape.esm-DHM8Q7BN.js                   443.77 kB │ gzip: 141.77 kB
+@wangke/web:build: dist/assets/transcribe-QWuo-IaV.js                      444.23 kB │ gzip: 119.69 kB
+@wangke/web:build: dist/assets/Player-Cl1qs0h3.js                          521.20 kB │ gzip: 165.63 kB
+@wangke/web:build: dist/assets/mermaid.core-Tzq_oy2O.js                    646.47 kB │ gzip: 154.20 kB
+@wangke/web:build: dist/assets/cynefin-OW5HDTMX-Ch5tiUq5.js                688.45 kB │ gzip: 153.92 kB
+@wangke/web:build: dist/assets/index-BJ9-Co0V.js                           877.14 kB │ gzip: 279.91 kB
+@wangke/web:build: ✓ built in 10.03s
+@wangke/web:build: 
+@wangke/web:build: PWA v0.20.5
+@wangke/web:build: mode      generateSW
+@wangke/web:build: precache  192 entries (24111.96 KiB)
+@wangke/web:build: files generated
+@wangke/web:build:   dist/sw.js
+@wangke/web:build:   dist/workbox-e190f46a.js
+
+ Tasks:    3 successful, 3 total
+Cached:    3 cached, 3 total
+  Time:    59ms >>> FULL TURBO
+

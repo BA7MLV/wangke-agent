@@ -5,7 +5,7 @@
  * Node ≥22.18 原生运行 TS（类型擦除），无需额外依赖。
  */
 import assert from 'node:assert/strict';
-import { parseSectionBlocks, salvageBlocks, collectFigureTimestamps, parseRewrittenBlock } from '../src/handout/ir.ts';
+import { parseSectionBlocks, salvageBlocks, collectFigureTimestamps, parseRewrittenBlock } from '../apps/web/src/handout/ir.ts';
 
 let passed = 0;
 const failures = [];

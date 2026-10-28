@@ -1,0 +1,83 @@
+name: Strict separation checks
+on:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: separation-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source-boundaries:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run test:boundaries && npm run check:boundaries
+      - run: npm run build:api
+      - run: npm run test:api && npm run test:tasks && npm run test:password
+      - run: npm run test:release-drain
+      - run: npm run test:release-recovery
+      - run: npm run test:release-plan
+      - run: node scripts/test-release-ci.mjs
+      - run: npm run test:system-files && npm run test:memory-context && npm run test:resources
+  isolated-builds:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        application: [api, web]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - run: npm run verify:${{ matrix.application }}-isolation
+  images:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - application: api
+            dockerfile: Dockerfile
+          - application: web
+            dockerfile: infra/docker/web.Dockerfile
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          tags: wangke-check-${{ matrix.application }}:local
+          load: true
+          push: false
+          cache-from: type=gha,scope=${{ matrix.application }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.application }}
+      - name: Verify API production filesystem and dependencies
+        if: matrix.application == 'api'
+        run: |
+          docker run --rm --entrypoint node wangke-check-api:local -e '
+            const fs = require("node:fs");
+            for (const file of ["src", "apps/web", "dist", "node_modules/react", "node_modules/react-dom", "node_modules/vite"]) {
+              if (fs.existsSync(file)) throw Error("API image leak: " + file);
+            }
+            require("better-sqlite3");
+            require("argon2");
+          '
+      - name: Verify Web production filesystem
+        if: matrix.application == 'web'
+        run: |
+          docker run --rm --entrypoint sh wangke-check-web:local -ec '
+            test -f /srv/index.html
+            test ! -e /app/apps/api
+            test ! -e /srv/node_modules
+            caddy validate --config /etc/caddy/Caddyfile.template --adapter caddyfile
+          '
