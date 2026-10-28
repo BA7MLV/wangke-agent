@@ -87,7 +87,7 @@ try {
       return (await metrics()).top;
     };
 
-    await expectReplyStart('history opens at the latest answer start');
+    await expectBottom('history opens at the latest message end');
     // Prepending older history must retain the stable keyed reading anchor.
     await list.evaluate((element) => {
       element.dispatchEvent(new WheelEvent('wheel', { deltaY: -200, bubbles: true }));
@@ -221,10 +221,10 @@ try {
       ]);
       await window.__scrollChat.getState().loadSession(sessionId);
     });
-    await expectReplyStart('switching sessions restores the answer-start default');
+    await expectBottom('switching sessions opens at the latest message end');
     assert.equal((await metrics()).top, 0, 'short answers remain fully visible without unnecessary scrolling');
     assert.deepEqual(errors, []);
-    console.log(`Chat scroll ${width}px: answer-start default, streaming/completion, manual downward reading, late layout, history anchor, explicit tail jump and session switch passed.`);
+    console.log(`Chat scroll ${width}px: history at end, new reply at start, streaming/completion, manual downward reading, late layout, history anchor, explicit tail jump and session switch passed.`);
     await page.close();
   }
 
@@ -272,7 +272,10 @@ try {
     }, null, { timeout: 5000 });
     await settle();
   };
-  await expectPanelStart();
+  await page.waitForFunction(() => {
+    const element = document.querySelector('[data-testid="chat-list"]');
+    return element && Math.abs(element.scrollHeight - element.clientHeight - element.scrollTop) <= 2;
+  });
   const option = panelList.getByRole('button', { name: /正确选项/ });
   await option.scrollIntoViewIfNeeded();
   const quizTop = (await option.boundingBox()).y;

@@ -699,7 +699,7 @@ export default function CourseChat() {
     lastMessage?.folderPlan?.applied ?? '',
   ].join('|');
   const { pinIfSticking, pauseFollowing: navigateToQuestion, jumpToLatest } = useChatScroll(listRef, {
-    sessionKey: activeId, revision: scrollSignal, messages, virtualRef: virtualMessagesRef, jumpButtonRef: jumpBtnRef,
+    sessionKey: activeId, historyReady: loaded, revision: scrollSignal, messages, virtualRef: virtualMessagesRef, jumpButtonRef: jumpBtnRef,
     onReachStart: () => {
       const state = useCourseChat.getState();
       if (!state.historyError) void state.loadOlder();

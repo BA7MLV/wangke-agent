@@ -1675,8 +1675,8 @@ export default function ChatPanel({
     const n = Number(key);
     if (Number.isFinite(n)) setActiveId(n);
   };
-  // Token updates are coalesced; actual content resizing (including final action
-  // rows and async previews) is also reported by VirtualMessages.
+  // Actual content resizing (including final action rows and async previews)
+  // is also reported by VirtualMessages before paint.
   const lastMsg = msgs[msgs.length - 1];
   const scrollSignal = [
     msgs.length,
@@ -1694,7 +1694,7 @@ export default function ChatPanel({
   ].join('|');
   const virtualMessagesRef = useRef<VirtualMessagesHandle>(null);
   const { pinIfSticking: pinList, pauseFollowing } = useChatScroll(listRef, {
-    sessionKey: activeId, revision: scrollSignal, messages: msgs, virtualRef: virtualMessagesRef,
+    sessionKey: activeId, historyReady: loadedSessionId === activeId, revision: scrollSignal, messages: msgs, virtualRef: virtualMessagesRef,
     onReachStart: () => { if (!historyError) void loadOlder(); },
   });
 
@@ -1779,12 +1779,12 @@ export default function ChatPanel({
         {msgs.length === 0 && (activeId == null || loadedSessionId === activeId) && (
           <PanelPlaceholder testId="chat-empty">针对课程内容提问，回答中的时间戳可点击跳转</PanelPlaceholder>
         )}
-        {msgs.length > 0 && <div className="chat-panel-history" aria-live="polite">
+        {msgs.length > 0 && loadedSessionId === activeId && <div className="chat-panel-history" aria-live="polite">
           {hasOlder && <button type="button" disabled={loadingOlder} onClick={() => void loadOlder()}>
             {loadingOlder ? '正在加载历史消息…' : historyError ? '加载失败，点击重试' : '加载更早消息'}
           </button>}
         </div>}
-        {msgs.length > 0 && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} ref={virtualMessagesRef} onResize={pinList}>{(m, index) => {
+        {msgs.length > 0 && loadedSessionId === activeId && <VirtualMessages key={activeId} items={msgs} scrollRef={listRef} ref={virtualMessagesRef} onResize={pinList}>{(m, index) => {
           const isUser = m.role === 'user';
           /** 与主页同一套判据：回答只重试最后一条；提问只重试「答复就在末尾」的那一句 */
           const canRetry = !isUser && index === msgs.length - 1;

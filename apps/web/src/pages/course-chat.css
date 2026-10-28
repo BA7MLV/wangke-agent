@@ -158,6 +158,9 @@
 
 .chat-history-loader button { cursor: pointer; }
 
+/* Measure the initial virtual tail without painting an intermediate position. */
+.course-chat__messages:has([data-chat-positioned='false']) { visibility: hidden; }
+
 .course-chat__history-skel {
   position: relative;
   display: grid;

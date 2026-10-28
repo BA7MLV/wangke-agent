@@ -9,6 +9,7 @@ const NEAR_BOTTOM_PX = 24;
 interface ScrollMessage { key: string; role: string }
 interface ChatScrollOptions {
   sessionKey: unknown;
+  historyReady: boolean;
   revision: string;
   messages: readonly ScrollMessage[];
   virtualRef: RefObject<VirtualMessagesHandle | null>;
@@ -16,12 +17,13 @@ interface ChatScrollOptions {
   jumpButtonRef?: RefObject<HTMLButtonElement | null>;
 }
 
-/** Default to the reply's beginning; only an explicit jump opts into tail-following. */
+/** Open history at the end; a new question starts reading at the reply's beginning. */
 export function useChatScroll(
   scrollRef: RefObject<HTMLDivElement | null>,
-  { sessionKey, revision, messages, virtualRef, onReachStart, jumpButtonRef }: ChatScrollOptions,
+  { sessionKey, historyReady, revision, messages, virtualRef, onReachStart, jumpButtonRef }: ChatScrollOptions,
 ) {
-  const modeRef = useRef<'start' | 'manual' | 'end'>('start');
+  const modeRef = useRef<'start' | 'manual' | 'end'>('end');
+  const viewRef = useRef<{ sessionKey: unknown; turnKey: string | undefined } | null>(null);
   const frameRef = useRef(0);
   const lastTopRef = useRef(0);
   const lastBottomRef = useRef(0);
@@ -45,10 +47,11 @@ export function useChatScroll(
     }
   }, [scrollRef, jumpButtonRef]);
 
-  // Coalesce token, ResizeObserver and viewport updates. Read the height at execution
-  // time, after the virtual rows / Markdown have committed their actual layout.
+  // Position during layout / ResizeObserver delivery, before paint. Deferring an
+  // initial or measured-height correction by a frame exposes the wrong position.
   const pinIfSticking = useCallback(() => {
-    if (frameRef.current) return;
+    cancelAnimationFrame(frameRef.current);
+    frameRef.current = 0;
     let attempts = 0;
     const position = () => {
       frameRef.current = 0;
@@ -81,7 +84,7 @@ export function useChatScroll(
       }
       syncButton();
     };
-    frameRef.current = requestAnimationFrame(position);
+    position();
   }, [scrollRef, syncButton, virtualRef]);
 
   const pauseFollowing = useCallback(() => {
@@ -103,7 +106,16 @@ export function useChatScroll(
   }, [scrollRef, syncButton, virtualRef]);
 
   useLayoutEffect(() => {
-    modeRef.current = 'start';
+    const previous = viewRef.current;
+    if (!historyReady) {
+      viewRef.current = null;
+      modeRef.current = 'end';
+    } else {
+      const entering = !previous || !Object.is(previous.sessionKey, sessionKey);
+      if (entering) modeRef.current = 'end';
+      else if (turnKey !== undefined && previous.turnKey !== turnKey) modeRef.current = 'start';
+      viewRef.current = { sessionKey, turnKey };
+    }
     lastTopRef.current = scrollRef.current?.scrollTop ?? 0;
     lastBottomRef.current = Math.max(0, (scrollRef.current?.scrollHeight ?? 0) - (scrollRef.current?.clientHeight ?? 0));
     syncButton();
@@ -112,9 +124,9 @@ export function useChatScroll(
       cancelAnimationFrame(frameRef.current);
       frameRef.current = 0;
     };
-  }, [sessionKey, turnKey, scrollRef, syncButton, pinIfSticking]);
+  }, [sessionKey, historyReady, turnKey, scrollRef, syncButton, pinIfSticking]);
 
-  useEffect(pinIfSticking, [revision, pinIfSticking]);
+  useLayoutEffect(pinIfSticking, [revision, pinIfSticking]);
   useViewportResize(pinIfSticking);
 
   useEffect(() => {

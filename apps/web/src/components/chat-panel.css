@@ -48,6 +48,8 @@
   padding: var(--reasoning-sticky-gap) 0 8px;
 }
 
+.chat-list-wrap:has([data-chat-positioned='false']) { visibility: hidden; }
+
 .chat-msg {
   padding-bottom: 12px;
   display: flex;

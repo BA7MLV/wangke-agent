@@ -17,6 +17,7 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
 }) {
   const hostRef = useRef<HTMLDivElement>(null);
   const [margin, setMargin] = useState(0);
+  const [positioned, setPositioned] = useState(false);
   const getItemKey = useCallback((index: number) => items[index].key, [items]);
   const virtualizer = useVirtualizer({
     count: items.length,
@@ -39,6 +40,18 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     cancelScroll: () => virtualizer.cancelScroll(),
   }), [virtualizer]);
   useLayoutEffect(() => {
+    const scroll = scrollRef.current;
+    const host = hostRef.current;
+    if (positioned || !scroll || !host || scroll.clientHeight === 0) return;
+    // A virtual window initially contains estimates (and may not contain the
+    // last row at all). Keep it unpainted until the measured tail is committed.
+    virtualizer.scrollToEnd();
+    const tailMounted = host.querySelector(`[data-index="${items.length - 1}"]`) != null;
+    if (tailMounted && Math.abs(host.getBoundingClientRect().height - virtualizer.getTotalSize()) < 1) {
+      setPositioned(true);
+    }
+  });
+  useLayoutEffect(() => {
     const host = hostRef.current;
     const scroll = scrollRef.current;
     if (!host || !scroll) return;
@@ -55,7 +68,8 @@ export default function VirtualMessages<T extends { key: string }>({ items, scro
     return () => observer.disconnect();
   }, [scrollRef, onResize]);
   return (
-    <div ref={hostRef} style={{ height: virtualizer.getTotalSize(), position: 'relative', overflowAnchor: 'none' }}>
+    <div ref={hostRef} data-chat-positioned={positioned ? 'true' : 'false'}
+      style={{ height: virtualizer.getTotalSize(), position: 'relative', overflowAnchor: 'none' }}>
       {virtualizer.getVirtualItems().map((item) => (
         <div key={item.key} data-index={item.index} ref={virtualizer.measureElement}
           style={{ position: 'absolute', top: item.start - margin, left: 0, width: '100%', display: 'flow-root' }}>
