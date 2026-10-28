@@ -2,6 +2,8 @@
   "modules": {
     "models": "模型",
     "agent": "Agent",
+    "bot": "Bot",
+    "gateway": "消息渠道",
     "appearance": "外观",
     "sources": "内容源",
     "live": "实时",

@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState, type ClipboardEvent } from 'react';
+import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState, type ClipboardEvent } from 'react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from '../components/markdown/Markdown';
 import { MaterialImage } from '../components/MaterialImage';
@@ -55,11 +55,14 @@ import { extractChatSources, type ChatSource } from '../utils/chatSources';
 import { useMediaQuery } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
 import { chatGreeting } from '../utils/chatGreeting';
-import { cloud } from '../cloud/state';
 import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
 import { SettingsButton } from '../components/SettingsModal';
+import { useBotPanel } from '../store/botPanel';
 import { useImeEnter } from '../utils/imeEnter';
 import './course-chat.css';
+
+/** Bot 栏按需加载：不开 Bot 的人不下载它。 */
+const BotPanel = lazy(() => import('./BotWorkspace').then((module) => ({ default: module.BotPanel })));
 
 // Replay only after a full reload, not when returning from another route.
 let welcomeEntrancePlayed = false;
@@ -93,7 +96,11 @@ const LIBRARY_STARTERS = [
 ] as const;
 
 /**
- * 空库也能开始学习；快捷提问始终围绕学习，执行型任务由 BOT 承接。
+ * 没有课程时的快捷提问：一条工具都不需要，纯通用能力。
+ *
+ * 旧实现在空库时只给一个「先去导入课程」按钮，等于告诉用户「不导入就没法用」。
+ * 实际助手本身能答任何问题，导入课程只是让它多一份可引用的依据 —— 所以这里给的是
+ * 能立刻用上的问题，导入课程降级成旁边一个次要入口。
  */
 const GENERAL_STARTERS = [
   {
@@ -107,14 +114,14 @@ const GENERAL_STARTERS = [
     prompt: '我想在两周内入门机器学习，帮我排一个每天 1 小时的学习计划，标出每天的重点。',
   },
   {
-    icon: <Sym name="quiz" />,
-    label: '出题检查理解',
-    prompt: '用三道循序渐进的题检查我对概率条件独立的理解，一次问一道，等我回答后再讲解。',
+    icon: <Sym name="code" />,
+    label: '写一段代码',
+    prompt: '帮我写一个 TypeScript 的 LRU 缓存类，带完整类型标注，并讲清楚时间复杂度。',
   },
   {
     icon: <Sym name="style" />,
-    label: '找到复习方法',
-    prompt: '我学过的内容总是很快忘记，帮我设计一个结合主动回忆和间隔重复的复习方法。',
+    label: '润色一段文字',
+    prompt: '我写了一段项目周报但读着很乱，帮我重写一版：更短、更结论先行、每条都有数字。',
   },
 ] as const;
 
@@ -259,12 +266,6 @@ function MessageActions({
   );
 }
 
-function MessageTimestamp({ timestamp }: { timestamp?: number }) {
-  if (timestamp == null) return null;
-  return <time className="course-chat__timestamp" dateTime={new Date(timestamp).toISOString()}
-    title={messageTime(timestamp)}>{messageTime(timestamp).split(' ').at(-1)}</time>;
-}
-
 /** 长消息默认展示六行；触屏长按仍可查看时间、复制完整提问与操作。 */
 function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete }: {
   message: CourseChatMessage;
@@ -275,6 +276,7 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete 
   onDelete: () => void;
 }) {
   const touchMenu = useMediaQuery('(hover: none), (pointer: coarse), (max-width: 640px)');
+  const isNarrow = useMediaQuery('(max-width: 900px)');
   const textRef = useRef<HTMLSpanElement>(null);
   const [expanded, setExpanded] = useState(false);
   const [overflows, setOverflows] = useState(false);
@@ -328,7 +330,6 @@ function UserMessageBubble({ message, busy, canRetry, onRetry, onFork, onDelete 
       data-testid="chat-user-expand" onPress={() => setExpanded((value) => !value)}>
       {expanded ? '收起' : '展开'}<Sym name="keyboard_arrow_down" />
     </Button>}
-    <MessageTimestamp timestamp={message.createdAt} />
     </div>
     </div>
   );
@@ -642,6 +643,8 @@ export default function CourseChat() {
   const removeMessage = useCourseChat((s) => s.deleteMessage);
   const { deleteMessage, deleting } = useMessageDeletion(listRef, activeId, (key) => removeMessage(key, activeId));
   const recent = useRecentChats(true);
+  const botOpen = useBotPanel((state) => state.open);
+  const setBotOpen = useBotPanel((state) => state.setOpen);
   const setDraft = useCourseChat((s) => s.setDraft);
   const send = useCourseChat((s) => s.send);
   const answerAsk = useCourseChat((s) => s.answerAsk);
@@ -877,7 +880,7 @@ export default function CourseChat() {
    * 用户口径（2026-10-16）：新会话默认**不在顶栏显示「新会话」**。
    * 找不到行（不该发生）时仍然退回页面名，不编一个假标题。
    */
-  const activeTitle = activeSession?.title ?? '课程问答';
+  const activeTitle = activeSession?.title ?? (activeId == null ? '' : 'AI 助手');
   /**
    * 本轮循环是否还活着（或卡片是否**从断点恢复**成了可答）：两张卡的 `active` 由
    * `pendingAsk` / `pendingPlan` 的 `messageKey` 是否对上这条消息决定。刷新后从库里读回的卡
@@ -946,7 +949,6 @@ export default function CourseChat() {
   return (
     <PageShell
       title={activeTitle}
-      subtitle={generating ? '正在回复…' : pendingAsk ? '等待你的回答' : '课程与资料 · AI 学习助手'}
       fill
       rootClassName="page-course-chat"
       rail={nav}
@@ -955,28 +957,48 @@ export default function CourseChat() {
          这块位置现在直接是主导航 —— 见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */
       recent={recent}
       railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
-      actions={isNarrow ? (
+      actions={<>
+        {isNarrow && (
+          <Button
+            isIconOnly
+            variant="tertiary"
+            className="course-chat__new-chat"
+            aria-label="新会话"
+            data-testid="chat-new-session"
+            onPress={() => { void createSession(); }}
+          >
+            <Sym name="edit" />
+          </Button>
+        )}
         <Button
           isIconOnly
-          variant="tertiary"
+          variant={botOpen ? 'secondary' : 'tertiary'}
           className="course-chat__new-chat"
-          aria-label="新建对话"
-          data-testid="chat-new-session"
-          onPress={() => {
-            if (useCourseChat.getState().activeId == null) toast.info('已在新会话');
-            else void createSession();
-          }}
+          aria-label="Bot"
+          aria-pressed={botOpen}
+          data-testid="chat-bot-toggle"
+          onPress={() => setBotOpen(!botOpen)}
         >
-          <Sym name="edit" />
+          <Sym name="smart_toy" />
         </Button>
-      ) : undefined}
+      </>}
+      aside={{
+        open: botOpen,
+        onOpenChange: setBotOpen,
+        label: 'Bot',
+        content: (
+          <Suspense fallback={<div className="bot-center" aria-busy="true" />}>
+            <BotPanel onClose={() => setBotOpen(false)} />
+          </Suspense>
+        ),
+      }}
     >
       <div
         className={`course-chat t-stagger${welcomeEntrancePlayed ? ' is-shown' : ''}${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
         ref={welcomeRef}
         data-testid="course-chat-page"
       >
-        <section className="course-chat__main" aria-label="课程问答">
+        <section className="course-chat__main" aria-label="AI 助手聊天">
           <div className="course-chat__timeline">
           <div className="course-chat__messages" ref={listRef} tabIndex={-1} data-testid="course-chat-messages">
             {!loaded && <ChatHistorySkeleton />}
@@ -996,8 +1018,6 @@ export default function CourseChat() {
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
                     <h2 className="t-stagger-line">{welcomeGreeting}</h2>
-                    <p className="text-sm text-muted">{hasCourses ? '结合课程与资料讲解、检索和复习，引用可回到原文。' : '先聊正在学的知识；导入课程后，可结合原文讲解与复习。'}</p>
-                    {cloud.enabled && <Button variant="ghost" size="sm" onPress={() => navigate('/')} data-testid="chat-go-bot">执行任务、创建项目或改配置 → BOT</Button>}
                     <div className="course-chat__starters t-stagger-line t-stagger-line--2" aria-label="快捷提问">
                       <div className="course-chat__starters-heading">试试这样问</div>
                       <div className="course-chat__starter-list">
@@ -1050,14 +1070,6 @@ export default function CourseChat() {
             {messages.length > 0 && <VirtualMessages key={activeId} items={messages} scrollRef={listRef}
               ref={virtualMessagesRef} onResize={pinIfSticking} scrollPaddingStart={88}>{(message, index) => {
               const user = message.role === 'user';
-              const previous = messages[index - 1];
-              const next = messages[index + 1];
-              const sameGroup = (other?: CourseChatMessage) => other?.role === message.role
-                && other.createdAt != null && message.createdAt != null
-                && new Date(other.createdAt).toDateString() === new Date(message.createdAt).toDateString()
-                && Math.abs(other.createdAt - message.createdAt) < 5 * 60_000;
-              const showDate = message.createdAt != null && (previous?.createdAt == null
-                || new Date(previous.createdAt).toDateString() !== new Date(message.createdAt).toDateString());
               /**
                * 「重新生成」只对**最后一条**完整回答成立：改历史中间的一步要用「分支」
                * （删掉它后面所有消息是一次不可见的批量删除，用户会看到一条会话凭空少一段）。
@@ -1072,10 +1084,6 @@ export default function CourseChat() {
               const canRetryAsk =
                 user && messages[index + 1]?.role === 'ai' && index === messages.length - 2;
               return (
-                <Fragment key={message.key}>
-                {showDate && <div className="course-chat__date" data-dust-ignore>
-                  <span>{messageTime(message.createdAt!).replace(/ \d{2}:\d{2}$/, '')}</span>
-                </div>}
                 <article
                   key={message.key}
                   className={
@@ -1086,10 +1094,9 @@ export default function CourseChat() {
                   }
                   data-error={message.error ? 'true' : undefined}
                   data-chat-message={message.key}
-                  data-group-first={!sameGroup(previous)}
-                  data-group-last={!sameGroup(next)}
                 >
-                  {/* Telegram-style directional bubbles; rich answers retain their readable column width. */}
+                  {/* AI 侧不挂头像气泡：showcase 里助手的回答是**直接铺在正文流里**的，
+                      加一个头像就把每条回答切成了「卡片」，长回答读起来很累。 */}
                   {user ? (
                     <UserMessageBubble message={message} busy={loading || deleting} canRetry={canRetryAsk}
                       onRetry={() => void retryMessage(message.key)} onFork={() => void onForkMessage(message)}
@@ -1205,7 +1212,6 @@ export default function CourseChat() {
                         {!message.streaming && message.content && (
                           <SourceList sources={extractChatSources(message.content)} />
                         )}
-                        <MessageTimestamp timestamp={message.createdAt} />
                       </>
                     </div>
                   )}
@@ -1228,7 +1234,6 @@ export default function CourseChat() {
                     />
                   )}
                 </article>
-                </Fragment>
               );
             }}</VirtualMessages>}
           </div>
@@ -1348,7 +1353,7 @@ export default function CourseChat() {
                  * 历史没就绪时禁用；等待作答时由 AskCard 接管输入栏。
                  */
                 disabled={!sessionReady}
-                placeholder="问课程、查资料，或聊聊正在学的知识"
+                placeholder="随便问点什么，或长按说话"
                 onKeyDown={(event) => {
                   if (!ime.isSubmitEnter(event)) return;
                   event.preventDefault();

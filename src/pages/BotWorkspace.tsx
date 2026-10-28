@@ -1,11 +1,12 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Avatar, Button, Dropdown, ListBox, Modal, Spinner, cn } from '@heroui/react';
 import { PageShell, Sym, toast, promptDialog, confirmDialog } from '../ui';
 import { useAppNav } from '../components/appNav';
 import { openSettings } from '../components/settingsDialogStore';
 import { cloud } from '../cloud/state';
-import ModeShell, { AppMenu, ModeSwitch, MoreMenu, useAppMenuActions, type MenuAction } from '../components/ModeShell';
+import { MoreMenu, type MenuAction } from '../ui';
+import { useBotPanel } from '../store/botPanel';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
@@ -13,8 +14,7 @@ import MessageComposer from '../components/MessageComposer';
 import VirtualMessages from '../components/VirtualMessages';
 import { formatListTime, groupMessages, timeOf, type DeliveryStatus, type Row } from './botMessages';
 import AccessForm from './BotAccess';
-import './bot-workspace.css';
-import './bot-home.css';
+import './bot.css';
 import BotMcpScope from '../mcp/BotMcpScope';
 import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { useTranslation } from 'react-i18next';
@@ -29,10 +29,10 @@ const BotRich = lazy(() => import('./BotRich'));
 const looksRich = (text: string) => /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|.*\|)|```|\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|\$\$?[^$]+\$/.test(text);
 
 /*
- * Bot 首页与对话页，按「信息」App 的结构来：
- *   左栏是联系人式的会话列表（头像、名字、最后一句、时间），右栏是对话；
- *   手机上两栏变成两屏，点进会话推入、左上角箭头返回。
- * Bot 当成一个人看待：顶栏只有头像和名字，不再有「BOT」徽标和副标题。
+ * Bot 的两处落点，共用同一个对话区与同一份样式（bot.css）：
+ *   - 主页右侧的 Bot 栏（BotPanel）：一条连续的对话，标题即会话切换器；
+ *   - 项目页（默认导出）：PageShell 里左列会话、右列对话或文件；手机上两列变两屏。
+ * 视觉与课程问答一致：没有气泡尾巴、送达勾和浮动日期。
  */
 
 function parseAttachment(content: string, fallback: string): { name: string; size?: number; uploading?: boolean } {
@@ -55,7 +55,7 @@ function formatBytes(size?: number) {
   return `${(size / 1024 / 1024).toFixed(1)} MB`;
 }
 
-/** 窄屏：两栏收成两屏。和 bot-home.css 里的断点保持一致。 */
+/** 窄屏：两栏收成两屏。和 bot.css 里的断点保持一致。 */
 const NARROW_QUERY = '(max-width: 760px)';
 function useNarrow() {
   const [narrow, setNarrow] = useState(() => window.matchMedia(NARROW_QUERY).matches);
@@ -95,17 +95,6 @@ const BotAvatar = memo(function BotAvatar({ agent, size = 40, className }: { age
 
 /* ─────────────────────────── 单条气泡 ─────────────────────────── */
 
-/** Telegram 式的送达标记：一个勾 = 服务器收下，两个勾 = 对方已读。 */
-function Ticks({ status }: { status: DeliveryStatus }) {
-  if (status === 'sending') return <svg className="imsg-ticks" viewBox="0 0 16 11" aria-hidden="true"><circle cx="8" cy="5.5" r="4.2" fill="none" stroke="currentColor" strokeWidth="1.3" /><path d="M8 3.4v2.3l1.5 1" fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" /></svg>;
-  return (
-    <svg className="imsg-ticks" data-status={status} viewBox="0 0 16 11" aria-hidden="true">
-      <path d="M1.5 5.8 4.6 8.9 11 2.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      {status === 'read' && <path d="M7.2 8.4 7.7 8.9 14.2 2.2" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />}
-    </svg>
-  );
-}
-
 const Bubble = memo(function Bubble({
   row,
   approval,
@@ -129,17 +118,6 @@ const Bubble = memo(function Bubble({
   const [fresh] = useState(() => Date.now() - timeOf(message) < 4000);
   const pending = message.id.startsWith('pending-');
   const statusLabel = status ? t(status === 'read' ? 'botHome.read' : status === 'sent' ? 'botHome.delivered' : 'botHome.sending') : undefined;
-  /* 时间和勾放在气泡右下角（Telegram 的做法：正文末尾留一块等宽的占位，真正的时间绝对定位在角上，
-     最后一行够短就和文字同行，太长就自动换到下一行）。 */
-  const meta = (
-    <span className="imsg-meta" title={statusLabel}>
-      <time dateTime={message.createdAt}>{row.time}</time>
-      {status && <Ticks status={status} />}
-      {statusLabel && <span className="sr-only">{statusLabel}</span>}
-    </span>
-  );
-  const gap = <span className="imsg-meta-gap" data-mine={mine || undefined} aria-hidden="true" />;
-
   let body;
   if (message.kind === 'progress') {
     // 进度用「正在输入」的三点气泡，正文是 Bot 当前在做的事。
@@ -163,8 +141,7 @@ const Bubble = memo(function Bubble({
           {file.uploading ? <Spinner size="sm" color="current" /> : <Sym name="description" />}
         </span>
         {download ? <a className="imsg-file__name" href={download} download>{file.name}</a> : <span className="imsg-file__name">{file.name}</span>}
-        <span className="imsg-file__size">{formatBytes(file.size)}{gap}</span>
-        {meta}
+        <span className="imsg-file__size">{formatBytes(file.size)}</span>
       </div>
     );
   } else if (message.kind === 'approval' || message.kind === 'question') {
@@ -195,18 +172,16 @@ const Bubble = memo(function Bubble({
     );
   } else if (!mine && (rich || looksRich(message.content))) {
     body = (
-      <div className="imsg-bubble imsg-bubble--rich" onDoubleClick={pending ? undefined : () => onReact(message.id)}>
+      <div className="imsg-bubble imsg-bubble--rich" title={row.time} onDoubleClick={pending ? undefined : () => onReact(message.id)}>
         <Suspense fallback={<p className="imsg-text">{message.content}</p>}>
           <BotRich content={message.content} />
         </Suspense>
-        <div className="imsg-meta-row">{meta}</div>
       </div>
     );
   } else {
     body = (
-      <div className="imsg-bubble" onDoubleClick={mine || pending ? undefined : () => onReact(message.id)}>
-        <p className="imsg-text">{message.content}{gap}</p>
-        {meta}
+      <div className="imsg-bubble" title={row.time} onDoubleClick={mine || pending ? undefined : () => onReact(message.id)}>
+        <p className="imsg-text">{message.content}</p>
       </div>
     );
   }
@@ -234,9 +209,18 @@ const Bubble = memo(function Bubble({
 
 const EMPTY: MessageDto[] = [];
 
+/** 项目页（#/projects/:id 与其 /files）。 */
 export default function BotWorkspace() {
   const { projectId } = useParams();
   return <Workspace key={projectId ?? 'bots'} projectId={projectId} />;
+}
+
+/**
+ * Bot 辅助栏：对话主页右侧的一项功能，而不是一个独立页面。
+ * 宽屏并排在主列右边，窄屏由 PageShell 放进全屏面板。
+ */
+export function BotPanel({ onClose }: { onClose: () => void }) {
+  return <Workspace embedded onClose={onClose} />;
 }
 
 /** 列表预览只要一句人话：去掉 Markdown 记号、代码块和表格竖线。 */
@@ -256,7 +240,7 @@ function lastText(messages: MessageDto[] | undefined) {
   return undefined;
 }
 
-function Workspace({ projectId }: { projectId?: string }) {
+function Workspace({ projectId, embedded = false, onClose }: { projectId?: string; embedded?: boolean; onClose?: () => void }) {
   const { t, i18n } = useTranslation();
   const { t: ts } = useTranslation('settings');
   const { t: tp } = useTranslation('projects');
@@ -264,7 +248,10 @@ function Workspace({ projectId }: { projectId?: string }) {
   const navigate = useNavigate();
   const location = useLocation();
   const [search, setSearch] = useSearchParams();
-  const initialThreadId = useRef(search.get('thread'));
+  // 渲染只读取请求；消费放在 effect 中，否则每次重渲染都会提前清掉新到的跳转请求。
+  const initialThreadId = useRef(embedded ? useBotPanel.getState().requestedThread : search.get('thread'));
+  /** 内嵌在主页时 URL 属于对话页，Bot 的线程不写进地址栏。 */
+  const setThreadParam = (value: Record<string, string>) => { if (!embedded) setSearch(value, { replace: true }); };
   const filesOpen = Boolean(projectId && location.pathname.endsWith('/files'));
   const narrow = useNarrow();
   /** 窄屏时显示哪一屏。宽屏两栏并排，这个值不起作用。 */
@@ -282,8 +269,7 @@ function Workspace({ projectId }: { projectId?: string }) {
   const [sendBusy, setSendBusy] = useState(false);
   const sendLock = useRef(false);
   const loadVersion = useRef(0);
-  const nav = useAppNav(projectId ? 'projects' : 'bot');
-  const appMenuItems = useAppMenuActions();
+  const nav = useAppNav('projects');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [connectError, setConnectError] = useState('');
@@ -374,7 +360,7 @@ function Workspace({ projectId }: { projectId?: string }) {
         setSession(nextSession);
         if (nextSession.authenticated) void refresh();
       })
-      .catch((e) => { if (!ignore) setConnectError(e instanceof ServerApiError ? e.code : t('botHome.offline')); });
+      .catch((e) => { if (!ignore) setConnectError(t('botHome.offline')); });
     return () => { ignore = true; loadVersion.current++; };
   }, [refresh, t]);
 
@@ -428,23 +414,6 @@ function Workspace({ projectId }: { projectId?: string }) {
     };
   }, [activeId, activeLoaded, session?.authenticated, patchActive, filesOpen]);
 
-  /* 滚动时浮出当前这一天的日期（Telegram 的 sticky date）。虚拟列表里 position: sticky 用不了，
-     所以滚动时找到最上面那一行，读它的 data-day；停下一秒后淡出。 */
-  const [floatDay, setFloatDay] = useState<string | null>(null);
-  const floatTimer = useRef(0);
-  const floatFrame = useRef(0);
-  const onScrollDate = useCallback((el: HTMLDivElement) => {
-    cancelAnimationFrame(floatFrame.current);
-    floatFrame.current = requestAnimationFrame(() => {
-      const top = el.getBoundingClientRect().top + 8;
-      const hit = [...el.querySelectorAll<HTMLElement>('.imsg-row[data-day]')].find(row => row.getBoundingClientRect().bottom > top);
-      setFloatDay(el.scrollTop > 24 ? hit?.dataset.day ?? null : null);
-      window.clearTimeout(floatTimer.current);
-      floatTimer.current = window.setTimeout(() => setFloatDay(null), 1200);
-    });
-  }, []);
-  useEffect(() => () => { window.clearTimeout(floatTimer.current); cancelAnimationFrame(floatFrame.current); }, []);
-
   // 吸底：用户停在底部时，新消息和高度变化都把视图留在最新一条；往上翻了就不打扰。
   const followEnd = useCallback(() => {
     const scroll = scrollRef.current;
@@ -461,11 +430,11 @@ function Workspace({ projectId }: { projectId?: string }) {
     setThreads((old) => [thread, ...old]);
     setDetails((old) => ({ ...old, [thread.id]: { ...thread, messages: [] } }));
     setActiveId(thread.id);
-    setSearch({ thread: thread.id }, { replace: true });
+    setThreadParam({ thread: thread.id });
     return thread;
   };
   const leaveFiles = () => { if (filesOpen) navigate(`/projects/${projectId}`); };
-  const newDraft = () => { setActiveId(null); setSearch({}, { replace: true }); };
+  const newDraft = () => { setActiveId(null); setThreadParam({}); };
   /** 和某个 Bot 开始一段新对话：落在它的问候页。 */
   const startWith = (id: string) => { setAgentId(id); newDraft(); leaveFiles(); setPane('chat'); };
   const openThread = (thread: ThreadDto) => {
@@ -473,8 +442,20 @@ function Workspace({ projectId }: { projectId?: string }) {
     if (thread.agentId) setAgentId(thread.agentId);
     setPane('chat');
     if (filesOpen) navigate(`/projects/${projectId}?thread=${thread.id}`);
-    else setSearch({ thread: thread.id }, { replace: true });
+    else setThreadParam({ thread: thread.id });
   };
+
+  /* 已经打开着 Bot 栏时又点了「接管」之类的链接：切到那条线程。 */
+  const requestedThread = useBotPanel((state) => state.requestedThread);
+  useEffect(() => {
+    if (!embedded || !requestedThread || listLoading) return;
+    const id = useBotPanel.getState().consumeRequest();
+    const hit = threads.find((thread) => thread.id === id);
+    if (hit) openThread(hit);
+    else if (id) { initialThreadId.current = id; void refresh(); }
+    // openThread 每次渲染都是新函数；这里只该在请求到来时跑一次。
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [embedded, requestedThread, listLoading, threads, refresh]);
 
   const appendPending = (threadId: string, kind: MessageDto['kind'], content: string, nonce: string): MessageDto => {
     const pending: MessageDto = {
@@ -637,22 +618,34 @@ function Workspace({ projectId }: { projectId?: string }) {
     });
   };
 
+  /* 内嵌在主页右侧时，加载 / 登录态也待在这块面板里，不另起一页。 */
+  const panelBar = (extra?: ReactNode) => (
+    <header className="bot-panel__bar">
+      <h2 className="bot-panel__title">{currentAgent?.name || 'Bot'}</h2>
+      <div className="bot-panel__actions">
+        {extra}
+        <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.close')} data-testid="bot-panel-close" onPress={onClose}>
+          <Sym name="close" />
+        </Button>
+      </div>
+    </header>
+  );
+  const frame = (body: ReactNode, title = 'Bot') => embedded
+    ? <section className="bot-panel" aria-label="Bot">{panelBar()}{body}</section>
+    : <PageShell title={title} rail={nav} onBack={() => navigate('/projects')}>{body}</PageShell>;
+
   if (!status) {
-    return (
-      <PageShell title="Bot" rail={nav}>
-        <div className="bot-center">
-          {connectError ? <p className="bot-center__error">{connectError}</p> : <Spinner size="lg" color="current" />}
-        </div>
-      </PageShell>
+    return frame(
+      <div className="bot-center">
+        {connectError
+          ? <div className="bot-center__error" role="alert"><p>{connectError}</p><Button size="sm" variant="secondary" onPress={reload}>{tp('retry')}</Button></div>
+          : <Spinner size="lg" color="current" />}
+      </div>,
     );
   }
 
   if (!session?.authenticated) {
-    return (
-      <PageShell title="Bot" rail={nav}>
-        <AccessForm initialized={status.initialized} onDone={reload} />
-      </PageShell>
-    );
+    return frame(<AccessForm initialized={status.initialized} onDone={reload} />);
   }
 
   /* ── 菜单 ── */
@@ -662,8 +655,8 @@ function Workspace({ projectId }: { projectId?: string }) {
     { key: 'logout', label: t('botHome.logout'), icon: <Sym name="key_off" />, danger: true, onAction: () => void logout() },
   ];
   const runActions: MenuAction[] = [
-    { key: 'stop', label: t('botHome.stop'), icon: <Sym name="stop" />, disabled: !active, onAction: () => void stop() },
-    ...(!projectId && cloud.enabled ? [{ key: 'permissions', label: t('botHome.permissions'), icon: <Sym name="tune" />, onAction: () => openSettings('data') }] : []),
+    { key: 'stop', label: t('botHome.stop'), icon: <Sym name="stop" />, disabled: !activeRunning, onAction: () => void stop() },
+    ...(!projectId ? [{ key: 'permissions', label: t('botHome.permissions'), icon: <Sym name="tune" />, onAction: () => openSettings(cloud.enabled ? 'bot' : 'agent') }] : []),
     ...(!projectId ? [{ key: 'mcp', label: ts('mcp.scope'), icon: <Sym name="extension" />, disabled: !active, onAction: () => setMcpOpen(true) }] : []),
   ];
   const threadMenu: MenuAction[] = activeSummary ? [
@@ -674,13 +667,12 @@ function Workspace({ projectId }: { projectId?: string }) {
   ] : [];
 
   const landing = !activeId && !filesOpen;
-  const chatTitle = filesOpen ? tp('files') : currentAgent?.name ?? '';
+  const chatTitle = filesOpen ? tp('files') : activeSummary?.title && activeSummary.title !== tp('newTitle') ? activeSummary.title : currentAgent?.name ?? '';
 
-  /* ── 对话区（两种模式共用） ── */
+  /* ── 对话区（Bot 栏与项目共用） ── */
 
   const conversation = filesOpen ? (project && <div className="bh-files"><ProjectFiles key={project.id} project={project} /></div>) : <>
     <div className="bh-scroll-wrap">
-      {floatDay && <div className="imsg-float-date" aria-hidden="true"><span>{floatDay}</span></div>}
       <div
         ref={scrollRef}
         className="bot-messages"
@@ -688,16 +680,13 @@ function Workspace({ projectId }: { projectId?: string }) {
         onScroll={(event) => {
           const el = event.currentTarget;
           stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 48;
-          onScrollDate(el);
         }}
       >
         {listLoading ? <div className="bot-center"><Spinner color="current" /></div> : landing ? (
           <div className="bh-hello">
             {projectId && !availableAgents.length ? <p className="bh-hello__note">{tp('noAgent')}</p> : <>
-              <BotAvatar agent={currentAgent} size={narrow ? 96 : 112} className="bh-hello__avatar" />
+              <BotAvatar agent={currentAgent} size={72} className="bh-hello__avatar" />
               <p className="bh-hello__name">{currentAgent?.name}</p>
-              <p className="bh-hello__note">{t(projectId ? 'botHome.projectPurpose' : 'botHome.purpose')}</p>
-              {!projectId && <Button variant="ghost" size="sm" onPress={() => navigate('/course-chat')}>{t('botHome.courseLink')}</Button>}
             </>}
           </div>
         ) : !active ? (
@@ -745,73 +734,82 @@ function Workspace({ projectId }: { projectId?: string }) {
     </Modal.Dialog></Modal.Container></Modal.Backdrop></Modal.Root>
   </>;
 
-  /* ── 聊天模式：只有一条对话 ── */
+  /* ── Bot 栏：标题即会话切换器（HIG pull-down），右侧「新对话」「更多」「关闭」 ── */
 
-  if (chatMode) {
+  if (embedded) {
+    const recentThreads = listRows.filter(row => !row.thread.archived).slice(0, 30);
+    const historyMenu = (
+      <Dropdown>
+        <Button variant="ghost" className="bot-panel__switcher" aria-label={t('botHome.history')} data-testid="bot-panel-history">
+          <BotAvatar agent={currentAgent} size={28} />
+          <span className="bot-panel__switcher-name">{landing ? currentAgent?.name || 'Bot' : chatTitle}</span>
+          <Sym name="keyboard_arrow_down" aria-hidden="true" />
+        </Button>
+        <Dropdown.Popover placement="bottom start" className="bot-panel__history">
+          <Dropdown.Menu
+            aria-label={t('botHome.history')}
+            selectionMode="single"
+            selectedKeys={activeId ? [activeId] : []}
+            onAction={(key) => {
+              const hit = threads.find(thread => thread.id === String(key));
+              if (hit) openThread(hit);
+            }}
+          >
+            {recentThreads.map(({ thread, time }) => (
+              <Dropdown.Item key={thread.id} id={thread.id} textValue={thread.title || tp('newTitle')}>
+                <span className="min-w-0 flex-1 truncate">{thread.title || tp('newTitle')}</span>
+                <time className="shrink-0 text-xs text-muted" dateTime={time}>{formatListTime(time, locale)}</time>
+              </Dropdown.Item>
+            ))}
+          </Dropdown.Menu>
+        </Dropdown.Popover>
+      </Dropdown>
+    );
     return (
-      <ModeShell mode="chat">
-        <section className="bh-chat bh-chat--solo" data-landing={landing || undefined} aria-label={chatTitle ? t('botHome.conversation', { name: chatTitle }) : undefined}>
-          <header className="bh-chat__bar">
-            <div className="bh-chat__side">
-              <span className="ms-mobile-only"><BotAvatar agent={currentAgent} size={30} /></span>
-            </div>
-            <div className="bh-chat__center">
-              <ModeSwitch mode="chat" />
-              {!landing && (
-                <h1 className="bh-chat__who ms-desktop-only">
-                  <BotAvatar agent={currentAgent} size={28} />
-                  <span className="bh-chat__name">{chatTitle}</span>
-                </h1>
-              )}
-            </div>
-            <div className="bh-chat__side bh-chat__side--end">
-              <span className="ms-desktop-only"><MoreMenu label={t('botHome.more')} actions={[...runActions, ...accountActions]} testId="bh-chat-more" /></span>
-              <span className="ms-mobile-only"><AppMenu extra={[...runActions, ...accountActions]} /></span>
-            </div>
-          </header>
-          {conversation}
-        </section>
+      <section className="bot-panel" data-landing={landing || undefined} aria-label="Bot" data-testid="bot-panel">
+        <header className="bot-panel__bar">
+          {recentThreads.length > 0 ? historyMenu : (
+            <h2 className="bot-panel__switcher bot-panel__switcher--static">
+              <BotAvatar agent={currentAgent} size={28} />
+              <span className="bot-panel__switcher-name">{currentAgent?.name || 'Bot'}</span>
+            </h2>
+          )}
+          <div className="bot-panel__actions">
+            <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.compose')} data-testid="bot-panel-new"
+              isDisabled={landing || sendBusy} onPress={() => { newDraft(); }}>
+              <Sym name="edit" />
+            </Button>
+            <MoreMenu label={t('botHome.more')} actions={[...(activeSummary ? threadMenu : runActions), ...accountActions]} testId="bot-panel-more" />
+            <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.close')} data-testid="bot-panel-close" onPress={onClose}>
+              <Sym name="close" />
+            </Button>
+          </div>
+        </header>
+        {conversation}
         {modals}
-      </ModeShell>
+      </section>
     );
   }
 
-  /* ── 项目模式：左边会话列表，右边对话或文件 ── */
+  /* ── 项目：左边会话列表，右边对话或文件，外面是全应用同一个 PageShell ── */
 
   const listMenu: MenuAction[] = [
     { key: 'archived', label: t(showArchived ? 'botHome.hideArchived' : 'botHome.showArchived'), icon: <Sym name="archive" />, onAction: () => setShowArchived(v => !v) },
-    ...accountActions,
   ];
 
   const listPane = (
-    <aside className="bh-list" data-testid="nav-rail" aria-label={t('botHome.listLabel')} inert={narrow && pane === 'chat'}>
-      <header className="bh-list__bar">
-        <Button isIconOnly variant="ghost" className="bh-icon-btn bh-back" aria-label={tp('back')} onPress={() => navigate('/projects')}>
-          <Sym name="chevron_left" />
-        </Button>
-        <div className="flex-1" />
-        <Button isIconOnly variant="ghost" className="bh-icon-btn" aria-label={tp('settings')} isDisabled={!project} onPress={() => setSettingsOpen(true)}>
-          <Sym name="tune" />
-        </Button>
-        <MoreMenu label={t('botHome.more')} actions={narrow ? [...listMenu, ...appMenuItems] : listMenu} testId="bh-list-more" />
-        <Button isIconOnly variant="ghost" className="bh-icon-btn" aria-label={t('botHome.compose')} isDisabled={sendBusy || project?.archived || !availableAgents.length} onPress={() => startWith(currentAgentId || availableAgents[0]?.id || '')}>
-          <Sym name="edit" />
-        </Button>
-      </header>
-      <h1 className="bh-list__title" data-testid="page-title">{project?.name ?? ''}</h1>
-
+    <aside className="bh-list" aria-label={t('botHome.listLabel')} inert={narrow && pane === 'chat'}>
       <div className="bh-segment" role="group">
-        <Button size="sm" variant="ghost" className="bh-segment__item" data-active={!filesOpen || undefined} onPress={() => { navigate(`/projects/${projectId}${activeId ? `?thread=${activeId}` : ''}`); setPane('chat'); }}>{tp('chat')}</Button>
-        <Button size="sm" variant="ghost" className="bh-segment__item" data-active={filesOpen || undefined} onPress={() => { navigate(`/projects/${projectId}/files`); setPane('chat'); }}>{tp('files')}</Button>
+        <Button size="sm" variant="ghost" className="bh-segment__item" aria-pressed={!filesOpen} data-active={!filesOpen || undefined} onPress={() => { navigate(`/projects/${projectId}${activeId ? `?thread=${activeId}` : ''}`); setPane('chat'); }}>{tp('chat')}</Button>
+        <Button size="sm" variant="ghost" className="bh-segment__item" aria-pressed={filesOpen} data-active={filesOpen || undefined} onPress={() => { navigate(`/projects/${projectId}/files`); setPane('chat'); }}>{tp('files')}</Button>
       </div>
 
-      {/* 项目里可以选和哪个 Bot 开新会话：一排头像，像「信息」置顶的联系人。 */}
       {availableAgents.length > 1 && (
         <div className="bh-pins" role="group" aria-label={t('botHome.contacts')}>
           {availableAgents.map(agent => (
             <Button key={agent.id} variant="ghost" className="bh-pin" aria-pressed={!activeId && !filesOpen && agent.id === agentId}
               data-current={agent.id === currentAgentId || undefined} onPress={() => startWith(agent.id)}>
-              <BotAvatar agent={agent} size={narrow ? 64 : 52} />
+              <BotAvatar agent={agent} size={52} />
               <span className="bh-pin__name">{agent.name}</span>
             </Button>
           ))}
@@ -828,7 +826,6 @@ function Workspace({ projectId }: { projectId?: string }) {
             aria-label={t('botHome.listLabel')}
             selectionMode="single"
             disallowEmptySelection
-            /* 手机上列表是单独一屏，不留选中高亮（和 iOS 一样），再点同一条也能推进去。 */
             selectedKeys={activeId && !filesOpen && !narrow ? [activeId] : []}
             onSelectionChange={(keys) => {
               const id = [...keys][0];
@@ -842,7 +839,7 @@ function Workspace({ projectId }: { projectId?: string }) {
               const title = thread.title || tp('newTitle');
               return (
                 <ListBox.Item key={thread.id} id={thread.id} textValue={title} className="bh-thread" data-archived={thread.archived || undefined}>
-                  <BotAvatar agent={agent} size={44} />
+                  <BotAvatar agent={agent} size={40} />
                   <span className="bh-thread__body">
                     <span className="bh-thread__top">
                       <span className="bh-thread__name">{title}</span>
@@ -862,35 +859,41 @@ function Workspace({ projectId }: { projectId?: string }) {
 
   const chatPane = (
     <section className="bh-chat" data-landing={landing || undefined} aria-label={chatTitle ? t('botHome.conversation', { name: chatTitle }) : undefined} inert={narrow && pane === 'list'}>
-      <header className="bh-chat__bar">
-        <div className="bh-chat__side">
-          {narrow && (
-            <Button isIconOnly variant="ghost" className="bh-icon-btn bh-back" aria-label={t('botHome.back')} onPress={() => setPane('list')}>
-              <Sym name="chevron_left" />
-            </Button>
-          )}
-        </div>
-        {!landing && (
+      {!landing && (
+        <header className="bh-chat__bar">
           <h2 className="bh-chat__who">
-            {!filesOpen && <BotAvatar agent={currentAgent} size={narrow ? 32 : 28} />}
+            {!filesOpen && <BotAvatar agent={currentAgent} size={28} />}
             <span className="bh-chat__name">{chatTitle}</span>
           </h2>
-        )}
-        <div className="bh-chat__side bh-chat__side--end">
           {threadMenu.length > 0 && !filesOpen && <MoreMenu label={t('botHome.more')} actions={threadMenu} testId="bh-thread-more" />}
-        </div>
-      </header>
+        </header>
+      )}
       {conversation}
     </section>
   );
 
   return (
-    <ModeShell mode="projects">
+    <PageShell
+      title={project?.name ?? tp('title')}
+      fill
+      rail={nav}
+      rootClassName="page-project"
+      onBack={() => (narrow && pane === 'chat' ? setPane('list') : navigate('/projects'))}
+      actions={<>
+        <Button isIconOnly variant="ghost" className="rounded-full" aria-label={tp('settings')} isDisabled={!project} onPress={() => setSettingsOpen(true)}>
+          <Sym name="tune" />
+        </Button>
+        <MoreMenu label={t('botHome.more')} actions={[...listMenu, ...accountActions]} testId="bh-list-more" />
+        <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.compose')} isDisabled={sendBusy || project?.archived || !availableAgents.length} onPress={() => startWith(currentAgentId || availableAgents[0]?.id || '')}>
+          <Sym name="edit" />
+        </Button>
+      </>}
+    >
       <div className="bh" data-pane={pane} data-narrow={narrow || undefined}>
         {listPane}
         {chatPane}
         {modals}
       </div>
-    </ModeShell>
+    </PageShell>
   );
 }

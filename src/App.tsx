@@ -1,5 +1,5 @@
 import { Suspense, lazy, useEffect } from 'react';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useSearchParams } from 'react-router-dom';
 import CourseChat from './pages/CourseChat';
 import { useMobileGlobals } from './utils/useMobile';
 import { isModelMetaStale, refreshModelMeta } from './api/modelMeta';
@@ -13,7 +13,7 @@ import { preloadOnIdle } from './utils/preload';
 import { FeedbackHost } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
 import CloudActivity from './cloud/Activity';
-import { cloud } from './cloud/state';
+import { useBotPanel } from './store/botPanel';
 
 /*
  * 按路由拆包：首页（对话）同步加载，其余页面点进去才下载。
@@ -38,6 +38,17 @@ const BotWorkspace = lazy(pages.bot);
 const Projects = lazy(pages.projects);
 const LiveGuest = lazy(pages.live);
 const WidgetPreview = lazy(pages.widget);
+
+/**
+ * #/bot 与 #/bot?thread=… 不再是一个页面：Bot 是对话主页右侧的一项功能。
+ * 旧链接（网关「接管」、书签）落到这里时打开 Bot 栏并切到那条线程，再回到主页。
+ */
+function OpenBot() {
+  const [search] = useSearchParams();
+  const thread = search.get('thread');
+  useEffect(() => { useBotPanel.getState().openThread(thread); }, [thread]);
+  return <Navigate to="/" replace />;
+}
 
 export default function App() {
   useMobileGlobals();
@@ -101,10 +112,11 @@ export default function App() {
         <SettingsModal />
         <Suspense fallback={<div className="route-fallback" aria-busy="true" />}>
         <Routes>
-          <Route path="/" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
-          <Route path="/chat" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
+          {/* 主页永远是对话；/chat、/course-chat 是旧地址，保留以免书签失效。 */}
+          <Route path="/" element={<CourseChat />} />
+          <Route path="/chat" element={<CourseChat />} />
           <Route path="/course-chat" element={<CourseChat />} />
-          <Route path="/bot" element={<BotWorkspace />} />
+          <Route path="/bot" element={<OpenBot />} />
           <Route path="/projects" element={<Projects />} />
           <Route path="/projects/:projectId" element={<BotWorkspace />} />
           <Route path="/projects/:projectId/files" element={<BotWorkspace />} />
@@ -113,7 +125,7 @@ export default function App() {
           <Route path="/study" element={<Study />} />
           {/* #/settings 不是独立页面，而是唤起设置弹窗的入口（见上面的 useEffect）。
               这里仍渲染默认首页，让用户「改完设置就能接着用」。 */}
-          <Route path="/settings/*" element={cloud.enabled ? <BotWorkspace /> : <CourseChat />} />
+          <Route path="/settings/*" element={<CourseChat />} />
           {/* guest 镜像页：其他设备打开主机复制的链接进来。刻意不挂左侧导航 ——
               它读的是主机的内容，与本机导航的目的地不是一回事（见 LiveGuest.tsx 文件头）。 */}
           <Route path="/live" element={<LiveGuest />} />

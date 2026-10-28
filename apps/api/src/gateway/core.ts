@@ -10,6 +10,14 @@ import { publishBotEvent } from '../agent/events.js';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
+/**
+ * 绑定码：8 位 Crockford Base32（不含 I/L/O/U，约 40 bit）。
+ * 码要在手机上读一眼就能输入或粘贴，32 位十六进制做不到；同一账号同时只有一个码、
+ * 10 分钟过期、只能从该渠道的本人私聊提交，这个熵足够。比较时忽略大小写与空白。
+ */
+const PAIR_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const pairCode = () => Array.from(crypto.randomBytes(8), byte => PAIR_ALPHABET[byte % 32]).join('');
+const pairHash = (code: string) => hash(code.replace(/[\s-]/g, '').toUpperCase());
 export type PluginFactory = (account?: { id: string; owner_id: string }) => ChannelPlugin;
 /** Single-instance durable gateway. ACK only includes the synchronous receive transaction. */
 export class GatewayCore {
@@ -70,9 +78,9 @@ export class GatewayCore {
   }
   pair(owner: string, id: string) {
     this.account(owner, id);
-    const code = crypto.randomBytes(16).toString('hex'), expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
-    this.store.db.prepare('INSERT INTO gateway_pairings(account_id,code_hash,expires_at) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at').run(id, hash(code), expiresAt);
-    return { command: `/pair ${code}`, expiresAt };
+    const code = pairCode(), expiresAt = new Date(Date.now() + 10 * 60_000).toISOString();
+    this.store.db.prepare('INSERT INTO gateway_pairings(account_id,code_hash,expires_at) VALUES(?,?,?) ON CONFLICT(account_id) DO UPDATE SET code_hash=excluded.code_hash,expires_at=excluded.expires_at').run(id, pairHash(code), expiresAt);
+    return { command: `/pair ${code}`, code, expiresAt };
   }
   revoke(owner: string, id: string, binding: string) {
     this.account(owner, id);
@@ -270,7 +278,7 @@ export class GatewayCore {
         if (b) this.inbound.set(row.id, { binding: b.id, controller });
         if (m.text.startsWith('/pair ')) {
           this.store.transaction(() => {
-            const pair = this.store.db.prepare('SELECT * FROM gateway_pairings WHERE account_id=? AND code_hash=? AND expires_at>?').get(row.account_id, hash(m.text.trim().slice(6)), stamp());
+            const pair = this.store.db.prepare('SELECT * FROM gateway_pairings WHERE account_id=? AND code_hash=? AND expires_at>?').get(row.account_id, pairHash(m.text.trim().slice(6)), stamp());
             if (!pair) return;
             // One owner identity per account. Rebinding requires explicit revocation first.
             if (this.store.db.prepare('SELECT 1 FROM gateway_bindings WHERE account_id=? AND revoked=0').get(row.account_id) && (!b || b.revoked)) return;

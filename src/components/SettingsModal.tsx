@@ -22,10 +22,13 @@ import { useTranslation } from 'react-i18next';
  * 现在只有用户真的点进某个模块时才下载它。
  * tint 是手机上 iOS 设置式列表里图标底块的颜色。
  */
-type Module = { key: SettingsModule; icon: string; tint: string; Component: LazyExoticComponent<ComponentType> };
-const MODULES: Module[] = [
+type Module = { key: SettingsModule; icon: string; tint: string; Component: LazyExoticComponent<ComponentType>; cloudOnly?: boolean };
+const ALL_MODULES: Module[] = [
   { key: 'models', icon: 'neurology', tint: '#5e5ce6', Component: lazy(() => import('./settings/ModelsModule')) },
-  { key: 'agent', icon: 'smart_toy', tint: '#0a84ff', Component: lazy(() => import('./settings/AgentModule')) },
+  { key: 'agent', icon: 'neurology', tint: '#0a84ff', Component: lazy(() => import('./settings/AgentModule')) },
+  // Bot 与消息渠道只在连着自己服务器时存在：本机模式没有 Bot 运行时，也就没有这两屏。
+  { key: 'bot', icon: 'smart_toy', tint: '#5856d6', Component: lazy(() => import('../cloud/BotSettings')), cloudOnly: true },
+  { key: 'gateway', icon: 'forum', tint: '#34c759', Component: lazy(() => import('../cloud/GatewaySettings')), cloudOnly: true },
   { key: 'appearance', icon: 'style', tint: '#ff9f0a', Component: lazy(() => import('./settings/AppearanceModule')) },
   { key: 'sources', icon: 'cloud_upload', tint: '#30b0c7', Component: lazy(() => import('./settings/SourcesModule')) },
   { key: 'live', icon: 'link', tint: '#34c759', Component: lazy(() => import('./settings/LiveModule')) },
@@ -35,15 +38,15 @@ const MODULES: Module[] = [
   { key: 'skills', icon: 'extension', tint: '#bf5af2', Component: lazy(() => import('./settings/SkillsModule')) },
   { key: 'data', icon: 'folder', tint: '#64d2ff', Component: lazy(() => import('./settings/DataModule')) },
 ];
-const CloudSettings = lazy(() => import('../cloud/Settings'));
 const CloudModels = lazy(() => import('../cloud/Models'));
+const MODULES = ALL_MODULES.filter((m) => !m.cloudOnly || cloud.enabled);
 
 function ModuleFallback() {
   return <div className="settings-module-fallback"><Spinner size="sm" color="current" /></div>;
 }
 
 /** 模块 key 集合，给 `#/settings/<模块>` 深链做校验（非法值回落到入口模块） */
-export const SETTINGS_MODULE_KEYS = MODULES.map((m) => m.key);
+export const SETTINGS_MODULE_KEYS = ALL_MODULES.map((m) => m.key);
 
 /**
  * 全局设置弹窗。挂在 App 根部一次，任何页面都能通过 openSettings() 唤起。
@@ -95,8 +98,7 @@ export default function SettingsModal() {
   }, [open, module, explicit]);
 
   const active = MODULES.find((m) => m.key === localModule) ?? MODULES[0];
-  const ActiveContent = cloud.enabled && localModule === 'models' ? CloudModels
-    : cloud.enabled && localModule === 'data' ? CloudSettings : active.Component;
+  const ActiveContent = cloud.enabled && localModule === 'models' ? CloudModels : active.Component;
 
   if (mobile) {
     const title = pushed ? t(`modules.${active.key}`) : common('settings');
@@ -172,12 +174,14 @@ export default function SettingsModal() {
             ⚠️ Container 必须写在 Backdrop **里面**：遮罩带 z-index 100000，兄弟结构下
             它画在面板之上（面板被自己那层遮罩压暗），而且遮罩上的 isDismissable /
             isKeyboardDismissDisabled 会静默失效 —— 详见 ui/modalContainer.ts。 */}
-        <Modal.Container placement="center" className={MODAL_CONTAINER_CLASS}>
+        {/* duration-* 也设置 transition-duration；禁用无关的 scrollbar-color 过渡，
+            避免它取消时让 React Aria 的退出等待悬空。HeroUI 的 keyframe 动画不受影响。 */}
+        <Modal.Container placement="center" className={`${MODAL_CONTAINER_CLASS} transition-none`}>
           <Modal.Dialog
             className="flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-[14px] bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full"
             data-testid="settings-modal"
           >
-            <Modal.CloseTrigger aria-label={common('closeSettings')}>
+            <Modal.CloseTrigger className="z-10" aria-label={common('closeSettings')}>
               <Sym name="close" />
             </Modal.CloseTrigger>
 

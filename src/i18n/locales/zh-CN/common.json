@@ -90,13 +90,6 @@
   },
   "botHome": {
     "typingShort": "正在输入…",
-    "nav": {
-      "label": "导航",
-      "chat": "BOT",
-      "projects": "项目",
-      "course": "课程问答",
-      "library": "资料"
-    },
     "listLabel": "会话",
     "compose": "新建会话",
     "more": "更多",
@@ -108,9 +101,7 @@
     "conversation": "与 {{name}} 的对话",
     "composer": "消息",
     "taskPlaceholder": "交给 BOT 一个任务…",
-    "purpose": "执行任务、创建项目、管理配置",
     "projectPurpose": "在当前项目中处理文件与任务",
-    "courseLink": "学习课程、查资料 → 课程问答",
     "attach": "添加附件",
     "attachment": "附件",
     "settings": "设置",
@@ -136,6 +127,9 @@
     "offline": "连不上 Bot 服务",
     "read": "已读",
     "delivered": "已送达",
-    "sending": "发送中"
+    "sending": "发送中",
+    "close": "关闭",
+    "history": "会话",
+    "open": "Bot"
   }
 }

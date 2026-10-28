@@ -7,6 +7,7 @@ import { deleteMcpServer, listMcpServers, saveMcpServer, testMcpServer } from '.
 import type { McpServer, McpServerInput, McpTool } from '../../packages/contracts/src/mcp';
 import settingsMessages from '../i18n/locales/zh-CN/settings.json';
 import { McpImport, McpConnectionActions } from './McpAdvanced';
+import { SettingSelect } from '../components/settings/controls';
 
 const initial: McpServerInput = { name: '', url: '', transport: 'streamable-http', auth: 'none', enabled: true, timeoutMs: 30000, disabledTools: [] };
 export default function McpSettings() {
@@ -94,7 +95,9 @@ export default function McpSettings() {
         <Modal.Header><Modal.Heading>{draft?.id ? t('mcp.edit') : t('mcp.add')}</Modal.Heading></Modal.Header>
         <Modal.Body>{draft && <div className="flex flex-col gap-3 [&_label]:flex [&_label]:flex-col [&_label]:gap-1">
           <label>{t('mcp.name')}<Input fullWidth value={draft.name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
-          <label>{t('mcp.transport')}<select aria-label={t('mcp.transport')} className="w-full rounded-lg bg-background-secondary p-2" value={draft.transport} onChange={e => setDraft({ ...draft, transport: e.target.value as McpServerInput['transport'], auth: e.target.value === 'stdio' ? 'none' : draft.auth })}><option value="streamable-http">Streamable HTTP</option><option value="sse">HTTP + SSE</option><option value="stdio">stdio</option></select></label>
+          <SettingSelect label={t('mcp.transport')} value={draft.transport}
+            options={[{ id: 'streamable-http', label: 'Streamable HTTP' }, { id: 'sse', label: 'HTTP + SSE' }, { id: 'stdio', label: 'stdio' }]}
+            onChange={value => setDraft({ ...draft, transport: value as McpServerInput['transport'], auth: value === 'stdio' ? 'none' : draft.auth })} />
           {draft.transport === 'stdio' ? <>
             <p className="text-sm text-muted">{t('mcp.stdioHint')}</p>
             <label>{t('mcp.command')}<Input fullWidth value={draft.command ?? ''} onChange={e => setDraft({ ...draft, command: e.target.value })} /></label>
@@ -104,10 +107,9 @@ export default function McpSettings() {
             <Button size="sm" variant="tertiary" onPress={() => setEnvText('{}')}>{t('mcp.clearSecret')}</Button>
           </> : <label>{t('mcp.url')}<Input fullWidth type="url" placeholder="https://example.com/mcp" value={draft.url} onChange={e => setDraft({ ...draft, url: e.target.value })} /></label>}
           {draft.transport !== 'stdio' ? <p className="text-sm text-muted">{t('mcp.transportHint')}</p> : null}
-          <label>{t('mcp.auth')}<select aria-label={t('mcp.auth')} disabled={draft.transport === 'stdio'} className="w-full rounded-lg bg-background-secondary p-2" value={draft.auth} onChange={e => { setDraft({ ...draft, auth: e.target.value as McpServerInput['auth'], token: undefined, headers: undefined }); setHeaderText(''); }}>
-            <option value="none">{t('mcp.authNone')}</option><option value="bearer">Bearer Token</option><option value="headers">{t('mcp.authHeaders')}</option>
-            <option value="oauth">OAuth</option>
-          </select></label>
+          <SettingSelect label={t('mcp.auth')} value={draft.auth} isDisabled={draft.transport === 'stdio'}
+            options={[{ id: 'none', label: t('mcp.authNone') }, { id: 'bearer', label: 'Bearer Token' }, { id: 'headers', label: t('mcp.authHeaders') }, { id: 'oauth', label: 'OAuth' }]}
+            onChange={value => { setDraft({ ...draft, auth: value as McpServerInput['auth'], token: undefined, headers: undefined }); setHeaderText(''); }} />
           {draft.auth === 'oauth' ? <p className="text-sm text-muted">{t('mcp.oauthHint')}</p> : null}
           {draft.auth === 'bearer' ? <label>Bearer Token<Input fullWidth type="password" autoComplete="new-password" value={draft.token ?? ''} placeholder={draft.configured ? t('mcp.secretKept') : ''} onChange={e => setDraft({ ...draft, token: e.target.value })} /></label> : null}
           {draft.auth === 'headers' ? <label>{t('mcp.headers')}<TextArea fullWidth aria-label={t('mcp.headers')} value={headerText} placeholder={draft.configured ? t('mcp.secretKept') : '{"X-API-Key": "..."}'} onChange={e => setHeaderText(e.target.value)} /></label> : null}

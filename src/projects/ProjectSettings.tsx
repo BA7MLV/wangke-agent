@@ -5,6 +5,7 @@ import type { AgentProfileDto, ProjectDetailDto, ProjectPolicy, ProjectRole } fr
 import { serverClient } from '../api/serverClient';
 import { MODAL_CONTAINER_CLASS, toast } from '../ui';
 import { projectError } from './errors';
+import { SettingSelect } from '../components/settings/controls';
 
 export default function ProjectSettings({ project, agents, onChange, onClose }: {
   project: ProjectDetailDto; agents: AgentProfileDto[]; onChange: (project: ProjectDetailDto) => void; onClose: () => void;
@@ -31,16 +32,21 @@ export default function ProjectSettings({ project, agents, onChange, onClose }: 
     <Modal.Header><Modal.Heading>{t('settings')}</Modal.Heading></Modal.Header>
     <Modal.Body><div className="project-form">
       <TextField isRequired><Label>{t('name')}</Label><Input value={name} maxLength={100} onChange={e => setName(e.target.value)} /></TextField>
-      <div className="project-path"><code>{project.workspacePath}</code><small>{t('pathHint')}</small></div>
       <TextField><Label>{t('instructions')}</Label><TextArea value={instructions} rows={4} maxLength={16000} onChange={e => setInstructions(e.target.value)} /></TextField>
-      <p className="project-muted">{t('instructionsHint')}</p>
-      <div className="project-controls">
-        <label>{t('shell')}<select value={policy.shell} onChange={e => setPolicy(p => ({ ...p, shell: e.target.value as ProjectPolicy['shell'] }))}>{(['ask', 'allow', 'deny'] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
-        <label>{t('network')}<select value={policy.network} onChange={e => setPolicy(p => ({ ...p, network: e.target.value as ProjectPolicy['network'] }))}>{(['deny', 'allow'] as const).map(value => <option key={value} value={value}>{t(value)}</option>)}</select></label>
+      <div>
+        <SettingSelect label={t('shell')} value={policy.shell} options={(['ask', 'allow', 'deny'] as const).map(value => ({ id: value, label: t(value) }))}
+          onChange={value => setPolicy(p => ({ ...p, shell: value as ProjectPolicy['shell'] }))} />
+        <SettingSelect label={t('network')} value={policy.network} options={(['deny', 'allow'] as const).map(value => ({ id: value, label: t(value) }))}
+          onChange={value => setPolicy(p => ({ ...p, network: value as ProjectPolicy['network'] }))} />
       </div>
-      <p className="project-muted">{t('policyHint')}</p>
-      <h3>{t('grants')}</h3><p className="project-muted">{t('grantHint')}</p>
-      {agents.map(agent => <label className="project-grant" key={agent.id}><span>{agent.name}</span><select aria-label={`${t('grants')} · ${agent.name}`} disabled={busy} value={project.grants.find(g => g.agentId === agent.id)?.role ?? 'none'} onChange={e => void grant(agent.id, e.target.value)}>{(['none', 'read', 'write', 'manage'] as const).map(role => <option key={role} value={role}>{t(role)}</option>)}</select></label>)}
+      <h3>{t('grants')}</h3>
+      <div>
+        {agents.map(agent => <SettingSelect key={agent.id} label={agent.name} isDisabled={busy}
+          value={project.grants.find(g => g.agentId === agent.id)?.role ?? 'none'}
+          options={(['none', 'read', 'write', 'manage'] as const).map(role => ({ id: role, label: t(role) }))}
+          onChange={role => void grant(agent.id, role)} />)}
+      </div>
+      <p className="project-path"><code>{project.workspacePath}</code></p>
       {error && <p className="project-error" role="alert">{error}</p>}
     </div></Modal.Body>
     <Modal.Footer><Button variant="tertiary" isDisabled={busy} onPress={onClose}>{t('cancel')}</Button><Button variant="primary" isDisabled={busy || !name.trim()} onPress={() => void save()}>{t('save')}</Button></Modal.Footer>

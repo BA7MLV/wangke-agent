@@ -593,168 +593,6 @@
   white-space: nowrap;
 }
 
-/* Telegram Web A Chat.tsx/Chat.scss: avatar + title/time + preview/status.
-   Source study and application-specific adaptations: docs/telegram-chat-source-study.md. */
-.app-rail--chats {
-  position: relative;
-  width: clamp(300px, 28vw, 380px);
-  padding: 0;
-  gap: 0;
-  background: var(--background);
-  border-inline-end: 1px solid var(--border);
-}
-
-.chat-sidebar__header {
-  display: flex;
-  align-items: center;
-  flex: none;
-  gap: 8px;
-  min-height: 64px;
-  padding: max(8px, env(safe-area-inset-top)) 12px 8px;
-}
-.chat-sidebar__header-button {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-  padding: 0;
-  border: 0;
-  border-radius: 50%;
-  background: transparent;
-  color: var(--muted);
-  cursor: pointer;
-}
-.chat-sidebar__header-button:hover,
-.chat-sidebar__header-button[aria-expanded='true'] { background: var(--background-secondary); color: var(--foreground); }
-.chat-sidebar__menu { min-width: 240px; }
-.chat-sidebar__current { margin-inline-start: auto; color: var(--accent); font-size: 0.625rem; }
-.chat-sidebar__filters {
-  display: flex;
-  flex: none;
-  justify-content: space-around;
-  gap: 8px;
-  padding-inline: 12px;
-  border-bottom: 1px solid var(--border);
-}
-.chat-sidebar__filters > button {
-  position: relative;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 6px;
-  flex: 1;
-  min-width: 0;
-  min-height: 48px;
-  padding: 10px 4px;
-  border: 0;
-  border-radius: 8px 8px 0 0;
-  background: transparent;
-  color: var(--muted);
-  font: inherit;
-  font-size: 0.875rem;
-  font-weight: 600;
-  cursor: pointer;
-}
-.chat-sidebar__filters > button:hover { background: var(--background-secondary); }
-.chat-sidebar__filters > button[aria-pressed='true'] { color: var(--accent); }
-.chat-sidebar__filters > button[aria-pressed='true']::after {
-  content: '';
-  position: absolute;
-  inset: auto 12px 0;
-  height: 3px;
-  border-radius: 3px 3px 0 0;
-  background: currentColor;
-}
-.chat-sidebar__count { min-width: 20px; padding: 1px 5px; border-radius: 12px; background: var(--background-tertiary); color: var(--foreground); font-size: 0.6875rem; line-height: 1.5; }
-.chat-sidebar__filters [aria-pressed='true'] .chat-sidebar__count { background: var(--accent); color: var(--accent-foreground); }
-.chat-sidebar__results { flex: none; min-height: 48px; padding: 14px 20px; color: var(--muted); font-size: 0.8125rem; }
-.chat-sidebar__scroll { padding: 6px 6px max(88px, calc(env(safe-area-inset-bottom) + 72px)); }
-.chat-sidebar__empty { display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 48px 20px 20px; color: var(--muted); text-align: center; font-size: 0.8125rem; }
-.chat-sidebar__empty > svg { width: 40px; height: 40px; margin-bottom: 8px; stroke-width: 1.25; }
-.chat-sidebar__empty strong { color: var(--foreground); font-size: 0.9375rem; font-weight: 500; }
-.chat-sidebar__compose { position: absolute; z-index: 2; right: 20px; bottom: max(20px, env(safe-area-inset-bottom)); display: flex; gap: 8px; }
-.chat-sidebar__compose > button { width: 56px; min-width: 56px; height: 56px; border-radius: 50%; box-shadow: 0 3px 12px rgb(0 0 0 / 0.2); }
-.chat-sidebar__compose > button svg { width: 24px; height: 24px; }
-
-.recent-search {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex: 1;
-  min-width: 0;
-  margin: 0;
-  padding: 0 12px;
-  min-height: 44px;
-  border-radius: 24px;
-  color: var(--muted);
-  background: var(--background-secondary);
-}
-
-.recent-search:focus-within { outline: 2px solid var(--accent); outline-offset: 1px; }
-.recent-search input {
-  width: 100%;
-  min-width: 0;
-  padding-block: 10px;
-  border: 0;
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 0.875rem;
-}
-.recent-search input:focus-visible { outline: none; }
-.recent-list .recent-item {
-  position: relative;
-  display: flex;
-  gap: 10px;
-  min-height: 76px;
-  padding: 10px;
-  border-radius: 12px;
-  color: var(--foreground);
-  font-weight: 400;
-}
-.recent-list .recent-item[data-hovered='true'] { background: var(--background-secondary); }
-.recent-list .recent-item[data-selected='true'] { background: var(--accent); color: var(--accent-foreground); }
-.recent-avatar {
-  display: grid;
-  place-items: center;
-  flex: none;
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  background: #4476b4;
-  color: #fff;
-  font-size: 1.125rem;
-  font-weight: 600;
-}
-.recent-avatar[data-color='1'] { background: #8a5bb0; }
-.recent-avatar[data-color='2'] { background: #357e78; }
-.recent-avatar[data-color='3'] { background: #ae6040; }
-.recent-avatar[data-color='4'] { background: #aa5479; }
-.recent-info { display: flex; flex-direction: column; gap: 5px; flex: 1; min-width: 0; }
-.recent-info__top, .recent-info__bottom { display: flex; align-items: center; gap: 6px; min-width: 0; }
-.recent-info__top { font-size: 1rem; font-weight: 600; }
-.recent-info__top .recent-title { flex: 1; }
-.recent-time { flex: none; font-size: 0.6875rem; font-weight: 400; color: var(--muted); }
-.recent-preview { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8125rem; color: var(--muted); }
-.recent-preview[data-pending='true'] { color: var(--accent); }
-.recent-status { display: grid; place-items: center; flex: none; width: 20px; height: 20px; font-size: 0.75rem; }
-.recent-list .recent-item[data-selected='true'] :is(.recent-time, .recent-preview, .recent-pin button, .recent-menu button) { color: inherit; }
-.recent-list .recent-item[data-selected='true'] .recent-unread { background: currentColor; }
-.recent-menu { position: absolute; inset-inline-end: 8px; top: 8px; }
-.recent-menu button { background: var(--background); }
-.recent-list .recent-item[data-selected='true'] .recent-menu button { background: var(--accent); }
-.recent-item:hover .recent-time, .recent-item:has([aria-expanded='true']) .recent-time { visibility: hidden; }
-@media (pointer: coarse) {
-  .recent-search input { font-size: 1rem; }
-}
-@media (hover: none), (max-width: 900px) {
-  .recent-info__top { padding-inline-end: 24px; }
-  .recent-item:hover .recent-time { visibility: visible; }
-  .recent-menu button { width: 32px; height: 32px; }
-}
-
 .recent-title > span {
   display: inline-block;
   white-space: nowrap;
@@ -770,16 +608,45 @@
   --drawer-exit-ease: var(--ease-smooth-out);
 }
 
-.app-nav-drawer.app-nav-drawer--chats[data-placement='left'] {
-  width: min(420px, 100vw);
-  max-width: 100vw;
-  padding: 0;
-  border-radius: 0;
-  background: var(--background);
-}
-.app-nav-drawer--chats nav { gap: 0; }
-
 /* 路由懒加载时的占位：占满视口、无内容，避免下载页面代码的那一瞬间布局塌掉。 */
 .route-fallback {
   height: var(--vvh, 100dvh);
+}
+
+/*
+ * 右侧辅助栏（PageShell `aside`）。
+ * 宽屏：主列右边的一列，和左侧导航同一层背景，用一条 hairline 分隔，不再套卡片。
+ * 窄屏：同一份内容进右侧 Drawer；≤640px 铺满全屏（手机上就是一次 push），
+ * 更宽时是一张 420px 的侧板。
+ */
+.app-aside {
+  display: flex;
+  flex-direction: column;
+  width: clamp(340px, 30vw, 420px);
+  min-height: 0;
+  flex-shrink: 0;
+  background: var(--background-secondary);
+  border-left: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  padding-right: env(safe-area-inset-right);
+}
+
+.app-aside-drawer[data-placement='right'] {
+  display: flex;
+  flex-direction: column;
+  width: min(420px, 100vw);
+  max-width: 100vw;
+  height: var(--vvh, 100dvh);
+  padding: 0;
+  background: var(--background-secondary);
+  --drawer-enter-duration: var(--duration-slow);
+  --drawer-exit-duration: var(--duration-medium);
+  --drawer-enter-ease: var(--ease-smooth-out);
+  --drawer-exit-ease: var(--ease-smooth-out);
+}
+
+@media (max-width: 640px) {
+  .app-aside-drawer[data-placement='right'] {
+    width: 100vw;
+    border-radius: 0;
+  }
 }

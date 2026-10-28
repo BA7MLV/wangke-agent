@@ -28,6 +28,7 @@ export {
   HelpTip,
   AppBarSearch,
   type PageShellProps,
+  type PageAside,
   type SectionCardProps,
   type FieldProps,
   type EmptyStateProps,
@@ -68,3 +69,4 @@ export {
   type SkeletonRevealProps,
 } from './skeleton';
 export { MODAL_CONTAINER_CLASS } from './modalContainer';
+export { MoreMenu, type MenuAction } from './MoreMenu';

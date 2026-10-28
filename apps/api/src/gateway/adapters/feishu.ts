@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { WSClient } from '@larksuiteoapi/node-sdk';
 import { mediaMime } from '../../cloud/image.js';
 import { DeliveryError, type ChannelContext, type ChannelPlugin, type GatewayEnvelope, type GatewayPayload } from '../plugin.js';
@@ -40,11 +41,18 @@ export class FeishuPlugin implements ChannelPlugin {
     await this.ws.start({ eventDispatcher: dispatcher });
   }
   async stop() { this.ws?.close({ force: true }); this.ws = undefined; }
+  /** tenant_access_token 有效期 2 小时：按平台给的 expire 缓存，提前 5 分钟换新，不在每次发送时重新换取。 */
+  private cached?: { key: string; token: string; until: number };
   private async token(c: Record<string, string>, signal: AbortSignal) {
+    const key = `${c.appId}\0${crypto.createHash('sha256').update(c.appSecret ?? '').digest('hex')}`;
+    if (this.cached?.key === key && this.cached.until > Date.now()) return this.cached.token;
     const r = await this.fetcher(`${root}/auth/v3/tenant_access_token/internal`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ app_id: c.appId, app_secret: c.appSecret }), signal, redirect: 'error' });
     if (!r.ok) throw new DeliveryError('authentication_failed');
     const b = await r.json() as any;
-    if (b.code || !b.tenant_access_token) throw new DeliveryError('authentication_failed'); return b.tenant_access_token as string;
+    if (b.code || !b.tenant_access_token) throw new DeliveryError('authentication_failed');
+    const ttl = Number.isFinite(b.expire) ? Number(b.expire) * 1000 : 7200_000;
+    this.cached = { key, token: b.tenant_access_token as string, until: Date.now() + Math.max(0, ttl - 300_000) };
+    return this.cached.token;
   }
   async send(c: Record<string, string>, peer: GatewayEnvelope, payload: GatewayPayload, id: string, signal: AbortSignal) {
     const token = await this.token(c, signal);
@@ -67,6 +75,8 @@ export class FeishuPlugin implements ChannelPlugin {
     if (response.status === 429) throw new DeliveryError('rate_limited', false, Math.max(1000, Number(response.headers.get('retry-after') ?? 1) * 1000));
     if (!response.ok) throw new DeliveryError('send_failed', response.status >= 500);
     const body = await response.json() as any;
+    // 令牌被吊销或过期（99991661/63/68）：丢掉缓存，下一次重试重新换取。
+    if ([99991661, 99991663, 99991668].includes(body.code)) this.cached = undefined;
     if (body.code) throw new DeliveryError(body.code === 230020 ? 'rate_limited' : 'platform_rejected', false, 1000);
     return body.data?.message_id ?? id;
   }

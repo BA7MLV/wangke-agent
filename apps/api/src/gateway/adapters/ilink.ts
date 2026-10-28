@@ -62,7 +62,18 @@ export class IlinkPlugin implements ChannelPlugin {
     }
     if (action.action !== 'poll' || !action.qrcode || action.qrcode.length > 4096) throw new Error('invalid_login_action');
     const base = action.redirectHost ? tencentUrl(action.redirectHost.includes('://') ? action.redirectHost : `https://${action.redirectHost}`) : DEFAULT;
-    const value = await this.request({ ...c, baseUrl: base }, `/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(action.qrcode)}${action.verifyCode ? `&verify_code=${encodeURIComponent(action.verifyCode)}` : ''}`, undefined, signal, false);
+    /*
+     * get_qrcode_status 是长轮询：扫码 / 确认 / 过期前服务端一直挂着。客户端用 30 秒上限
+     * 自己收线，到点当作「还在等」返回，网页立即发起下一轮 —— 而不是把超时当错误抛给用户，
+     * 也不需要用户手动点「检查状态」。调用方自己取消（关掉弹窗）时照常中断。
+     */
+    let value: any;
+    try {
+      value = await this.request({ ...c, baseUrl: base }, `/ilink/bot/get_qrcode_status?qrcode=${encodeURIComponent(action.qrcode)}${action.verifyCode ? `&verify_code=${encodeURIComponent(action.verifyCode)}` : ''}`, undefined, AbortSignal.any([signal, AbortSignal.timeout(30_000)]), false);
+    } catch (error) {
+      if (signal.aborted || !(error instanceof DeliveryError) || error.code !== 'transport_result_unknown') throw error;
+      return { status: 'wait', ...(action.redirectHost ? { redirectHost: base } : {}) };
+    }
     const result: Record<string, string> = { status: String(value.status ?? 'wait') };
     if (value.redirect_host) result.redirectHost = tencentUrl(value.redirect_host.includes('://') ? value.redirect_host : `https://${value.redirect_host}`);
     if (value.status === 'confirmed') {
@@ -73,10 +84,12 @@ export class IlinkPlugin implements ChannelPlugin {
   }
   async start(c: Record<string, string>, ctx: ChannelContext) {
     this.validate(c); if (!c.botToken) { ctx.health('login_required'); return; }
-    let failures = 0;
+    let failures = 0, pollTimeout = 40_000;
     while (!ctx.signal.aborted) {
       try {
-        const result = await this.request(c, '/ilink/bot/getupdates', { get_updates_buf: ctx.cursor() ?? '' }, AbortSignal.any([ctx.signal, AbortSignal.timeout(40_000)]));
+        const result = await this.request(c, '/ilink/bot/getupdates', { get_updates_buf: ctx.cursor() ?? '' }, AbortSignal.any([ctx.signal, AbortSignal.timeout(pollTimeout)]));
+        // 服务端可以下发建议的长轮询时长；客户端超时总比它多留 5 秒余量，免得把正常挂起当成断线。
+        if (Number.isFinite(result.longpolling_timeout_ms) && result.longpolling_timeout_ms > 0) pollTimeout = Math.min(120_000, Math.max(10_000, Number(result.longpolling_timeout_ms) + 5_000));
         ctx.receive((result.msgs ?? []).map(normalizeIlink), typeof result.get_updates_buf === 'string' ? result.get_updates_buf : undefined);
         ctx.health('connected'); failures = 0;
         if (!result.msgs?.length) await delay(100, undefined, { signal: ctx.signal });

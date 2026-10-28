@@ -1,0 +1,651 @@
+/*
+ * Bot（主页右侧辅助栏）与项目工作区的唯一一份样式。
+ *
+ * 和课程问答同一套视觉语言：同样的画布、同样的用户气泡（--surface + 2xl 圆角）、
+ * 助手回答直接铺在正文流里、同样的输入卡。不再有 Telegram / iMessage 的尾巴、
+ * 送达勾和浮动日期 —— 两个对话界面长得不一样，用户就得学两次。
+ *
+ * 动效全部取自 transitions.css 的共享 token。
+ */
+
+/* ── 公用 ─────────────────────────────────────────────── */
+
+.bot-center {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  height: 100%;
+  padding: 24px;
+  color: var(--muted);
+}
+
+.bot-center__error {
+  display: grid;
+  justify-items: center;
+  gap: 12px;
+  margin: 0;
+  font-size: 0.9375rem;
+  text-align: center;
+}
+
+.bot-center__error p { margin: 0; }
+
+.bot-hidden-file {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.bh-inline-error {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 16px;
+  color: var(--danger);
+  font-size: 0.875rem;
+  text-align: center;
+}
+
+/* 字母头像：iOS 通讯录的灰色渐变，Bot 栏、项目列表、问候页共用 */
+.bh-avatar.avatar {
+  width: var(--bh-avatar);
+  height: var(--bh-avatar);
+  flex: none;
+  border-radius: 999px;
+}
+
+.bh-avatar .bh-avatar__fallback {
+  background: linear-gradient(180deg, #a5aab5, #858a96);
+  color: #fff;
+  font-size: calc(var(--bh-avatar) * 0.4);
+  font-weight: 600;
+}
+
+/* ── 登录 ─────────────────────────────────────────────── */
+
+.bot-access {
+  display: grid;
+  place-items: center;
+  min-height: 100%;
+  padding: 24px 16px;
+}
+
+.bot-access__form {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: min(100%, 340px);
+  animation: bot-rise var(--duration-slow) var(--ease-smooth-out) both;
+}
+
+.bot-access__form[data-shake] .bot-access__group {
+  animation: bot-shake calc(var(--shake-dur-a) * 4) var(--shake-ease);
+}
+
+.bot-access__icon {
+  display: grid;
+  place-items: center;
+  width: 64px;
+  height: 64px;
+  border-radius: 16px;
+  background: var(--accent);
+  color: var(--accent-foreground);
+  font-size: 32px;
+}
+
+.bot-access__title {
+  margin: 0 0 6px;
+  font-size: 1.375rem;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* iOS 分组输入：一张圆角卡，行间 hairline */
+.bot-access__group {
+  display: grid;
+  width: 100%;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.bot-access__group > * + * { border-top: 1px solid var(--border); }
+
+.bot-access__group input {
+  min-height: 44px;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  font-size: 1rem;
+}
+
+.bot-access__secret {
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+}
+
+.bot-access__error {
+  margin: 0;
+  color: var(--danger);
+  font-size: 0.875rem;
+}
+
+/* ── Bot 栏 ───────────────────────────────────────────── */
+
+.bot-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--background-secondary);
+  color: var(--foreground);
+}
+
+/* 顶栏：左边标题即会话切换器，右边三颗 44pt 圆形按钮（新对话 / 更多 / 关闭） */
+.bot-panel__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  min-height: 56px;
+  padding: max(8px, env(safe-area-inset-top)) 8px 6px 12px;
+}
+
+.bot-panel__title,
+.bot-panel__switcher {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+}
+
+.bot-panel__switcher {
+  height: 44px;
+  padding: 0 8px 0 4px;
+  border-radius: 999px;
+}
+
+.bot-panel__switcher--static { padding-left: 4px; }
+
+.bot-panel__switcher-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bot-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.bot-panel__actions > .button,
+.bot-panel__actions > button {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+}
+
+.bot-panel__history {
+  width: min(320px, calc(100vw - 32px));
+  max-height: min(420px, 60dvh);
+}
+
+/* ── 项目工作区：左列会话，右列对话或文件 ───────────── */
+
+.bh {
+  --bh-list-width: 300px;
+  display: grid;
+  grid-template-columns: var(--bh-list-width) minmax(0, 1fr);
+  height: 100%;
+  min-height: 0;
+  padding-top: var(--app-bar-h, 60px);
+  overflow: hidden;
+}
+
+.bh-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  padding: 4px 8px 0 12px;
+}
+
+/* 分段控件：HIG segmented control，两段等宽 */
+.bh-segment {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--foreground) 7%, transparent);
+}
+
+.bh-segment__item {
+  height: 32px;
+  min-height: 32px;
+  border-radius: 8px;
+  color: var(--foreground);
+  font-weight: 500;
+}
+
+.bh-segment__item[data-active] {
+  background: var(--surface);
+  box-shadow: 0 1px 3px rgb(0 0 0 / 0.1);
+}
+
+.bh-pins {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.bh-pin {
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  width: 72px;
+  height: auto;
+  padding: 6px 2px;
+  border-radius: 12px;
+}
+
+.bh-pin[aria-pressed='true'] { background: var(--surface); }
+
+.bh-pin__name {
+  max-width: 100%;
+  overflow: hidden;
+  font-size: 0.75rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bh-list__scroll {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding-bottom: env(safe-area-inset-bottom);
+}
+
+.bh-list__loading {
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  color: var(--muted);
+}
+
+/* 会话行：和左侧导航里的 Recent 同一种选中态（--surface），不再整行主色 */
+.bh-thread {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 60px;
+  padding: 8px 10px;
+  border-radius: 12px;
+}
+
+.bh-thread[data-hovered='true']:not([data-selected='true']) { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
+.bh-thread[data-selected='true'] { background: var(--surface); }
+.bh-thread[data-archived] .bh-avatar { opacity: 0.55; }
+
+.bh-thread__body {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+  flex: 1;
+}
+
+.bh-thread__top {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.bh-thread__name {
+  min-width: 0;
+  flex: 1;
+  overflow: hidden;
+  font-size: 0.9375rem;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bh-thread__flag { color: var(--muted); font-size: 0.8125rem; }
+
+.bh-thread__time {
+  flex: none;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.bh-thread__preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.8125rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bh-chat {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  margin: 0 8px 8px 0;
+  overflow: hidden;
+  border-radius: var(--radius-2xl);
+  background: var(--background);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.bh-chat__bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 8px;
+  min-height: 52px;
+  padding: 4px 8px 4px 16px;
+  border-bottom: 1px solid var(--border);
+}
+
+.bh-chat__who {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex: 1;
+  margin: 0;
+  font-size: 0.9375rem;
+  font-weight: 600;
+}
+
+.bh-chat__name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.bh-files {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+
+/* 手机：两列变两屏。列表是第一屏，点进会话推入第二屏；顶栏返回键回到列表。 */
+@media (max-width: 760px) {
+  .bh { grid-template-columns: minmax(0, 1fr); }
+  .bh-list, .bh-chat { grid-area: 1 / 1; }
+  .bh-chat { margin: 0; border-radius: 0; box-shadow: none; }
+  .bh[data-pane='list'] .bh-chat,
+  .bh[data-pane='chat'] .bh-list { visibility: hidden; }
+  .bh[data-pane='chat'] .bh-chat { animation: bh-push var(--duration-slow) var(--ease-smooth-out) both; }
+  .bh-list { padding: 4px 16px 0; }
+}
+
+/* ── 消息：与课程问答同一套 ───────────────────────────── */
+
+.bh-scroll-wrap {
+  position: relative;
+  display: flex;
+  min-height: 0;
+  flex: 1;
+}
+
+.bot-messages {
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 12px 16px 16px;
+}
+
+.bh-hello {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  min-height: 100%;
+  padding: 24px;
+  text-align: center;
+}
+
+.bh-hello__name {
+  margin: 0;
+  font-size: 1.125rem;
+  font-weight: 600;
+}
+
+.bh-hello__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.9375rem;
+}
+
+.imsg-stamp {
+  display: flex;
+  justify-content: center;
+  padding: 16px 0 6px;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+.imsg-row {
+  display: flex;
+  padding-top: 4px;
+}
+
+.imsg-row[data-first] { padding-top: 14px; }
+.imsg-row--mine { justify-content: flex-end; }
+
+.imsg-bubble {
+  max-width: min(100%, 720px);
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+/* 用户：右侧 --surface 气泡，与 .course-chat__bubble--user 同值 */
+.imsg-row--mine .imsg-bubble {
+  max-width: min(82%, 560px);
+  padding: 9px 14px;
+  border-radius: var(--radius-2xl);
+  background: var(--surface);
+  color: var(--foreground);
+}
+
+/* Bot 栏底色是 --background-secondary，--surface 在浅色下与之对比够；项目里画布是 --background */
+.bh-chat .imsg-row--mine .imsg-bubble { background: var(--background-secondary); }
+
+.imsg-row[data-fresh] .imsg-bubble { animation: bot-bubble-in var(--duration-medium) var(--ease-smooth-out) both; }
+.imsg-row[data-pending] .imsg-bubble { opacity: 0.6; }
+
+.imsg-text {
+  margin: 0;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+
+.imsg-rich { min-width: 0; line-height: 1.6; }
+.imsg-rich > :first-child { margin-top: 0; }
+.imsg-rich > :last-child { margin-bottom: 0; }
+
+.imsg-receipt {
+  padding: 3px 4px 0;
+  color: var(--muted);
+  font-size: 0.6875rem;
+  text-align: right;
+}
+
+.imsg-bubble--typing {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.imsg-typing { display: inline-flex; gap: 4px; }
+
+.imsg-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 999px;
+  background: currentColor;
+  animation: bot-typing 1.2s infinite var(--ease-in-out, ease-in-out);
+}
+
+.imsg-typing i:nth-child(2) { animation-delay: 0.15s; }
+.imsg-typing i:nth-child(3) { animation-delay: 0.3s; }
+
+.imsg-bubble--file {
+  display: grid;
+  grid-template-columns: 36px minmax(0, 1fr);
+  grid-template-areas: 'icon name' 'icon size';
+  align-items: center;
+  column-gap: 10px;
+  padding: 10px 14px 10px 10px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.imsg-file__icon {
+  display: grid;
+  grid-area: icon;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.imsg-file__name {
+  grid-area: name;
+  overflow: hidden;
+  color: inherit;
+  font-size: 0.9375rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.imsg-file__size {
+  grid-area: size;
+  color: var(--muted);
+  font-size: 0.75rem;
+}
+
+/* 审批 / 提问：一张卡，操作是两颗等宽按钮（HIG：破坏性在前、确认在后） */
+.imsg-bubble--action {
+  display: grid;
+  gap: 10px;
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: var(--surface);
+  box-shadow: 0 0 0 1px var(--border);
+}
+
+.imsg-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}
+
+.imsg-actions .button { min-height: 44px; }
+
+.imsg-resolved {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  font-size: 0.8125rem;
+}
+
+.imsg-resolved[data-status='approved'] { color: var(--success); }
+
+.imsg-bubble--code pre {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px;
+  overflow: auto;
+  border-radius: 12px;
+  background: var(--surface);
+  font-size: 0.8125rem;
+}
+
+/* 输入卡：与 .course-chat__composer 同一套外观 */
+.bot-composer.imsg-composer {
+  padding: 8px 12px max(12px, env(safe-area-inset-bottom));
+  background: transparent;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.bot-composer .imsg-composer__field {
+  border-color: var(--border);
+  border-radius: 22px;
+  background: var(--background);
+  box-shadow: var(--shadow-sm);
+}
+
+.bot-composer .imsg-composer__field:focus-within {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+}
+
+.bot-composer .imsg-composer__attach {
+  width: 44px;
+  min-width: 44px;
+  height: 44px;
+}
+
+@keyframes bot-bubble-in {
+  from { opacity: 0; transform: translateY(var(--distance-base)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes bot-rise {
+  from { opacity: 0; transform: translateY(var(--distance-medium)); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes bot-typing {
+  0%, 60%, 100% { opacity: 0.35; transform: none; }
+  30% { opacity: 0.9; transform: translateY(-3px); }
+}
+
+@keyframes bot-shake {
+  0%, 100% { transform: none; }
+  20% { transform: translateX(calc(var(--shake-distance) * -1)); }
+  40% { transform: translateX(var(--shake-distance)); }
+  60% { transform: translateX(calc(var(--shake-overshoot) * -1)); }
+  80% { transform: translateX(var(--shake-overshoot)); }
+}
+
+@keyframes bh-push {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .bot-access__form,
+  .imsg-row[data-fresh] .imsg-bubble,
+  .bh[data-pane='chat'] .bh-chat { animation: none; }
+  .imsg-typing i { animation-duration: 0s; }
+}
