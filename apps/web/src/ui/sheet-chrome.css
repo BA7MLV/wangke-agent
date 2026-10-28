@@ -1,0 +1,67 @@
+.sheet-chrome {
+  position: absolute;
+  inset: 0 0 auto;
+  z-index: 2;
+  padding-top: 8px;
+  pointer-events: none;
+}
+
+.sheet-chrome > :not(.sheet-chrome__blur) {
+  position: relative;
+  z-index: 1;
+  pointer-events: auto;
+}
+
+.sheet-chrome .drawer__close-trigger {
+  position: static;
+  flex: none;
+}
+
+.sheet-chrome__blur {
+  position: absolute;
+  inset: 0 0 -20px;
+  pointer-events: none;
+}
+
+.sheet-chrome__blur > span {
+  position: absolute;
+  inset: 0;
+  -webkit-backdrop-filter: blur(var(--sheet-blur));
+  backdrop-filter: blur(var(--sheet-blur));
+  -webkit-mask-image: var(--sheet-mask);
+  mask-image: var(--sheet-mask);
+}
+
+.sheet-chrome__blur > span:nth-child(1) {
+  --sheet-blur: 1px;
+  --sheet-mask: linear-gradient(to bottom, #000 28%, transparent 100%);
+}
+.sheet-chrome__blur > span:nth-child(2) {
+  --sheet-blur: 2px;
+  --sheet-mask: linear-gradient(to bottom, #000 20%, transparent 86%);
+}
+.sheet-chrome__blur > span:nth-child(3) {
+  --sheet-blur: 4px;
+  --sheet-mask: linear-gradient(to bottom, #000 12%, transparent 72%);
+}
+.sheet-chrome__blur > span:nth-child(4) {
+  --sheet-blur: 8px;
+  --sheet-mask: linear-gradient(to bottom, #000 0%, transparent 58%);
+}
+
+/* A light tint for legibility, with no solid cap or hard lower edge. */
+.sheet-chrome__blur::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(to bottom, color-mix(in oklch, var(--background) 60%, transparent), transparent);
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .sheet-chrome__blur { bottom: 0; background: var(--background); }
+  .sheet-chrome__blur > span { display: none; }
+}
+@media (prefers-reduced-transparency: reduce) {
+  .sheet-chrome__blur { bottom: 0; background: var(--background); }
+  .sheet-chrome__blur > span { display: none; }
+}

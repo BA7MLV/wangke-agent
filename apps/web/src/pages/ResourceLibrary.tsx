@@ -13,6 +13,7 @@ import { flushCloud } from '../cloud/sync';
 import { MoreMenu, PageShell, Sym, toast, promptDialog, confirmDialog, MODAL_CONTAINER_CLASS } from '../ui';
 import { projectError } from '../projects/errors';
 import ProjectSettings from '../projects/ProjectSettings';
+import ImagePreview from '../components/ImagePreview';
 import { formatSize } from '../utils/format';
 import { probeDuration } from '../utils/mediaDuration';
 import { useIsMobile } from '../utils/useMobile';
@@ -22,6 +23,7 @@ import './resources.css';
 
 const join = (parent: string, name: string) => parent ? `${parent}/${name}` : name;
 const keyOf = (entry: ResourceEntry) => `${entry.projectId}:${entry.path}:${entry.courseId ?? ''}`;
+const isImage = (name: string) => /\.(png|jpe?g|gif|webp|avif|bmp)$/i.test(name);
 const validName = (value: string) => !value.trim() || value === '.' || value === '..' || /[\\/\u0000-\u001f\u007f]/.test(value) || new TextEncoder().encode(value).length > 255;
 
 /** The server filesystem is the browser's directory listing, not a second library. */
@@ -43,6 +45,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const [view, setView] = useState<'icons' | 'list'>('icons');
   const [settings, setSettings] = useState<{ project: ProjectDetailDto; agents: AgentProfileDto[] } | null>(null);
   const [editor, setEditor] = useState<{ projectId: string; path: string; text: string; revision: string | null } | null>(null);
+  const [image, setImage] = useState<ResourceEntry | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const locationKey = `${projectId ?? ''}:${directory}`;
   const loadedLocation = useRef('');
@@ -109,8 +112,11 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
     });
   };
   const upload = (event: ChangeEvent<HTMLInputElement>) => { const files = [...(event.target.files ?? [])]; event.target.value = ''; void uploadFiles(files); };
+  const download = (entry: ResourceEntry) => { const link = document.createElement('a'); link.href = serverClient.projectDownloadUrl(entry.projectId, entry.path); link.download = entry.name; link.click(); };
   const open = async (entry: ResourceEntry) => {
     if (entry.kind === 'directory') { openDirectory(entry.projectId, entry.path); return; }
+    if (!entry.missing && isImage(entry.name)) { setImage(entry); return; }
+    if (!entry.courseId && !/\.(txt|md|markdown|json|csv|tsv|yaml|yml|xml|log|srt|vtt|js|ts|css|py|sh)$/i.test(entry.name)) { download(entry); return; }
     await perform(async () => {
       if (entry.courseId) {
         await flushCloud();
@@ -158,6 +164,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const breadcrumbs = directory.split('/').filter(Boolean);
   const readOnly = Boolean(data?.project?.archived);
   return <PageShell title={t('resources')} rail={nav} fill rootClassName="page-library">
+    <ImagePreview isOpen={Boolean(image)} onOpenChange={open => { if (!open) setImage(null); }} title={image?.name ?? ''} content={image ? { kind: 'image', src: serverClient.projectDownloadUrl(image.projectId, image.path) } : undefined} onDownload={image ? () => download(image) : undefined} downloadLabel={t('download')} />
     <section className="finder-window resource-window" data-mobile={mobile || undefined} aria-label={t('resources')}
       onDragOver={e => { if (!busy && !readOnly) e.preventDefault(); }} onDrop={e => { if (data && !busy && !readOnly) moveInto(e, projectId ?? data.rootId, directory); }}>
       <header className="finder-toolbar">
@@ -190,7 +197,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
               draggable={!entry.scope && !entry.missing && !busy && !readOnly} onDragStart={e => { e.dataTransfer.setData('application/x-resource-entry', JSON.stringify(entry)); e.dataTransfer.effectAllowed = 'move'; }}
               onDragOver={e => { if (entry.kind === 'directory' && !entry.scope?.archived) e.preventDefault(); }} onDrop={e => { if (entry.kind === 'directory' && !busy && !entry.scope?.archived) moveInto(e, entry.projectId, entry.path); }}>
               <button className="resource-open" disabled={busy} onClick={() => void open(entry)} title={entry.scope?.workspacePath ?? entry.path}>
-                {entry.kind === 'directory' ? <FolderIcon /> : <Sym name="description" />}
+                {entry.kind === 'directory' ? <FolderIcon /> : <Sym name={isImage(entry.name) ? 'image' : 'description'} />}
                 <span>{entry.name}</span><small>{entry.scope?.archived ? t('archived') : entry.kind === 'directory' ? t('folder') : entry.missing ? t('learningRecord') : formatSize(entry.size)}</small>
               </button>
               <MoreMenu className="resource-more" label={`${t('more')} · ${entry.name}`} actions={[
@@ -198,7 +205,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
                 ...(entry.scope ? [
                   { key: 'chat', label: t('botChat'), icon: <Sym name="chat" />, onAction: () => navigate(`/library/folders/${entry.projectId}/chat`) },
                   { key: 'settings', label: t('settings'), icon: <Sym name="tune" />, onAction: () => void editSettings(entry.projectId) },
-                ] : entry.kind === 'file' && !entry.missing ? [{ key: 'download', label: t('download'), icon: <Sym name="download" />, onAction: () => { const link = document.createElement('a'); link.href = serverClient.projectDownloadUrl(entry.projectId, entry.path); link.download = entry.name; link.click(); } }] : []),
+                ] : entry.kind === 'file' && !entry.missing ? [{ key: 'download', label: t('download'), icon: <Sym name="download" />, onAction: () => download(entry) }] : []),
                 ...(!entry.missing ? [{ key: 'remove', label: entry.scope ? t(entry.scope.archived ? 'restore' : 'archive') : t('delete'), icon: <Sym name={entry.scope ? 'archive' : 'delete'} />, danger: !entry.scope, disabled: busy || readOnly, onAction: () => void remove(entry) }] : []),
               ]} />
             </li>)}

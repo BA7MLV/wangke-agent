@@ -37,6 +37,8 @@ interface Props {
    * 而滑块上正按着的手指容易让人以为在改当前这轮 —— 那就干脆别让动。
    */
   thinkingDepthDisabled?: boolean;
+  /** Close an enclosing add menu when this picker is dismissed. */
+  onClose?: () => void;
 }
 
 /** 槽位 → 图标：面板头寸土寸金，图标至少要能一眼看出「这个按钮换的是哪个模型」。 */
@@ -81,6 +83,7 @@ export default function ModelPicker({
   variant = 'icon',
   showThinking = false,
   thinkingDepthDisabled,
+  onClose,
 }: Props) {
   const settings = useSettings();
   const value = settings[field];
@@ -183,6 +186,7 @@ export default function ModelPicker({
   }
 
   return <ChipDropdown
+    onClose={onClose}
     slot={slot}
     candidates={candidates}
     value={value}
@@ -214,6 +218,7 @@ export default function ModelPicker({
  * （`Dropdown.Menu` 的 `onAction` 是自动关的，改用 ListBox 的选中语义就没有这层。）
  */
 function ChipDropdown({
+  onClose,
   slot,
   candidates,
   value,
@@ -227,6 +232,7 @@ function ChipDropdown({
   nameOf,
   catalogOf,
 }: {
+  onClose?: () => void;
   slot: ModelSlot;
   candidates: ModelRef[];
   value: ModelRef;
@@ -262,26 +268,8 @@ function ChipDropdown({
   const thinking = settings.thinkingEnabled;
   const effort = settings.thinkingEffort;
 
-  return (
-    <Dropdown>
-      <Tooltip>
-        <Tooltip.Trigger>
-          {/* 同 icon 形态那条警告：Dropdown.Trigger 自己渲染 <button>，外面别再套 Button */}
-          <Dropdown.Trigger
-            className="model-picker__trigger model-picker__trigger--chip"
-            aria-label={`切换${SLOT_LABEL[slot]}：当前 ${value.model}`}
-            data-testid="model-picker"
-          >
-            {SLOT_ICON[slot]}
-            <span className="model-picker__chip-name">{shortModelName(modelLabel(settings, value))}</span>
-            <Sym name="keyboard_arrow_down" className="model-picker__chip-caret" />
-          </Dropdown.Trigger>
-        </Tooltip.Trigger>
-        <Tooltip.Content>
-          <p className="model-picker__tooltip">{tooltip}</p>
-        </Tooltip.Content>
-      </Tooltip>
-      <Dropdown.Popover placement="top start" className="model-picker__panel">
+  const content = (
+    <>
         {/* 标题行写全「谁 + 现在哪个」：面板是贴着输入卡底部浮起来的，
             只列模型名的话分不清自己开的是哪一个槽位的面板 */}
         <div className="model-picker__panel-head">
@@ -386,7 +374,25 @@ function ChipDropdown({
             )}
           </>
         )}
-      </Dropdown.Popover>
+    </>
+  );
+  return (
+    <Dropdown onOpenChange={(open) => { if (!open) onClose?.(); }}>
+      <Tooltip>
+        <Tooltip.Trigger>
+          <Dropdown.Trigger
+            className="model-picker__trigger model-picker__trigger--chip"
+            aria-label={`切换${SLOT_LABEL[slot]}：当前 ${value.model}`}
+            data-testid="model-picker"
+          >
+            {SLOT_ICON[slot]}
+            <span className="model-picker__chip-name">{shortModelName(modelLabel(settings, value))}</span>
+            <Sym name="keyboard_arrow_down" className="model-picker__chip-caret" />
+          </Dropdown.Trigger>
+        </Tooltip.Trigger>
+        <Tooltip.Content><p className="model-picker__tooltip">{tooltip}</p></Tooltip.Content>
+      </Tooltip>
+      <Dropdown.Popover placement="top start" className="model-picker__panel">{content}</Dropdown.Popover>
     </Dropdown>
   );
 }

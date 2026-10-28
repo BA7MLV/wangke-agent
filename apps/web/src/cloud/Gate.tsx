@@ -106,7 +106,7 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
     if (step === 'welcome') go('key');
     else if (step === 'key') go('account');
     else if (step === 'name') {
-      // 账号偏好：登录后 preferences 会把它同步到服务器，Bot 用它称呼你。
+      // 同步账号偏好；服务器同时写入 owner 级称呼记忆，供各个 Bot 使用。
       useSettings.getState().update({ userName: nickname });
       go('models');
     } else void signIn();

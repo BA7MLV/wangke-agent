@@ -9,10 +9,12 @@ import { MoreMenu, type MenuAction } from '../ui';
 import { useBotPanel } from '../store/botPanel';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
+import { botProgressText } from '@wangke/contracts/cloud';
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
 import MessageComposer from '../components/MessageComposer';
 import VirtualMessages from '../components/VirtualMessages';
-import { formatListTime, groupMessages, timeOf, type DeliveryStatus, type Row } from './botMessages';
+import { formatListTime, groupMessages, timeOf, type Row } from './botMessages';
+import DeliveryReceipt from '../components/DeliveryReceipt';
 import AccessForm from './BotAccess';
 import './bot.css';
 import BotMcpScope from '../mcp/BotMcpScope';
@@ -111,20 +113,20 @@ const Bubble = memo(function Bubble({
   /** 项目里 Bot 的文字回复一律走富渲染；聊天里只有像 Markdown 的才走。 */
   rich?: boolean;
 }) {
-  const { t } = useTranslation();
+  const { t, i18n } = useTranslation();
   const { message, first, last, stamp, status } = row;
   const mine = message.role === 'user';
   // 只有刚到的消息播入场动效；虚拟列表滚回来重新挂载的旧消息不再动一遍。
   const [fresh] = useState(() => Date.now() - timeOf(message) < 4000);
   const pending = message.id.startsWith('pending-');
-  const statusLabel = status ? t(status === 'read' ? 'botHome.read' : status === 'sent' ? 'botHome.delivered' : 'botHome.sending') : undefined;
   let body;
   if (message.kind === 'progress') {
+    const progress = botProgressText(message.content, i18n.language);
     // 进度用「正在输入」的三点气泡，正文是 Bot 当前在做的事。
     body = (
-      <div className="imsg-bubble imsg-bubble--typing" role="status" aria-label={message.content || t('botHome.typingShort')}>
+      <div className="imsg-bubble imsg-bubble--typing" role="status" aria-label={progress || t('botHome.typingShort')}>
         <span className="imsg-typing" aria-hidden="true"><i /><i /><i /></span>
-        {message.content && <span className="imsg-typing__text">{message.content}</span>}
+        {progress && <span className="imsg-typing__text">{progress}</span>}
       </div>
     );
   } else if (message.kind === 'attachment') {
@@ -200,7 +202,7 @@ const Bubble = memo(function Bubble({
         {body}
       </div>
       {/* iMessage：只在自己最后一条下面写一次「已读 / 已送达」。 */}
-      {row.lastMine && status && status !== 'sending' && <div className="imsg-receipt" data-status={status}>{statusLabel}</div>}
+      {row.lastMine && status && <DeliveryReceipt status={status} createdAt={timeOf(message)} />}
     </>
   );
 });
@@ -300,7 +302,8 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const messages = active?.messages ?? EMPTY;
   const activeRunning = Boolean(activeId && running[activeId]);
   const rows = useMemo(() => {
-    const grouped = groupMessages(messages, locale, { running: activeRunning });
+    // Optimistic "running" only controls the stop/typing UI, not a read receipt.
+    const grouped = groupMessages(messages, locale);
     // Bot 在处理、又还没发出进度时，补一枚「正在输入」气泡，像对面的人在打字。
     const tail = messages[messages.length - 1];
     if (activeRunning && tail && tail.kind !== 'progress') {

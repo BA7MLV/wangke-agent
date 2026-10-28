@@ -24,6 +24,31 @@ export interface CloudRecord {
   revision: number;
 }
 export type Permission = 'allow' | 'ask' | 'deny';
+
+/** Shared wording for new pauses and older persisted progress messages. */
+export function botPauseMessage(code: string, language = 'zh-CN'): string {
+  const en = language.startsWith('en');
+  if (code === 'context_capacity_exceeded') return en
+    ? 'There was more here than I could process at once, so I couldn’t finish this time. The work already done is saved.'
+    : '这次的内容有点多，我没能全部处理完。已经完成的部分都保留着。';
+  if (code === 'run_step_budget') return en
+    ? 'I haven’t finished everything yet. The work completed so far is saved.'
+    : '这件事还没全部处理完，已经完成的部分都保留着。';
+  if (code === 'tool_timeout') return en
+    ? 'That last operation hasn’t returned, so I can’t confirm whether it finished. The results already received are saved.'
+    : '刚才那一步一直没有返回，我还不能确认它是否完成。已经收到的结果都保留着。';
+  if (code === 'model_usage_exceeded_reservation') return en
+    ? 'I couldn’t finish this time because the model returned an unexpected result. The work already done is saved.'
+    : '模型这次返回的情况有些异常，我没能接着处理完。已经完成的部分都保留着。';
+  return en
+    ? 'I couldn’t finish this time. The work already done is saved.'
+    : '这次暂时没能处理完，已经完成的部分都保留着。';
+}
+
+export function botProgressText(text: string, language = 'zh-CN'): string {
+  const legacy = /^预算已暂停任务：([a-z_]+)。请调整预算后显式继续。$/.exec(text);
+  return legacy ? botPauseMessage(legacy[1], language) : text;
+}
 export interface AgentPolicy {
   read: Permission;
   write: Permission;
@@ -49,7 +74,7 @@ export interface CloudConfig {
   /** Opaque version of provider/model settings, independent of account policy. */
   modelRevision?: string;
   botBudget?: {
-    runTokens: number; dayTokens: number; activeMs: number; contextTokens: number; runCost?: number;
+    runTokens?: number; dayTokens?: number; activeMs?: number; contextTokens: number; runCost?: number;
     prices: Array<{ provider: string; model: string; inputPerMillion: number; outputPerMillion: number; source: string }>;
   };
   providers: CloudProvider[];

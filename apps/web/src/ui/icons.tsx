@@ -36,6 +36,7 @@ import {
   IconDotsVertical,
   IconDownload,
   IconEraser,
+  IconExternalLink,
   IconEye,
   IconEyeOff,
   IconFileText,
@@ -187,6 +188,7 @@ const ICONS: Record<string, Icon> = {
   neurology: IconBrain,
   account_tree: IconGitBranch,
   open_in_full: IconArrowsMaximize,
+  open_in_new: IconExternalLink,
   /** 顶栏的侧栏折叠开关 */
   panel_left: IconLayoutSidebar,
   /** 从某条消息分叉出一条新会话（对话消息操作行 / Recent 行尾菜单） */

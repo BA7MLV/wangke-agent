@@ -7,6 +7,7 @@ import { MODAL_CONTAINER_CLASS } from '../ui/modalContainer';
 import { allowSettingsLeave, closeSettingsAndClearHash, openSettings, useSettingsDialog, type SettingsModule } from './settingsDialogStore';
 import { cloud } from '../cloud/state';
 import { useTranslation } from 'react-i18next';
+import SheetChrome from '../ui/SheetChrome';
 
 /**
  * 设置模块登记表：桌面左侧导航，移动端顶部横向模块栏，只渲染当前模块。
@@ -112,16 +113,18 @@ export default function SettingsModal() {
         <Drawer.Backdrop variant="opaque" className="settings-sheet__backdrop">
           <Drawer.Content placement="bottom" className="settings-sheet__content">
             <Drawer.Dialog className="settings-sheet__dialog" data-testid="settings-modal">
-              <Drawer.Handle />
-              <Drawer.Header className="settings-sheet__header">
-                {pushed ? (
-                  <Button variant="ghost" size="sm" className="settings-sheet__back" onPress={async () => { if (!await allowSettingsLeave()) return; setDirection('back'); setPushed(false); }}>
-                    <Sym name="chevron_left" />{common('settings')}
-                  </Button>
-                ) : <span aria-hidden="true" />}
-                <Drawer.Heading className="settings-sheet__title">{title}</Drawer.Heading>
-                <Drawer.CloseTrigger aria-label={common('closeSettings')}><Sym name="close" /></Drawer.CloseTrigger>
-              </Drawer.Header>
+              <SheetChrome>
+                <Drawer.Handle />
+                <Drawer.Header className="settings-sheet__header">
+                  {pushed ? (
+                    <Button variant="ghost" size="sm" className="settings-sheet__back" onPress={async () => { if (!await allowSettingsLeave()) return; setDirection('back'); setPushed(false); }}>
+                      <Sym name="chevron_left" />{common('settings')}
+                    </Button>
+                  ) : <span aria-hidden="true" />}
+                  <Drawer.Heading className="settings-sheet__title">{title}</Drawer.Heading>
+                  <Drawer.CloseTrigger aria-label={common('closeSettings')}><Sym name="close" /></Drawer.CloseTrigger>
+                </Drawer.Header>
+              </SheetChrome>
               <Drawer.Body
                 key={pushed ? localModule : 'root'}
                 className="settings-sheet__page mx-0 min-h-0 flex-1 overflow-y-auto overscroll-contain px-4"

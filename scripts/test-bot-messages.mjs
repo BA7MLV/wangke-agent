@@ -43,7 +43,7 @@ test('list times read like Messages: time today, "yesterday", weekday, then a da
 test('legacy model failure notices are hidden before grouping', () => {
   const notice = { ...msg('error', 'assistant', 1), kind: 'progress', content: '模型暂时不可用，请稍后重试。' };
   const rows = groupMessages([msg('a', 'user', 0), notice, msg('b', 'user', 1)]);
-  assert.deepEqual(rows.map((r) => r.key), ['a', 'b']);
+  assert.deepEqual(rows.map((r) => r.message.id), ['a', 'b']);
   assert.deepEqual(rows.map((r) => [r.first, r.last]), [[true, false], [false, true]]);
   assert.deepEqual(groupMessages([notice]), []);
 });
@@ -51,5 +51,12 @@ test('legacy model failure notices are hidden before grouping', () => {
 test('ordinary progress and user-authored failure text remain visible', () => {
   const progress = { ...msg('progress', 'assistant', 0), kind: 'progress', content: '正在整理资料' };
   const user = { ...msg('user', 'user', 1), content: '模型暂时不可用，请稍后重试。' };
-  assert.deepEqual(groupMessages([progress, user]).map((r) => r.key), ['progress', 'user']);
+  assert.deepEqual(groupMessages([progress, user]).map((r) => r.message.id), ['progress', 'user']);
+});
+
+test('a pending message keeps its UI identity after the server acknowledges it', () => {
+  const pending = { ...msg('pending-nonce', 'user', 0), clientNonce: 'nonce' };
+  const accepted = { ...pending, id: 'server-id' };
+  assert.equal(groupMessages([pending])[0].key, groupMessages([accepted])[0].key);
+  assert.equal(groupMessages([accepted])[0].status, 'sent', 'acceptance alone is not a read event');
 });

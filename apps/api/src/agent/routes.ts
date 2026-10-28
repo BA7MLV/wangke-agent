@@ -19,7 +19,7 @@ export function registerBotManagement(app: FastifyInstance, store: DatabaseStore
     return {
       budget: new UsageLedger(store, configuration).limits(u.id), timezone: 'UTC',
       memoryJob: store.db.prepare('SELECT enabled,cursor,token_budget AS tokenBudget,interval_seconds AS intervalSeconds,next_at AS nextAt FROM bot_memory_jobs WHERE owner_id=?').get(u.id) ?? { enabled: 0, cursor: null, tokenBudget: 10000, intervalSeconds: 86400 },
-      runs: store.db.prepare('SELECT r.id,r.thread_id AS threadId,r.status,r.error_code AS errorCode,r.step_count AS steps,r.active_ms AS activeMs,r.created_at AS createdAt FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND r.mode=? ORDER BY r.created_at DESC LIMIT 50 OFFSET ?').all(u.id, 'bot', offset),
+      runs: store.db.prepare('SELECT r.id,r.thread_id AS threadId,t.title,r.status,r.error_code AS errorCode,r.step_count AS steps,r.active_ms AS activeMs,r.created_at AS createdAt FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND r.mode=? ORDER BY r.created_at DESC LIMIT 50 OFFSET ?').all(u.id, 'bot', offset),
       usage: store.db.prepare(`SELECT COUNT(*) AS requests,COALESCE(SUM(input_tokens+output_tokens),0) AS knownTokens,
         COALESCE(SUM(CASE WHEN input_tokens IS NULL THEN reserved_tokens ELSE 0 END),0) AS unknownReservedTokens,
         SUM(cost) AS knownCost,COALESCE(SUM(CASE WHEN cost IS NULL THEN 1 ELSE 0 END),0) AS unknownCostRequests
@@ -39,8 +39,8 @@ export function registerBotManagement(app: FastifyInstance, store: DatabaseStore
     };
   });
   app.post<{ Params: { id: string }; Body: { budget?: BotBudget } }>('/api/v1/bot/runs/:id/resume', async (r, p) => { const u = write(r, p); if (!u) return; if (!ownsRun(u.id, r.params.id)) return p.code(404).send({ error: 'run_not_found' }); return safe(p, () => {
-    const budget = r.body?.budget ? validateBudget(r.body.budget) : new UsageLedger(store, configuration).limits(u.id);
-    const updated = store.db.prepare("UPDATE runs SET status='queued',error_code=NULL,budget_json=? WHERE id=? AND status='paused'").run(JSON.stringify(budget), r.params.id);
+    const budget = r.body?.budget ? validateBudget(r.body.budget) : null;
+    const updated = store.db.prepare("UPDATE runs SET status='queued',error_code=NULL,budget_json=? WHERE id=? AND status='paused'").run(budget ? JSON.stringify(budget) : null, r.params.id);
     if (!updated.changes) throw new Error('run_not_paused'); runner.enqueue(r.params.id); return { queued: true };
   }); });
   app.get<{ Params: { id: string }; Querystring: { offset?: string } }>('/api/v1/bot/artifacts/:id', async (r, p) => { const u = auth(r, p); if (!u) return; return safe(p, () => new BotArtifacts(store).read(u.id, r.params.id, Number(r.query.offset) || 0)); });

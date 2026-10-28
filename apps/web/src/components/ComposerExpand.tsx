@@ -1,6 +1,7 @@
 import { useLayoutEffect, useState, type ClipboardEventHandler, type RefObject } from 'react';
 import { Button, Drawer, TextArea } from '@heroui/react';
 import { Sym } from '../ui';
+import SheetChrome from '../ui/SheetChrome';
 import './composer-expand.css';
 
 /** Measure wrapping as well as edits: side panels and the software keyboard resize independently. */
@@ -46,11 +47,13 @@ export default function ComposerExpand({ value, onChange, onPaste, visible }: { 
     <Drawer.Backdrop variant="opaque" className="composer-sheet__backdrop">
       <Drawer.Content placement="bottom" className="composer-sheet__content">
         <Drawer.Dialog className="composer-sheet" data-testid="composer-sheet">
-          <Drawer.Handle />
-          <Drawer.Header className="composer-sheet__header">
-            <Drawer.Heading>编辑完整消息</Drawer.Heading>
-            <Drawer.CloseTrigger aria-label="收起输入框"><Sym name="fullscreen_exit" /></Drawer.CloseTrigger>
-          </Drawer.Header>
+          <SheetChrome>
+            <Drawer.Handle />
+            <Drawer.Header className="composer-sheet__header">
+              <Drawer.Heading>编辑完整消息</Drawer.Heading>
+              <Drawer.CloseTrigger aria-label="收起输入框"><Sym name="fullscreen_exit" /></Drawer.CloseTrigger>
+            </Drawer.Header>
+          </SheetChrome>
           <Drawer.Body className="composer-sheet__body">
             <TextArea autoFocus aria-label="完整消息" value={value} onChange={(event) => onChange(event.target.value)} onPaste={onPaste}
               className="composer-sheet__input" />

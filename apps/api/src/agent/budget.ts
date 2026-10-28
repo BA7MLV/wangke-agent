@@ -2,31 +2,43 @@ import crypto from 'node:crypto';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import { publishBotEvent } from './events.js';
+import { modelSettings } from './model-settings.js';
 
 export interface BotBudget {
-  runTokens: number; dayTokens: number; activeMs: number; contextTokens: number;
+  runTokens?: number; dayTokens?: number; activeMs?: number; contextTokens: number;
   runCost?: number;
   prices: Array<{ provider: string; model: string; inputPerMillion: number; outputPerMillion: number; source: string }>;
 }
-export const DEFAULT_BOT_BUDGET: BotBudget = { runTokens: 250000, dayTokens: 1000000, activeMs: 900000, contextTokens: 32000, prices: [] };
+export const DEFAULT_BOT_BUDGET: BotBudget = { contextTokens: 131072, prices: [] };
 export class BudgetBlocked extends Error {
   constructor(readonly code: string) { super(code); this.name = 'BudgetBlocked'; }
 }
 export interface RequestAttribution { owner: string; run?: string; step?: string; task?: string; purpose: string; provider: string; model: string }
 export function validateBudget(value: BotBudget): BotBudget {
-  for (const field of ['runTokens', 'dayTokens', 'activeMs', 'contextTokens'] as const) if (!Number.isSafeInteger(value[field]) || value[field] < 100 || value[field] > 1000000000) throw new Error('invalid_bot_budget');
+  if (!value || typeof value !== 'object') throw new Error('invalid_bot_budget');
+  for (const field of ['runTokens', 'dayTokens', 'activeMs', 'contextTokens'] as const) if (value[field] !== undefined && (!Number.isSafeInteger(value[field]) || value[field]! < (field === 'contextTokens' ? 1 : 100) || value[field]! > 1000000000)) throw new Error('invalid_bot_budget');
   if (value.runCost !== undefined && (!Number.isFinite(value.runCost) || value.runCost <= 0 || value.runCost > 100000)) throw new Error('invalid_bot_cost_budget');
   if (!Array.isArray(value.prices) || value.prices.length > 100) throw new Error('invalid_bot_prices');
   for (const price of value.prices) if (!price || typeof price.provider !== 'string' || typeof price.model !== 'string' || typeof price.source !== 'string' || price.source.length > 200 || ![price.inputPerMillion, price.outputPerMillion].every(p => Number.isFinite(p) && p >= 0)) throw new Error('invalid_bot_price');
-  return { runTokens: value.runTokens, dayTokens: value.dayTokens, activeMs: value.activeMs, contextTokens: value.contextTokens, ...(value.runCost === undefined ? {} : { runCost: value.runCost }), prices: value.prices.map(p => ({ ...p })) };
+  return { runTokens: value.runTokens, dayTokens: value.dayTokens, activeMs: value.activeMs, contextTokens: value.contextTokens ?? DEFAULT_BOT_BUDGET.contextTokens, ...(value.runCost === undefined ? {} : { runCost: value.runCost }), prices: value.prices.map(p => ({ ...p })) };
 }
 export class UsageLedger {
   constructor(readonly store: DatabaseStore, readonly configuration?: CloudConfiguration) {}
   limits(owner: string, run?: string): BotBudget {
-    const defaults = { ...DEFAULT_BOT_BUDGET, ...this.configuration?.get(owner).botBudget };
+    const stored = { ...this.configuration?.get(owner).botBudget };
+    // Retire the old UI defaults; explicit non-default API quotas remain compatible.
+    if (stored.runTokens === 250000) delete stored.runTokens;
+    if (stored.dayTokens === 1000000) delete stored.dayTokens;
+    if (stored.activeMs === 900000) delete stored.activeMs;
+    if (stored.contextTokens === 32000) delete stored.contextTokens;
+    const defaults = { ...DEFAULT_BOT_BUDGET, contextTokens: this.model(owner).contextTokens, ...stored };
     const row = run ? this.store.db.prepare('SELECT budget_json FROM runs WHERE id=?').get(run) as { budget_json: string | null } | undefined : undefined;
-    return validateBudget({ ...defaults, ...(row?.budget_json ? JSON.parse(row.budget_json) : {}) });
+    const override = row?.budget_json ? JSON.parse(row.budget_json) : {};
+    // Older Continue actions copied the entire default budget into the run.
+    for (const [field, value] of Object.entries({ runTokens: 250000, dayTokens: 1000000, activeMs: 900000, contextTokens: 32000 })) if (override[field] === value) delete override[field];
+    return validateBudget({ ...defaults, ...override });
   }
+  model(owner: string, ref?: { providerId: string; model: string }) { return modelSettings(this.store, owner, this.configuration?.get(owner), ref); }
   checkAdmission(a: RequestAttribution) {
     if (a.run) {
       const row = this.store.db.prepare('SELECT r.status FROM runs r JOIN threads t ON t.id=r.thread_id WHERE r.id=? AND t.owner_id=?').get(a.run, a.owner) as { status: string } | undefined;
@@ -42,8 +54,8 @@ export class UsageLedger {
       this.checkAdmission(a);
       const limits = this.limits(a.owner, a.run);
       const sum = (where: string, params: string[]) => (this.store.db.prepare(`SELECT COALESCE(SUM(COALESCE(input_tokens+output_tokens,reserved_tokens)),0) AS tokens FROM bot_requests WHERE ${where}`).get(...params) as { tokens: number }).tokens;
-      if (sum('owner_id=? AND started_at>=?', [a.owner, new Date().toISOString().slice(0, 10)]) + tokens > limits.dayTokens) throw new BudgetBlocked('owner_daily_token_budget');
-      if (a.run && sum('owner_id=? AND run_id=?', [a.owner, a.run]) + tokens > limits.runTokens) throw new BudgetBlocked('run_token_budget');
+      if (limits.dayTokens !== undefined && sum('owner_id=? AND started_at>=?', [a.owner, new Date().toISOString().slice(0, 10)]) + tokens > limits.dayTokens) throw new BudgetBlocked('owner_daily_token_budget');
+      if (a.run && limits.runTokens !== undefined && sum('owner_id=? AND run_id=?', [a.owner, a.run]) + tokens > limits.runTokens) throw new BudgetBlocked('run_token_budget');
       const price = limits.prices.find(p => p.provider === a.provider && p.model === a.model);
       if (limits.runCost !== undefined) {
         if (!price) throw new BudgetBlocked('model_price_required');

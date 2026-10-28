@@ -41,7 +41,7 @@ export function MarkdownCode({ block, lang, streamStatus, className, children }:
     const source = String(children ?? '').replace(/\s+$/, '');
     const closed = streamStatus !== 'loading';
     return <ArtifactEditor kind="html" source={source} closed={closed}>
-      <HtmlAnswer source={source} streaming={!closed} />
+      {(actions) => <HtmlAnswer source={source} streaming={!closed} editActions={actions} />}
     </ArtifactEditor>;
   }
   if (kind) {

@@ -497,6 +497,7 @@ export default function ChatPanel({
   const [skillIds, setSkillIds] = useState<number[] | undefined>(undefined);
   const [mcpServerIds, setMcpServerIds] = useState<string[] | undefined>();
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [handoutPreparing, setHandoutPreparing] = useState(false);
   const [shots, setShots] = useState<Snapshot[]>([]);
   /**
@@ -2021,12 +2022,15 @@ export default function ChatPanel({
             />
           </div>
           <div className="chat-composer__tools">
-          <Dropdown>
+          <Dropdown isOpen={addOpen} onOpenChange={setAddOpen}>
             <Button isIconOnly variant="tertiary" size="sm" data-testid="panel-chat-add"
-              aria-label="添加截图、讲义、出题或技能范围" isDisabled={activeId == null || activeId !== loadedSessionId}>
+              aria-label="添加截图、讲义、出题、技能范围或调整模型" isDisabled={activeId == null || activeId !== loadedSessionId}>
               <Sym name="add" />
             </Button>
             <Dropdown.Popover placement="top start">
+              <div className="px-2 py-1">
+                <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} onClose={() => setAddOpen(false)} />
+              </div>
               <Dropdown.Menu aria-label="添加到学习问答"
                 disabledKeys={[
                   ...(!indexReady || loading ? ['shot', 'quiz', 'question-bank', 'bank-practice'] : []),
@@ -2050,7 +2054,6 @@ export default function ChatPanel({
               </Dropdown.Menu>
             </Dropdown.Popover>
           </Dropdown>
-          <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} />
           {/* 上文用量环：只留环，不再跟一串 `≈2.1k / 131k` 文字 —— 常驻的估值
               在工具行上太吵（详情在环的弹层里），文字还会把发送键从最右侧挤开。
               环排在发送键**前面**，发送键永远占最右那一格。 */}

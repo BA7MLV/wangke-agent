@@ -15,8 +15,9 @@ export function accountedFetch(ledger: UsageLedger, base: Omit<RequestAttributio
     if (!provider) { if (modelEndpoint) throw new Error('model_attribution_missing'); return fetcher(url, init); }
     const body = typeof init?.body === 'string' ? JSON.parse(init.body) as { model?: string; max_tokens?: number; max_output_tokens?: number } : undefined;
     if (!body || typeof body.model !== 'string') throw new Error('model_attribution_missing');
-    const request = boundedRequest(body, endpoint);
-    checkRequestCapacity(request.total, ledger.limits(base.owner, base.run).contextTokens);
+    const model = ledger.model(base.owner, { providerId: provider.id, model: body.model });
+    const request = boundedRequest(body, endpoint, model.outputTokens);
+    checkRequestCapacity(request.total, Math.min(model.contextTokens, ledger.limits(base.owner, base.run).contextTokens));
     const attribution = { ...base, provider: provider.id, model: body.model };
     const id = ledger.reserve(attribution, ++attempt, request.total);
     try {

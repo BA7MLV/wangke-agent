@@ -11,6 +11,7 @@ import {
 } from 'react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Button, Drawer } from '@heroui/react';
+import SheetChrome from '../ui/SheetChrome';
 import { Sym } from '../ui';
 import { copyText } from '../utils/clipboard';
 import { useIsMobile } from '../utils/useMobile';
@@ -435,6 +436,7 @@ function TableSheet({
             data-testid="md-table-sheet"
             aria-label="完整表格"
           >
+            <SheetChrome>
             <Drawer.Handle
               className="md-table-sheet__handle"
               onPointerDown={onPointerDown}
@@ -461,6 +463,7 @@ function TableSheet({
                 <Sym name="close" />
               </Drawer.CloseTrigger>
             </Drawer.Header>
+            </SheetChrome>
             <Drawer.Body className="md-table-sheet__body">
               <div className="x-markdown md-table-sheet__md">
                 <TableSurface

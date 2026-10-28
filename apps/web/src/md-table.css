@@ -283,7 +283,7 @@
   max-height: min(920px, calc(var(--visual-viewport-height, 100dvh) - 16px));
   overflow: hidden;
   border-radius: 24px 24px 0 0;
-  padding: 6px 0 max(12px, env(safe-area-inset-bottom));
+  padding: 0 0 max(12px, env(safe-area-inset-bottom));
   background: var(--background);
   /* 同时保留 HeroUI 的 translate 进场/退场；只写 height 会把它的滑动动画顶掉 */
   transition:
@@ -315,11 +315,8 @@
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  /* 尾部 46px = 关闭键（24px）+ 面板内边距（16px）+ 一点呼吸。
-     HeroUI 的 drawer__close-trigger 是 absolute end-4 top-4，不占 flex 位置，
-     不留这条 padding 的话 snap 按钮会和它叠在一起。 */
   padding-block: 4px 10px;
-  padding-inline: 16px 46px;
+  padding-inline: 16px;
 }
 
 .md-table-sheet__heading {
@@ -350,7 +347,8 @@
   /* HeroUI 的 drawer__body 自带 margin: 8px -3px 0；这里要贴着面板两侧，
      负 margin 会让表头比面板宽 6px，横向滚动时边缘被切掉。 */
   margin: 0;
-  padding: 0 16px;
+  padding: calc(var(--sheet-chrome-height, 70px) + 8px) 16px 0;
+  scroll-padding-top: calc(var(--sheet-chrome-height, 70px) + 8px);
   overflow: auto;
   overscroll-behavior: contain;
 }

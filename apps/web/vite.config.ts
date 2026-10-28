@@ -181,8 +181,8 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       manifest: {
-        name: '网课学习助手',
-        short_name: '网课助手',
+        name: 'DeepStudent Go',
+        short_name: 'DeepStudent Go',
         description: '上传网课视频，自动生成字幕、公文格式讲义，支持 AI 问答',
         theme_color: '#ebebeb',
         background_color: '#ebebeb',

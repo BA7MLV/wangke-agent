@@ -3,14 +3,14 @@ import { Button, Input, Label, ListBox, Select, Switch, TextArea } from '@heroui
 import { useTranslation } from 'react-i18next';
 import { request } from '../api/serverClient';
 import { confirmDialog } from '../ui';
-import type { CloudConfig } from '@wangke/contracts/cloud';
+import { botPauseMessage } from '@wangke/contracts/cloud';
+import { closeSettingsAndClearHash, openSettings } from '../components/settingsDialogStore';
 import { useNavigate } from 'react-router-dom';
 
-type Budget = NonNullable<CloudConfig['botBudget']>;
 interface Memory { id: string; path?: string; scope: string; scope_id: string; content: string; source: string; source_revision: string | null; revision: number; status: string; kind: string }
-interface Run { id: string; threadId: string; status: string; errorCode: string | null; steps: number; activeMs: number }
-interface Overview { budget: Budget; runs: Run[]; usage: { requests: number; knownTokens: number; unknownReservedTokens: number; knownCost: number | null; unknownCostRequests: number }; memoryJob: { enabled: number; tokenBudget: number; intervalSeconds: number } }
-interface Detail { budget: Budget; requests: Array<{ id: string; purpose: string; status: string; input_tokens: number | null; output_tokens: number | null; reserved_tokens: number; cost: number | null; started_at: string; ended_at: string | null }>; steps: Array<{ id: string; tool: string; status: string; preview: string; created_at: string; completed_at: string | null }>; summaries: Array<{ id: string; content: string }>; artifacts: Array<{ id: string; size_bytes: number }> }
+interface Run { id: string; threadId: string; title?: string | null; status: 'queued' | 'running' | 'waiting_user' | 'paused' | 'completed' | 'failed' | 'cancelled'; errorCode: string | null; steps: number; activeMs: number }
+interface Overview { runs: Run[]; memoryJob: { enabled: number; tokenBudget: number; intervalSeconds: number } }
+interface Detail { requests: Array<{ id: string; purpose: string; status: string; input_tokens: number | null; output_tokens: number | null; reserved_tokens: number; started_at: string; ended_at: string | null }>; steps: Array<{ id: string; tool: string; status: string; preview: string; created_at: string; completed_at: string | null }>; summaries: Array<{ id: string; content: string }>; artifacts: Array<{ id: string; size_bytes: number }> }
 const emptyMemory = { id: '', path: '', revision: 0, scope: 'owner', scopeId: '', kind: 'preference', content: '', source: 'user:management', sourceRevision: '' };
 const memoryForm = (row: Memory) => ({ id: row.id, path: row.path ?? '', revision: row.revision, scope: row.scope, scopeId: row.scope_id, kind: row.kind, content: row.content, source: row.source, sourceRevision: row.source_revision ?? '' });
 /** HeroUI Select 的薄封装：一个标签、一组 [值, 文案]。 */
@@ -23,11 +23,9 @@ function PlainSelect({ label, value, options, onChange }: { label: string; value
 }
 
 export default function BotManagement() {
-  const { t } = useTranslation('bot');
+  const { t, i18n } = useTranslation('bot');
   const navigate = useNavigate();
   const [overview, setOverview] = useState<Overview>();
-  const [budget, setBudget] = useState<Budget>();
-  const [prices, setPrices] = useState<string>();
   const [memories, setMemories] = useState<Memory[]>([]);
   const [query, setQuery] = useState('');
   const [search, setSearch] = useState('');
@@ -48,8 +46,6 @@ export default function BotManagement() {
   const load = async () => {
     const [next, list] = await Promise.all([request<Overview>(`/bot/manage?offset=${runOffset}`), request<{ memories: Memory[] }>(`/bot/memories?deleted=true&query=${encodeURIComponent(search)}&offset=${offset}`)]);
     setOverview(next); setMemories(list.memories);
-    setBudget(current => current ?? next.budget);
-    setPrices(current => current ?? JSON.stringify(next.budget.prices, null, 2));
   };
   useEffect(() => {
     const timer = setTimeout(() => { setSearch(query); setOffset(0); }, 250);
@@ -58,7 +54,7 @@ export default function BotManagement() {
   useEffect(() => {
     let ignore = false;
     const controller = new AbortController();
-    void Promise.all([request<Overview>(`/bot/manage?offset=${runOffset}`, { signal: controller.signal }), request<{ memories: Memory[] }>(`/bot/memories?deleted=true&query=${encodeURIComponent(search)}&offset=${offset}`, { signal: controller.signal })]).then(([next, list]) => { if (ignore) return; setOverview(next); setMemories(list.memories); setBudget(current => current ?? next.budget); setPrices(current => current ?? JSON.stringify(next.budget.prices, null, 2)); }).catch(e => { if (!ignore) setError((e as Error).message); });
+    void Promise.all([request<Overview>(`/bot/manage?offset=${runOffset}`, { signal: controller.signal }), request<{ memories: Memory[] }>(`/bot/memories?deleted=true&query=${encodeURIComponent(search)}&offset=${offset}`, { signal: controller.signal })]).then(([next, list]) => { if (ignore) return; setOverview(next); setMemories(list.memories); }).catch(e => { if (!ignore) setError((e as Error).message); });
     return () => { ignore = true; controller.abort(); };
   }, [offset, runOffset, search]);
   async function act(action: () => Promise<unknown>) { setBusy(true); setError(''); try { await action(); window.dispatchEvent(new Event('system-files-changed')); await load(); } catch (e) { setError((e as Error).message); } finally { setBusy(false); } }
@@ -74,32 +70,27 @@ export default function BotManagement() {
     <h3 className="text-base font-semibold">{t('title')}</h3>
     {error ? <p role="alert" className="break-words text-danger">{error}</p> : null}
     <Button variant="secondary" isDisabled={busy} onPress={() => void act(load)}>{t('refresh')}</Button>
-    {overview && budget ? <>
-      <p data-testid="bot-usage">{t('usage', { ...overview.usage, knownCost: overview.usage.knownCost ?? t('unknown') })}</p>
-      <fieldset className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4"><legend>{t('budget')}</legend>
-        {(['runTokens', 'dayTokens', 'activeMs', 'contextTokens'] as const).map(key => <label key={key}>{t(key)}<Input className="w-full" type="number" min={100} value={budget[key]} onChange={e => setBudget({ ...budget, [key]: Number(e.target.value) })} /></label>)}
-        <label>{t('runCost')}<Input className="w-full" type="number" min={0} step="0.01" value={budget.runCost ?? ''} onChange={e => setBudget({ ...budget, runCost: e.target.value ? Number(e.target.value) : undefined })} /></label>
-        <label htmlFor="bot-budget-prices">{t('prices')}</label><TextArea id="bot-budget-prices" className="w-full font-mono text-sm" rows={3} value={prices ?? ''} onChange={e => setPrices(e.target.value)} />
-        <Button isDisabled={busy} onPress={() => void act(() => post('/budget', { ...budget, prices: JSON.parse(prices ?? '[]') }))}>{t('save')}</Button>
-      </fieldset>
-      <fieldset className="flex flex-col gap-2 rounded-xl border border-border p-4"><legend>{t('consolidation')}</legend>
+    {overview ? <>
+      <div className="rounded-xl bg-default p-4" data-testid="bot-model-settings"><p>{t('modelSettingsHint')}</p><Button variant="ghost" onPress={() => openSettings('models')}>{t('modelSettings')}</Button><Button variant="ghost" onPress={() => { closeSettingsAndClearHash(); navigate('/library'); }}>{t('resources')}</Button></div>
+      <details><summary>{t('consolidation')}</summary><fieldset className="flex flex-col gap-2 rounded-xl border border-border p-4">
         <Switch isSelected={Boolean(overview.memoryJob.enabled)} onChange={on => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, enabled: Number(on) } })}><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control><Label>{t('enabled')}</Label></Switch.Content></Switch>
         <label>{t('jobTokens')}<Input className="w-full" type="number" value={overview.memoryJob.tokenBudget} onChange={e => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, tokenBudget: Number(e.target.value) } })} /></label>
         <label>{t('interval')}<Input className="w-full" type="number" value={overview.memoryJob.intervalSeconds} onChange={e => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, intervalSeconds: Number(e.target.value) } })} /></label>
         <Button isDisabled={busy} onPress={() => void act(() => post('/memory-job', { ...overview.memoryJob, enabled: Boolean(overview.memoryJob.enabled) }))}>{t('save')}</Button>
-      </fieldset>
-      <h4>{t('runs')}</h4>
+      </fieldset></details>
+      <details data-testid="bot-run-diagnostics"><summary>{t('runs')}</summary>
       {!overview.runs.length ? <p>{t('empty')}</p> : null}
-      {overview.runs.map(run => <div key={run.id} className="flex flex-wrap items-center gap-2 rounded-lg bg-default p-3"><span className="min-w-0 break-all text-sm">{run.id} · {run.status} · {run.errorCode} · {run.steps} · {Math.round(run.activeMs / 1000)}s</span><Button variant="secondary" isDisabled={busy} onPress={() => void act(() => openRun(run))}>{t('details')}</Button>{run.status === 'paused' ? <Button isDisabled={busy} onPress={() => void act(() => post(`/runs/${run.id}/resume`, {}))}>{t('resume')}</Button> : null}{['queued', 'running', 'waiting_user', 'paused'].includes(run.status) ? <Button variant="secondary" isDisabled={busy} onPress={() => void act(() => request(`/runs/${run.id}/cancel`, { method: 'POST', body: '{}' }))}>{t('stop')}</Button> : null}</div>)}
+      {overview.runs.map(run => <div key={run.id} data-testid={`bot-run-${run.id}`} className="flex flex-wrap items-center gap-2 rounded-lg bg-default p-3">{run.title ? <p className="w-full break-words font-medium">{run.title}</p> : null}<span className="min-w-0 break-words text-sm">{t(`runStatus.${run.status}`, { defaultValue: run.status })} · {t('runSteps', { count: run.steps })}</span>{run.status === 'paused' ? <p className="w-full text-sm">{botPauseMessage(run.errorCode ?? '', i18n.language)}</p> : null}<Button variant="secondary" isDisabled={busy} onPress={() => void act(() => openRun(run))}>{t('details')}</Button>{['queued', 'running', 'waiting_user', 'paused'].includes(run.status) ? <Button variant="secondary" isDisabled={busy} onPress={() => void act(() => request(`/runs/${run.id}/cancel`, { method: 'POST', body: '{}' }))}>{t('stop')}</Button> : null}</div>)}
       <div className="flex gap-2"><Button variant="secondary" isDisabled={runOffset === 0} onPress={() => setRunOffset(Math.max(0, runOffset - 50))}>{t('previous')}</Button><Button variant="secondary" isDisabled={overview.runs.length < 50} onPress={() => setRunOffset(runOffset + 50)}>{t('next')}</Button></div>
+      </details>
     </> : <p role="status">{t('loading')}</p>}
     {detail && selected ? <div className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4">
       <h4>{t('details')} · <span className="break-all">{selected.id}</span></h4>
-      <details><summary>{t('budget')}</summary><pre className="whitespace-pre-wrap break-all text-sm">{JSON.stringify(detail.budget, null, 2)}</pre></details>
+      {selected.errorCode ? <p className="break-all text-sm text-muted">{selected.errorCode}</p> : null}
       <label>{t('skillScope')}<Input className="w-full font-mono" value={skillScope} onChange={e => setSkillScope(e.target.value)} /></label><p className="text-sm text-muted">{t('scopeHint')}</p>
       {skills.map(skill => <p key={skill.id} className="break-words text-sm">{skill.id}: {skill.name}{skill.missingMcp.length ? ` · MCP: ${skill.missingMcp.join(', ')}` : ''}</p>)}
       <Button isDisabled={busy} onPress={() => void act(() => post(`/threads/${selected.threadId}/skills`, { ids: JSON.parse(skillScope) }))}>{t('save')}</Button>
-      {detail.requests.map(row => <p key={row.id} className="break-all text-sm">{row.purpose} · {row.status} · {row.input_tokens === null ? `${t('unknown')} (${row.reserved_tokens})` : `${row.input_tokens} + ${row.output_tokens}`} · {row.cost ?? t('unknown')} · {row.ended_at ? `${Date.parse(row.ended_at) - Date.parse(row.started_at)}ms` : '…'}</p>)}
+      {detail.requests.map(row => <p key={row.id} className="break-all text-sm">{row.purpose} · {row.status} · {row.input_tokens === null ? t('unknown') : `${row.input_tokens} + ${row.output_tokens}`} · {row.ended_at ? `${Date.parse(row.ended_at) - Date.parse(row.started_at)}ms` : '…'}</p>)}
       {detail.steps.map(step => <details key={step.id}><summary className="break-all">{step.tool} · {step.status} · {step.completed_at ? `${Date.parse(step.completed_at) - Date.parse(step.created_at)}ms` : '…'}</summary><pre className="whitespace-pre-wrap break-all text-sm">{step.preview}</pre></details>)}
       {detail.summaries.map(summary => <details key={summary.id}><summary>{t('summary')}</summary><pre className="whitespace-pre-wrap break-words text-sm">{summary.content}</pre></details>)}
       {detail.artifacts.map(item => <Button key={item.id} variant="secondary" isDisabled={busy} onPress={() => void act(async () => setArtifact(await request(`/bot/artifacts/${item.id}`)))}>{t('artifact')} · {item.size_bytes}</Button>)}

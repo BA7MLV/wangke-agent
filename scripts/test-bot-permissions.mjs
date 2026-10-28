@@ -69,7 +69,7 @@ try {
   const created = JSON.parse((await runTool('projects', { action: 'create', name: 'Bot-created project' })).result);
   assert.equal(created.grants[0].role, 'manage');
   assert.equal(created.grants[0].agentId, agent);
-  assert.equal(created.url, `#/projects/${created.id}`);
+  assert.equal(created.url, `#/library?folder=${created.id}`);
   assert.equal(projects.list(owner).length, 1);
   assert.deepEqual(projects.files.list(created.id, ''), []);
 

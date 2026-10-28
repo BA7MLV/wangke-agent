@@ -8,7 +8,7 @@ import { CloudRecords } from '../apps/api/src/cloud/records.ts';
 import { BotApplicationService } from '../apps/api/src/agent/service.ts';
 import { UsageLedger, DEFAULT_BOT_BUDGET } from '../apps/api/src/agent/budget.ts';
 import { ModelClient, modelUsage, retryAfter } from '../apps/api/src/agent/model-client.ts';
-import { botCalls, botRequest, responseContinuation } from '../apps/api/src/agent/model.ts';
+import { botCalls, botReply, botRequest, responseContinuation } from '../apps/api/src/agent/model.ts';
 import { BotArtifacts } from '../apps/api/src/agent/artifacts.ts';
 import { ContextGovernor } from '../apps/api/src/agent/context-governor.ts';
 import { BotSkills } from '../apps/api/src/agent/skills.ts';
@@ -77,9 +77,9 @@ try {
     const body = await new ModelClient(ledger, async () => ++attempts === 1 ? Response.json({}, { status: 429, headers: { 'retry-after': '0' } }) : Response.json(envelope)).request('https://fake.invalid', {}, attribution, 100);
     assert.equal(attempts, 2); assert.equal(botCalls(protocol, body)[0].function.name, 'read');
     const continuation = responseContinuation(protocol, envelope);
-    const request = botRequest({ protocol }, 'fake', [{ role: 'assistant', content: null, tool_calls: [{ id: 'call', type: 'function', function: { name: 'read', arguments: '{}' } }], response_items: continuation }, { role: 'tool', tool_call_id: 'call', content: '{}' }], []);
+    const request = botRequest({ protocol }, 'fake', [{ role: 'assistant', content: botReply(protocol, envelope).text || null, tool_calls: [{ id: 'call', type: 'function', function: { name: 'read', arguments: '{}' } }], response_items: continuation }, { role: 'tool', tool_call_id: 'call', content: '{}' }], []);
     if (protocol !== 'openai-chat') assert.ok(JSON.stringify(request).includes('opaque'));
-    if (protocol === 'openai-responses') { assert.ok(JSON.stringify(request).includes('commentary')); assert.deepEqual(request.body.include, ['reasoning.encrypted_content']); }
+    if (protocol === 'openai-responses') { assert.ok(JSON.stringify(request).includes('commentary')); assert.deepEqual(request.body.include, ['reasoning.encrypted_content']); assert.equal(JSON.stringify(request).split('checking').length, 2, 'visible text is not duplicated in provider continuation'); }
   }
   for (const status of [401, 402, 403]) {
     let calls = 0;

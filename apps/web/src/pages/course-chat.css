@@ -38,7 +38,7 @@
   background: transparent;
 }
 
-/* 空会话使用同一条正常布局流：输入增高时只推开下方提问，不再重叠或跳位。
+/* 空会话使用同一条正常布局流：输入增高时只推开下方入口，不再重叠或跳位。
    保留输入框 DOM，切换到消息态时不会丢失焦点。 */
 .course-chat--empty .course-chat__main {
   display: grid;
@@ -82,15 +82,8 @@
     0 12px 32px rgb(0 0 0 / 0.07);
 }
 
-.course-chat--empty .course-chat__starters {
-  grid-row: 3;
-  width: min(100%, 660px);
-  justify-self: center;
-  margin: 0;
-}
-
 .course-chat--empty .course-chat__import {
-  grid-row: 4;
+  grid-row: 3;
   justify-self: center;
   margin: 0;
 }
@@ -140,7 +133,7 @@
 .course-chat__messages {
   overflow-anchor: none;
   /* 直接裁掉输入区内的消息，不靠背景遮挡；边界随输入区高度同步变化。 */
-  clip-path: inset(0 0 var(--chat-composer-height, 116px) 0);
+  clip-path: inset(0 0 var(--chat-composer-clip-height, 108px) 0);
   /* 首屏消息让出浮动顶栏，再留 28px 阅读间距；吸顶标题单独贴顶栏下沿，
      不继承首屏的阅读间距。 */
   --reasoning-sticky-gap: 28px;
@@ -856,36 +849,13 @@
 }
 
 .course-chat__composer {
-  position: relative;
-  box-sizing: border-box;
   width: min(100%, var(--course-chat-column));
   margin: 0 auto;
-  padding: 8px 12px;
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto;
-  grid-template-areas:
-    'context context context'
-    'add input tools';
-  align-items: end;
-  gap: 0 8px;
-  border-radius: 24px;
-  background: var(--background);
-  border: 1px solid var(--border);
-  box-shadow: var(--shadow-sm);
 }
 
 /* Keep attachments and course chips clear of the top-right expand control. */
 .course-chat__composer:has(.composer-expand:not([hidden])) .course-chat__composer-context {
   padding-inline-end: 36px;
-}
-
-/* 聚焦时整卡换主色细描边：焦点状态做在卡片上，
-   用户的注意力自然落在「正在写的那一块」，而不是去找某个小控件的焦点环。 */
-.course-chat__composer:focus-within {
-  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
-  box-shadow:
-    0 1px 2px rgb(0 0 0 / 0.04),
-    0 10px 30px rgb(0 0 0 / 0.07);
 }
 
 /* 确认问题与回答共用输入卡，不在消息流里再放第二个输入入口。 */
@@ -907,68 +877,6 @@
   border: 0;
   border-radius: 0;
   background: transparent;
-}
-
-/* TextArea：外框与底色由卡片提供，这里把它彻底摊平 —— 一个自带边框的
-   输入框套在一张卡片里，会出现「框中框」，两层圆角也对不齐。 */
-.course-chat__input {
-  grid-area: input;
-  flex: 1 1 0;
-  width: 100%;
-  min-width: 0;
-  min-height: calc(1.6em + 10px);
-  max-height: min(180px, 25dvh);
-  padding: 5px 0;
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  resize: none;
-  border: 0;
-  border-radius: var(--radius-lg);
-  background: transparent;
-  color: var(--foreground);
-  font: inherit;
-  font-size: 0.9375rem;
-  line-height: 1.6;
-  outline: none;
-  box-shadow: none;
-}
-
-/* ⚠️ 上面那条 `outline: none` **压不住** theme.css 的全局
-   `:focus-visible { outline: 2px solid var(--focus) }` —— 文本框被鼠标点一下
-   也算 :focus-visible（规范如此），于是聚焦时里面冒出一圈 2px 主色描边，
-   外面卡片已经换过主色边框了（`.course-chat__composer:focus-within`），
-   两圈焦点环叠在一起像是套了框中框。
-
-   两者还都是单类 / 伪类特异度（0,1,0），只能靠源码顺序决胜负 ——
-   而 `course-chat.css` 是跟着 CourseChat 模块注入的，`App` 的模块图在
-   main.tsx 的 import 语句里排在那几行 CSS **之前**，所以 theme.css 永远压它。
-   靠顺序赌不稳，这里直接把特异度抬到 (0,3,0) 写死。
-
-   去掉焦点环**不丢可访问性**：卡片本身的 `:focus-within` 换主色边框，
-   键盘用户照样看得出焦点在哪 —— 这正是「焦点状态做在卡片上」那句的意图。 */
-.course-chat__composer .course-chat__input:focus-visible {
-  outline: none;
-}
-
-.course-chat__input::placeholder {
-  color: color-mix(in oklch, var(--muted) 85%, transparent);
-}
-
-.course-chat__input:disabled {
-  opacity: 0.6;
-}
-
-/* 加号、输入和工具始终同一行；只有输入文字本身会向上增高。 */
-.course-chat__composer-tools {
-  grid-area: tools;
-  width: 100%;
-  min-width: 0;
-  flex: 0 0 auto;
-  display: flex;
-  flex-wrap: nowrap;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 4px 6px;
 }
 
 .course-chat__composer-tools .model-picker__trigger {

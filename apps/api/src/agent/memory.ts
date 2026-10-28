@@ -7,6 +7,20 @@ export interface MemoryInput { scope: 'owner' | 'bot' | 'course'; scopeId: strin
 export type MemoryRow = { id: string; owner_id: string; scope: MemoryInput['scope']; scope_id: string; kind: MemoryInput['kind']; content: string; source: string; source_revision: string | null; revision: number; status: string; origin: string; created_at: string; updated_at: string };
 export class BotMemory {
   constructor(readonly store: DatabaseStore) {}
+  /** A single explicit profile memory, updated only when the account name changes. */
+  rememberUserName(owner: string, name: string) {
+    const source = 'user:profile-name';
+    const existing = this.store.db.prepare('SELECT id FROM bot_memories WHERE owner_id=? AND source=?').get(owner, source) as { id: string } | undefined;
+    const row = existing ? this.get(owner, existing.id) : undefined;
+    if (!name) {
+      if (row && row.status !== 'deleted') this.remove(owner, row.id, row.revision);
+      return;
+    }
+    const content = `用户希望被称呼为：${JSON.stringify(name)}。`;
+    if (row?.status === 'active' && row.content === content) return;
+    this.save(owner, { scope: 'owner', scopeId: '', kind: 'preference', content, source },
+      row ? { id: row.id, revision: row.revision } : {});
+  }
   path(row: MemoryRow) { return this.store.systemFiles.path(row.owner_id, row.id) ?? memoryPath(row.id); }
   /** Import disk changes into the index, never repair a notebook from an old DB snapshot. */
   materialize(row: MemoryRow) {

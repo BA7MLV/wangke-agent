@@ -615,7 +615,7 @@
 
 /*
  * 右侧辅助栏（PageShell `aside`）。
- * 宽屏：主列右边的一列，和左侧导航同一层背景，用一条 hairline 分隔，不再套卡片。
+ * 宽屏：主列右边的微圆角面板，与主内容区保留一致的外边距。
  * 窄屏：同一份内容进右侧 Drawer；≤640px 铺满全屏（手机上就是一次 push），
  * 更宽时是一张 420px 的侧板。
  */
@@ -626,9 +626,61 @@
   min-height: 0;
   flex-shrink: 0;
   background: var(--background-secondary);
-  border-left: 1px solid color-mix(in oklab, var(--foreground) 8%, transparent);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  margin: 6px 6px 6px 0;
+  overflow: hidden;
   padding-right: env(safe-area-inset-right);
 }
+
+@media (min-width: 901px) {
+  .page-shell__surface {
+    margin: 6px 6px 6px 0;
+    border: 1px solid var(--border);
+    border-radius: 18px;
+    overflow: hidden;
+    background: var(--background);
+  }
+}
+
+.page-shell__rail {
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
+  width: 16.5rem;
+  min-height: 0;
+  padding: 12px;
+  gap: 8px;
+  overflow: hidden;
+}
+
+.page-shell__rail-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; }
+.page-shell__brand { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--foreground); font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+.page-shell__brand svg { flex-shrink: 0; }
+.page-shell__compact-rail .page-shell__rail-header { flex-direction: column; }
+.page-shell__compact-rail .page-shell__brand { justify-content: center; width: 44px; height: 44px; }
+.page-shell__rail-content { display: flex; flex: 1; flex-direction: column; min-height: 0; width: calc(16.5rem - 24px); }
+
+.page-shell__compact-rail {
+  align-items: center;
+  width: 60px;
+  padding: 12px 6px;
+}
+
+.page-shell__rail-icon {
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-full);
+}
+
+.page-shell__rail-icon[aria-current='page'] {
+  background: var(--accent-soft);
+  color: var(--accent-soft-foreground);
+}
+
+.page-shell__compact-footer { margin-top: auto; }
+.page-shell__compact-footer button { width: 44px; height: 44px; justify-content: center; padding: 0; }
+.page-shell__compact-footer button > span:last-child { display: none; }
 
 .app-aside-drawer[data-placement='right'] {
   display: flex;

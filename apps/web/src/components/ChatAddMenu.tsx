@@ -9,6 +9,7 @@ import { MAX_COURSE_CONTEXT } from '../harness/courseContext';
 import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
 import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
 import SkillPicker from './SkillPicker';
+import ModelPicker from './ModelPicker';
 import './chat-attachments.css';
 import { useTranslation } from 'react-i18next';
 
@@ -18,6 +19,7 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
   const [skillsOpen, setSkillsOpen] = useState(false);
+  const [addOpen, setAddOpen] = useState(false);
   const [coursesOpen, setCoursesOpen] = useState(false);
   const [courses, setCourses] = useState<{ id: string; name: string }[]>([]);
   const [selected, setSelected] = useState<string[]>([]);
@@ -65,12 +67,15 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   };
   return <>
     <div className="chat-add-menu">
-      <Dropdown>
-        <Button className="chat-add-menu__trigger" isIconOnly size="sm" variant="tertiary" aria-label={`添加课程、图片、文件或讲义${contextCourses.length ? `，已引用 ${contextCourses.length} 门课程` : ''}`} data-testid="chat-add" isDisabled={disabled}>
+      <Dropdown isOpen={addOpen} onOpenChange={setAddOpen}>
+        <Button className="chat-add-menu__trigger" isIconOnly size="sm" variant="tertiary" aria-label={`添加内容或调整模型${contextCourses.length ? `，已引用 ${contextCourses.length} 门课程` : ''}`} data-testid="chat-add" isDisabled={disabled}>
           <Sym name="add" />
           {contextCourses.length > 0 && <span className="chat-add-menu__context-dot" data-testid="chat-context-dot" aria-hidden="true" />}
         </Button>
         <Dropdown.Popover placement="top start">
+          <div className="px-2 py-1">
+            <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} onClose={() => setAddOpen(false)} />
+          </div>
           <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['handout'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
             if (key === 'courses') void openCourses();
             else if (key === 'images') imageInput.current?.click();

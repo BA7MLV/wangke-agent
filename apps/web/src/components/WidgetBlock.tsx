@@ -44,6 +44,8 @@ interface Props {
   /** 独立预览页不再显示「在新窗口展开」，避免从新窗口继续打开新窗口。 */
   allowPopout?: boolean;
   editActions?: ArtifactActions | null;
+  /** Ordinary HTML uses the same sandbox/popout boundary, with source actions owned by its renderer. */
+  htmlActions?: { sourceOpen: boolean; sourceId: string; toggleSource(): void; copySource(): void };
   /** Popouts inherit the originating surface's locally scoped palette and typography. */
   appearance?: WidgetTheme;
   /** Question-scoped draft only. The student confirms submission in the trusted host UI. */
@@ -63,7 +65,7 @@ export const WIDGET_PREVIEW_MSG = {
 
 export type WidgetPreviewMessage =
   | { type: typeof WIDGET_PREVIEW_MSG.ready }
-  | { type: typeof WIDGET_PREVIEW_MSG.payload; payload: WidgetPayload; dark: boolean; appearance?: WidgetTheme; rowId?: number; canPrompt?: boolean }
+  | { type: typeof WIDGET_PREVIEW_MSG.payload; payload: WidgetPayload; dark: boolean; appearance?: WidgetTheme; rowId?: number; canPrompt?: boolean; surface?: 'html' }
   | { type: typeof WIDGET_PREVIEW_MSG.prompt; text: string; requestId: number }
   | { type: typeof WIDGET_PREVIEW_MSG.result; requestId: number; error?: string };
 
@@ -99,7 +101,8 @@ export default function WidgetBlock(props: Props) {
   return <WidgetSessionBlock key={key} {...props} />;
 }
 
-function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, appearance, answerInput }: Props) {
+function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, htmlActions, appearance, answerInput }: Props) {
+  const htmlSurface = !!htmlActions;
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const themeRef = useRef<WidgetTheme | undefined>(appearance);
@@ -258,6 +261,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
           appearance: themeRef.current,
           rowId,
           canPrompt: !!onPromptRef.current && !disabledRef.current,
+          ...(htmlSurface ? { surface: 'html' as const } : {}),
         } satisfies WidgetPreviewMessage);
       } else if (message.type === WIDGET_PREVIEW_MSG.prompt) {
         const text = typeof message.text === 'string' ? message.text.trim() : '';
@@ -281,7 +285,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
       if (previewChannelRef.current === channel) previewChannelRef.current = null;
       channel.close();
     };
-  }, [allowPopout, previewToken, rowId, session]);
+  }, [allowPopout, previewToken, rowId, session, htmlSurface]);
 
   // 预览页打开后，主题切换或 payload 替换也要同步过去；打开前的消息会被忽略，
   // 因为预览页随后一定会发 ready，ready 分支会再发送当前值。
@@ -294,8 +298,9 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
       appearance: themeRef.current,
       rowId,
       canPrompt: !!onPrompt && !disabled,
+      ...(htmlSurface ? { surface: 'html' as const } : {}),
     } satisfies WidgetPreviewMessage);
-  }, [allowPopout, dark, payload, rowId, onPrompt, disabled]);
+  }, [allowPopout, dark, payload, rowId, onPrompt, disabled, htmlSurface]);
 
   const requestFollowUp = useCallback(async (raw: unknown, requestId?: number) => {
     let acquired = false;
@@ -494,16 +499,20 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
         <Button size="sm" variant="tertiary" onPress={() => setSelection(null)}>收起</Button>
       </div>}
       {stateMessage && <p className="sr-only" role="status">{stateMessage}</p>}
-      {(canPopout || editActions) && <div className="widget-block__tools">
+      {(canPopout || editActions || htmlActions) && <div className="widget-block__tools">
         <Dropdown>
-          <Button isIconOnly size="sm" variant="tertiary" aria-label="更多交互图形操作" data-testid="widget-more"><Sym name="more_horiz" size={18} /></Button>
+          <Button isIconOnly size="sm" variant="tertiary" aria-label={htmlSurface ? '更多 HTML 操作' : '更多交互图形操作'} data-testid="widget-more"><Sym name="more_horiz" size={18} /></Button>
           <Dropdown.Popover placement="bottom end">
-            <Dropdown.Menu aria-label="交互图形操作" disabledKeys={editActions?.busy ? ['edit', 'undo'] : []} onAction={(key) => {
+            <Dropdown.Menu aria-label={htmlSurface ? 'HTML 操作' : '交互图形操作'} disabledKeys={editActions?.busy ? ['edit', 'undo'] : []} onAction={(key) => {
               if (key === 'edit') editActions?.edit();
               if (key === 'undo') editActions?.undo?.();
+              if (key === 'copy-html') htmlActions?.copySource();
+              if (key === 'source-html') htmlActions?.toggleSource();
             }}>
-              {canPopout ? <Dropdown.Item id="expand" href={previewHref} target="_blank" rel="noopener noreferrer" textValue="在新窗口展开" data-testid="widget-open"><Sym name="open_in_full" /><Label>在新窗口展开</Label></Dropdown.Item> : null}
-              {editActions ? <Dropdown.Item id="edit" textValue="修改这幅图" data-testid="widget-edit"><Sym name="edit" /><Label>修改这幅图</Label></Dropdown.Item> : null}
+              {canPopout ? <Dropdown.Item id="expand" href={previewHref} target="_blank" rel="noopener noreferrer" textValue={htmlSurface ? '在新页面打开' : '在新窗口展开'} data-testid="widget-open"><Sym name={htmlSurface ? 'open_in_new' : 'open_in_full'} /><Label>{htmlSurface ? '在新页面打开' : '在新窗口展开'}</Label></Dropdown.Item> : null}
+              {editActions ? <Dropdown.Item id="edit" textValue={htmlSurface ? '修改 HTML' : '修改这幅图'} data-testid="widget-edit"><Sym name="edit" /><Label>{htmlSurface ? '修改 HTML' : '修改这幅图'}</Label></Dropdown.Item> : null}
+              {htmlActions ? <Dropdown.Item id="copy-html" textValue="复制 HTML"><Sym name="content_copy" /><Label>复制 HTML</Label></Dropdown.Item> : null}
+              {htmlActions ? <Dropdown.Item id="source-html" textValue={htmlActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'} aria-expanded={htmlActions.sourceOpen} aria-controls={htmlActions.sourceId}><Sym name="code" /><Label>{htmlActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Label></Dropdown.Item> : null}
               {editActions?.undo ? <Dropdown.Item id="undo" textValue="撤销上次修改"><Sym name="undo" /><Label>撤销上次修改</Label></Dropdown.Item> : null}
             </Dropdown.Menu>
           </Dropdown.Popover>

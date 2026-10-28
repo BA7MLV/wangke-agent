@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { CloudRecords } from '../cloud/records.js';
 import { ProjectError } from './files.js';
+import { importBotAttachments } from './attachments.js';
 import type { ProjectRepository } from './repository.js';
 import type { ResourceDirectory, ResourceEntry } from '@wangke/contracts/resources';
 
@@ -183,6 +184,7 @@ export class ResourceFiles {
       this.remember(owner, course.id, projectId, filename, sourceId);
       if (edited) this.put(owner, 'files', course.id, null);
     }
+    importBotAttachments(this.projects, this.filesDir, owner, root);
   }
   private entry(projectId: string, filename: string) {
     const parent = path.posix.dirname(filename) === '.' ? '' : path.posix.dirname(filename);

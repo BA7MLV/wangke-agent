@@ -84,7 +84,7 @@ export function groupMessages(messages: MessageDto[], locale = 'zh-CN', options:
       else status = index < answeredUpTo || options.running ? 'read' : 'sent';
     }
     return {
-      key: message.id, message, first: !sameAsPrevious, last: !sameAsNext,
+      key: fromUser(message) && message.clientNonce ? `user-${message.clientNonce}` : message.id, message, first: !sameAsPrevious, last: !sameAsNext,
       stamp: dayBreak ? day : null, day, time: clock(date, locale), status,
       lastMine: index === lastMineIndex || undefined,
     };

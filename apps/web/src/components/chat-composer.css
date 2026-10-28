@@ -1,0 +1,63 @@
+.study-composer {
+  position: relative;
+  box-sizing: border-box;
+  width: 100%;
+  padding: 8px 12px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  grid-template-areas: 'context context context' 'add input tools';
+  align-items: end;
+  gap: 0 8px;
+  border-radius: 24px;
+  background: var(--background);
+  border: 1px solid var(--border);
+  box-shadow: var(--shadow-sm);
+}
+
+.study-composer:focus-within {
+  border-color: color-mix(in oklch, var(--accent) 55%, transparent);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.04), 0 10px 30px rgb(0 0 0 / 0.07);
+}
+
+.study-composer__input {
+  grid-area: input;
+  flex: 1 1 0;
+  width: 100%;
+  min-width: 0;
+  min-height: calc(1.6em + 10px);
+  max-height: min(180px, 25dvh);
+  padding: 5px 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  resize: none;
+  border: 0;
+  border-radius: var(--radius-lg);
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 0.9375rem;
+  line-height: 1.6;
+  outline: none;
+  box-shadow: none;
+}
+
+.study-composer .study-composer__input:focus-visible { outline: none; }
+.study-composer__input::placeholder { color: color-mix(in oklch, var(--muted) 85%, transparent); }
+.study-composer__input:disabled { opacity: 0.6; }
+.study-composer__tools {
+  grid-area: tools;
+  width: 100%;
+  min-width: 0;
+  flex: 0 0 auto;
+  display: flex;
+  flex-wrap: nowrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 4px 6px;
+}
+
+@media (max-width: 640px) {
+  .study-composer { padding: 8px; gap: 0 4px; }
+  .study-composer__input { font-size: 1rem; }
+  .study-composer__tools { gap: 4px; }
+}

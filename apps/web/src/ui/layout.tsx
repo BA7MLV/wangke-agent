@@ -12,6 +12,7 @@ import {
   Typography,
 } from '@heroui/react';
 import { Sym } from './icons';
+import BrandLogo from './BrandLogo';
 import { toast } from './feedback';
 import { useRailCollapsed } from './rail';
 import { DotBadge, IconSwap, MatrixDots } from '../components/motion';
@@ -302,7 +303,7 @@ function Sidebar({
                试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
                ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
                留着只会让后来的人以为它在生效。 */
-            className="min-h-11 gap-2.5 rounded-xl px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-accent-soft data-[selected=true]:font-medium data-[selected=true]:text-accent-soft-foreground"
+            className="min-h-11 gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-accent-soft data-[selected=true]:font-medium data-[selected=true]:text-accent-soft-foreground"
           >
             <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
               {it.icon}
@@ -669,26 +670,36 @@ export function PageShell({
         跳到主要内容
       </a>
       <div className="flex min-h-0 flex-1 items-stretch">
-        {/* 收起时**整块不渲染**，而不是留着 display:none —— 侧栏里是会话列表，
-            一屏几十条，留一棵看不见的 DOM 只会让 Tab 顺序凭空多出几十站。 */}
-        {rail && !isNarrow && !railCollapsed && (
-          <nav
-            className="hidden w-[16.5rem] shrink-0 flex-col gap-1 bg-background-secondary p-3 text-foreground min-[901px]:flex"
-            data-testid="nav-rail"
-            aria-label="主导航"
-          >
-            <div className="mb-2 flex shrink-0 justify-end">
+        {/* 同一个容器过渡宽度，主内容列随 flex 布局自然伸缩。 */}
+        {rail && !isNarrow && (
+          <nav className={`page-shell__rail t-resize${railCollapsed ? ' page-shell__compact-rail' : ''}`}
+            aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
+            <div className="page-shell__rail-header">
+              <div className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand">
+                <BrandLogo />
+                {!railCollapsed && <span>DeepStudent Go</span>}
+              </div>
               {railToggle}
             </div>
+            {railCollapsed ? <>{rail.items.map(item => (
+              <span key={item.value} title={item.label}>
+                <Button isIconOnly variant="ghost" className="page-shell__rail-icon"
+                  aria-label={item.label} aria-current={!item.isAction && item.value === rail.value ? 'page' : undefined}
+                  data-testid={item.testId} onPress={item.onClick}>{item.icon}</Button>
+              </span>
+            ))}
+            {railFooter && <div className="page-shell__compact-footer">{railFooter}</div>}
+            </> : <div className="page-shell__rail-content">
             <Sidebar
               rail={rail}
               recent={recent}
               railFooter={railFooter}
               navigationId={navigationId}
             />
+            </div>}
           </nav>
         )}
-        <div ref={mainColRef} className="relative flex min-h-0 min-w-0 flex-1 flex-col">
+        <div ref={mainColRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col${rail ? ' page-shell__surface' : ''}`}>
           <header
             ref={barRef}
             data-testid="top-app-bar"
@@ -753,7 +764,6 @@ export function PageShell({
                   label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>
             )}
-            {rail && !isNarrow && railCollapsed && railToggle}
             {onBack && (
               <Button
                 isIconOnly
@@ -822,9 +832,9 @@ export function PageShell({
         <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
           <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
           <Drawer.Content placement="left">
-            <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent">
+            <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent Go">
               <Drawer.Header className="mb-4 flex items-center justify-between p-0">
-                <Drawer.Heading className="text-sm text-muted">DeepStudent</Drawer.Heading>
+                <Drawer.Heading className="page-shell__brand"><BrandLogo /><span>DeepStudent Go</span></Drawer.Heading>
                 <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
               </Drawer.Header>
               <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">

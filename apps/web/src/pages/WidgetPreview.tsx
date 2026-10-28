@@ -36,6 +36,7 @@ export default function WidgetPreview() {
   const [appearance, setAppearance] = useState<WidgetTheme>();
   const [rowId, setRowId] = useState<number | undefined>();
   const [canPrompt, setCanPrompt] = useState(false);
+  const [htmlSurface, setHtmlSurface] = useState(false);
   const [error, setError] = useState('');
 
   useEffect(() => {
@@ -69,6 +70,8 @@ export default function WidgetPreview() {
       setAppearance(message.appearance);
       setRowId(Number.isSafeInteger(message.rowId) ? message.rowId : undefined);
       setCanPrompt(message.canPrompt === true);
+      setHtmlSurface(message.surface === 'html');
+      document.title = message.surface === 'html' ? 'HTML 预览' : '交互图形';
     };
     channel.postMessage({ type: WIDGET_PREVIEW_MSG.ready } satisfies WidgetPreviewMessage);
     return () => {
@@ -100,8 +103,8 @@ export default function WidgetPreview() {
       <div className="widget-preview-page__inner">
         <header className="widget-preview-page__header">
           <div>
-            <h1>交互图形</h1>
-            <p>独立预览 · 仍可使用图形内的交互控件</p>
+            <h1>{htmlSurface ? 'HTML 预览' : '交互图形'}</h1>
+            <p>{htmlSurface ? '独立页面 · 安全预览 HTML 内容' : '独立预览 · 仍可使用图形内的交互控件'}</p>
           </div>
         </header>
         {error ? (

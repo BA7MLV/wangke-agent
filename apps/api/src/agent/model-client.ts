@@ -77,8 +77,9 @@ export class ModelClient {
     if (typeof init.body === 'string') {
       const payload: unknown = JSON.parse(init.body);
       if (!object(payload)) throw new Error('invalid_model_body');
-      const request = boundedRequest(payload as JsonObject, url);
-      checkRequestCapacity(request.total, this.ledger.limits(attribution.owner, attribution.run).contextTokens);
+      const model = this.ledger.model(attribution.owner, { providerId: attribution.provider, model: attribution.model });
+      const request = boundedRequest(payload as JsonObject, url, model.outputTokens);
+      checkRequestCapacity(request.total, Math.min(model.contextTokens, this.ledger.limits(attribution.owner, attribution.run).contextTokens));
       reserveTokens = request.total;
       init = { ...init, body: JSON.stringify(request.body) };
     }

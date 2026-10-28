@@ -129,7 +129,8 @@ try {
   await panel(first).getByRole('button', { name: '收起', exact: true }).click();
 
   const staticBlock = artifacts.filter({ has: page.locator(':scope > [data-testid="html-answer"]') });
-  await staticBlock.getByRole('button', { name: '修改此 HTML' }).click();
+  await staticBlock.getByRole('button', { name: '更多 HTML 操作' }).click();
+  await page.getByRole('menuitem', { name: '修改 HTML', exact: true }).click();
   await panel(staticBlock).getByRole('textbox', { name: '修改要求', exact: true }).fill('改标题');
   plan({ edits: [{ search: 'old static', replace: 'new static' }] });
   await panel(staticBlock).getByRole('button', { name: '生成局部修改', exact: true }).click();
@@ -179,7 +180,9 @@ try {
   await previewFrame().getByText('修改后的交互图', { exact: true }).waitFor();
   await panel(widget).getByRole('button', { name: '应用修改', exact: true }).click();
   await panel(widget).waitFor({ state: 'hidden' });
-  await staticBlock.getByRole('button', { name: '撤销上次修改', exact: true }).waitFor();
+  await staticBlock.getByRole('button', { name: '更多 HTML 操作' }).click();
+  await page.getByRole('menuitem', { name: '撤销上次修改', exact: true }).waitFor();
+  await page.keyboard.press('Escape');
   assert.equal((await readRow()).widget.html, revisedWidget);
   await originalFrame().getByText('修改后的交互图', { exact: true }).waitFor();
   await page.reload();

@@ -65,9 +65,9 @@ try {
   let seen;
   const wrapped = accountedFetch(ledger, a, config.get(owner, true).providers, async (_url, init) => { seen = JSON.parse(init.body); return Response.json({}); });
   await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","messages":[]}' });
-  assert.equal(seen.max_tokens, 4096);
+  assert.equal(seen.max_tokens, 8192);
   await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"fake","max_tokens":1000000}' });
-  assert.equal(seen.max_tokens, 4096);
+  assert.equal(seen.max_tokens, 8192);
   await wrapped('https://fake.invalid/v1/responses', { body: '{"model":"fake","max_output_tokens":123}' });
   assert.equal(seen.max_output_tokens, 123);
   await wrapped('https://fake.invalid/v1/chat/completions', { body: '{"model":"o3","max_tokens":20}' });

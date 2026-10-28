@@ -195,7 +195,7 @@ export async function buildHandoutDocx(doc: HandoutDoc): Promise<Blob> {
   );
 
   const file = new Document({
-    creator: '网课学习助手',
+    creator: 'DeepStudent Go',
     title: doc.title,
     evenAndOddHeaderAndFooters: true,
     features: { updateFields: true },

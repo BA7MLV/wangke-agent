@@ -7,19 +7,17 @@ import {
   Button,
   Dropdown,
   Input,
-  TextArea,
   ToggleButton,
   ToggleButtonGroup,
-  Toolbar,
   Tooltip,
 } from '@heroui/react';
 import { useAppNav } from '../components/appNav';
 import { useRecentChats } from '../components/useRecentChats';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
-import ModelPicker from '../components/ModelPicker';
 import ChatAddMenu from '../components/ChatAddMenu';
 import ComposerExpand, { useComposerSize } from '../components/ComposerExpand';
+import { ChatComposer, ChatComposerInput, ChatComposerTools } from '../components/ChatComposer';
 import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
 import { useChatAttachments } from '../store/chatAttachments';
 import { MAX_CHAT_ATTACHMENTS } from '../chat/attachments';
@@ -77,64 +75,6 @@ const ANSWER_COMPONENTS = { p: StreamParagraph, code: MarkdownCode, pre: Markdow
 
 // Replay only after a full reload, not when returning from another route.
 let welcomeEntrancePlayed = false;
-
-/**
- * 有课程时的快捷提问：全部围绕「问我的课程库」。
- *
- * 与通用那组的分野不是措辞，而是**依赖哪份数据** —— 这一组每一条都需要工具才能回答。
- */
-const LIBRARY_STARTERS = [
-  {
-    icon: <Sym name="local_fire_department" />,
-    label: '推荐下一门课',
-    prompt: '根据我的资料和学习进度，推荐我下一门最值得学的课程，并说明理由。',
-  },
-  {
-    icon: <Sym name="play_circle" />,
-    label: '看看未完成课程',
-    prompt: '列出我还没学完的课程，按完成进度从高到低整理，并建议先完成哪一门。',
-  },
-  {
-    icon: <Sym name="toc" />,
-    label: '梳理课程主题',
-    prompt: '根据课程名称和已有内容，帮我梳理整个资料库覆盖了哪些主要主题。',
-  },
-  {
-    icon: <Sym name="folder" />,
-    label: '整理资料目录',
-    prompt: '帮我把资料目录整理一下：先看现有分类和全部课程，再按一个统一的主轴给出分类方案。',
-  },
-] as const;
-
-/**
- * 没有课程时的快捷提问：一条工具都不需要，纯通用能力。
- *
- * 旧实现在空库时只给一个「先去导入课程」按钮，等于告诉用户「不导入就没法用」。
- * 实际助手本身能答任何问题，导入课程只是让它多一份可引用的依据 —— 所以这里给的是
- * 能立刻用上的问题，导入课程降级成旁边一个次要入口。
- */
-const GENERAL_STARTERS = [
-  {
-    icon: <Sym name="neurology" />,
-    label: '讲清一个概念',
-    prompt: '用通俗的语言给我讲清楚「注意力机制」是什么，配一个生活里的类比。',
-  },
-  {
-    icon: <Sym name="calendar_month" />,
-    label: '安排学习计划',
-    prompt: '我想在两周内入门机器学习，帮我排一个每天 1 小时的学习计划，标出每天的重点。',
-  },
-  {
-    icon: <Sym name="code" />,
-    label: '写一段代码',
-    prompt: '帮我写一个 TypeScript 的 LRU 缓存类，带完整类型标注，并讲清楚时间复杂度。',
-  },
-  {
-    icon: <Sym name="style" />,
-    label: '润色一段文字',
-    prompt: '我写了一段项目周报但读着很乱，帮我重写一版：更短、更结论先行、每条都有数字。',
-  },
-] as const;
 
 /**
  * 一条消息下面的操作行。
@@ -394,25 +334,12 @@ function SourceList({ sources }: { sources: ChatSource[] }) {
  * UI 为 HeroUI v3（Tailwind v4 + React Aria）：会话切换走 Select，输入走 TextArea，
  * 深度档位走 ToggleButtonGroup，提示走全局 toast / confirmDialog。
  */
-/**
- * 数课程期间的骨架：与「标题 + 说明 + 一排快捷提问」逐块对齐。
- *
- * 高度不是拍脑袋，是照抄上面 `.course-chat__empty h2` / `> p` / `.course-chat__starter`
- * 三条真规则的口径（字号 × 行高、药丸 min-height 40px、starters 的 26px 上边距）——
- * 骨架和内容对不齐的话，读到数据那一刻会整块跳一下，比不出骨架更糟。
- */
+/** 数课程期间只显示欢迎标题的骨架。 */
 function CourseCountSkeleton() {
   return (
     <div className="course-chat__empty-skel t-skel" role="status" aria-label="正在准备聊天">
       <div className="t-skel-skeleton is-pulsing" aria-hidden="true">
         <div className="course-chat__empty-skel__head" />
-        <div className="course-chat__empty-skel__line" />
-        <div className="course-chat__empty-skel__line course-chat__empty-skel__line--short" />
-        <div className="course-chat__empty-skel__starters">
-          {[0, 1, 2].map((i) => (
-            <div className="course-chat__empty-skel__pill" key={i} />
-          ))}
-        </div>
       </div>
       <span className="sr-only">正在准备聊天…</span>
     </div>
@@ -783,12 +710,17 @@ export default function CourseChat() {
     const main = composer?.parentElement;
     if (!composer || !main) return;
     const measure = () => {
-      main.style.setProperty('--chat-composer-height', `${composer.getBoundingClientRect().height}px`);
+      const height = composer.getBoundingClientRect().height;
+      // Clip at the input area's actual top edge, not above its transparent padding.
+      const inset = parseFloat(getComputedStyle(composer).paddingTop) || 0;
+      main.style.setProperty('--chat-composer-height', `${height}px`);
+      main.style.setProperty('--chat-composer-clip-height', `${Math.max(0, height - inset)}px`);
       pinIfSticking();
     };
     measure();
     const observer = new ResizeObserver(measure);
     observer.observe(composer);
+    observer.observe(main);
     return () => observer.disconnect();
   }, [pinIfSticking]);
 
@@ -1018,29 +950,6 @@ export default function CourseChat() {
                 ) : courseCount == null && !coursesStuck ? null : (
                   <>
                     <h2 className="t-stagger-line">{welcomeGreeting}</h2>
-                    <div className="course-chat__starters t-stagger-line t-stagger-line--2" aria-label="快捷提问">
-                      <div className="course-chat__starters-heading">试试这样问</div>
-                      <div className="course-chat__starter-list">
-                        {(hasCourses ? LIBRARY_STARTERS : GENERAL_STARTERS).map((starter) => (
-                          <Button
-                            key={starter.label}
-                            variant="secondary"
-                            className="course-chat__starter t-learn"
-                            data-testid={`chat-starter-${starter.label}`}
-                            onPress={() => void send(starter.prompt)}
-                            isDisabled={loading || !sessionReady}
-                          >
-                            <span className="course-chat__starter-icon" aria-hidden="true">
-                              {starter.icon}
-                            </span>
-                            <span className="course-chat__starter-label">{starter.label}</span>
-                            <span className="t-learn-chevron" aria-hidden="true">
-                              <Sym name="chevron_right" size={16} />
-                            </span>
-                          </Button>
-                        ))}
-                      </div>
-                    </div>
                     {/* 导入入口从「唯一的出路」降级成「可选的增强」。空库时它是主按钮
                         （那时库里确实没东西），有库时它只是标题下的一行小字。 */}
                     {!hasCourses && (
@@ -1264,7 +1173,7 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            <div className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}
+            <ChatComposer className="course-chat__composer" ref={composerHoldRef} data-asking={composerAsk ? 'true' : undefined}
               onDragOver={(event) => { if (event.dataTransfer.types.includes('Files') && !pendingAsk) event.preventDefault(); }}
               onDrop={(event) => { if (event.dataTransfer.files.length && !pendingAsk) { event.preventDefault(); useChatAttachments.getState().add(Array.from(event.dataTransfer.files)); } }}>
               {composerAsk && pendingAsk ? (
@@ -1291,7 +1200,7 @@ export default function CourseChat() {
                 setVoiceEditVersion((version) => version + 1);
                 setDraft(value);
               }} />
-              <TextArea
+              <ChatComposerInput
                 ref={composerRef}
                 className="course-chat__input"
                 aria-label="给 AI 助手发送消息"
@@ -1344,23 +1253,11 @@ export default function CourseChat() {
                 }}
               />
                {/* Toolbar 负责方向键在输入区工具间循环。投递切换独立挂在输入卡上方。 */}
-              <Toolbar
+              <ChatComposerTools
                 className="course-chat__composer-tools"
                 aria-label="输入区工具"
                 orientation="horizontal"
               >
-                {/* 模型 chip 那一格点开是张下拉面板：模型列表 + 思考开关 + 思考深度。
-                    后两者原先是工具行上的两颗独立控件（灯泡 icon + 横向滑块），
-                    但「用哪个模型」和「怎么答」改的是同一件事 —— 这一轮怎么答 ——
-                    同一件事两个入口，用户得先想「思考深度是不是归模型管」才找得到。
-                    `showThinking` 把它们收进同一个面板，工具行因此只剩四个控件。 */}
-                <ModelPicker
-                  slot="chat"
-                  field="llmModel"
-                  variant="chip"
-                  showThinking
-                  thinkingDepthDisabled={loading}
-                />
                 <span className="course-chat__context-usage-slot">
                   <ContextUsageButton
                     tokens={ctxEst} windowTokens={ctxWin} breakdown={ctxBreakdown} testId="chat-context-usage"
@@ -1394,9 +1291,9 @@ export default function CourseChat() {
                       : '插入发送：立刻打断这一轮，换成这句'
                     : '发送'}
                 />}
-              </Toolbar>
+              </ChatComposerTools>
               </>}
-            </div>
+            </ChatComposer>
           </div>
         </section>
       </div>

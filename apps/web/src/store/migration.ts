@@ -217,7 +217,7 @@ async function parsePackage(file: Blob): Promise<ParsedPackage> {
     throw new Error('文件不是有效的 zip 包');
   }
   if (!files[MANIFEST] || !files[DB_FILE]) {
-    throw new Error('这不是网课助手迁移包（缺少 manifest.json）');
+    throw new Error('这不是 DeepStudent Go 迁移包（缺少 manifest.json）');
   }
   const manifest = JSON.parse(strFromU8(files[MANIFEST])) as MigrationManifest;
   if (typeof manifest.format !== 'number' || manifest.format > FORMAT) {

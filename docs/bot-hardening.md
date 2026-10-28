@@ -76,21 +76,36 @@ database to a pre-v16 binary.
   use a labeled 2× input estimate. Reservations use the larger of 2× input and
   output rates. Unknown prices block requests when a money cap is enabled.
 
-Defaults, editable in cloud settings:
+Bot model settings follow the main model (2026-10-28). The management UI no
+longer exposes a second execution budget or administrator price form:
 
 | Limit | Default |
 | --- | --- |
-| Run tokens (including associated child/vision/memory requests) | 250,000 |
-| Owner daily tokens, UTC request-start day | 1,000,000 |
-| Active execution time (persistent waits/approvals excluded) | 900,000 ms |
-| Estimated context capacity | 32,000 tokens |
+| Run tokens | No separate default quota |
+| Owner daily tokens | No separate default quota |
+| Active execution time | No separate default quota; individual request/tool deadlines remain |
+| Estimated context capacity | Selected main model's saved override, then account `contextWindow`; fallback 131,072 |
+| Output capacity | Selected model's saved `maxOutputTokens`; fallback 8,192, bounded by context |
 | Run steps | existing policy, 100 by default |
 | Run cost | disabled until configured with administrator prices |
 
-SQLite transactions serialize budget reservations across concurrent runs.
-Exhaustion pauses rather than succeeds. Increase the appropriate limit, then
-use **Explicitly continue**; previous usage and active time remain charged.
-For a step-limit pause, also increase the existing policy's maxSteps. Parent
+Legacy default values (250,000 / 1,000,000 / 900,000 / 32,000), including old
+per-run snapshots, no longer override these settings. Non-default quotas and
+prices set through the compatibility API still apply. Request usage remains
+recorded for diagnostics; no prices are required by default.
+
+SQLite transactions serialize any explicit quota reservations across concurrent runs.
+Exhaustion never reports success. Context is compacted automatically and the
+reply reservation can shrink to 1,024 tokens while preserving instructions and
+the latest request. If it still cannot fit, the run fails with a conversational
+text reply. Startup can recover legacy context pauses once when no later user
+message, archived thread, uncertain/pending operation or active child supersedes
+that work. Text and emoji replies are accepted across all three model protocols;
+text-only replies finish atomically, and text with tools continues normally.
+Management has no Continue task button; activity records are collapsed by default.
+Other quota/step pauses remain diagnostic states with ordinary-language wording.
+The compatibility resume API, without an explicit override, reads current settings
+instead of freezing a new snapshot; previous usage and active time remain recorded. Parent
 pause/cancel blocks child calls and commits; an interrupted child is not
 silently replayed on parent resume. Inspect its evidence before explicitly
 requesting another job. Shutdown and database faults have rejection boundaries
@@ -101,7 +116,7 @@ best-effort observers; permission and budget gates are not.
 
 Context estimates use the **final protocol payload**, including metadata and
 tool definitions: UTF-8 bytes × 1.1 plus 1,024 protocol-headroom tokens and the
-explicit output cap (normally 4,096; vision 3,000). This is a conservative
+explicit output cap (main-model settings; vision at most 3,000). This is a conservative
 byte-fallback text estimate, not a model tokenizer; no reliable model-specific
 tokenizer is configured. The same estimator is used for compaction, physical
 requests, child proxies and memory. Configure capacity no larger than the

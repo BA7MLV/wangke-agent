@@ -3,6 +3,7 @@ import type { DatabaseStore } from '../storage/database.js';
 import { isDeepStrictEqual } from 'node:util';
 import { AGENTS_PATH } from '@wangke/contracts/system';
 import crypto from 'node:crypto';
+import { BotMemory } from '../agent/memory.js';
 
 const equal = isDeepStrictEqual;
 export class CloudConflict extends Error {
@@ -52,6 +53,7 @@ export class CloudRecords {
     const instructions = mutations.some(op => op?.table === 'preferences' && op.key === 'agentInstructions');
     if (instructions && !this.indexingInstructions) this.agentInstructions(owner);
     const result = this.store.transaction(() => {
+      const nameBefore = this.get(owner, 'preferences', 'userName')?.value;
       const instructionBefore = instructions ? this.get(owner, 'preferences', 'agentInstructions')?.value ?? '' : '';
       const deletedHere = new Set<string>();
       for (const op of mutations) {
@@ -112,6 +114,11 @@ export class CloudRecords {
         this.store.db.prepare('INSERT INTO cloud_operations(owner_id,id) VALUES(?,?)').run(owner, op.id);
       }
       if (instructions && !this.indexingInstructions) this.store.systemFiles.write(owner, AGENTS_PATH, this.get(owner, 'preferences', 'agentInstructions')?.value ?? '', instructionBefore);
+      const nameAfter = this.get(owner, 'preferences', 'userName')?.value;
+      if (nameAfter !== nameBefore) {
+        const name = typeof nameAfter === 'string' ? nameAfter.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : '';
+        new BotMemory(this.store).rememberUserName(owner, name);
+      }
       return { accepted: mutations.map(op => op.id), versions: mutations.map(op => ({ table: op.table, key: op.key,
         revision: (this.store.db.prepare('SELECT revision FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?').get(owner, op.table, JSON.stringify(op.key)) as { revision: number }).revision })) };
     });

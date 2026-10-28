@@ -60,9 +60,12 @@ try {
   const input = page.getByRole('textbox', { name: '给学习助手发送消息' });
   await input.fill('保留这份草稿');
   assert.equal(await page.locator('[data-testid="chat-model-bar"]').count(), 0);
-  await page.getByTestId('chat-composer').getByTestId('model-picker').click();
+  assert.equal(await page.getByTestId('chat-composer').getByTestId('model-picker').count(), 0);
+  await page.getByTestId('panel-chat-add').click();
+  await page.getByTestId('model-picker').click();
   await page.getByRole('searchbox', { name: '搜索已添加模型' }).waitFor();
   await page.keyboard.press('Escape');
+  await page.getByTestId('model-picker').waitFor({ state: 'detached' });
   await page.getByTestId('panel-chat-add').click();
   await page.getByTestId('shot-btn').click();
   assert.equal(await page.locator('.chat-shots--pending .chat-shot').count(), 1);

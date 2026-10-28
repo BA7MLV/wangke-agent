@@ -358,6 +358,14 @@ const MIGRATIONS: Array<[number, string]> = [
     );
     CREATE INDEX resource_files_identity ON resource_files(owner_id,project_id,identity);
   `],
+  [20, `
+    CREATE TABLE resource_attachments (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      file_id TEXT NOT NULL, project_id TEXT NOT NULL, path TEXT NOT NULL,
+      status TEXT NOT NULL CHECK(status IN ('pending','done')),
+      PRIMARY KEY(owner_id,file_id)
+    );
+  `],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -451,6 +459,7 @@ export class DatabaseStore {
           { version: 19, tables: [], extra: [['cloud_tasks', 'worker_id'], ['cloud_tasks', 'lease_expires_at']], sql: LEASE_MIGRATION },
           { version: 20, tables: ['system_file_entries'], extra: [], sql: MIGRATIONS.find(([v]) => v === 18)![1] },
           { version: 21, tables: ['resource_roots', 'resource_folders', 'resource_files'], extra: [], sql: MIGRATIONS.find(([v]) => v === 19)![1] },
+          { version: 22, tables: ['resource_attachments'], extra: [], sql: MIGRATIONS.find(([v]) => v === 20)![1] },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -490,6 +499,7 @@ export class DatabaseStore {
         if (!present[5]) this.db.exec(groups[5].sql);
         apply(18, groups[6], 6);
         apply(19, groups[7], 7);
+        apply(20, groups[8], 8);
       } finally { expected.close(); }
     })();
   }
