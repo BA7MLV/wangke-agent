@@ -6,6 +6,7 @@ import type { AgentProfileDto, ProjectDetailDto } from '@wangke/contracts';
 import type { ResourceDirectory, ResourceEntry } from '@wangke/contracts/resources';
 import { request, serverClient } from '../api/serverClient';
 import { useAppNav } from '../components/appNav';
+import { FolderIcon } from '../components/FolderIcon';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { db } from '../store/db';
 import { flushCloud } from '../cloud/sync';
@@ -152,6 +153,8 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
     } catch { /* Unrelated drag payload. */ }
   };
   const entries = (data?.entries ?? []).filter(entry => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(b.kind === 'directory') - Number(a.kind === 'directory') || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const showSystemFolder = !projectId && 'system'.includes(query.toLocaleLowerCase());
+  const entryCount = entries.length + Number(showSystemFolder);
   const breadcrumbs = directory.split('/').filter(Boolean);
   const readOnly = Boolean(data?.project?.archived);
   return <PageShell title={t('resources')} rail={nav} fill rootClassName="page-library">
@@ -182,12 +185,12 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
       <div className="finder-canvas" data-testid="resource-list" aria-busy={loading || busy}>
         {loading ? <div className="project-empty"><Spinner /></div> : <>
           <ul className="resource-grid" data-view={view}>
-            {!projectId && !query && <li className="resource-tile" data-testid="system-folder"><button className="resource-open" onClick={() => useLibraryNavigation.getState().setFolderHistory(h => ({ entries: [...h.entries.slice(0, h.index + 1), 'system'], index: h.index + 1 }))}><Sym name="folder" /><span>system</span><small>{t('systemFiles')}</small></button></li>}
+            {showSystemFolder && <li className="resource-tile" data-kind="directory" data-testid="system-folder"><button className="resource-open" title="/system" disabled={busy} onClick={() => useLibraryNavigation.getState().setFolderHistory(h => ({ entries: [...h.entries.slice(0, h.index + 1), 'system'], index: h.index + 1 }))}><FolderIcon color="gray" /><span>system</span><small>{t('systemFiles')}</small></button></li>}
             {entries.map(entry => <li key={keyOf(entry)} className="resource-tile" data-kind={entry.kind} data-testid="resource-entry"
               draggable={!entry.scope && !entry.missing && !busy && !readOnly} onDragStart={e => { e.dataTransfer.setData('application/x-resource-entry', JSON.stringify(entry)); e.dataTransfer.effectAllowed = 'move'; }}
               onDragOver={e => { if (entry.kind === 'directory' && !entry.scope?.archived) e.preventDefault(); }} onDrop={e => { if (entry.kind === 'directory' && !busy && !entry.scope?.archived) moveInto(e, entry.projectId, entry.path); }}>
               <button className="resource-open" disabled={busy} onClick={() => void open(entry)} title={entry.scope?.workspacePath ?? entry.path}>
-                <Sym name={entry.kind === 'directory' ? 'folder' : 'description'} />
+                {entry.kind === 'directory' ? <FolderIcon /> : <Sym name="description" />}
                 <span>{entry.name}</span><small>{entry.scope?.archived ? t('archived') : entry.kind === 'directory' ? t('folder') : entry.missing ? t('learningRecord') : formatSize(entry.size)}</small>
               </button>
               <MoreMenu className="resource-more" label={`${t('more')} · ${entry.name}`} actions={[
@@ -200,13 +203,13 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
               ]} />
             </li>)}
           </ul>
-          {!entries.length && (projectId || query) && !error && <div className="project-empty">{query ? t('noResults') : t('folderEmpty')}</div>}
+          {!entryCount && (projectId || query) && !error && <div className="project-empty">{query ? t('noResults') : t('folderEmpty')}</div>}
         </>}
       </div>
       <footer className="finder-footer"><nav className="finder-path" aria-label={t('workspace')}><Button variant="ghost" size="sm" onPress={() => openDirectory()}>{t('resources')}</Button>
         {projectId && <><Sym name="chevron_right" /><Button variant="ghost" size="sm" onPress={() => openDirectory(projectId)}>{data?.project?.name}</Button></>}
         {breadcrumbs.map((part, i) => <span key={i}><Sym name="chevron_right" /><Button variant="ghost" size="sm" onPress={() => openDirectory(projectId, breadcrumbs.slice(0, i + 1).join('/'))}>{part}</Button></span>)}
-      </nav><div className="finder-status"><span className="resource-count">{busy ? t('working') : t('itemCount', { count: entries.length })}</span>{data?.project && <code>{data.project.workspacePath}{directory ? `/${directory}` : ''}</code>}</div></footer>
+      </nav><div className="finder-status"><span className="resource-count">{busy ? t('working') : t('itemCount', { count: entryCount })}</span>{data?.project && <code>{data.project.workspacePath}{directory ? `/${directory}` : ''}</code>}</div></footer>
     </section>
     {settings && <ProjectSettings project={settings.project} agents={settings.agents} onClose={() => setSettings(null)} onChange={project => { setSettings(s => s && ({ ...s, project })); refresh(); }} />}
     {editor && <Modal.Root isOpen onOpenChange={open => { if (!open && !busy) setEditor(null); }}><Modal.Backdrop><Modal.Container size="lg" className={MODAL_CONTAINER_CLASS}><Modal.Dialog>

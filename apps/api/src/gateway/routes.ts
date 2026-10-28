@@ -16,7 +16,14 @@ export function registerGatewayRoutes(app: FastifyInstance, gateway: GatewayCore
   app.post('/api/v1/gateway/accounts', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => gateway.save(u.id, r.body as any)); });
   app.post<{ Params: { id: string } }>('/api/v1/gateway/accounts/:id/pair', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => gateway.pair(u.id, r.params.id)); });
   app.post<{ Params: { id: string }; Body: { bindingId: string } }>('/api/v1/gateway/accounts/:id/revoke', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => { gateway.revoke(u.id, r.params.id, r.body.bindingId); return { revoked: true }; }); });
-  app.post<{ Params: { id: string }; Body: Record<string, string> }>('/api/v1/gateway/accounts/:id/login', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => gateway.login(u.id, r.params.id, r.body)); });
+  app.post<{ Params: { id: string }; Body: Record<string, string> }>('/api/v1/gateway/accounts/:id/login', async (r, p) => {
+    const u = write(r, p); if (!u) return;
+    const controller = new AbortController();
+    const abort = () => { if (!p.raw.writableEnded) controller.abort(); };
+    r.raw.once('aborted', abort); p.raw.once('close', abort);
+    try { return await safe(p, () => gateway.login(u.id, r.params.id, r.body, controller.signal)); }
+    finally { r.raw.off('aborted', abort); p.raw.off('close', abort); }
+  });
   app.post<{ Params: { id: string }; Body: { acknowledgeUncertain?: boolean } }>('/api/v1/gateway/deliveries/:id/retry', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => { gateway.retry(u.id, r.params.id, r.body?.acknowledgeUncertain === true); return { queued: true }; }); });
   app.post<{ Params: { id: string } }>('/api/v1/gateway/deliveries/:id/discard', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => { gateway.discard(u.id, r.params.id); return { cancelled: true }; }); });
   app.post<{ Params: { id: string } }>('/api/v1/gateway/reminders/:id/cancel', async (r, p) => { const u = write(r, p); if (!u) return; return { cancelled: gateway.store.db.prepare("UPDATE bot_reminders SET status='cancelled' WHERE id=? AND owner_id=? AND status='active'").run(r.params.id, u.id).changes === 1 }; });

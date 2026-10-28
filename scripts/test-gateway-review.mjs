@@ -219,12 +219,13 @@ try {
   assert.equal(normalizeIlink({ message_id: Number.MAX_SAFE_INTEGER }).messageId, String(Number.MAX_SAFE_INTEGER));
   assert.throws(() => normalizeIlink({ message_id: Number.MAX_SAFE_INTEGER + 1 }), /unsafe_platform_message_id/);
   assert.equal(normalizeIlink({ message_id: '9223372036854775807' }).messageId, '9223372036854775807');
-  const pollAbort = new AbortController(); let acceptedUnsafe = false;
-  const unsafePoll = new IlinkPlugin(async () => { throw new Error('unused'); }, async () => new Response('{"ret":0,"msgs":[{"message_id":9007199254740993,"from_user_id":"me","message_type":1}],"get_updates_buf":"must-not-commit"}', { headers: { 'content-type': 'application/json' } }));
-  await unsafePoll.start({ botToken: 'test' }, { signal: pollAbort.signal, cursor: () => 'old-safe-cursor', receive() { acceptedUnsafe = true; }, health(state) { if (state === 'reconnecting') pollAbort.abort(); }, updateConfig() {} });
-  assert.equal(acceptedUnsafe, false, 'a lossy numeric message ID must not accept a batch or advance its cursor');
+  const pollAbort = new AbortController(); let acceptedId, acceptedCursor;
+  const losslessPoll = new IlinkPlugin(async () => { throw new Error('unused'); }, async () => new Response('{"ret":0,"msgs":[{"message_id":9007199254740993,"from_user_id":"me","message_type":1}],"get_updates_buf":"new-safe-cursor"}', { headers: { 'content-type': 'application/json' } }));
+  await losslessPoll.start({ botToken: 'test' }, { signal: pollAbort.signal, cursor: () => 'old-safe-cursor', receive(batch, cursor) { acceptedId = batch[0].messageId; acceptedCursor = cursor; }, health(state) { if (state === 'connected') pollAbort.abort(); }, updateConfig() {} });
+  assert.equal(acceptedId, '9007199254740993', 'wire message IDs must be preserved before conversion to Number');
+  assert.equal(acceptedCursor, 'new-safe-cursor');
   assert.deepEqual(unhandled, []);
-  console.log('Review extra: Feishu octet-stream and iLink JPEG-labelled PNG sniffing, 3 vision MIME payloads, invalid image/unsafe numeric ID rejection');
+  console.log('Review extra: Feishu octet-stream and iLink JPEG-labelled PNG sniffing, 3 vision MIME payloads, invalid image rejection and lossless wire message IDs');
 } finally { process.off('unhandledRejection', rejectUnhandled); await runner?.close(); await gateway.close(); store.close(); fs.rmSync(dir, { recursive: true, force: true }); }
 
 await import('./test-gateway-workers.mjs');

@@ -26,7 +26,9 @@ import type { ChatMessage } from '../api/siliconflow';
 import { askUserToolResult, askAnswerText, validateAskAnswer, type AskUserData, type AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
 import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
-import { nextVisualRound, readPartialWidgetArguments } from '../utils/streamingHtml';
+import { readPartialWidgetArguments } from '../utils/streamingHtml';
+import { beginResponseSegment, nextResponseRound, type ResponseSegment } from '../utils/responseOrder';
+import { widgetReference } from '../harness/widgetLayout';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { attachmentText, type ChatAttachment } from '../chat/attachments';
 import { attachmentsForModel, messageForModel } from '../chat/attachmentModel';
@@ -121,6 +123,7 @@ import { normalizeCourseContextIds } from '../harness/courseContext';
 
 /** 视图用的一条消息（比 `ChatRow` 多的是流式中间态） */
 export interface CourseChatMessage {
+  responseSegments?: ResponseSegment[];
   processPhase?: ProcessPhase;
   /** 本轮启动时刻，只用于实时「已用时」，不冒充纯思考耗时。 */
   processStartedAt?: number;
@@ -697,7 +700,7 @@ function writeView(key: ViewKey, patch: Partial<SessionView>): void {
 export function reflectArtifactEdit(row: ChatRow): void {
   const view = readView(row.sessionId);
   writeView(row.sessionId, { messages: view.messages.map((message) => message.rowId === row.id
-    ? { ...message, content: row.content, widget: row.widget, widgets: row.widgets } : message) });
+    ? { ...message, content: row.content, responseSegments: row.responseSegments, widget: row.widget, widgets: row.widgets } : message) });
 }
 
 /** Reconcile server-owned turns on every device, including reconnects. */
@@ -1271,6 +1274,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     let currentKey = aiKey;
     let answer = '';
     let reasoning = '';
+    let responseSegments: ResponseSegment[] = [];
     /**
      * 思考用时的首末时刻（首个思考 token → 末个）。中间的停顿是 agent 在调工具，
      * 那几秒不算思考 —— 理由同 ChatPanel 的同名变量。
@@ -1280,9 +1284,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     /**
      * 最后一轮流出的旁白 + 最后一次工具提示。
      *
-     * 留着它们是因为 `onRoundStart` 会把当轮正文清空（旁白不是答案），而**轮次用尽时
-     * 模型可能一个字都不说** —— 那时若只有 `answer`，用户看到的就是一片空白，
-     * 六轮工具调用等于白跑（实测：只剩一句「（未获得回答）」）。
+     * 正文按事件顺序保留；这里给没有正文时的停止说明补充实际执行上下文。
      */
     let lastNarration = '';
     let lastHint = '';
@@ -1403,6 +1405,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       });
     });
     const patchAi = updates.write;
+    const beginProcess = () => {
+      responseSegments = beginResponseSegment(responseSegments, answer, reasoning, toolCalls);
+      return responseSegments;
+    };
     /**
      * 标题按首条消息生成，判据是「这条会话还没有标题」。
      *
@@ -1443,6 +1449,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         content: message.content,
         createdAt: Date.now(),
         reasoning: message.reasoning,
+        responseSegments: message.responseSegments,
         ...(message.tools ? { tools: message.tools } : {}),
         ...(message.widget ? { widget: message.widget } : {}),
         ...(message.widgets ? { widgets: message.widgets } : {}),
@@ -1477,6 +1484,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         // 挂起时已落过库：改成 update，并把检查点结掉（这一轮不再可续跑）
         await db.chats.where('id').equals(rowId).modify((row) => {
           row.content = message.content;
+          row.responseSegments = message.responseSegments;
           if (message.reasoning) row.reasoning = message.reasoning;
           else delete row.reasoning;
           if (closedTools) row.tools = closedTools;
@@ -1498,6 +1506,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           content: message.content,
           createdAt: Date.now(),
           reasoning: message.reasoning,
+          responseSegments: message.responseSegments,
           ...(closedTools ? { tools: closedTools } : {}),
           ...(message.widget ? { widget: message.widget } : {}),
           ...(message.widgets ? { widgets: message.widgets } : {}),
@@ -1517,6 +1526,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       currentKey = fresh;
       answer = '';
       reasoning = '';
+      responseSegments = [];
       reasoningFrom = 0;
       reasoningTo = 0;
       toolCalls.length = 0;
@@ -1682,7 +1692,10 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           updates.flush();
           const current = readView(turnKey).messages.find((message) => message.key === currentKey);
           const widgets = current?.widgets ?? (current?.widget ? [current.widget] : []);
-          patchAi({ widget: w, widgets: [...widgets, w], widgetPreview: undefined });
+          // Place the validated visual at delivery time. Later model references are echoes,
+          // not instructions to move an already-mounted interactive frame.
+          if (w.ref) answer = `${nextResponseRound(answer)}${widgetReference(w.ref)}\n\n`;
+          patchAi({ content: answer, widget: w, widgets: [...widgets, w], widgetPreview: undefined });
         },
         library: {
           contextCourseIds: contextCourses.map((course) => course.id),
@@ -1715,40 +1728,44 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
               : 'none'
             : undefined,
           onReasoningDelta: (delta) => {
+            beginProcess();
             reasoning += delta;
             const now = Date.now();
             const first = !reasoningFrom;
             if (first) reasoningFrom = now;
             reasoningTo = now;
             // 起点随首个 token 一起上屏：思考中那行「已用时 x 秒」按它算（不落库，见字段注释）
-            updates.stream({ reasoning, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
+            updates.stream({ reasoning, responseSegments, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
           },
           onDelta: (delta) => {
             answer += delta;
             updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
-            // 检索旁白可以清空，已输出的 HTML / 图卡和讲解不能随下一轮消失。
             if (answer.trim()) lastNarration = answer.trim();
-            const current = readView(turnKey).messages.find((message) => message.key === currentKey);
-            answer = nextVisualRound(answer, !!current?.widget || !!current?.widgets?.length);
+            answer = nextResponseRound(answer);
             roundsRan++;
             widgetPreview = undefined;
-            patchAi({ content: answer, hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
+            patchAi({ content: answer, responseSegments: beginProcess(), hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
           onToolStart: (name, argsJson) => {
+            beginProcess();
             lastHint = toolHint(name, argsJson, '正在读取资料…');
             toolStartedAt = Date.now();
             toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running', reasoningOffset: reasoning.length });
-            patchAi({ hint: lastHint, tools: [...toolCalls], processPhase: 'tool' });
+            const preview = name === 'show_widget' ? readPartialWidgetArguments(argsJson) : undefined;
+            widgetPreview = preview?.format === 'html' && preview.code ? { html: preview.code.slice(0, 60_000) } : undefined;
+            patchAi({ hint: lastHint, tools: [...toolCalls], responseSegments, widgetPreview, processPhase: 'tool' });
           },
           onToolCallDelta: (call) => {
-            updates.stream({ processPhase: 'preparing' });
-            if (call.name !== 'show_widget') return;
+            updates.stream({ responseSegments: beginProcess(), processPhase: 'preparing' });
+            // Tool calls execute in index order. A later call's preview must not
+            // overtake the first one while their argument chunks are interleaved.
+            if (call.name !== 'show_widget' || call.index !== 0) return;
             const partial = readPartialWidgetArguments(call.arguments);
             if (partial.format !== 'html' || !partial.code) return;
             widgetPreview = { html: partial.code.slice(0, 60_000) };
-            patchAi({ widgetPreview, hint: '正在生成交互图形…' });
+            updates.stream({ widgetPreview, hint: '正在生成交互图形…' });
           },
           onToolEnd: (name, result) => {
             // 顺序执行 ⇒ 正在跑的那条就是末尾那条（同一个工具可能被连调多次，不能按名字反查）
@@ -1786,14 +1803,14 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         resolveMaxRounds(settings.agentRounds),
       );
       const closeOut = stopped[stopped.length - 1];
-      const finalAnswer = answer.trim() || noAnswerNotice({
+      const finalAnswer = answer.trim() && (!closeOut || closeOut.granted) ? answer : nextResponseRound(answer) + noAnswerNotice({
         // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
         // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
         reason: closeOut?.reason ?? 'empty',
         rounds: closeOut?.rounds ?? roundsRan,
         ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
         requestedTools: closeOut?.requestedTools ?? [],
-        narration: lastNarration,
+        narration: answer.trim() ? undefined : lastNarration,
         hint: lastHint,
       });
       /** 一帧都没来过就别记 0（那会让「已思考用时 0.0 秒」看着像 bug） */
@@ -1810,6 +1827,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         content: finalAnswer,
         createdAt: Date.now(),
         reasoning: reasoning || undefined,
+        responseSegments,
         reasoningMs,
         ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
         ...(finalMessage?.widget ? { widget: finalMessage.widget } : {}),
@@ -1824,7 +1842,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
        * 按停止键是「到此为止」，插入新消息是「换个方向」。两者都不算错误。
        */
       if (abort.signal.aborted) {
-        const partial = answer.trim() || lastNarration.trim();
+        const partial = answer.trim() ? answer : lastNarration;
         const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
         const currentWidgets = readView(turnKey).messages.find((m) => m.key === currentKey)?.widgets;
         // 停在思考中途照样计时：那正是用户中止时最想知道的一个数
@@ -1876,6 +1894,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             content: partial,
             createdAt: Date.now(),
             reasoning: reasoning || undefined,
+            responseSegments,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
@@ -1901,6 +1920,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             content,
             createdAt: Date.now(),
             reasoning: reasoning || undefined,
+            responseSegments,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
@@ -1922,7 +1942,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
          * 走 `interrupted` / `interruptReason` 两个字段。
          */
         const reason = error instanceof Error ? error.message : String(error);
-        const partial = answer.trim();
+        const partial = answer.trim() ? answer : '';
         const currentWidget = readView(turnKey).messages.find((m) => m.key === currentKey)?.widget;
         const currentWidgets = readView(turnKey).messages.find((m) => m.key === currentKey)?.widgets;
         if (!partial) {
@@ -1949,6 +1969,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
               content: '',
               createdAt: Date.now(),
               reasoning: reasoning || undefined,
+              responseSegments,
               ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
               widget: currentWidget,
               widgets: currentWidgets,
@@ -1982,6 +2003,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             content: partial,
             createdAt: Date.now(),
             reasoning: reasoning || undefined,
+            responseSegments,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
@@ -2279,6 +2301,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           ...(row.images ? { images: row.images } : {}),
           ...(row.attachments ? { attachments: row.attachments } : {}),
           ...(row.reasoning ? { reasoning: row.reasoning } : {}),
+          ...(row.responseSegments ? { responseSegments: row.responseSegments } : {}),
           ...(row.reasoningMs != null ? { reasoningMs: row.reasoningMs } : {}),
           ...(row.tools ? { tools: row.tools } : {}),
           ...(row.quiz ? { quiz: row.quiz } : {}),
@@ -2527,6 +2550,9 @@ async function continueInterrupted(
   let carried = partial;
   let answer = '';
   let reasoning = message.reasoning ?? '';
+  // Old messages have one legacy process group; new continuation starts after the exact prefix.
+  let responseSegments = message.responseSegments?.length ? [...message.responseSegments]
+    : [{ contentOffset: 0, reasoningOffset: 0, toolOffset: 0 }];
   let reasoningFrom = 0;
   let reasoningTo = 0;
   const stopped: AgentStopInfo[] = [];
@@ -2534,9 +2560,10 @@ async function continueInterrupted(
   /** 中断/停止时统一把当前进度写回库（`patch` 只管界面，库里也要跟上） */
   const persist = async (content: string, extra: { interrupted?: boolean; interruptReason?: string }) => {
     const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
-    patch({ content, streaming: false, hint: undefined, reasoningMs, ...extra });
+    patch({ content, responseSegments, streaming: false, hint: undefined, reasoningMs, ...extra });
     await db.chats.where('id').equals(rowId).modify((row) => {
       row.content = content;
+      row.responseSegments = responseSegments;
       if (reasoning) row.reasoning = reasoning;
       else delete row.reasoning;
       if (reasoningMs != null) row.reasoningMs = reasoningMs;
@@ -2586,13 +2613,14 @@ async function continueInterrupted(
             : 'none'
           : undefined,
         onReasoningDelta: (delta) => {
+          responseSegments = beginResponseSegment(responseSegments, carried + answer, reasoning, message.tools ?? []);
           reasoning += delta;
           const now = Date.now();
           const first = !reasoningFrom;
           if (first) reasoningFrom = now;
           reasoningTo = now;
           // 续写同样要实时计时（这条回答的中途可能出现「接着想的几秒」）
-          patch({ reasoning, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
+          patch({ reasoning, responseSegments, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
         },
         onDelta: (delta) => {
           answer += delta;
@@ -2601,7 +2629,9 @@ async function continueInterrupted(
         onRoundStart: () => {
           if (answer.trim()) carried += answer;
           answer = '';
-          patch({ content: carried, hint: undefined, processPhase: 'preparing' });
+          // No new content boundary until actual reasoning arrives: plain continuation
+          // must finish the same paragraph/code fence instead of remounting a second one.
+          patch({ content: carried, responseSegments, hint: undefined, processPhase: 'preparing' });
         },
         onStop: (info) => {
           stopped.push(info);
@@ -2776,6 +2806,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
     attachments: row.attachments,
     createdAt: row.createdAt,
     reasoning: row.reasoning,
+    responseSegments: row.responseSegments,
     reasoningMs: row.reasoningMs,
     tools: row.tools,
     // 中断过的回答在历史回放里也要能「继续」，所以这两个字段必须跟着走

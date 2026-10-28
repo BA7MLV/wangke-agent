@@ -63,7 +63,7 @@ export function htmlPreviewSource(source: string): string | undefined {
 }
 
 export interface AssistantContentBlock {
-  kind: 'markdown' | 'html';
+  kind: 'markdown' | 'html' | 'widget';
   source: string;
   /** Offsets in the original answer, including fence markers when fenced. */
   start: number;
@@ -90,9 +90,9 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
       closing.lastIndex = lineEnd;
       const match = closing.exec(source);
       const end = match ? match.index + match[0].length : source.length;
-      if (/^html?$/i.test(fence[2])) {
+      if (/^html?$/i.test(fence[2]) || fence[2] === 'wbw-widget') {
         markdown(cursor);
-        blocks.push({ kind: 'html', source: source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, ''),
+        blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : 'html', source: source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, ''),
           start: cursor, end, location: 'fence', closed: !!match });
         markdownStart = end;
       }

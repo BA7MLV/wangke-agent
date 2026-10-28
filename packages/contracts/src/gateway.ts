@@ -15,3 +15,18 @@ export interface GatewayEnvelope {
   attachments?: Array<{ key: string; name: string; mime: string; metadata?: Record<string, string> }>;
 }
 export interface GatewayPayload { text: string; fileId?: string }
+
+/** Closed vocabulary: never put platform text, URLs, tokens or envelopes in diagnostics. */
+export const GATEWAY_CONNECTION_ERRORS = ['network_error', 'dns_error', 'tls_error', 'request_timeout', 'rate_limited', 'login_required', 'platform_http_error', 'platform_rejected', 'invalid_platform_response', 'invalid_platform_message', 'unsafe_platform_message_id', 'response_too_large', 'inbox_capacity', 'receive_failed'] as const;
+export interface GatewayConnectionError {
+  code: typeof GATEWAY_CONNECTION_ERRORS[number];
+  httpStatus?: number;
+  platformCode?: number;
+}
+export interface GatewayConnectionDiagnostics {
+  updatedAt: number;
+  lastSuccessAt?: number;
+  consecutiveFailures: number;
+  retryAt?: number;
+  error?: GatewayConnectionError;
+}

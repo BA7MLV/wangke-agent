@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState, type ClipboardEvent } from 'react';
+import { Suspense, lazy, memo, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useState, type ClipboardEvent } from 'react';
 import type { ComponentProps } from '@ant-design/x-markdown';
 import { Markdown as XMarkdown } from '../components/markdown/Markdown';
 import { MaterialImage } from '../components/MaterialImage';
@@ -26,7 +26,7 @@ import { MAX_CHAT_ATTACHMENTS } from '../chat/attachments';
 import { pastedTextAttachment } from '../chat/paste';
 import VoiceInput from '../components/VoiceInput';
 import { StreamParagraph, PendingReply, useMessageEnter } from '../components/motion';
-import ResponseProcess from '../components/ResponseProcess';
+import ResponseTimeline from '../components/ResponseTimeline';
 import VirtualMessages, { type VirtualMessagesHandle } from '../components/VirtualMessages';
 import ChatMessageNav from '../components/ChatMessageNav';
 import { useMessageDeletion } from '../components/useMessageDeletion';
@@ -63,6 +63,16 @@ import './course-chat.css';
 
 /** Bot 栏按需加载：不开 Bot 的人不下载它。 */
 const BotPanel = lazy(() => import('./BotWorkspace').then((module) => ({ default: module.BotPanel })));
+
+/** Completed segments keep their parsed Markdown and interactive descendants while the tail grows. */
+const AnswerMarkdown = memo(function AnswerMarkdown({ content, streaming, link }: {
+  content: string; streaming: boolean; link: React.ComponentType<ComponentProps>;
+}) {
+  const components = useMemo(() => ({ ...ANSWER_COMPONENTS, a: link }), [link]);
+  return <XMarkdown content={content} components={components}
+    streaming={{ hasNextChunk: streaming, tail: streaming ? { component: StreamTailCircle } : false }} />;
+});
+const ANSWER_COMPONENTS = { p: StreamParagraph, code: MarkdownCode, pre: MarkdownPre, table: MarkdownTable };
 
 // Replay only after a full reload, not when returning from another route.
 let welcomeEntrancePlayed = false;
@@ -1104,15 +1114,6 @@ export default function CourseChat() {
                   ) : (
                     <div className="course-chat__bubble course-chat__bubble--ai" data-dust-surface>
                       <>
-                        <ResponseProcess key={message.key} reasoning={message.reasoning} calls={message.tools}
-                          streaming={!!message.streaming} phase={message.processPhase} hint={message.hint}
-                          since={message.processStartedAt ?? message.reasoningStartedAt} elapsedMs={message.reasoningMs}
-                          waiting={!!message.ask && !message.ask.picked || !!message.folderPlan && message.folderPlan.applied === 0} />
-                        <div aria-hidden="true" data-chat-answer-start={message.content || message.ask || message.folderPlan || message.widget || message.widgetPreview ? '' : undefined} />
-                        {/* 卡片排在正文**之前**：卡片是「先发生的那个动作」（第 1 轮问 / 提方案），
-                            正文是用户回应之后（第 2 轮）才流出来的。反过来排会读成
-                            「先给结论、下面才是问题」。 */}
-                        {renderCards(message)}
                         {message.error && !message.streaming && canRetry && (
                           <div className="course-chat__failed" data-testid="chat-answer-failed" role="alert">
                             <Sym name="error" aria-hidden="true" />
@@ -1135,40 +1136,21 @@ export default function CourseChat() {
                         <WidgetMessage message={message} content={message.error ? '' : message.content} dark={widgetDark} rowId={message.rowId}
                           disabled={loading || !!message.streaming || !!message.error || !!message.interrupted || !!message.ask && !message.ask.picked}
                           onPrompt={(text) => void send(text)}>
-                        {(markdown) => message.content && !message.error ? (
-                          <AssistantContent content={markdown} streaming={!!message.streaming}>
-                            {(part, streaming) => (
-                              <XMarkdown
-                                content={part}
-                                components={{
-                                  a: CourseLink,
-                                  p: StreamParagraph,
-                                  code: MarkdownCode,
-                                  pre: MarkdownPre,
-                                  table: MarkdownTable,
-                                }}
-                                streaming={{
-                                  hasNextChunk: streaming,
-                                  /**
-                                   * 流式中的尾巴换成一颗黑色圆点（见 `StreamTailCircle`）：
-                                   * XMarkdown 把它插在最后一个文本 token 之后，圆点因此跟着
-                                   * 文字一起长，正好落在下一个字符将出现的位置。
-                                   *
-                                   * 写完（`hasNextChunk: false`）时整条尾巴消失 ——
-                                   * `shouldShowTail` 在库里是 `!!hasNextChunk && tailContent`，
-                                   * 这里传 `false` 就是显式关掉。
-                                   */
-                                  tail: streaming ? { component: StreamTailCircle } : false,
-                                }}
-                              />
-                            )}
-                          </AssistantContent>
-                        ) : null}
+                        {(markdown) => (
+                          <ResponseTimeline message={message} content={markdown}>
+                          {(content, active) => <AssistantContent content={content} streaming={active}>
+                            {(part, streaming) => <AnswerMarkdown content={part} streaming={streaming} link={CourseLink} />}
+                          </AssistantContent>}
+                          </ResponseTimeline>
+                        )}
                         </WidgetMessage>
                         {message.widgetPreview && (
                           <StreamingHtmlPreview html={message.widgetPreview.html} />
                         )}
                         </ArtifactEditProvider>
+                        {!message.content && (message.ask || message.folderPlan) && <div aria-hidden="true" data-chat-answer-start="" />}
+                        {/* 提问/确认在当前输出之后；用户回应后 store 会另起助手消息。 */}
+                        {renderCards(message)}
                         {/* 操作行与来源都只在**这一轮写完**之后出现：流式进行中时正文还在变，
                             这两个块的计数与内容每一帧都不一样，闪得人没法读。 */}
                         {/* 中断提示条。正文里**不嵌**「回答中断：xxx」那句（与「已停止生成」

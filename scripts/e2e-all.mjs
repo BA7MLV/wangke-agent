@@ -255,6 +255,7 @@ const META = {
   // 上下双箭头、**思考中手动收起后不挂那个跳动的实时用时**、跑完自动收起、吸顶、
   // 刷新后工具链还在。
   'e2e-chat-trace': { service: 'preview', antd: false, base: true, timeout: 300 },
+  'e2e-chat-output-order': { service: 'dev', antd: false, base: true, timeout: 180 },
   // 来源折叠 / 消息操作行 / 会话选中。
   // 直接往 IndexedDB 种写好的回答，不依赖模型流，也不花 API。
   // （原有「顶栏新建对话」一条 2026-10-15 随按钮删除；入口二轮落在侧栏首项「新会话」，

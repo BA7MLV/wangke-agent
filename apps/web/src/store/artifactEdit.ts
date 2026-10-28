@@ -3,6 +3,7 @@ import { htmlPreviewSource, splitAssistantContent } from '../utils/streamingHtml
 import { replaceArtifactFence, type ArtifactKind, type ArtifactLocation } from '../utils/artifactEdit';
 import { uuid } from '../utils/uuid';
 import { messageWidgets } from '../harness/widgetLayout';
+import { rebaseResponseSegments } from '../utils/responseOrder';
 
 export interface ArtifactTarget {
   rowId: number; kind: ArtifactKind; location: ArtifactLocation; source: string; widgetId?: string;
@@ -59,6 +60,9 @@ export async function persistArtifactEdit(input: ArtifactTarget & { next: string
       } else {
         patch = { content: replaceHtmlBlock(row.content, input.source, input.next) };
       }
+    }
+    if (patch.content != null && row.responseSegments) {
+      patch.responseSegments = rebaseResponseSegments(row.responseSegments, row.content, patch.content);
     }
     await db.chats.update(input.rowId, patch);
     return { ...row, ...patch };

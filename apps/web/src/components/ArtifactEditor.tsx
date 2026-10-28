@@ -22,8 +22,8 @@ export function ArtifactEditProvider({ rowId, disabled, onSaved, children }: {
   rowId?: number; content: string; disabled: boolean; onSaved: (row: ChatRow) => void; children: ReactNode;
 }) {
   const [history, setHistory] = useState<Revision[]>([]);
-  return <ArtifactContext.Provider value={rowId == null ? null : {
-    rowId, disabled, history,
+  return <ArtifactContext.Provider value={{
+    rowId: rowId ?? -1, disabled: disabled || rowId == null, history,
     saved: (row, revision, undo) => {
       setHistory((prev) => undo ? prev.filter((item) => item !== revision) : [...prev.slice(-9), revision]);
       onSaved(row);

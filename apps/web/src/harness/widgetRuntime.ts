@@ -77,6 +77,7 @@ export const WIDGET_MSG = {
   ready: 'wbw:ready',
   state: 'wbw:state',
   sync: 'wbw:sync',
+  persistent: 'wbw:persistent',
   result: 'wbw:result',
   answerDraft: 'wbw:answer-draft',
   answerSync: 'wbw:answer-sync',
@@ -126,6 +127,7 @@ const BRIDGE = `
     if (event.source !== parent || !event.data) return;
     var data = event.data, value = data.payload;
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.theme)}) setTheme(value);
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.persistent)}) initial.persistent = value === true;
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.display)} && value &&
         Number.isFinite(value.width) && value.width > 0 && Number.isFinite(value.height) && value.height > 0) {
       if (display.width !== value.width || display.height !== value.height) {

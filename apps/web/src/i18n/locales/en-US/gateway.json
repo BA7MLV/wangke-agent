@@ -11,6 +11,28 @@
   "autonomous": "Autonomous",
   "enabled": "Enabled",
   "status": "Status",
+  "reconnect": "Reconnect now",
+  "connection": {
+    "failures": "Consecutive failures: {{attempts}}",
+    "retryAt": "Next retry: {{time}}",
+    "lastSuccess": "Last successful sync: {{time}}"
+  },
+  "connectionErrors": {
+    "network_error": "Could not reach WeChat. Retrying.",
+    "dns_error": "Could not resolve the WeChat hostname. Check the server network.",
+    "tls_error": "TLS connection to WeChat failed. Check server certificates and networking.",
+    "request_timeout": "Request or response transfer timed out. Retrying.",
+    "rate_limited": "WeChat rate limit reached. Waiting before retrying.",
+    "login_required": "Credentials expired. Scan a new QR code to sign in.",
+    "platform_http_error": "WeChat returned an HTTP error.",
+    "platform_rejected": "WeChat rejected the request. See the error code.",
+    "invalid_platform_response": "Invalid WeChat response. The cursor is preserved for recovery.",
+    "invalid_platform_message": "Invalid message format. The cursor is preserved for recovery.",
+    "unsafe_platform_message_id": "Message ID precision error. Upgrade the server.",
+    "response_too_large": "WeChat response exceeded the size limit. The cursor is preserved.",
+    "inbox_capacity": "The inbox is full. Polling resumes as the backlog clears.",
+    "receive_failed": "Could not persist incoming messages. Retrying from the same cursor."
+  },
   "health": {
     "connected": "Connected",
     "connecting": "Connecting",
@@ -36,7 +58,10 @@
     "refresh": "Refresh",
     "verify": "Verification code",
     "submit": "Submit",
-    "relogin": "Sign in again"
+    "relogin": "Sign in again",
+    "blocked": "Too many incorrect verification codes. Refresh the QR code later.",
+    "alreadyBound": "This bot was already connected. Go back to check its status.",
+    "identityChanged": "This is a different bot. Create a new channel for it."
   },
   "pairTitle": "Link your account",
   "pairSend": "Send this message to the Bot in {{channel}}",

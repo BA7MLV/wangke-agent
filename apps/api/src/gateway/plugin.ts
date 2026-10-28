@@ -1,11 +1,11 @@
-import type { GatewayEnvelope, GatewayManifest, GatewayPayload } from '@wangke/contracts/gateway';
+import type { GatewayEnvelope, GatewayManifest, GatewayPayload, GatewayConnectionDiagnostics } from '@wangke/contracts/gateway';
 export type { GatewayEnvelope, GatewayManifest, GatewayPayload };
 export interface ChannelContext {
   signal: AbortSignal;
   receive(batch: GatewayEnvelope[], cursor?: string): void;
   cursor(): string | undefined;
   updateConfig(patch: Record<string, string>): void;
-  health(state: string): void;
+  health(state: string, detail?: Pick<GatewayConnectionDiagnostics, 'error' | 'consecutiveFailures' | 'retryAt'>): void;
 }
 export interface ChannelPlugin {
   manifest: GatewayManifest;
@@ -17,5 +17,5 @@ export interface ChannelPlugin {
   download?(config: Record<string, string>, message: GatewayEnvelope, attachment: NonNullable<GatewayEnvelope['attachments']>[number], signal: AbortSignal): Promise<{ bytes: Uint8Array; name: string; mime: string }>;
 }
 export class DeliveryError extends Error {
-  constructor(readonly code: string, readonly uncertain = false, readonly retryAfterMs = 0) { super(code); }
+  constructor(readonly code: string, readonly uncertain = false, readonly retryAfterMs = 0, readonly retryable = true) { super(code); }
 }

@@ -4,6 +4,8 @@ import os from 'node:os';
 import path from 'node:path';
 import net from 'node:net';
 import { chromium } from 'playwright';
+import { createServer } from 'vite';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 // Isolated server/database and a protocol fake; never uses an actual IM account.
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'gateway-ui-'));
@@ -12,14 +14,26 @@ const reservation = net.createServer(); await new Promise(r => reservation.liste
 const origin = `http://localhost:${port}`; process.env.PUBLIC_ORIGIN = origin;
 const { buildServer } = await import('../apps/api/src/server.ts');
 const { DatabaseStore } = await import('../apps/api/src/storage/database.ts');
+let qrStatus = 'confirmed', statusPolls = 0;
+const verifySubmissions = [];
 const app = buildServer({ dbPath: path.join(directory, 'db.sqlite'), fetch: async (url, init) => {
   if (String(url).includes('get_bot_qrcode')) { assert.equal(init.method, 'POST'); return Response.json({ qrcode: 'test-qr-handle', qrcode_img_content: 'https://weixin.qq.com/test-qr-not-real-account' }); }
-  if (String(url).includes('get_qrcode_status')) return Response.json({ status: 'confirmed', bot_token: 'DO-NOT-EXPOSE-THIS-TOKEN', ilink_bot_id: 'test-bot', baseurl: 'https://ilinkai.weixin.qq.com' });
-  throw new Error('No real network allowed in UI test');
+  if (String(url).includes('get_qrcode_status')) {
+    statusPolls++;
+    const code = new URL(url).searchParams.get('verify_code');
+    if (code) { verifySubmissions.push(code); return Response.json({ status: 'verify_code_blocked' }); }
+    return Response.json({ status: qrStatus, ...(qrStatus === 'confirmed' ? { bot_token: 'DO-NOT-EXPOSE-THIS-TOKEN', ilink_bot_id: 'test-bot', baseurl: 'https://ilinkai.weixin.qq.com' } : {}) });
+  }
+  throw new TypeError('DO-NOT-EXPOSE-THIS-TRANSPORT-ERROR', { cause: { code: 'ENOTFOUND' } });
 } });
-let browser, store;
+let browser, store, web;
 try {
-  await app.listen({ host: '127.0.0.1', port });
+  await app.listen({ host: '127.0.0.1', port: 0 });
+  // API-only deployment: serve the real web app separately and proxy its API calls.
+  web = await createServer({ root: path.resolve('apps/web'), configFile: path.resolve('apps/web/vite.config.ts'),
+    cacheDir: path.join(directory, 'vite-cache'),
+    server: { host: 'localhost', port, strictPort: true, proxy: { '/api/v1': { target: `http://127.0.0.1:${app.server.address().port}`, changeOrigin: false } } } });
+  await web.listen();
   browser = await chromium.launch({ headless: true });
   const context = await browser.newContext({ serviceWorkers: 'block' });
   await context.addInitScript(() => {
@@ -48,11 +62,13 @@ try {
   await qr.waitFor(); assert.match(await qr.getAttribute('src'), /^data:image\/png;base64,/);
   // Login progresses automatically, without a manual status-check button.
   await page.getByTestId('gateway-pair').waitFor();
+  await page.getByTestId('gateway-connection-details').getByText('dns_error', { exact: true }).waitFor();
   const data = await (await context.request.get(`${origin}/api/v1/gateway`)).json(); assert.equal(data.accounts.length, 1);
   const id = data.accounts[0].id;
   await page.getByTestId('gateway-pair').click();
   assert.match(await page.getByTestId('gateway-pair-command').innerText(), /^\/pair [0-9A-HJKMNP-TV-Z]{8}$/);
   assert.equal((await (await context.request.get(`${origin}/api/v1/gateway`)).text()).includes('DO-NOT-EXPOSE-THIS-TOKEN'), false);
+  assert.equal((await (await context.request.get(`${origin}/api/v1/gateway`)).text()).includes('DO-NOT-EXPOSE-THIS-TRANSPORT-ERROR'), false);
   const threadResult = await context.request.post(`${origin}/api/v1/threads`, { headers: { origin }, data: { mode: 'bot', title: 'IM · browser-test' } }); const thread = await threadResult.json();
   store = new DatabaseStore(path.join(directory, 'db.sqlite'));
   store.db.prepare('INSERT INTO gateway_bindings(id,account_id,tenant,peer,chat,topic,thread_id) VALUES(?,?,?,?,?,?,?)').run('ui-binding', id, '', 'ui-owner-peer', 'ui-chat', '', thread.id);
@@ -103,6 +119,25 @@ try {
     assert.ok(boxes.every(b => b.left >= -1 && b.right <= width + 1), `gateway controls fit ${width}px`);
     await page.screenshot({ path: path.join(output, `gateway-${width}.png`), fullPage: true });
   }
+  // Verification codes are sent only on explicit submit, once; blocked/already-bound are terminal states.
+  qrStatus = 'need_verifycode';
+  await page.getByTestId('gateway-relogin').click();
+  const verifyInput = panel.getByRole('textbox', { name: 'Verification code', exact: true });
+  await verifyInput.waitFor();
+  const pollsBeforeTyping = statusPolls;
+  await verifyInput.fill('12'); await sleep(600);
+  assert.equal(verifySubmissions.length, 0); assert.equal(statusPolls, pollsBeforeTyping);
+  await verifyInput.fill('123456');
+  await panel.getByRole('button', { name: 'Submit', exact: true }).click();
+  await panel.getByText('Too many incorrect verification codes. Refresh the QR code later.', { exact: true }).waitFor();
+  const pollsAfterBlocked = statusPolls;
+  await sleep(600);
+  assert.deepEqual(verifySubmissions, ['123456']); assert.equal(statusPolls, pollsAfterBlocked);
+  qrStatus = 'binded_redirect';
+  await panel.getByRole('button', { name: 'Refresh', exact: true }).click();
+  await panel.getByText('This bot was already connected. Go back to check its status.', { exact: true }).waitFor();
+  await page.getByTestId('gateway-wechat-login').getByRole('button', { name: 'Messaging', exact: true }).click();
+  qrStatus = 'confirmed';
   await panel.getByRole('button', { name: 'Unlink', exact: true }).click();
   await page.getByTestId('confirm-dialog-confirm').click();
   await page.getByTestId('gateway-pair').waitFor();
@@ -133,9 +168,9 @@ try {
     }
   }
   assert.deepEqual(errors, []);
-  console.log(`Gateway management browser passed: automatic QR login, short pairing, automatic binding completion, open/switch Bot panel, masked credentials, reminder cancel, failed/uncertain discard, sent discard rejected, revoke, QR/poll cancellation and controls at 390/1440px. Screenshots: ${output}`);
+  console.log(`Gateway management browser passed: separate Web/API, safe connection diagnostics, automatic QR login, explicit single-submit verification, blocked/already-bound terminal states, short pairing, automatic binding completion, open/switch Bot panel, masked credentials, reminder cancel, failed/uncertain discard, sent discard rejected, revoke, QR/poll cancellation and controls at 390/1440px. Screenshots: ${output}`);
 } catch (e) {
   const pages = browser?.contexts()[0]?.pages() ?? [];
   for (const page of pages) console.error('UI failure:', page.url(), (await page.locator('body').innerText()).slice(-8000));
   throw e;
-} finally { store?.close(); await browser?.close(); await app.close(); fs.rmSync(directory, { recursive: true, force: true }); }
+} finally { store?.close(); await browser?.close(); await web?.close(); await app.close(); fs.rmSync(directory, { recursive: true, force: true }); }

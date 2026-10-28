@@ -89,8 +89,13 @@ const MIN_H = 80;
 export default function WidgetBlock(props: Props) {
   // A new source revision owns a new bridge and pending requests. State/theme updates do not remount it.
   const libsKey = JSON.stringify(props.payload.libs ?? []);
-  const key = useMemo(() => JSON.stringify([props.rowId ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey]),
-    [props.rowId, props.readingKey, props.payload.id, props.payload.html, libsKey]);
+  const owner = useRef({ rowId: props.rowId, key: props.rowId });
+  if (props.rowId !== owner.current.rowId) {
+    // Persisting this streaming message is a promotion, not a new iframe session.
+    if (owner.current.rowId != null) owner.current.key = props.rowId;
+    owner.current.rowId = props.rowId;
+  }
+  const key = JSON.stringify([owner.current.key ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey]);
   return <WidgetSessionBlock key={key} {...props} />;
 }
 
@@ -195,8 +200,9 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
     // Source identity is the enclosing component key; callback and theme changes must not reopen it.
   }, [rowId, payload.html, payload.id, post]);
 
+  const sessionReady = session !== undefined;
   useEffect(() => {
-    if (session === undefined) return;
+    if (!sessionReady) return;
     let cancelled = false;
     setDoc('');
     setFailed('');
@@ -208,7 +214,11 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
     return () => {
       cancelled = true;
     };
-  }, [session, payload.html]);
+  }, [sessionReady, payload.html]);
+
+  useEffect(() => {
+    post(WIDGET_MSG.persistent, session != null);
+  }, [session, post]);
 
   useEffect(() => {
     if (answerInput) post(WIDGET_MSG.answerSync, { answer: answerInput.answer, submitted: answerInput.submitted, question: answerInput.question });
@@ -363,6 +373,7 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
         syncDisplay();
         post(WIDGET_MSG.theme, themeRef.current ?? darkRef.current);
         post(WIDGET_MSG.sync, stateRef.current);
+        post(WIDGET_MSG.persistent, session != null);
         if (answerInputRef.current) post(WIDGET_MSG.answerSync, { answer: answerInputRef.current.answer, submitted: answerInputRef.current.submitted, question: answerInputRef.current.question });
       } else if (d.__wbw === WIDGET_MSG.answerDraft || d.__wbw === WIDGET_MSG.answerSubmit) {
         const request = d.payload as { requestId?: number; value?: unknown } | null;

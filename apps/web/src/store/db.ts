@@ -308,6 +308,8 @@ export interface ChatRow {
    * 只存摘要，不存原始返回（见 `ChatToolCall` 的注释）。
    */
   tools?: ChatToolCall[];
+  /** Ordered process/content boundaries; absent on legacy messages. Non-indexed metadata. */
+  responseSegments?: import('../utils/responseOrder').ResponseSegment[];
   /** 答题卡（非索引字段，无需升级版本） */
   quiz?: QuizState;
   /**

@@ -39,7 +39,7 @@
     "test:bot:hardening": "tsx scripts/test-bot-migrations.mjs && tsx scripts/test-bot-hardening.mjs && tsx scripts/test-bot-services.mjs && tsx scripts/test-bot-domain.mjs && tsx scripts/test-bot-lifecycle.mjs && tsx scripts/test-bot-request-budget.mjs && tsx scripts/test-gateway-retention.mjs",
     "test:bot:management": "tsx scripts/e2e-bot-management.mjs",
     "eval:bot": "npm run build:api && tsx scripts/eval-bot.mjs",
-    "test:gateway": "tsx scripts/test-gateway.mjs && tsx scripts/test-gateway-review.mjs",
+    "test:gateway": "tsx --test scripts/test-ilink.mjs && tsx scripts/test-gateway.mjs && tsx scripts/test-gateway-review.mjs",
     "test:gateway:ui": "tsx scripts/e2e-gateway.mjs",
     "test:mcp": "tsx scripts/test-mcp.mjs && tsx scripts/test-mcp-compat.mjs",
     "test:sandbox": "node scripts/test-sandbox.mjs",

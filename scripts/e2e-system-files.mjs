@@ -45,22 +45,41 @@ try {
   page = await context.newPage();
   page.on('pageerror', error => errors.push(error.message));
   await context.route('https://models.dev/**', route => route.fulfill({ json: {} }));
+  let projectListRequests = 0;
+  await context.route('**/api/v1/projects', route => {
+    projectListRequests++;
+    return route.fulfill({ status: 500, json: { error: 'project_list_unavailable' } });
+  });
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/#/library`);
     const open = item => width < 600 ? item.click() : item.dblclick();
     const systemFolder = page.getByTestId('system-folder');
     await systemFolder.waitFor({ timeout: 60000 });
+    await page.waitForFunction(() => document.querySelector('.resource-count')?.textContent === '1 个条目');
+    const search = page.getByRole('searchbox', { name: '搜索当前文件夹' });
+    await search.fill('SYSTEM');
+    await systemFolder.waitFor();
+    assert.equal(await page.getByText('没有匹配的文件', { exact: true }).count(), 0);
+    await search.fill('missing-folder');
+    await systemFolder.waitFor({ state: 'hidden' });
+    await page.getByText('没有匹配的文件', { exact: true }).waitFor();
+    await search.fill('');
+    await systemFolder.waitFor();
+    await page.screenshot({ path: path.join(output, `resources-${width}.png`) });
     await open(systemFolder);
     await page.getByTestId('agent-instructions-file').waitFor();
     const memoryFolder = page.getByTestId('memory-folder');
     await memoryFolder.waitFor();
+    assert.equal(projectListRequests, 0, 'system folders must not depend on the project directory API');
+    assert.equal(await page.getByText('操作失败，请重试。', { exact: true }).count(), 0);
     await page.screenshot({ path: path.join(output, `system-${width}.png`) });
     await open(memoryFolder);
     const file = page.getByTestId('memory-file').filter({ hasText: memory.id });
     await file.waitFor();
     await page.getByTestId('memory-file').filter({ hasText: '2026-10-28.md' }).waitFor();
     await page.getByTestId('memory-file').filter({ hasText: 'preferences.md' }).waitFor();
+    assert.equal(projectListRequests, 0, 'memory listing must only load system documents');
     assert.equal(await page.getByRole('navigation', { name: '资料路径' }).getByRole('button', { name: 'memory', exact: true }).isVisible(), true);
     assert.equal(await page.getByTestId('btn-new-folder').isDisabled(), true);
     await page.screenshot({ path: path.join(output, `memory-${width}.png`) });
@@ -115,9 +134,13 @@ try {
     await page.getByTestId('agent-instructions-open-file').click();
     await reader.getByText(`设置中即时修改 ${width}`, { exact: true }).waitFor();
     // Deep links from memory management and tools work without entering the directory first.
+    await page.getByTestId('nav-back').click();
+    await page.getByRole('navigation', { name: '资料路径' }).getByRole('button', { name: '全部资料', exact: true }).click();
+    await systemFolder.waitFor();
     await page.goto(`${origin}/#/library?file=${resource}`);
     await reader.waitFor();
     assert.match(page.url(), /system%3Amemory%3A/);
+    assert.equal(projectListRequests, 0, 'system deep links must not request the project directory either');
     await page.screenshot({ path: path.join(output, `reader-${width}.png`) });
     console.log(`System documents UI ${width}px: navigation, live Bot ↔ Markdown, conflict draft retention, reload, two-way instructions and deep links passed`);
     await page.getByTestId('nav-back').click();

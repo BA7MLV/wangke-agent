@@ -142,23 +142,15 @@
 
 .reasoning-chain .reasoning-chain__body--live {
   max-height: min(240px, 35dvh);
-  /* A stable, explicitly styled gutter avoids the OS overlay scrollbar flashing
-     on every streamed scroll update. Keep it usable without hover as well. */
+  /* Hide the scrollbar while keeping manual scrolling and streamed follow. */
   overflow-x: hidden;
   overflow-y: scroll;
-  scrollbar-gutter: stable;
-  scrollbar-width: thin;
-  scrollbar-color: var(--border-secondary) transparent;
+  scrollbar-width: none;
   padding-right: 8px;
   overscroll-behavior: contain;
 }
 
-.reasoning-chain__body--live::-webkit-scrollbar { width: 6px; }
-.reasoning-chain__body--live::-webkit-scrollbar-thumb {
-  background: var(--border-secondary);
-  border-radius: 999px;
-}
-.reasoning-chain__body--live::-webkit-scrollbar-track { background: transparent; }
+.reasoning-chain__body--live::-webkit-scrollbar { display: none; }
 
 /* 实时视口始终使用 .t-reason 的上下渐隐，抵达滚动边界时也不切换。
    全文视图没有 .t-reason，不影响完整阅读。 */

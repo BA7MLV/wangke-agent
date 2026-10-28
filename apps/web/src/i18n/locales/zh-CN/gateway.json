@@ -11,6 +11,28 @@
   "autonomous": "高自治",
   "enabled": "启用",
   "status": "状态",
+  "reconnect": "立即重连",
+  "connection": {
+    "failures": "连续失败 {{attempts}} 次",
+    "retryAt": "下次重试：{{time}}",
+    "lastSuccess": "最近成功同步：{{time}}"
+  },
+  "connectionErrors": {
+    "network_error": "连接微信服务失败，正在重试。",
+    "dns_error": "无法解析微信服务域名，请检查服务器网络。",
+    "tls_error": "微信服务的 TLS 连接失败，请检查服务器证书和网络。",
+    "request_timeout": "请求或响应传输超时，正在重试。",
+    "rate_limited": "微信服务限制了请求频率，将按要求等待后重试。",
+    "login_required": "登录凭据已失效，请重新扫码登录。",
+    "platform_http_error": "微信服务返回 HTTP 错误。",
+    "platform_rejected": "微信服务拒绝了请求，请查看错误码。",
+    "invalid_platform_response": "微信响应格式异常，已保留原游标等待恢复。",
+    "invalid_platform_message": "消息格式异常，已保留原游标等待恢复。",
+    "unsafe_platform_message_id": "消息 ID 精度异常，请升级服务端。",
+    "response_too_large": "微信响应超过大小限制，已保留原游标。",
+    "inbox_capacity": "收件队列已满，处理积压后会自动继续。",
+    "receive_failed": "消息落库失败，已保留原游标等待重试。"
+  },
   "health": {
     "connected": "已连接",
     "connecting": "连接中",
@@ -36,7 +58,10 @@
     "refresh": "刷新",
     "verify": "验证码",
     "submit": "提交",
-    "relogin": "重新登录"
+    "relogin": "重新登录",
+    "blocked": "验证码错误次数过多，请稍后刷新二维码。",
+    "alreadyBound": "此机器人已连接过，请返回查看连接状态。",
+    "identityChanged": "扫码的机器人与当前渠道不同，请为它新建渠道。"
   },
   "pairTitle": "绑定你的账号",
   "pairSend": "在{{channel}}里把这条消息发给 Bot",

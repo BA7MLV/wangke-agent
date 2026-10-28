@@ -7,6 +7,7 @@ import { receiveFile } from '../cloud/files.js';
 import { DeliveryError, type ChannelPlugin, type GatewayEnvelope, type GatewayPayload } from './plugin.js';
 import { cleanupGateway, gatewayLimits } from './retention.js';
 import { publishBotEvent } from '../agent/events.js';
+import { GATEWAY_CONNECTION_ERRORS, type GatewayConnectionDiagnostics } from '@wangke/contracts/gateway';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -22,6 +23,7 @@ export type PluginFactory = (account?: { id: string; owner_id: string }) => Chan
 /** Single-instance durable gateway. ACK only includes the synchronous receive transaction. */
 export class GatewayCore {
   private live = new Map<string, { plugin: ChannelPlugin; controller: AbortController }>();
+  private connections = new Map<string, GatewayConnectionDiagnostics>();
   private work = new Set<Promise<unknown>>();
   private inbound = new Map<number, { binding: string; controller: AbortController }>();
   private logins = new Map<string, AbortController>();
@@ -42,6 +44,7 @@ export class GatewayCore {
   config(account: any): Record<string, string> { return JSON.parse(this.secrets.open(account.config)); }
   list(owner: string) {
     return (this.store.db.prepare('SELECT id,channel,agent_id AS agentId,enabled,preset,health,created_at AS createdAt FROM gateway_accounts WHERE owner_id=?').all(owner) as any[]).map(a => ({ ...a,
+      connection: this.connections.get(a.id),
       manifest: this.factories[a.channel]?.().manifest,
       configuration: Object.fromEntries((this.factories[a.channel]?.().manifest.configFields ?? []).map(field => { const config = this.config(this.account(owner, a.id)); return [field.key, field.secret ? { configured: Boolean(config[field.key]) } : { value: config[field.key] ?? '' }]; })),
       pressure: this.store.db.prepare("SELECT (SELECT COUNT(*) FROM gateway_inbox WHERE account_id=? AND status='pending') AS inbox,(SELECT COUNT(*) FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id WHERE b.account_id=? AND o.status IN ('pending','sending','failed','uncertain')) AS outbox").get(a.id, a.id),
@@ -57,6 +60,7 @@ export class GatewayCore {
     if (value.config !== undefined && (!value.config || typeof value.config !== 'object' || Array.isArray(value.config))) throw new Error('invalid_config');
     const supplied = Object.fromEntries(Object.entries(value.config ?? {}).filter(([key, value]) => value !== '' || !fields?.some(field => field.key === key && field.secret)));
     const config = { ...(old ? this.config(old) : {}), ...supplied };
+    if (old && value.channel === 'ilink' && this.config(old).botId && config.botId !== this.config(old).botId) throw new Error('channel_identity_changed');
     if (fields && Object.keys(config).some(key => !fields.some(field => field.key === key))) throw new Error('unknown_channel_config_field');
     if (Object.values(config).some(v => typeof v !== 'string' || v.length > 16384)) throw new Error('invalid_config');
     this.factories[value.channel]().validate(config);
@@ -124,6 +128,29 @@ export class GatewayCore {
     try { this.store.db.prepare("UPDATE gateway_accounts SET health='inbound_failed' WHERE id=?").run(account); }
     catch { console.error('gateway_inbox_worker_failed'); }
   }
+  private connectionHealth(id: string, state: string, detail?: Pick<GatewayConnectionDiagnostics, 'error' | 'consecutiveFailures' | 'retryAt'>) {
+    const previous = this.connections.get(id), now = Date.now();
+    const number = (value: unknown): value is number => typeof value === 'number' && Number.isSafeInteger(value);
+    const supplied = detail?.error;
+    // Whitelist values again at the plugin boundary. No exception text or platform errmsg.
+    const error = supplied && GATEWAY_CONNECTION_ERRORS.includes(supplied.code) ? {
+      code: supplied.code,
+      ...(number(supplied.httpStatus) && supplied.httpStatus >= 100 && supplied.httpStatus <= 599 ? { httpStatus: supplied.httpStatus } : {}),
+      ...(number(supplied.platformCode) ? { platformCode: supplied.platformCode } : {}),
+    } : undefined;
+    const value: GatewayConnectionDiagnostics = {
+      updatedAt: now,
+      ...(state === 'connected' ? { lastSuccessAt: now } : previous?.lastSuccessAt ? { lastSuccessAt: previous.lastSuccessAt } : {}),
+      consecutiveFailures: number(detail?.consecutiveFailures) ? Math.max(0, detail.consecutiveFailures) : 0,
+      ...(number(detail?.retryAt) && detail.retryAt > now ? { retryAt: detail.retryAt } : {}),
+      ...(error ? { error } : {}),
+    };
+    this.store.db.prepare('UPDATE gateway_accounts SET health=? WHERE id=?').run(state, id);
+    this.connections.set(id, value);
+    if (error && (JSON.stringify(error) !== JSON.stringify(previous?.error) || value.consecutiveFailures > 0 && Number.isInteger(Math.log2(value.consecutiveFailures)))) {
+      console.warn('gateway_connection', JSON.stringify({ accountId: id, state, ...value }));
+    }
+  }
   private launch(id: string) {
     if (this.stopped || this.live.has(id)) return;
     const a = this.store.db.prepare('SELECT * FROM gateway_accounts WHERE id=?').get(id) as any;
@@ -138,14 +165,14 @@ export class GatewayCore {
     this.live.set(id, { plugin, controller });
     const task = Promise.resolve().then(() => plugin.start(this.config(a), {
       signal: controller.signal,
-      receive: (batch, cursor) => this.receive(id, batch, cursor),
+      receive: (batch, cursor) => { controller.signal.throwIfAborted(); this.receive(id, batch, cursor); },
       cursor: () => (this.store.db.prepare('SELECT cursor FROM gateway_accounts WHERE id=?').get(id) as any)?.cursor ?? undefined,
       updateConfig: patch => {
         if (controller.signal.aborted) return;
         const current = this.store.db.prepare('SELECT * FROM gateway_accounts WHERE id=?').get(id);
         this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify({ ...this.config(current), ...patch })), id);
       },
-      health: state => { if (!controller.signal.aborted) this.store.db.prepare('UPDATE gateway_accounts SET health=? WHERE id=?').run(state, id); },
+      health: (state, detail) => { if (!controller.signal.aborted) this.connectionHealth(id, state, detail); },
     })).catch(async () => {
       if (controller.signal.aborted) return;
       controller.abort();
@@ -163,7 +190,7 @@ export class GatewayCore {
     const live = this.live.get(id); this.live.delete(id);
     live?.controller.abort();
     if (live) await Promise.race([Promise.resolve().then(() => live.plugin.stop()).catch(() => {}), new Promise(resolve => setTimeout(resolve, 1500))]);
-    this.store.db.prepare("UPDATE gateway_accounts SET health='stopped' WHERE id=?").run(id);
+    this.connectionHealth(id, 'stopped');
   }
   async close() {
     this.stopped = true; clearInterval(this.timer);
@@ -174,7 +201,7 @@ export class GatewayCore {
     // when projection/delivery fails before that pass can await its workers.
     while (this.work.size) await Promise.allSettled([...this.work]);
   }
-  async login(owner: string, id: string, action: Record<string, string>) {
+  async login(owner: string, id: string, action: Record<string, string>, externalSignal?: AbortSignal) {
     const a = this.account(owner, id), live = this.live.get(id);
     const plugin = live?.plugin ?? this.factories[a.channel](a);
     if (!plugin.login) throw new Error('login_not_supported');
@@ -183,15 +210,18 @@ export class GatewayCore {
     if (plugin.manifest.loginSteps && (!step || Object.keys(action).some(key => key !== 'action' && !step.fields.includes(key)))) throw new Error('invalid_channel_login_action');
     this.logins.get(id)?.abort();
     const controller = new AbortController(); this.logins.set(id, controller);
+    const signal = AbortSignal.any([controller.signal, live?.controller.signal ?? controller.signal, externalSignal ?? controller.signal, AbortSignal.timeout(40_000)]);
     let result: Record<string, string>;
     try {
-      result = await plugin.login(this.config(a), action, AbortSignal.any([controller.signal, live?.controller.signal ?? controller.signal, AbortSignal.timeout(40_000)]));
-      controller.signal.throwIfAborted();
+      signal.throwIfAborted();
+      result = await plugin.login(this.config(a), action, signal);
+      signal.throwIfAborted();
     } finally { if (this.logins.get(id) === controller) this.logins.delete(id); }
     if (!result || Object.keys(result).length > 20 || Object.values(result).some(value => typeof value !== 'string' || value.length > 128000)) throw new Error('invalid_channel_login_result');
     const loginConfig = Object.fromEntries(Object.entries(result).filter(([key]) => plugin.manifest.loginConfigFields?.includes(key)));
     if (Object.keys(loginConfig).length) {
       const config = { ...this.config(a), ...loginConfig }; plugin.validate(config);
+      if (a.channel === 'ilink' && this.config(a).botId && config.botId !== this.config(a).botId) throw new Error('channel_identity_changed');
       this.store.db.prepare('UPDATE gateway_accounts SET config=? WHERE id=?').run(this.secrets.seal(JSON.stringify(config)), id);
       await this.stop(id); if (a.enabled) this.launch(id);
     }
@@ -380,7 +410,7 @@ export class GatewayCore {
         if (error.code === 'login_required') this.store.db.prepare("UPDATE gateway_accounts SET health='login_required' WHERE id=?").run(row.account_id);
         const window = live.plugin.manifest.capabilities.deduplicationWindowMs;
         const retrySafe = !error.uncertain || (window > 0 && Date.now() - row.created_at < window - 60_000);
-        const state = error.code === 'context_required' || error.code === 'login_required' ? 'failed' : !retrySafe ? 'uncertain' : row.attempts >= 7 ? 'failed' : 'pending';
+        const state = error.code === 'context_required' || error.code === 'login_required' ? 'failed' : !retrySafe ? 'uncertain' : !error.retryable || row.attempts >= 7 ? 'failed' : 'pending';
         this.store.db.prepare("UPDATE gateway_outbox SET status=?,error=?,next_at=? WHERE id=? AND status='sending'").run(state, error.code, Date.now() + Math.max(error.retryAfterMs, Math.min(300_000, 1000 * 2 ** row.attempts)), row.id);
       }
     }

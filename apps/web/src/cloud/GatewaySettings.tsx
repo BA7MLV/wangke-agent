@@ -7,7 +7,7 @@ import { SectionCard, Sym, confirmDialog, toast } from '../ui';
 import { SettingRow, SettingSelect, SettingSwitch } from '../components/settings/controls';
 import { closeSettingsAndClearHash } from '../components/settingsDialogStore';
 import { useBotPanel } from '../store/botPanel';
-import type { GatewayManifest } from '@wangke/contracts/gateway';
+import type { GatewayManifest, GatewayConnectionDiagnostics } from '@wangke/contracts/gateway';
 
 /*
  * 设置 → 消息渠道（微信 iLink / 飞书）。
@@ -26,6 +26,7 @@ import type { GatewayManifest } from '@wangke/contracts/gateway';
 interface Account {
   id: string; channel: string; agentId: string; preset: string; enabled: number; health: string;
   manifest?: GatewayManifest;
+  connection?: GatewayConnectionDiagnostics;
   configuration?: Record<string, { value?: string; configured?: boolean }>;
   bindings: Array<{ id: string; peer: string; threadId: string; revoked: number }>;
 }
@@ -268,6 +269,10 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
             <span className="text-sm text-muted" role="status">{status}</span>
             {wechat && <Button size="sm" variant="secondary" onPress={() => setLogin(true)} data-testid="gateway-relogin">{t('qr.relogin')}</Button>}
           </SettingRow>
+          <ConnectionDetails connection={account.connection} />
+          {account.enabled === 1 && ['reconnecting', 'connection_failed', 'inbound_failed'].includes(account.health) && (
+            <Button size="sm" variant="secondary" onPress={() => void save({})} isDisabled={busy}>{t('reconnect')}</Button>
+          )}
           <SettingSwitch label={t('enabled')} isSelected={Boolean(account.enabled)} isDisabled={busy} onChange={(on) => void save({ enabled: on })} />
           {agents.length > 1 && <SettingSelect label={t('bot')} value={account.agentId} isDisabled={busy}
             options={agents.map((a) => ({ id: a.id, label: a.name }))} onChange={(agentId) => void save({ agentId })} />}
@@ -318,6 +323,20 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, onBac
   );
 }
 
+function ConnectionDetails({ connection }: { connection?: GatewayConnectionDiagnostics }) {
+  const { t } = useTranslation('gateway');
+  if (!connection) return null;
+  return <div className="flex flex-col gap-1 py-2 text-xs text-muted" data-testid="gateway-connection-details" aria-live="polite">
+    {connection.error && <>
+      <p className="text-warning">{t(`connectionErrors.${connection.error.code}`)}</p>
+      <code className="break-words">{connection.error.code}{connection.error.httpStatus !== undefined ? ` · HTTP ${connection.error.httpStatus}` : ''}{connection.error.platformCode !== undefined ? ` · code ${connection.error.platformCode}` : ''}</code>
+      <p>{t('connection.failures', { attempts: connection.consecutiveFailures })}</p>
+    </>}
+    {connection.retryAt !== undefined && <p>{t('connection.retryAt', { time: new Date(connection.retryAt).toLocaleTimeString() })}</p>}
+    {connection.lastSuccessAt !== undefined && <p>{t('connection.lastSuccess', { time: new Date(connection.lastSuccessAt).toLocaleString() })}</p>}
+  </div>;
+}
+
 function PairCode({ pair, channel }: { pair: { command: string; expiresAt: string }; channel: string }) {
   const { t } = useTranslation('gateway');
   const [copied, setCopied] = useState(false);
@@ -343,12 +362,12 @@ function PairCode({ pair, channel }: { pair: { command: string; expiresAt: strin
 function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => void }) {
   const { t } = useTranslation('gateway');
   const [qr, setQr] = useState<{ qrcode: string; qrDataUrl: string; redirectHost?: string }>();
-  const [state, setState] = useState<'loading' | 'wait' | 'scaned' | 'confirmed' | 'expired' | 'verify' | 'error'>('loading');
+  const [state, setState] = useState<'loading' | 'wait' | 'scaned' | 'confirmed' | 'expired' | 'verify' | 'blocked' | 'already_bound' | 'error'>('loading');
+  const [identityChanged, setIdentityChanged] = useState(false);
   const [verifyCode, setVerifyCode] = useState('');
   const [round, setRound] = useState(0);
   const renewals = useRef(0);
   const verifyRef = useRef('');
-  verifyRef.current = verifyCode;
   const doneRef = useRef(onDone);
   doneRef.current = onDone;
 
@@ -356,38 +375,58 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
     let alive = true;
     const controller = new AbortController();
     let doneTimer: ReturnType<typeof setTimeout> | undefined;
+    const pause = (ms: number) => new Promise<void>((resolve) => {
+      const finish = () => { clearTimeout(timer); controller.signal.removeEventListener('abort', finish); resolve(); };
+      const timer = setTimeout(finish, ms);
+      controller.signal.addEventListener('abort', finish, { once: true });
+      if (controller.signal.aborted) finish();
+    });
     void (async () => {
-      setState('loading');
+      setState('loading'); setIdentityChanged(false); setVerifyCode(''); verifyRef.current = '';
       let current: { qrcode: string; qrDataUrl: string; redirectHost?: string };
       try { current = await post(`/accounts/${accountId}/login`, { action: 'qr' }, controller.signal); }
       catch { if (alive) setState('error'); return; }
       if (!alive) return;
       setQr(current); setState('wait');
+      let failures = 0;
       while (alive) {
         let result: { status: string; redirectHost?: string };
         try {
-          result = await post(`/accounts/${accountId}/login`, { action: 'poll', qrcode: current.qrcode, ...(current.redirectHost ? { redirectHost: current.redirectHost } : {}), ...(verifyRef.current ? { verifyCode: verifyRef.current } : {}) }, controller.signal);
-        } catch {
+          const code = verifyRef.current; verifyRef.current = '';
+          result = await post(`/accounts/${accountId}/login`, { action: 'poll', qrcode: current.qrcode, ...(current.redirectHost ? { redirectHost: current.redirectHost } : {}), ...(code ? { verifyCode: code } : {}) }, controller.signal);
+          failures = 0;
+        } catch (error) {
           if (!alive) return;
-          await new Promise((resolve) => setTimeout(resolve, 2000));
+          if ((error as Error).message === 'channel_identity_changed') { setIdentityChanged(true); setState('error'); return; }
+          if (++failures >= 3) { setState('error'); return; }
+          await pause(1000 * 2 ** failures);
           continue;
         }
         if (!alive) return;
         if (result.redirectHost) current = { ...current, redirectHost: result.redirectHost };
         const status = result.status;
         if (status === 'confirmed') { setState('confirmed'); doneTimer = setTimeout(() => alive && doneRef.current(), 900); return; }
+        if (status === 'binded_redirect') { setState('already_bound'); return; }
+        if (status === 'verify_code_blocked') { setVerifyCode(''); verifyRef.current = ''; setState('blocked'); return; }
         if (status === 'expired') {
           if (renewals.current++ < 3) { setRound((value) => value + 1); return; }
           setState('expired'); return;
         }
-        if (status.includes('verify')) { setState('verify'); await new Promise((resolve) => setTimeout(resolve, 1500)); continue; }
+        if (status === 'need_verifycode') {
+          setVerifyCode(''); setState('verify');
+          // Only submit a complete code after an explicit click; never retry a rejected code.
+          while (alive && !verifyRef.current) await pause(200);
+          continue;
+        }
         setState(status.startsWith('scaned') ? 'scaned' : 'wait');
+        await pause(300); // Some backends return "wait" immediately rather than holding the poll.
       }
     })();
     return () => { alive = false; controller.abort(); clearTimeout(doneTimer); };
   }, [accountId, round]);
 
-  const label = state === 'scaned' ? t('qr.scanned') : state === 'confirmed' ? t('qr.confirmed') : state === 'expired' ? t('qr.expired') : t('qr.scan');
+  const label = state === 'blocked' ? t('qr.blocked') : state === 'already_bound' ? t('qr.alreadyBound') : state === 'verify' ? t('qr.verify')
+    : state === 'scaned' ? t('qr.scanned') : state === 'confirmed' ? t('qr.confirmed') : state === 'expired' ? t('qr.expired') : t('qr.scan');
   return (
     <SectionCard title={t('wechat')} testId="gateway-wechat-login">
       <div className="flex flex-col items-center gap-4 py-4 text-center">
@@ -400,14 +439,16 @@ function WeChatLogin({ accountId, onDone }: { accountId: string; onDone: () => v
             <Button className="absolute" variant="primary" onPress={() => { renewals.current = 0; setRound((value) => value + 1); }}>{t('qr.refresh')}</Button>
           )}
         </div>
-        <p className="text-base font-medium" role="status" aria-live="polite">{state === 'error' ? t('health.connection_failed') : label}</p>
-        {state === 'error' && <Button variant="secondary" onPress={() => setRound((value) => value + 1)}>{t('qr.refresh')}</Button>}
+        <p className="text-base font-medium" role="status" aria-live="polite">{state === 'error' ? identityChanged ? t('qr.identityChanged') : t('health.connection_failed') : label}</p>
+        {(state === 'error' || state === 'blocked') && <Button variant="secondary" onPress={() => setRound((value) => value + 1)}>{t('qr.refresh')}</Button>}
+        {state === 'already_bound' && <Button variant="secondary" onPress={() => doneRef.current()}>{t('back')}</Button>}
         {state === 'verify' && (
           <TextField className="w-48">
             <Label>{t('qr.verify')}</Label>
-            <Input inputMode="numeric" autoComplete="one-time-code" value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))} />
+            <Input inputMode="numeric" autoComplete="one-time-code" maxLength={16} value={verifyCode} onChange={(e) => setVerifyCode(e.target.value.replace(/\D/g, ''))} />
           </TextField>
         )}
+        {state === 'verify' && <Button variant="primary" isDisabled={!verifyCode} onPress={() => { verifyRef.current = verifyCode; setVerifyCode(''); setState('scaned'); }}>{t('qr.submit')}</Button>}
       </div>
     </SectionCard>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type ComponentProps } from 'react';
+import { useEffect, useMemo, useRef, useState, type ChangeEvent, type ComponentProps } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import {
   Button,
@@ -73,6 +73,7 @@ import { folderAncestors, validFolderDrop, moveLibraryItems, undoLibraryMove } f
 import { useProjectLibrary } from '../projects/useProjectLibrary';
 import { cloud } from '../cloud/state';
 import ResourceLibrary from './ResourceLibrary';
+import { FOLDER_COLORS, FolderIcon } from '../components/FolderIcon';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -218,34 +219,6 @@ const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap
 /** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
 const SKEL_CLS = 'skel-breathe block rounded-md bg-background-tertiary';
 
-const FOLDER_COLORS = [
-  { id: 'blue', label: '默认蓝色', hue: 198, swatch: '#50bfe8' },
-  { id: 'green', label: '绿色', hue: 142, swatch: '#63bc7c' },
-  { id: 'yellow', label: '黄色', hue: 46, swatch: '#e6c34e' },
-  { id: 'orange', label: '橙色', hue: 27, swatch: '#e89b50' },
-  { id: 'red', label: '红色', hue: 0, swatch: '#df7373' },
-  { id: 'purple', label: '紫色', hue: 274, swatch: '#ad83d8' },
-  { id: 'gray', label: '灰色', hue: 198, swatch: '#9ca3af' },
-] as const;
-
-/** Finder 专属的拟物文件夹，保留自绘外观，不随通用操作图标库替换。 */
-function FolderIcon({ color = 'blue' }: { color?: FolderRow['color'] }) {
-  const id = useId();
-  const palette = FOLDER_COLORS.find((entry) => entry.id === color) ?? FOLDER_COLORS[0];
-  return (
-    <svg className="finder-folder-icon" data-folder-color={palette.id} style={{ filter: `hue-rotate(${palette.hue - 198}deg) saturate(${palette.id === 'gray' ? 0 : 1}) drop-shadow(0 2px 1px rgb(0 0 0 / 20%))` }} viewBox="0 0 120 96" fill="none" aria-hidden="true">
-      <defs>
-        <linearGradient id={`${id}-back`} x1="60" y1="10" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#48b8e8" /><stop offset=".3" stopColor="#168dc3" /><stop offset="1" stopColor="#56bce4" /></linearGradient>
-        <linearGradient id={`${id}-front`} x1="60" y1="29" x2="60" y2="88" gradientUnits="userSpaceOnUse"><stop stopColor="#87ddfa" /><stop offset="1" stopColor="#50bfe8" /></linearGradient>
-      </defs>
-      <path d="M8 18a8 8 0 0 1 8-8h23c4 0 6 2 10 5l7 5h48a8 8 0 0 1 8 8v53a7 7 0 0 1-7 7H15a7 7 0 0 1-7-7Z" fill={`url(#${id}-back)`} />
-      <rect x="12" y="25" width="96" height="55" rx="5" fill="#c5eeff" />
-      <rect x="8" y="25" width="104" height="63" rx="7" fill={`url(#${id}-front)`} stroke="#39afe0" />
-      <path d="M15 32h90M12 82h96" stroke="#a2e2fa" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 /** 首屏骨架复用 Finder 网格尺寸；工具栏与路径栏在加载期间保留。 */
 function LibrarySkeleton({ count }: { count: number }) {
   return (
@@ -281,7 +254,6 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
   const agentFileRequested = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const memoryFileRequested = searchParams.get('file')?.startsWith('/system/memory/') ? searchParams.get('file')! : '';
   const nav = useAppNav('home');
-  const projectLibrary = useProjectLibrary();
   const bootstrapChat = useCourseChat((s) => s.bootstrap);
   const recent = useRecentChats();
   useEffect(() => {
@@ -314,6 +286,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
   const folderKey = folderHistory.entries[folderHistory.index];
   const inMemoryFolder = folderKey === 'system/memory';
   const inSystemFolder = folderKey === 'system' || inMemoryFolder;
+  const projectLibrary = useProjectLibrary(!inSystemFolder && !agentFileRequested && !memoryFileRequested && !importing);
   const [memoryPage, setMemoryPage] = useState<SystemDirectory>({ files: [], nextOffset: null });
   const [memoryOffset, setMemoryOffset] = useState(0);
   const [memoryLoading, setMemoryLoading] = useState(false);

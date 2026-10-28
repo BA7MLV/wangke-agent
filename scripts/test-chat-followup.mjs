@@ -70,6 +70,8 @@ await build({
   platform: 'node',
   logLevel: 'silent',
   loader: { '.md': 'text' },
+  // Vite supplies this lazy browser-only asset; queue/steer tests never load it.
+  external: ['@widget/chart-runtime?raw'],
   define: { 'process.env.NODE_ENV': '"test"' },
 });
 const { useCourseChat, useSettings, db } = await import(pathToFileURL(join(OUT, 'bundle.mjs')).href);
@@ -349,6 +351,8 @@ await test('E. 提问卡悬着时：打字是答卡，不排队也不插入', as
   // 真实场景里这张卡由 agent 循环挂上；这里直接挂一张等价的（resolve 是 spy）
   let resolvedWith = null;
   useCourseChat.setState({
+    messages: state().messages.map(message => message.key === lastAi().key
+      ? { ...message, ask: { type: 'text', question: '请补充你的想法', options: [] } } : message),
     pendingAsk: { messageKey: lastAi().key, resolve: (picked) => (resolvedWith = picked) },
   });
 
@@ -356,7 +360,8 @@ await test('E. 提问卡悬着时：打字是答卡，不排队也不插入', as
   state().setDraft('我的回答');
   await state().send('我的回答');
 
-  assert.equal(resolvedWith, '我的回答', '这话该去答那张卡');
+  assert.equal(resolvedWith?.text, '我的回答', '这话该去答那张卡');
+  assert.equal(resolvedWith?.mode, 'text', 'resolve receives the validated structured answer');
   assert.equal(state().pendingAsk, null, '答完卡该收起');
   assert.deepEqual(state().queued, [], '答卡不该进队列');
   assert.equal(requests, callsBefore, '答卡不该新起一轮请求');

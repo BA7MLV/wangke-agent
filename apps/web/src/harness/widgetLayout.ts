@@ -26,8 +26,9 @@ export function layoutWidgets(content: string, widgets: WidgetPayload[]) {
     if (seen.has(ref)) duplicates.push(fence);
     seen.add(ref);
   }
-  // An empty reference renders nothing; retain the fence so surrounding Markdown stays untouched.
+  // Blank duplicates without shifting persisted process/content offsets or later block keys.
   let markdown = content;
-  for (const { start, end } of duplicates.reverse()) markdown = markdown.slice(0, start) + markdown.slice(end);
+  for (const { start, end } of duplicates.reverse()) markdown = markdown.slice(0, start)
+    + markdown.slice(start, end).replace(/[^\r\n]/g, ' ') + markdown.slice(end);
   return { markdown, unplaced: widgets.filter((widget) => !widget.ref || !seen.has(widget.ref)) };
 }

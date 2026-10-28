@@ -65,9 +65,9 @@ try {
     const texts = [...element.querySelectorAll('p')].filter((node) => node.textContent.includes('再独立调整'));
     const frames = element.querySelectorAll('iframe');
     return { firstBeforeText: !!(frames[0].compareDocumentPosition(texts[0]) & Node.DOCUMENT_POSITION_FOLLOWING),
-      textBeforeSecond: !!(texts[0].compareDocumentPosition(frames[1]) & Node.DOCUMENT_POSITION_FOLLOWING) };
+      secondBeforeText: !!(frames[1].compareDocumentPosition(texts[0]) & Node.DOCUMENT_POSITION_FOLLOWING) };
   });
-  assert.ok(placement.firstBeforeText && placement.textBeforeSecond, 'figures sit between the relevant explanation paragraphs');
+  assert.ok(placement.firstBeforeText && placement.secondBeforeText, 'both delivered figures retain their positions before later explanation and reference echoes');
   const first = () => blocks.nth(0).getByTestId('widget-frame').contentFrame();
   const second = () => blocks.nth(1).getByTestId('widget-frame').contentFrame();
   const token = await first().locator('section').getAttribute('data-run-token');
