@@ -9,7 +9,8 @@ import type { ArtifactActions } from './ArtifactEditor';
 import WidgetStateSummary from './WidgetStateSummary';
 import { readWidgetHeight, rememberWidgetHeight, widgetRevision, WIDGET_SCROLL_INTENT } from '../harness/widgetReading';
 import './widget-block.css';
-import { MAX_WIDGET_DIAGNOSTICS, readWidgetDiagnostic, WIDGET_READY_TIMEOUT_MS, type WidgetDiagnostic } from '../harness/widgetDiagnostics';
+import { MAX_WIDGET_DIAGNOSTICS, readWidgetDiagnostic, WIDGET_READY_TIMEOUT_MS, widgetDiagnosticIsError, widgetDiagnosticSummary, widgetRepairInstruction, type WidgetDiagnostic } from '../harness/widgetDiagnostics';
+import { loadWidgetImages, widgetImageReferences } from '../harness/widgetImages';
 import { copyText } from '../utils/clipboard';
 import { toast } from '../ui';
 import { validateWidgetPayload } from '../harness/widgetProtocol';
@@ -100,7 +101,7 @@ export default function WidgetBlock(props: Props) {
   try { validateWidgetPayload(props.payload); }
   catch (error) { invalid = error instanceof Error ? error.message : String(error); }
   if (invalid) return <RejectedWidget error={invalid} source={typeof props.payload?.html === 'string' ? props.payload.html : ''}
-    retry={() => setRun(value => value + 1)} />;
+    retry={() => setRun(value => value + 1)} editActions={props.editActions} />;
   const libsKey = JSON.stringify(props.payload.libs ?? []);
   if (props.rowId !== owner.current.rowId) {
     // Persisting this streaming message is a promotion, not a new iframe session.
@@ -113,12 +114,13 @@ export default function WidgetBlock(props: Props) {
 }
 
 /** Corrupt/imported records fail before layout keys, hooks or library loading touch their fields. */
-function RejectedWidget({ error, source, retry }: { error: string; source: string; retry(): void }) {
+function RejectedWidget({ error, source, retry, editActions }: { error: string; source: string; retry(): void; editActions?: ArtifactActions | null }) {
   const [open, setOpen] = useState(false);
   const id = useId();
   return <div className="md-embedded-ui widget-block" data-testid="widget-block">
     <div className="widget-block--error" data-testid="widget-error" role="alert">
       <p>预览失败：{error}</p>
+      {editActions?.repair && <Button size="sm" variant="secondary" isDisabled={editActions.busy} onPress={() => editActions.repair?.(widgetRepairInstruction([], error))}>修复此块</Button>}
       <Button size="sm" variant="tertiary" onPress={retry}>重试预览</Button>
       <Button size="sm" variant="tertiary" aria-controls={id} aria-expanded={open} onPress={() => setOpen(value => !value)}>{open ? '收起 HTML 源码' : '查看 HTML 源码'}</Button>
       <Button size="sm" variant="tertiary" onPress={() => void copyText(source).then(ok => ok ? toast.success('HTML 源码已复制') : toast.error('复制失败'))}>复制 HTML</Button>
@@ -273,6 +275,15 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   }, [doc, ready]);
 
   useEffect(() => {
+    if (!ready) return;
+    const refs = widgetImageReferences(payload.html);
+    if (!refs.length) return;
+    const controller = new AbortController();
+    void loadWidgetImages(refs, result => post(WIDGET_MSG.image, result), controller.signal);
+    return () => controller.abort();
+  }, [ready, payload.html, post]);
+
+  useEffect(() => {
     post(WIDGET_MSG.persistent, session != null);
   }, [session, post]);
 
@@ -392,7 +403,8 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
       if (d.__wbw === WIDGET_MSG.diagnostic) {
         const diagnostic = readWidgetDiagnostic(d.payload);
         if (!diagnostic || diagnosticKeys.current.size >= MAX_WIDGET_DIAGNOSTICS) return;
-        const key = `${diagnostic.kind}:${diagnostic.message}`;
+        if (!widgetDiagnosticIsError(diagnostic) && diagnosticKeys.current.size >= MAX_WIDGET_DIAGNOSTICS - 2) return;
+        const key = JSON.stringify(diagnostic);
         if (diagnosticKeys.current.has(key)) return;
         diagnosticKeys.current.add(key);
         setDiagnostics((current) => [...current, diagnostic]);
@@ -531,13 +543,20 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
 
   return (
     <div ref={hostRef} className="md-embedded-ui widget-block" data-testid="widget-block" data-h={Math.round(height)}>
-      {(failed || diagnostics.length > 0) && <div className="widget-block--error" role="alert" data-testid="widget-error">
-        <p className="m-0">{failed ? `预览失败：${failed}` : (diagnostics.some((item) => item.kind === 'script' || item.kind === 'promise')
-          ? '交互脚本运行出错，部分功能可能不可用。' : '部分资源被限制或未能加载，内容可能不完整。')}</p>
-        <details><summary>运行详情</summary><ul>{diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul></details>
-        <p className="m-0 text-xs">外部脚本、网络请求和动态求值不受支持。重新运行不会调用 AI，也不会修复源码错误。</p>
-        <Button size="sm" variant="tertiary" onPress={onRerun}>重试预览</Button>
-        <Button size="sm" variant="tertiary" onPress={sourceActions.toggleSource}>{sourceActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Button>
+      {(failed || diagnostics.length > 0) && <div className={failed || diagnostics.some(widgetDiagnosticIsError) ? 'widget-block--error' : 'widget-block--notice'}
+        role={failed || diagnostics.some(widgetDiagnosticIsError) ? 'alert' : 'status'} data-testid={failed || diagnostics.some(widgetDiagnosticIsError) ? 'widget-error' : 'widget-notice'}>
+        <div className="widget-block__diagnostic-heading">
+          <p className="m-0">{failed ? `预览失败：${failed}` : widgetDiagnosticSummary(diagnostics)}</p>
+          {editActions?.repair && <Button size="sm" variant="tertiary" isDisabled={editActions.busy} onPress={() => editActions.repair?.(widgetRepairInstruction(diagnostics, failed))}>修复此块</Button>}
+        </div>
+        <details><summary>运行详情</summary>
+          <ul>{diagnostics.map((item, index) => <li key={index}>{item.message}
+            {(item.source || item.directive || item.line) && <span className="block text-xs">{[item.source, item.directive, item.line ? `运行文档第 ${item.line} 行` : ''].filter(Boolean).join(' · ')}</span>}
+          </li>)}</ul>
+          <p className="text-xs">重试只重新加载当前源码。修复此块会先打开修改要求，确认生成后才调用 AI。</p>
+          <Button size="sm" variant="tertiary" onPress={onRerun}>重试预览</Button>
+          <Button size="sm" variant="tertiary" onPress={sourceActions.toggleSource}>{sourceActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Button>
+        </details>
       </div>}
       {doc && <iframe
         ref={frameRef}

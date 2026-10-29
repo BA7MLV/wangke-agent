@@ -109,6 +109,7 @@ export default function BotSettings() {
       )}
 
       <SectionCard title="权限" testId="bot-policy">
+        <p className="text-xs text-muted-foreground">允许后，Bot 会直接完成日常操作；“每次询问”会逐次确认。工作区单独设置的限制仍然生效。</p>
         <SettingSwitch label="专用工作机" isSelected={workstation}
           onChange={(on) => setPolicy(on ? { read: 'allow', write: 'allow', shell: 'allow', remove: 'ask' } : { write: 'ask', shell: 'ask', remove: 'ask' })} />
         {CAPABILITIES.map(({ key, label }) => (
@@ -116,12 +117,14 @@ export default function BotSettings() {
             onChange={(value) => setPolicy({ [key]: value } as Partial<Policy>)} />
         ))}
         <SettingSwitch label="命令可联网" isSelected={config.policy.network === 'allow'} onChange={(on) => setPolicy({ network: on ? 'allow' : 'deny' })} />
+        <p className="text-xs text-muted-foreground">联网开关只决定命令能否访问网络，不会因联网额外询问。工作区也需允许联网。删除或破坏性命令、对外发布等影响、外部 MCP 工具，以及修改权限或服务连接、提高步数上限，仍需单独确认；确认消息会说明原因。</p>
         <SettingNumber label="每个任务最多步数" min={1} max={1000} value={config.policy.maxSteps}
           onChange={(value) => value && setPolicy({ maxSteps: Math.min(1000, Math.max(1, Math.round(value))) }, 600)} />
       </SectionCard>
 
       {agents.length > 0 && (
         <SectionCard title="信任的 Bot" testId="bot-trusted">
+          <p className="text-xs text-muted-foreground">信任后，常规写入和命令执行从询问变为允许。明确禁止、工作区限制和需要单独确认的操作仍然有效。</p>
           {agents.map((agent) => (
             <SettingSwitch key={agent.id} label={agent.name} isSelected={config.trustedAgentIds?.includes(agent.id) ?? false}
               onChange={(on) => persist({ ...config, trustedAgentIds: on ? [...(config.trustedAgentIds ?? []), agent.id] : (config.trustedAgentIds ?? []).filter((id) => id !== agent.id) })} />

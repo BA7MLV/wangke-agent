@@ -115,6 +115,45 @@ test('html 形态：超长被拒；内联 script 不误伤', () => {
   assert.ok(ok.ok, '内联 script 应放行');
 });
 
+test('资源预检：CSS、srcset、SVG 图片和转义 URL 在工具阶段反馈', () => {
+  for (const code of [
+    '<style>.x{background:url(https://example.test/bg.png)}</style><div class="x">示例</div>',
+    '<div style="background: url(\'./bg.png\')">示例</div>',
+    '<style>@import "https://example.test/theme.css";</style>',
+    String.raw`<style>.x{background:u\72l(\68ttps://example.test/bg.png)}</style>`,
+    '<img srcset="https://example.test/a.png 1x, https://example.test/b.png 2x">',
+    '<svg><image xlink:href="https://example.test/a.png"/></svg>',
+    '<video poster="./poster.jpg"></video>',
+    '<style>.x{background:image-set("https://example.test/a.png" 1x)}</style>',
+  ]) {
+    const result = validateWidgetArgs({ format: 'html', code });
+    assert.equal(result.ok, false, code);
+    assert.match(result.error, /内联|系统字体|data-wbw-image/);
+    assert.equal(validateWidgetArgs({ format: 'html', code }, false, false).ok, true, 'saved works retain runtime fallback');
+  }
+  for (const code of [
+    '<script>fetch("https://example.test/data")</script>',
+    '<script>new XMLHttpRequest()</script>',
+    '<script>new Function("return 1")()</script>',
+    '<script>eval("1+1")</script>',
+    '<script type="module">import Chart from "chart.js"</script>',
+  ]) assert.equal(validateWidgetArgs({ format: 'html', code }).ok, false, code);
+  for (const code of [
+    '<svg><defs><linearGradient id="g"/></defs><rect style="fill:url(#g)"/></svg>',
+    '<style>.x{background:url(data:image/png;base64,aGVsbG8=)}</style>',
+    '<p>url(https://example.test) 是示例文字</p>',
+    '<script>const example = `url(https://example.test/bg.png)`;</script>',
+    '<script>const example = "fetch(\'https://example.test\')"; /* eval(\'1\') */</script>',
+    '<!-- <img srcset="remote.png 1x"> --><p>说明</p>',
+    '<img data-wbw-image="#source-image/course-1/page-2" alt="原图">',
+  ]) assert.equal(validateWidgetArgs({ format: 'html', code }).ok, true, code);
+  for (const code of [
+    '<img data-wbw-image="https://example.test/a.png">',
+    '<div data-wbw-image="#source-image/course-1/page-2"></div>',
+    '<img data-wbw-image="#source-image/course-1/page-2">'.repeat(7),
+  ]) assert.equal(validateWidgetArgs({ format: 'html', code }).ok, false, code);
+});
+
 test('html 回执：给出正文位置引用，不重复源码或宣称在下方', () => {
   const t = widgetAcceptedText({ format: 'html', code: '<div/>' }, 'host-ref');
   assert.match(t, /预检通过/);

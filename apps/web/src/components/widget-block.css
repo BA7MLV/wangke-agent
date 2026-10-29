@@ -24,6 +24,7 @@
 .widget-block__selection > span { flex: 1 1 12rem; overflow-wrap: anywhere; color: var(--muted); }
 
 .widget-block--loading,
+.widget-block--notice,
 .widget-block--error {
   padding: 12px;
   font-size: .875rem;
@@ -38,4 +39,7 @@
   overflow-wrap: anywhere;
 }
 
-.widget-block--error details { max-height: 12rem; overflow: auto; }
+.widget-block--error details, .widget-block--notice details { max-height: 12rem; overflow: auto; }
+.widget-block--notice { overflow-wrap: anywhere; }
+.widget-block__diagnostic-heading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: .5rem; }
+.widget-block--error summary, .widget-block--notice summary { cursor: pointer; }

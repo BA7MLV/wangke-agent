@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import vm from 'node:vm';
 import { readFileSync } from 'node:fs';
 import { buildWidgetDocument, WIDGET_MSG } from '../apps/web/src/harness/widgetRuntime.ts';
-import { readWidgetDiagnostic, MAX_WIDGET_DIAGNOSTICS } from '../apps/web/src/harness/widgetDiagnostics.ts';
+import { readWidgetDiagnostic, MAX_WIDGET_DIAGNOSTICS, widgetDiagnosticSummary, widgetResourceLabel, widgetDiagnosticIsError } from '../apps/web/src/harness/widgetDiagnostics.ts';
 import { htmlFenceContentType } from '../apps/web/src/utils/htmlContent.ts';
 import { splitAssistantContent } from '../apps/web/src/utils/streamingHtml.ts';
 import { replaceArtifactFence } from '../apps/web/src/utils/artifactEdit.ts';
@@ -28,7 +28,7 @@ const parent = { postMessage: data => messages.push(data) };
 const context = {
   parent, document: { body: null, documentElement: { style: { setProperty() {} }, setAttribute() { attributes++; } }, addEventListener: listen },
   ResizeObserver: class { observe() {} }, MutationObserver: class { observe() {} },
-  CustomEvent: class {}, requestAnimationFrame: () => 1, setTimeout, clearTimeout,
+  CustomEvent: class {}, requestAnimationFrame: () => 1, setTimeout, clearTimeout, URL,
   window: { addEventListener: listen, dispatchEvent() {} }, navigator: {},
 };
 vm.runInNewContext(bootstrap, context);
@@ -40,6 +40,18 @@ emit('error', { target: { tagName: 'SCRIPT' } });
 emit('securitypolicyviolation', { disposition: 'report', effectiveDirective: 'script-src' });
 emit('securitypolicyviolation', { disposition: 'enforce', effectiveDirective: 'unsupported-directive' });
 assert.equal(messages.length, 3, 'duplicates and non-enforced/unknown CSP reports ignored');
+emit('securitypolicyviolation', { disposition: 'enforce', effectiveDirective: 'img-src', blockedURI: 'https://user:password@images.test/private.png?token=secret' });
+const imageDiagnostic = readWidgetDiagnostic(messages.at(-1).payload);
+assert.equal(imageDiagnostic.resourceType, 'image');
+assert.equal(imageDiagnostic.source, 'https://images.test');
+assert.equal(widgetDiagnosticSummary([imageDiagnostic]), '有图片未能显示');
+assert.equal(widgetDiagnosticIsError(imageDiagnostic), false);
+assert.equal(widgetResourceLabel('data:image/png;base64,secret'), '内联图片/资源');
+assert.equal(widgetResourceLabel('blob:https://app.test/secret-id'), '临时图片/资源');
+assert.equal(readWidgetDiagnostic({ kind: 'resource', message: 'x', resourceType: 'execute' }), null);
+assert.equal(readWidgetDiagnostic({ kind: 'resource', message: 'x', source: 'x'.repeat(201) }), null);
+assert.equal(readWidgetDiagnostic({ kind: 'resource', message: 'x', directive: '<img>' }), null);
+assert.equal(readWidgetDiagnostic({ kind: 'resource', message: 'x', line: -1 }), null);
 emit('securitypolicyviolation', { disposition: 'enforce', effectiveDirective: 'connect-src' });
 for (let i = 0; i < 30; i++) emit('error', { message: `${i}`.repeat(600) });
 assert.equal(messages.length, MAX_WIDGET_DIAGNOSTICS);

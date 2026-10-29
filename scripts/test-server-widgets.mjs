@@ -97,6 +97,9 @@ try {
   const invalid = [
     widgetCall('bad-document', '<html><body>not a fragment</body></html>'),
     widgetCall('bad-script', '<script src="https://invalid.test/script.js"></script>'),
+    widgetCall('bad-css-image', '<style>.x{background:url(https://invalid.test/bg.png)}</style><div class="x">图片</div>'),
+    widgetCall('bad-srcset', '<img srcset="https://invalid.test/a.png 1x">'),
+    widgetCall('bad-fetch', '<script>fetch("https://invalid.test/data")</script>'),
     widgetCall('bad-library', '<canvas></canvas>', { libs: ['unknown'] }),
     widgetCall('bad-length', '<div>' + 'x'.repeat(60001) + '</div>'),
   ];

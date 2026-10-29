@@ -11,7 +11,7 @@ export function validateWidgetPayload(payload: WidgetPayload): void {
     if (value != null && (typeof value !== 'string' || !value || value.length > 128)) throw new Error('作品身份格式无效');
   }
   if (payload.source != null && !['tool', 'legacy-widget', 'legacy-html'].includes(payload.source)) throw new Error('作品来源格式无效');
-  const result = validateWidgetArgs({ format: 'html', code: payload.html, libs: payload.libs }, payload.source === 'legacy-html');
+  const result = validateWidgetArgs({ format: 'html', code: payload.html, libs: payload.libs }, payload.source === 'legacy-html', false);
   if (!result.ok) throw new Error(result.error);
 }
 

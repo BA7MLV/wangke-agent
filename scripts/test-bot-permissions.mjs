@@ -114,16 +114,34 @@ try {
   assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE thread_id=? AND kind='progress' AND content LIKE '%console.log%' ").get(threadId), undefined);
   assert.match(store.db.prepare('SELECT arguments FROM run_steps WHERE run_id=? AND tool=\'shell\'').get(privateShell.id).arguments, /console.log/, 'command stays in internal execution evidence');
   assert.equal(commands, 1);
-  await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: false });
+  await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: false, beforeResolve: () => {
+    const prompt = store.db.prepare("SELECT content FROM messages WHERE thread_id=? AND kind='approval' ORDER BY seq DESC LIMIT 1").get(threadId).content;
+    assert.match(prompt, /破坏性操作/);
+    assert.doesNotMatch(prompt, /可联网/);
+  } });
   assert.equal(commands, 1);
   await runTool('shell', { command: 'python publish.py', description: '将生成的报告发布到指定网站', requiresApproval: true }, { approved: false, beforeResolve: () => {
     const prompt = store.db.prepare("SELECT content FROM messages WHERE thread_id=? AND kind='approval' ORDER BY seq DESC LIMIT 1").get(threadId).content;
     assert.match(prompt, /将生成的报告发布到指定网站/);
     assert.doesNotMatch(prompt, /python|publish.py/);
+    assert.match(prompt, /对外产生影响/);
   } });
   assert.equal(commands, 1);
   await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: true, restart: true });
   assert.equal(commands, 2, 'one approved operation is executed exactly once after restart');
+
+  projects.update(owner, workspace.id, { policy: { shell: 'ask', network: 'allow' } });
+  await runTool('shell', { command: 'echo hello' }, { approved: false, beforeResolve: () => {
+    const prompt = store.db.prepare("SELECT content FROM messages WHERE thread_id=? AND kind='approval' ORDER BY seq DESC LIMIT 1").get(threadId).content;
+    assert.match(prompt, /工作区.*每次询问/);
+  } });
+  projects.update(owner, workspace.id, { policy: { shell: 'allow', network: 'allow' } });
+  configuration.save(owner, { ...get(), trustedAgentIds: [], policy: { ...get().policy, shell: 'ask' } });
+  await runTool('shell', { command: 'echo hello' }, { approved: false, beforeResolve: () => {
+    const prompt = store.db.prepare("SELECT content FROM messages WHERE thread_id=? AND kind='approval' ORDER BY seq DESC LIMIT 1").get(threadId).content;
+    assert.match(prompt, /Bot.*每次询问/);
+  } });
+  configuration.save(owner, { ...get(), policy: { ...get().policy, shell: 'allow' } });
 
   const projectThread = crypto.randomUUID();
   store.db.prepare("INSERT INTO threads(id,owner_id,agent_id,project_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,'bot','Project',?,?)").run(projectThread, owner, agent, workspace.id, now, now);

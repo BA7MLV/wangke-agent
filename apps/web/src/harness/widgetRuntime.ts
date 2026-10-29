@@ -33,13 +33,14 @@
  *    Chart.js 由宿主把源码**内联**进去。第三方 CDN 既是供应链面，也是绕过 CSP 的洞。
  *
  * 与宿主的唯一通道是 `postMessage`，且宿主侧会校验 iframe window 与 opaque origin，
- * 仅交换高度、主题、受限 JSON 状态、题目草稿和待用户确认的追问，不暴露检索或执行工具。
+ * 仅交换高度、主题、受限 JSON 状态、题目草稿、声明过的材料图片和待用户确认的追问，
+ * 不暴露检索或执行工具；图片由宿主按原始源码声明主动提供，iframe 不能请求新资源。
  */
 
 import { WIDGET_STYLES } from './widgetStyles.ts';
 import { normalizeWidgetState, type WidgetState } from './widgetState.ts';
 import type { WidgetTheme } from './widgetTheme.ts';
-import { MAX_WIDGET_DIAGNOSTICS } from './widgetDiagnostics.ts';
+import { MAX_WIDGET_DIAGNOSTICS, widgetResourceLabel } from './widgetDiagnostics.ts';
 import { validateWidgetPayload } from './widgetProtocol.ts';
 import { MAX_WIDGET_DOC } from './widget.ts';
 import type { WidgetLib, WidgetPayload } from '@wangke/study-core/widgets';
@@ -68,6 +69,7 @@ export const WIDGET_MSG = {
   /** iframe → 宿主：文档就绪 */
   ready: 'wbw:ready',
   diagnostic: 'wbw:diagnostic',
+  image: 'wbw:image',
   state: 'wbw:state',
   sync: 'wbw:sync',
   persistent: 'wbw:persistent',
@@ -97,18 +99,46 @@ const BRIDGE = `
     try { parent.postMessage({ __wbw: type, instance: initial.instance, payload: payload }, '*'); } catch (e) {}
   };
   var diagnostics = new Set();
-  function diagnostic(kind, message) {
+  var resourceLabel = ${widgetResourceLabel.toString()};
+  var placeholders = new WeakMap(), materialImages = new Map(), imageTimer;
+  function imagePlaceholder(image, message) {
+    var placeholder = placeholders.get(image);
+    if (!placeholder) {
+      placeholder = document.createElement('span');
+      placeholder.className = 'wbw-image-placeholder';
+      placeholder.setAttribute('role', 'img');
+      image.after(placeholder); placeholders.set(image, placeholder);
+    }
+    var label = (image.getAttribute('alt') || '').slice(0, 160);
+    placeholder.textContent = (label ? label + ' · ' : '') + message;
+    placeholder.setAttribute('aria-label', placeholder.textContent);
+    image.hidden = true;
+  }
+  function diagnostic(kind, message, details) {
     message = String(message || '未知运行错误').slice(0, 500);
-    var key = kind + ':' + message;
-    if (diagnostics.has(key) || diagnostics.size >= ${MAX_WIDGET_DIAGNOSTICS}) return;
+    var value = Object.assign({ kind: kind, message: message }, details || {});
+    var key = JSON.stringify(value);
+    var critical = kind === 'script' || kind === 'promise' || value.resourceType === 'script' || value.resourceType === 'network';
+    // Reserve space for functional errors even when many images fail first.
+    if (diagnostics.has(key) || diagnostics.size >= (critical ? ${MAX_WIDGET_DIAGNOSTICS} : ${MAX_WIDGET_DIAGNOSTICS - 2})) return;
     diagnostics.add(key);
-    post(${JSON.stringify(WIDGET_MSG.diagnostic)}, { kind: kind, message: message });
+    post(${JSON.stringify(WIDGET_MSG.diagnostic)}, value);
   }
   window.addEventListener('error', function (event) {
     if (event.target && event.target !== window) {
-      var tag = event.target.tagName;
-      if (['SCRIPT', 'LINK', 'IMG'].includes(tag)) diagnostic('resource', tag + ' 资源未能加载；外部依赖可能被隔离策略阻止');
-    } else diagnostic('script', event.message || '脚本运行失败');
+      var target = event.target, tag = target.tagName;
+      if (tag === 'IMG') imagePlaceholder(target, '图片未能显示');
+      if (['SCRIPT', 'LINK', 'IMG'].includes(tag)) diagnostic('resource', tag === 'IMG' ? '图片加载失败' : tag === 'SCRIPT' ? '脚本依赖加载失败；请使用已声明的宿主库' : '样式依赖加载失败；请使用内联 CSS', {
+        resourceType: tag === 'IMG' ? 'image' : tag === 'SCRIPT' ? 'script' : 'style',
+        source: resourceLabel(target.currentSrc || target.src || target.href || '')
+      });
+    } else diagnostic('script', event.message || '脚本运行失败', event.lineno ? { line: event.lineno } : {});
+  }, true);
+  document.addEventListener('load', function (event) {
+    if (event.target && event.target.tagName === 'IMG') {
+      var placeholder = placeholders.get(event.target);
+      if (placeholder) { placeholder.remove(); placeholders.delete(event.target); event.target.hidden = false; schedule(); }
+    }
   }, true);
   window.addEventListener('unhandledrejection', function (event) {
     var reason = event.reason;
@@ -119,7 +149,14 @@ const BRIDGE = `
     if (event.disposition !== 'enforce') return;
     var directive = event.effectiveDirective || '';
     if (!/^(script-src|style-src|img-src|font-src|connect-src|frame-src|child-src|form-action|base-uri|object-src|navigate-to)/.test(directive)) return;
-    diagnostic('policy', '隔离策略阻止了 ' + directive + '；请使用内联代码、数据图片或宿主提供的库');
+    var resourceType = /^img-src/.test(directive) ? 'image' : /^font-src/.test(directive) ? 'font' : /^style-src/.test(directive) ? 'style' : /^script-src/.test(directive) ? 'script' : /^connect-src/.test(directive) ? 'network' : 'other';
+    var message = resourceType === 'image' ? '图片来源不受支持；使用材料图片引用或内联 SVG/CSS 绘图'
+      : resourceType === 'font' ? '外部字体未加载；请使用系统字体'
+      : resourceType === 'style' ? '外部样式未加载；请把 CSS 内联到 style'
+      : resourceType === 'script' ? '脚本依赖或动态求值被阻止；请使用内联脚本和已声明的宿主库'
+      : resourceType === 'network' ? '交互尝试请求网络；请使用本地数据和宿主提供的资源'
+      : '当前预览不支持此资源或导航';
+    diagnostic('policy', message, { resourceType: resourceType, directive: directive, source: resourceLabel(event.blockedURI || '') });
   });
   function request(type, payload) {
     return new Promise(function (resolve, reject) {
@@ -144,6 +181,18 @@ const BRIDGE = `
   window.addEventListener('message', function (event) {
     if (event.source !== parent || !event.data || event.data.instance !== initial.instance) return;
     var data = event.data, value = data.payload;
+    if (data.__wbw === ${JSON.stringify(WIDGET_MSG.image)} && value && typeof value.ref === 'string') {
+      var images = materialImages.get(value.ref);
+      if (!images) return;
+      materialImages.delete(value.ref);
+      if (!materialImages.size) clearTimeout(imageTimer);
+      images.forEach(function (image) {
+        if (typeof value.data === 'string' && /^data:image[/](png|jpeg|gif|webp|avif|bmp);base64,/i.test(value.data)) image.src = value.data;
+        else imagePlaceholder(image, typeof value.error === 'string' ? value.error.slice(0, 200) : '原图读取失败');
+      });
+      if (!value.data) diagnostic('resource', typeof value.error === 'string' ? value.error : '原图读取失败', { resourceType: 'image', source: '材料原图' });
+      schedule();
+    }
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.theme)}) setTheme(value);
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.persistent)}) initial.persistent = value === true;
     if (data.__wbw === ${JSON.stringify(WIDGET_MSG.display)} && value &&
@@ -241,6 +290,17 @@ const BRIDGE = `
   setTheme(initial.theme || initial.dark);
   new ResizeObserver(schedule).observe(document.documentElement);
   document.addEventListener('DOMContentLoaded', function () {
+    document.querySelectorAll('img[data-wbw-image]').forEach(function (image) {
+      var ref = image.getAttribute('data-wbw-image');
+      var images = materialImages.get(ref) || [];
+      images.push(image); materialImages.set(ref, images);
+      imagePlaceholder(image, '正在读取原图…');
+    });
+    if (materialImages.size) imageTimer = setTimeout(function () {
+      materialImages.forEach(function (images) { images.forEach(function (image) { imagePlaceholder(image, '原图读取超时，请重试预览'); }); });
+      if (materialImages.size) diagnostic('resource', '原图未能及时读取，请检查此设备的材料文件后重试预览', { resourceType: 'image', source: '材料原图' });
+      // Keep references so a slow local PDF render can still recover the image.
+    }, 12000);
     new ResizeObserver(schedule).observe(document.body);
     new MutationObserver(schedule).observe(document.body, { childList: true, subtree: true, characterData: true, attributes: true });
     schedule();
@@ -294,6 +354,7 @@ const BRIDGE = `
     }
   });
   window.addEventListener('pagehide', function () {
+    clearTimeout(imageTimer); materialImages.clear();
     pending.forEach(function (task) { clearTimeout(task.timer); task.reject(new Error('交互讲解已关闭')); });
     pending.clear();
   });

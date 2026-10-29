@@ -75,7 +75,7 @@ export async function generateArtifactDraft(target: ArtifactTarget, mode: 'patch
     const next = await editArtifact({ kind: target.kind, source: target.source, instruction: draft.instruction,
       context: draft.context, libraries, mode, signal: controller.signal });
     if (controller.signal.aborted) return;
-    await validateArtifact(target.kind, next);
+    await validateArtifact(target.kind, next, target.location === 'widget');
     assertArtifactTarget(await db.chats.get(target.rowId), target);
     if (!controller.signal.aborted) updateArtifactDraft(key, { next, status: 'ready' });
   } catch (error) {

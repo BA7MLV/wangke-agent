@@ -10,7 +10,7 @@ import { useResolvedDark } from '../ui/theme';
 
 const ArtifactPreview = lazy(() => import('./ArtifactPreview'));
 interface Revision { kind: ArtifactKind; location: ArtifactLocation; before: string; after: string; widgetRef?: string; widgetIndex?: number }
-export interface ArtifactActions { edit(): void; undo?: () => void; busy: boolean }
+export interface ArtifactActions { edit(): void; repair?: (instruction: string) => void; undo?: () => void; busy: boolean }
 interface Scope {
   rowId: number; disabled: boolean; history: Revision[];
   saved: (row: ChatRow, revision: Revision, undo: boolean) => void;
@@ -71,6 +71,14 @@ function EditableArtifact({ kind, source, location = 'fence', libraries, widgetI
     // Focus only on an explicit user action, never when a virtualized message remounts.
     requestAnimationFrame(() => (draft.next || running ? panelRef.current : inputRef.current)?.focus());
   };
+  const repair = (instruction: string) => {
+    if (busy || scope.disabled) return;
+    // Opening a repair never sends a request or discards a user's existing draft.
+    if (!draft.next) updateArtifactDraft(key, draft.instruction.trim()
+      ? { context: [draft.context, instruction].filter(Boolean).join('\n').slice(0, 4000) }
+      : { instruction: instruction.slice(0, 4000) });
+    edit();
+  };
   const collapse = () => {
     updateArtifactDraft(key, { open: false });
     requestAnimationFrame(() => (statusButtonRef.current ?? editButtonRef.current)?.focus());
@@ -121,7 +129,7 @@ function EditableArtifact({ kind, source, location = 'fence', libraries, widgetI
       <Button ref={editButtonRef} size="sm" variant="tertiary" isDisabled={scope.disabled || applying} onPress={edit}>{kind === 'html' ? '修改此 HTML' : '修改此图'}</Button>
       {revision && <Button size="sm" variant="tertiary" isDisabled={scope.disabled || busy} onPress={() => void save(true)}>撤销上次修改</Button>}
     </div>}
-    {typeof children === 'function' ? children(scope.disabled ? null : { busy: applying, edit,
+    {typeof children === 'function' ? children(scope.disabled ? null : { busy, edit, repair,
       ...(revision && !running ? { undo: () => void save(true) } : {}),
     }) : children}
     {!draft.open && (running || draft.next || draft.error || draft.notice) && <div className="my-2 flex flex-wrap items-center gap-2 rounded-xl border border-border p-3" data-testid="artifact-edit-status">

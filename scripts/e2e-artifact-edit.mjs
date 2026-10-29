@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
-import { openCodeMenu, openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 await mkdir(new URL('../e2e-shots/', import.meta.url), { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -143,13 +142,12 @@ try {
   await panel(staticBlock).waitFor({ state: 'hidden' });
   assert.equal((await readRow()).content, initial.replace('"value":4', '"value":7').replace('old static', 'new static'));
 
-  const widget = artifacts.filter({ has: page.locator(':scope > [data-testid="code-block"]') });
-  await openWidgetPreviews(page);
-  const widgetSourceBlock = widget.locator(':scope > [data-testid="code-block"]');
+  const widget = artifacts.filter({ has: page.locator(':scope > [data-testid="widget-block"]') });
+  const widgetSourceBlock = widget.locator(':scope > [data-testid="widget-block"]');
   const originalFrame = () => widgetSourceBlock.getByTestId('widget-frame').contentFrame();
   const runToken = await originalFrame().locator('section').getAttribute('data-run');
-  await openCodeMenu(page, widgetSourceBlock);
-  await page.getByRole('menuitem', { name: '修改 HTML', exact: true }).click();
+  await widgetSourceBlock.getByTestId('widget-more').click();
+  await page.getByRole('menuitem', { name: '修改这幅图', exact: true }).click();
   await panel(widget).getByRole('textbox', { name: '修改要求', exact: true }).fill('做得更可视化，用变化对比说明系数的作用');
   plan({ edits: [{ search: 'missing', replace: 'broken' }] });
   await panel(widget).getByRole('button', { name: '生成局部修改', exact: true }).click();
@@ -199,7 +197,6 @@ try {
   await page.waitForFunction(async () => (await window.__artifactTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await switchSession(sessionId);
   await widgetSourceBlock.waitFor();
-  await openWidgetPreviews(page);
   await page.getByTestId('html-answer').getByTestId('widget-frame').contentFrame().getByText('new static', { exact: true }).waitFor();
   assert.equal((await readRow()).widget.html, revisedWidget);
   const deletedId = await page.evaluate(async () => {

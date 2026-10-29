@@ -6,12 +6,11 @@ import { openSettings } from '../components/settingsDialogStore';
 import { cloud } from '../cloud/state';
 import { MoreMenu, type MenuAction } from '../ui';
 import { useBotPanel } from '../store/botPanel';
-import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
+import { serverClient, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
 import { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS, type BotAttachment } from '@wangke/contracts';
 import { BotAttachmentDraft, BotMessageAttachments, type BotDraftFile } from '../components/BotAttachments';
 import { botProgressText } from '@wangke/contracts/cloud';
-import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
 import MessageComposer from '../components/MessageComposer';
 import VirtualMessages from '../components/VirtualMessages';
 import { formatListTime, groupMessages, timeOf, type Row } from './botMessages';
@@ -552,31 +551,6 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     }
   };
 
-  const addPasskey = async () => {
-    if (!browserSupportsWebAuthn()) { toast.error(t('botHome.passkeyUnsupported')); return; }
-    try {
-      const optionsJSON = await serverClient.passkeyRegisterOptions();
-      const response = await startRegistration({ optionsJSON });
-      await serverClient.passkeyRegisterVerify(response);
-      toast.success(t('botHome.passkeyAdded'));
-    } catch (e) {
-      if (e instanceof ServerApiError && e.code === 'webauthn_not_configured') toast.error(t('botHome.passkeyUnavailable'));
-      else if ((e instanceof DOMException || e instanceof Error) && e.name === 'NotAllowedError') toast.error(t('botHome.passkeyCancelled'));
-      else toast.error(t('botHome.passkeyFailed'));
-    }
-  };
-
-  const logout = async () => {
-    try {
-      await serverClient.logout();
-      setSession({ authenticated: false, user: null });
-      setThreads([]);
-      setDetails({});
-    } catch {
-      toast.error(t('botHome.logoutFailed'));
-    }
-  };
-
   const editThread = async (thread: ThreadDto, action: 'rename' | 'archive' | 'delete') => {
     try {
       if (action === 'delete') {
@@ -640,10 +614,6 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
 
   /* ── 菜单 ── */
 
-  const accountActions: MenuAction[] = [
-    { key: 'passkey', label: t('botHome.passkey'), icon: <Sym name="key" />, onAction: () => void addPasskey() },
-    { key: 'logout', label: t('botHome.logout'), icon: <Sym name="key_off" />, danger: true, onAction: () => void logout() },
-  ];
   const runActions: MenuAction[] = [
     { key: 'stop', label: t('botHome.stop'), icon: <Sym name="stop" />, disabled: !activeRunning, onAction: () => void stop() },
     ...(!projectId ? [{ key: 'permissions', label: t('botHome.permissions'), icon: <Sym name="tune" />, onAction: () => openSettings(cloud.enabled ? 'bot' : 'agent') }] : []),
@@ -774,7 +744,7 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
               isDisabled={landing || sendBusy} onPress={() => { newDraft(); }}>
               <Sym name="edit" />
             </Button>
-            <MoreMenu label={t('botHome.more')} actions={[...(activeSummary ? threadMenu : runActions), ...accountActions]} testId="bot-panel-more" />
+            <MoreMenu label={t('botHome.more')} actions={activeSummary ? threadMenu : runActions} testId="bot-panel-more" />
             <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.close')} data-testid="bot-panel-close" onPress={onClose}>
               <Sym name="close" />
             </Button>
@@ -877,7 +847,7 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
         <Button isIconOnly variant="ghost" className="rounded-full" aria-label={tp('settings')} isDisabled={!project} onPress={() => setSettingsOpen(true)}>
           <Sym name="tune" />
         </Button>
-        <MoreMenu label={t('botHome.more')} actions={[...listMenu, ...accountActions]} testId="bh-list-more" />
+        <MoreMenu label={t('botHome.more')} actions={listMenu} testId="bh-list-more" />
         <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.compose')} isDisabled={sendBusy || project?.archived || !availableAgents.length} onPress={() => startWith(currentAgentId || availableAgents[0]?.id || '')}>
           <Sym name="edit" />
         </Button>

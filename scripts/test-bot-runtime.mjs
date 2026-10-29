@@ -48,7 +48,8 @@ try {
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM run_steps WHERE run_id=?').get(id).n, 2);
   await runner.close();
   runner = new BotRunner(store, { fetch: async (_url, init) => {
-    assert.match(JSON.parse(init.body).messages.at(-1).content, /Scheduled wake/);
+    // A refreshed runtime policy may follow the persisted wait result.
+    assert.match(JSON.parse(init.body).messages.findLast(message => message.role === 'tool').content, /Scheduled wake/);
     return response('send_message', { kind: 'text', text: 'Finished after restart' });
   } });
   runner.start(); await until(() => state(id).status === 'completed'); await runner.close();

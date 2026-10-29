@@ -7,6 +7,7 @@ import { validateDiagram } from '../components/mermaid/diagramSchema';
 import { renderDiagram } from '../components/mermaid/diagramRender';
 import { sanitizeSvg } from '../components/mermaid/svgRender';
 import { renderMermaid } from '../components/mermaid/mermaidRender';
+import { validateWidgetArgs } from '../harness/widget';
 
 /** A separate, tool-free request: no chat history, other figures, or generated runtime libraries. */
 export async function editArtifact(input: {
@@ -32,7 +33,7 @@ export async function editArtifact(input: {
   return applyArtifactReply(input.source, parseArtifactReply(textOf(response)), input.mode);
 }
 
-export async function validateArtifact(kind: ArtifactKind, source: string): Promise<void> {
+export async function validateArtifact(kind: ArtifactKind, source: string, executableWidget = false): Promise<void> {
   if (kind === 'diagram') {
     let diagram: unknown;
     try { diagram = JSON.parse(source); } catch {
@@ -47,6 +48,9 @@ export async function validateArtifact(kind: ArtifactKind, source: string): Prom
     // Widgets frequently begin with <style> or <script>; static-answer routing has
     // a narrower root list and must not be reused to reject valid widget payloads.
     if (!/^\s*(?:<!--|<!doctype\s+html\b|<[a-z][\w:-]*(?:\s|\/?>))/i.test(source)) throw new Error('修改结果不是 HTML 源码');
-    // The original static sanitizer / sandbox remains the only rendering boundary.
+    if (executableWidget) {
+      const result = validateWidgetArgs({ format: 'html', code: source }, true);
+      if (!result.ok) throw new Error(`修改后的 HTML 未通过预检：${result.error}`);
+    }
   }
 }

@@ -126,6 +126,7 @@ try {
   const ask = id => {
     const m = bot.append(ilinkBinding.thread_id, 'assistant', 'approval', '需要确认生成文档。');
     store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,status,created_at) VALUES(?,?,?,?,?)').run(id, ilinkBinding.thread_id, m.id, 'pending', at);
+    return m.seq;
   };
   const flush = async () => { for (let i = 0; i < 15; i++) await gateway.tick(); };
   const decision = id => store.db.prepare('SELECT status FROM approvals WHERE id=?').get(id).status;
@@ -133,7 +134,7 @@ try {
   gateway.receive(ilink, [envelope('before-prompt', '同意')]);
   await flush();
   assert.equal(decision('text-approval'), 'pending', 'plain replies cannot approve a prompt that was not delivered');
-  assert.ok(sent.some(s => /批准 text-approval/.test(s.payload.text)));
+  assert.ok(sent.some(s => /待确认 \d+[\s\S]*同意 \d+/.test(s.payload.text)));
   const runsBeforeReply = countRuns();
   gateway.receive(ilink, [envelope('natural-yes', '同意。')]); await flush();
   assert.equal(decision('text-approval'), 'approved');
@@ -143,11 +144,19 @@ try {
   ask('text-reject'); await flush();
   gateway.receive(ilink, [envelope('natural-no', '拒绝')]); await flush();
   assert.equal(decision('text-reject'), 'rejected');
-  ask('choice-a'); ask('choice-b'); await flush();
+  const numberA = ask('choice-a'), numberB = ask('choice-b'); await flush();
   gateway.receive(ilink, [envelope('ambiguous-yes', '同意')]); await flush();
   assert.equal(decision('choice-a'), 'pending'); assert.equal(decision('choice-b'), 'pending');
-  gateway.receive(ilink, [envelope('choose-a', '批准 choice-a'), envelope('choose-b', '拒绝 choice-b')]); await flush();
+  gateway.receive(ilink, [envelope('approval-status', '/status')]); await flush();
+  assert.ok(sent.some(s => s.payload.text.includes(`${numberA}：需要确认生成文档。`) && s.payload.text.includes(`${numberB}：需要确认生成文档。`)));
+  gateway.receive(ilink, [envelope('choose-a', `同意 ${numberA}。`)]); await flush();
+  assert.equal(decision('choice-b'), 'pending', 'resolving one number does not renumber another approval');
+  gateway.receive(ilink, [envelope('choose-b', `拒绝 ${numberB}`)]); await flush();
   assert.equal(decision('choice-a'), 'approved'); assert.equal(decision('choice-b'), 'rejected');
+  ask('number-new'); await flush();
+  gateway.receive(ilink, [envelope('stale-number', `同意 ${numberA}`), envelope('unknown-number', '同意 999999999')]); await flush();
+  assert.equal(decision('number-new'), 'pending', 'stale and unknown numbers never select a new pending operation');
+  bot.resolve(owner, 'number-new', false, '', ilinkBinding.thread_id);
   ask('old-choice'); await flush();
   gateway.receive(ilink, [envelope('delayed-yes', '同意')]);
   bot.resolve(owner, 'old-choice', false, '', ilinkBinding.thread_id);

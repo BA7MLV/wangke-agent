@@ -56,6 +56,11 @@ export const WIDGET_STYLES = `
   .wbw-primary, button[aria-pressed="true"] { background: var(--wbw-foreground); color: var(--wbw-surface); }
   .wbw-stage { width: 100%; min-width: 0; }
   svg, img, canvas { max-width: 100%; height: auto; }
+  .wbw-image-placeholder {
+    display: inline-flex; align-items: center; justify-content: center; padding: 12px;
+    min-height: 64px; max-width: 100%; border-radius: var(--wbw-radius);
+    background: var(--wbw-surface); color: var(--wbw-muted); font-size: var(--wbw-font-size-small);
+  }
   .wbw-stage svg, .wbw-stage canvas {
     display: block; max-width: 100%; max-height: var(--wbw-available-height);
     width: auto; height: auto; margin-inline: auto; object-fit: contain;

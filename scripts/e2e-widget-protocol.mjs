@@ -80,6 +80,7 @@ try {
   const failingCode = '<section data-run="pending">失败示例</section><script>document.querySelector("section").dataset.run=String(Math.random());throw new Error("初始化示例错误")</script>';
   await page.evaluate(code => window.__deliver(code), failingCode);
   await host.getByTestId('widget-error').waitFor();
+  await host.getByText('运行详情', { exact: true }).click();
   await host.getByRole('button', { name: '查看 HTML 源码', exact: true }).click();
   assert.equal(await host.getByTestId('widget-source').textContent(), failingCode);
   const failedToken = await frame().locator('section').getAttribute('data-run');

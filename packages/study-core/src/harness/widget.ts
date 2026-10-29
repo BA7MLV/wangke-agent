@@ -26,6 +26,9 @@
  * html 是必须执行脚本的交互例外：载荷单独保存，正文引用负责定位隔离沙箱。
  */
 
+import { widgetResourceError } from './widgetResources.ts';
+export { MAX_WIDGET_IMAGES } from './widgetResources.ts';
+
 /** Shared wire contract. Runtime construction and rendering stay in the browser. */
 export type WidgetLib = 'chart.js';
 export interface WidgetPayload {
@@ -108,7 +111,7 @@ export const MAX_WIDGET_DOC = 320_000;
 const MAX_HTML = 60_000;
 
 /** 校验 show_widget 的入参。任何字段非法都返回**可直接照着改**的错误描述 */
-export function validateWidgetArgs(raw: unknown, legacyDocument = false): WidgetArgsValidation {
+export function validateWidgetArgs(raw: unknown, legacyDocument = false, resourcePreflight = true): WidgetArgsValidation {
   const a = (raw as { format?: unknown; code?: unknown; libs?: unknown; title?: unknown } | null) ?? {};
 
   const format = a.format;
@@ -152,7 +155,7 @@ export function validateWidgetArgs(raw: unknown, legacyDocument = false): Widget
       if (attr === 'href' && !value.startsWith('#'))
         return { ok: false, error: 'html 形态不支持外部链接或链接导航；交互请使用 data-wbw-prompt' };
       if (attr === 'src' && !/^data:image\//i.test(value))
-        return { ok: false, error: 'src 只允许内联 data:image；不要引用外部资源，交互请使用 data-wbw-prompt' };
+        return { ok: false, error: 'src 只允许已有的内联 data:image；不要引用外部资源或编造 Base64。材料原图改用 <img data-wbw-image="#source-image/材料ID/图片key" alt="说明">，其他图形用内联 SVG/CSS' };
     }
     // CSP 的 navigate-to 在部分 Chromium 版本里不会阻止 sandbox 文档导航，
     // 所以再挡住脚本里最直接的导航 API。widget 的交互桥只需要 DOM、计时器和
@@ -165,6 +168,10 @@ export function validateWidgetArgs(raw: unknown, legacyDocument = false): Widget
         return { ok: false, error: '脚本不能导航窗口或打开外部页面（location / window.open）；交互请使用 data-wbw-prompt' };
     }
 
+    // New generation/edit calls get actionable feedback. Replaying saved works
+    // keeps their content visible, with CSP and per-resource runtime diagnostics.
+    const resourceError = resourcePreflight ? widgetResourceError(code) : undefined;
+    if (resourceError) return { ok: false, error: resourceError };
     const libs = normalizeLibs(a.libs);
     if (!libs.ok) return libs;
     return { ok: true, args: { format, code, libs: libs.libs } };
