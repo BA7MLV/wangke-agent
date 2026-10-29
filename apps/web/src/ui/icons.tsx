@@ -73,6 +73,7 @@ import {
   IconMicrophoneFilled,
   IconMinimize,
   IconPalette,
+  IconPaperclip,
   IconPencil,
   IconPhoto,
   IconPhotoFilled,
@@ -121,6 +122,7 @@ export const ICON_STROKE = 1.75;
  */
 const ICONS: Record<string, Icon> = {
   add: IconPlus,
+  attach_file: IconPaperclip,
   add_photo_alternate: IconPhotoPlus,
   /** 会话归档（侧栏 Recent 的行尾菜单） */
   archive: IconArchive,

@@ -20,7 +20,7 @@
   margin: 0 auto;
   padding: 0;
   overflow: hidden;
-  border-radius: 14px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: 0 0 0 1px color-mix(in oklab, var(--foreground) 6%, transparent);
   list-style: none;
@@ -31,7 +31,7 @@
   position: relative;
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-right: 8px;
 }
 
 .ph-row + .ph-row::before {
@@ -50,7 +50,7 @@
   gap: 12px;
   min-width: 0;
   min-height: 60px;
-  padding: 10px 8px 10px 14px;
+  padding: 12px 8px 12px 16px;
   border: 0;
   background: transparent;
   color: inherit;
@@ -74,7 +74,7 @@
   place-items: center;
   width: 38px;
   height: 38px;
-  border-radius: 10px;
+  border-radius: var(--radius-chip);
   background: color-mix(in oklab, var(--accent) 14%, transparent);
   color: var(--accent);
   font-size: 1.25rem;
@@ -87,7 +87,7 @@
 
 .ph-row__body {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   flex: 1;
 }
@@ -118,7 +118,7 @@
 .ph-empty {
   display: grid;
   justify-items: center;
-  gap: 18px;
+  gap: 20px;
   padding: 12dvh 16px;
   color: var(--muted);
 }
@@ -128,7 +128,7 @@
   place-items: center;
   width: 88px;
   height: 88px;
-  border-radius: 24px;
+  border-radius: var(--radius-2xl);
   background: color-mix(in oklab, var(--accent) 12%, transparent);
   color: var(--accent);
   font-size: 2.5rem;
@@ -137,7 +137,7 @@
 
 .ph-empty__cta {
   min-height: 44px;
-  padding: 0 22px;
+  padding: 0 24px;
   border-radius: 999px;
   font-weight: 600;
 }
@@ -145,7 +145,7 @@
 .ph .bh-inline-error {
   display: grid;
   justify-items: center;
-  gap: 10px;
+  gap: 12px;
   padding: 20px 12px;
   color: var(--danger);
   font-size: 0.875rem;

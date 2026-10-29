@@ -118,7 +118,7 @@ BOOTSTRAP_TTL_MS=86400000
 # Set these to an HTTPS origin and its host before enabling Passkey.
 PUBLIC_ORIGIN=http://localhost:$PORT
 WEBAUTHN_RP_ID=localhost
-WEBAUTHN_RP_NAME=Wangke Agent
+WEBAUTHN_RP_NAME=DeepStudent Go
 # Initial model defaults. Configure all model services in the setup web page.
 MODEL_BASE_URL=https://api.openai.com/v1
 MODEL_API_KEY=

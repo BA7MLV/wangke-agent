@@ -546,7 +546,7 @@ async function chat(context: TaskContext) {
   const courses = rowsFor(context, 'videos');
   const contextNames = new Set<string>(Array.isArray(session.contextCourseIds) ? session.contextCourseIds : []);
   const contextHint = contextNames.size ? `\n当前固定课程上下文：${[...contextNames].join('、')}` : '';
-  const system = `你是 Wangke 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。${contextHint}\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。`;
+  const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。${contextHint}\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。`;
   const messages: ChatMessage[] = [{ role: 'system', content: system }, ...history.slice(-24).map(row => ({ role: row.role, content: String(row.content ?? '') }) as ChatMessage), { role: 'user', content: text }];
   const result = await runServerAgent(context, targetFor(context), messages, libraryTools(courses.length > 0), libraryExecutor(context, session));
   const userId = newRecordId();

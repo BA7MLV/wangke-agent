@@ -100,7 +100,7 @@
     "archived": "Archived",
     "conversation": "Conversation with {{name}}",
     "composer": "Message",
-    "taskPlaceholder": "Give your BOT a task…",
+    "taskPlaceholder": "Ask anything, or hold to speak",
     "projectPurpose": "Work on files and tasks in this project",
     "attach": "Add attachment",
     "attachment": "Attachment",

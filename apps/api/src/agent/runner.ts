@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
+import { parseBotAttachments } from '@wangke/contracts';
 import type { DatabaseStore } from '../storage/database.js';
-import { cancelSandbox, executeSandbox, type SandboxCleanup, type SandboxExecutor } from './sandbox.js';
+import { cancelSandbox, executeSandbox, readSandboxFile, type SandboxCleanup, type SandboxExecutor, type SandboxFileReader } from './sandbox.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import { DEFAULT_AGENT_POLICY, type AgentPolicy } from '@wangke/contracts/cloud';
 import { botRequest, botReply, responseContinuation, type ModelMessage as Message, type ModelCall as Call } from './model.js';
@@ -27,12 +28,12 @@ import { settleWithin } from '../lifecycle.js';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
 const now = () => new Date().toISOString();
-const conversationStyle = 'You may reply directly with ordinary assistant text, including a brief emoji when it fits the conversation; tools are not required for a reply. Use tools when you need to act or look something up. Handle context organization yourself. Never ask the user to press Continue task, adjust execution budgets, or operate a task dashboard. If you cannot finish, explain honestly in normal conversation without claiming an automatic retry that is not scheduled.';
+const conversationStyle = 'You may reply directly with ordinary assistant text, including a brief emoji when it fits the conversation; tools are not required for a reply. Use tools when you need to act or look something up. The user wants results: keep Python/shell commands, tool arguments, execution logs and routine progress internal. Send useful results, necessary questions and concise approval requests, not a narration of tool use. Decide what text and finished files to deliver. For ANY file generated in /workspace (including binary PDF, DOCX, ZIP or images), use study_upload_file(path) to register it, then study_send_file with the returned fileId if it belongs in the answer. Registration alone sends nothing. Do not claim workspace files cannot be attached or print their bytes/base64 into chat. For approvals describe the purpose in plain language; the runtime handles exact authorization and text replies in IM. Handle context organization yourself. Never ask the user to press Continue task, adjust execution budgets, or operate a task dashboard. If you cannot finish, explain honestly in normal conversation without claiming an automatic retry that is not scheduled.';
 const tool = (name: string, description: string, properties: object, required: string[]) => ({ type: 'function', function: { name, description, parameters: { type: 'object', additionalProperties: false, properties, required } } });
 const tools = [
-  tool('send_message', 'Send one separate message to the current conversation immediately. For conversational text, set complete=false to keep working or send more messages; complete=true ends the turn (default for legacy callers). progress always continues; question ends the turn; approval waits. Send actual images/files with study_send_file, not attachment JSON.', { kind: { type: 'string', enum: ['text', 'progress', 'question', 'approval', 'attachment'] }, text: { type: 'string', minLength: 1, maxLength: 12000 }, complete: { type: 'boolean', description: 'For text/legacy attachment messages: false continues the task, true finishes. Defaults to true.' } }, ['kind', 'text']),
+  tool('send_message', 'Send one separate result or necessary question to the current conversation. For conversational text, set complete=false to keep working or send more messages; complete=true ends the turn (default for legacy callers). progress is internal only, hidden in Web/IM, and always continues; question ends the turn; approval waits for a button or IM text reply. Keep code execution and routine status internal. Send actual images/files with study_send_file, not attachment JSON.', { kind: { type: 'string', enum: ['text', 'progress', 'question', 'approval', 'attachment'] }, text: { type: 'string', minLength: 1, maxLength: 12000 }, complete: { type: 'boolean', description: 'For text/legacy attachment messages: false continues the task, true finishes. Defaults to true.' } }, ['kind', 'text']),
   tool('finish_turn', 'Finish after your messages or files have already been sent. Emits no extra message: do not repeat delivered content in a final summary.', {}, []),
-  tool('shell', 'Execute bash in your isolated Linux workspace. Read/write files, run Python/Node, test programs. Files in /workspace persist across commands. Each command starts a fresh container; keep dependencies in /workspace (venv, node_modules). No host access. Maximum 120 seconds per command. Set requiresApproval=true for destructive or externally impactful work.', { command: { type: 'string' }, requiresApproval: { type: 'boolean' } }, ['command']),
+  tool('shell', 'Execute bash privately in your isolated Linux workspace. Read/write files, run Python/Node, test programs. Files in /workspace persist across commands. Each command starts a fresh container; keep dependencies in /workspace (venv, node_modules). No host access. Maximum 120 seconds per command. Set requiresApproval=true for destructive or externally impactful work. Give description as a short user-facing purpose (including important effects), never code. To deliver a generated binary file use study_upload_file then study_send_file.', { command: { type: 'string' }, description: { type: 'string', maxLength: 300 }, requiresApproval: { type: 'boolean' } }, ['command']),
   tool('wait', 'Persist this task and wake it later, without keeping a model request or browser open.', { seconds: { type: 'integer', minimum: 1, maximum: 86400 }, reason: { type: 'string' } }, ['seconds', 'reason']),
 ];
 
@@ -56,7 +57,7 @@ export class BotRunner {
   private readonly projects?: ProjectRepository;
   private readonly projectTools?: ProjectTools;
   private readonly settingsTools?: BotSettingsTools;
-  constructor(private readonly store: DatabaseStore, private readonly options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxCleanup?: SandboxCleanup; configuration?: CloudConfiguration; study?: StudyTools; mcp?: McpManager; projects?: ProjectRepository; onEvent?: BotEventHook } = {}) {
+  constructor(private readonly store: DatabaseStore, private readonly options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxFile?: SandboxFileReader; sandboxCleanup?: SandboxCleanup; configuration?: CloudConfiguration; study?: StudyTools; mcp?: McpManager; projects?: ProjectRepository; onEvent?: BotEventHook } = {}) {
     this.mcp = options.mcp;
     this.configuration = options.configuration;
     this.fetcher = options.fetch ?? fetch;
@@ -179,8 +180,13 @@ export class BotRunner {
   }
 
   private initialContext(run: Run): Message[] {
-    const history = this.store.db.prepare(`SELECT seq,role,content FROM messages WHERE thread_id=? AND kind IN ('text','attachment') AND role IN ('user','assistant')
-      AND seq <= COALESCE((SELECT seq FROM messages WHERE id=?),9223372036854775807) ORDER BY seq DESC LIMIT 40`).all(run.thread_id, run.trigger_message_id) as Array<Message & { seq: number }>;
+    const history = (this.store.db.prepare(`SELECT seq,role,kind,content FROM messages WHERE thread_id=? AND kind IN ('text','attachment') AND role IN ('user','assistant')
+      AND seq <= COALESCE((SELECT seq FROM messages WHERE id=?),9223372036854775807) ORDER BY seq DESC LIMIT 40`).all(run.thread_id, run.trigger_message_id) as Array<Message & { seq: number; kind: string }>).map(({ kind, ...message }) => {
+        const attachment = kind === 'attachment' ? parseBotAttachments(message.content ?? '') : null;
+        return attachment ? { ...message, content: [attachment.text, ...attachment.files.map(file => file.fileId
+          ? `Attachment fileId=${file.fileId}, name=${file.originalName ?? file.name ?? 'attachment'}, mime=${file.mimeType ?? 'application/octet-stream'}. Use study_file to read/understand it.`
+          : `Project attachment: ${JSON.stringify(file)}. Read it from the current project workspace.`)].filter(Boolean).join('\n') } : message;
+      });
     const thread = this.thread(run.thread_id);
     const profiles = thread.project_id
       ? this.store.db.prepare('SELECT name,role,system_prompt FROM agent_profiles WHERE id=? AND enabled=1').all(thread.agent_id)
@@ -543,7 +549,7 @@ export class BotRunner {
             this.store.transaction(() => {
               scoped.checkActive();
               this.store.db.prepare("UPDATE run_steps SET status='waiting_approval',arguments=? WHERE id=?").run(JSON.stringify({ command: args.command, network }), call.id);
-              const message = appendActive('approval', `请求执行命令（联网：${network ? '允许' : '禁止'}）：\n${args.command}`);
+               const message = appendActive('approval', `需要你的确认：${args.description?.trim() || '在工作区运行程序，处理当前任务'}${network ? '（可联网）' : ''}。是否允许这次操作？`);
               this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,step_id,status,created_at) VALUES(?,?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, call.id, 'pending', now());
               this.store.db.prepare("UPDATE runs SET status='waiting_user' WHERE id=?").run(run.id);
               suspended = true;
@@ -553,7 +559,6 @@ export class BotRunner {
           }
           if (permission === 'deny') result = 'Command denied by policy.';
           else {
-          appendActive('progress', `执行第 ${run.step_count} 步：\n${args.command.slice(0, 2000)}`);
           try { result = JSON.stringify(await this.runSandbox({ threadId: run.thread_id, projectId: thread.project_id ?? undefined, executionId: call.id, command: args.command, network }, signal)); }
           catch { if (signal.aborted) throw new Error('cancelled'); throw new Error('sandbox_unavailable'); }
           }
@@ -567,7 +572,7 @@ export class BotRunner {
           if (fileAttachment) result = 'File attachments must use study_send_file with the owned fileId; send_message cannot bypass read policy or approval.';
           else {
           const message = appendActive(args.kind, args.text, `bot:${call.id}:message`);
-          result = 'Message delivered.';
+           result = args.kind === 'progress' ? 'Progress recorded internally; not shown to the user.' : 'Message delivered.';
           if (args.kind === 'approval') {
             this.store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,run_id,status,created_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), run.thread_id, message.id, run.id, 'pending', now());
             state = 'waiting_user';
@@ -637,7 +642,7 @@ export class BotRunner {
       const code = error instanceof ModelFailure ? error.code : error instanceof Error && ['model_not_configured', 'sandbox_unavailable', 'invalid_structured_response', 'model_incomplete_or_refused'].includes(error.message) ? error.message : 'model_request_failed';
       this.store.db.prepare("UPDATE run_steps SET status='failed',result=?,completed_at=? WHERE run_id=? AND status='running'").run(code, now(), run.id);
       this.store.db.prepare("UPDATE run_steps SET status='interrupted',result='Not executed: task failed.',completed_at=? WHERE run_id=? AND status='queued'").run(now(), run.id);
-      if (code === 'sandbox_unavailable') this.append(run.thread_id, 'progress', '沙盒服务不可用，任务已停止。请检查后端沙盒配置。');
+      if (code === 'sandbox_unavailable') this.append(run.thread_id, 'text', '暂时无法完成这次处理，执行服务当前不可用。');
       this.store.db.prepare("UPDATE runs SET status='failed',completed_at=?,error_code=? WHERE id=? AND status='running'").run(now(), code, run.id);
     } finally {
       clearInterval(monitor);
@@ -664,7 +669,25 @@ export class BotRunner {
       const registry = new ToolRegistry();
       registry.register(this.options.study!.definitions().find(d => d.function.name === name)!, ['read', 'grep', 'checkpoint_read', 'study_read'].includes(name) ? 'read' : 'uncertain');
       const outcome = await registry.execute(name, args, { owner, thread: run.thread_id, run: run.id, step, signal, checkActive }, async scoped => {
-        return plugin.execute(args, { ...scoped, append: (kind, text) => { scoped.checkActive(); return this.append(run.thread_id, kind, text, `bot:${step}:attachment`); } });
+        return plugin.execute(args, { ...scoped,
+          readWorkspaceFile: async path => {
+            scoped.checkActive();
+            const thread = this.thread(run.thread_id);
+            this.authorize(thread);
+            if (thread.project_id) this.projects!.beginExecution(thread.project_id, step);
+            try {
+              const bytes = await (this.options.sandboxFile ?? readSandboxFile)({ threadId: run.thread_id, projectId: thread.project_id ?? undefined, executionId: step, path }, scoped.signal);
+              if (thread.project_id) this.projects!.endExecution(step);
+              scoped.checkActive();
+              return bytes;
+            } catch (error) {
+              if (thread.project_id) {
+                try { await this.sandboxCleanup(step); this.projects!.endExecution(step); } catch { /* Keep lease until cleanup is confirmed. */ }
+              }
+              throw error;
+            }
+          },
+          append: (kind, text) => { scoped.checkActive(); return this.append(run.thread_id, kind, text, `bot:${step}:attachment`); } });
       });
       if (!outcome.ok) { if (outcome.error.code === 'tool_timeout') throw new BudgetBlocked('tool_timeout'); return JSON.stringify(outcome); }
       const value = outcome.value;

@@ -1,4 +1,5 @@
 export type ConversationMode = 'chat' | 'bot';
+export { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS, type BotAttachment } from './bot-attachments.js';
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface ThreadDto {

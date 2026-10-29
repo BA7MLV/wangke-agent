@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
+import { parseBotAttachments } from '@wangke/contracts';
 import type { ProjectRepository } from './repository.js';
 
 type Source = { id: string; storage_name: string; original_name: string; sha256: string; created_at: string };
@@ -25,6 +26,13 @@ export function importBotAttachments(projects: ProjectRepository, filesDir: stri
     WHERE t.owner_id=? AND t.mode='bot' AND m.role='user' AND instr(m.content,'Attachment fileId=')>0`).all(owner) as { content: string }[];
   const lookup = db.prepare(`SELECT id,storage_name,original_name,sha256,created_at FROM files f WHERE id=? AND owner_id=?
     AND NOT EXISTS (SELECT 1 FROM resource_attachments a WHERE a.owner_id=f.owner_id AND a.file_id=f.id AND a.status='done')`);
+  const batches = db.prepare(`SELECT m.content FROM messages m JOIN threads t ON t.id=m.thread_id
+    WHERE t.owner_id=? AND t.mode='bot' AND m.kind='attachment' AND instr(m.content,'"attachments"')>0`).all(owner) as { content: string }[];
+  for (const message of batches) for (const file of parseBotAttachments(message.content)?.files ?? []) {
+    if (!file.fileId || sources.has(file.fileId)) continue;
+    const source = lookup.get(file.fileId, owner) as Source | undefined;
+    if (source) sources.set(source.id, source);
+  }
   for (const message of legacy) for (const match of message.content.matchAll(/Attachment fileId=([a-f0-9-]{36}),/g)) {
     if (sources.has(match[1])) continue;
     const source = lookup.get(match[1], owner) as Source | undefined;

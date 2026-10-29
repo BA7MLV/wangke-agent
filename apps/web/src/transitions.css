@@ -823,7 +823,7 @@ html.dark {
   display: grid;
   grid-template-columns: repeat(4, 2px);
   grid-auto-rows: 2px;
-  gap: 2px;
+  gap: 4px;
 }
 .t-matrix i {
   display: block;

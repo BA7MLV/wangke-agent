@@ -10,12 +10,12 @@
 .plan-card {
   margin-top: 12px;
   border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-lg);
+  border-radius: var(--radius-2xl);
   background: var(--background-secondary);
 }
 
 .ask-card {
-  padding: 12px 14px 10px;
+  padding: 16px;
 }
 
 /* ── 提问卡 ──────────────────────────────────────────────────────────────── */
@@ -24,7 +24,7 @@
 .plan-card__head {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--accent);
   font-size: 0.75rem;
   font-weight: 500;
@@ -47,7 +47,7 @@
    否则刷新后一张明明该是「上次那个问题」的卡还亮着，会以为是新问的 */
 .ask-card__restored {
   margin-left: auto;
-  padding: 1px 8px;
+  padding: 0 8px;
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -68,7 +68,7 @@
   margin: 0;
   border: 0;
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 
 .ask-card__hint {
@@ -130,7 +130,7 @@
   height: 20px;
   display: grid;
   place-items: center;
-  border-radius: 6px;
+  border-radius: var(--radius-xs);
   background: var(--default-soft);
   color: var(--muted);
   font-size: 0.6875rem;
@@ -194,7 +194,7 @@
   padding: 0 8px;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -232,7 +232,7 @@
 /* ── 方案卡 ──────────────────────────────────────────────────────────────── */
 
 .plan-card {
-  padding: 12px 14px 12px;
+  padding: 16px;
 }
 
 .plan-card__count {
@@ -257,11 +257,11 @@
 
 .plan-card__folders {
   display: grid;
-  gap: 10px;
+  gap: 12px;
 }
 
 .plan-folder {
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-radius: var(--radius);
   background: var(--background);
 }
@@ -270,7 +270,7 @@
   margin: 0 0 4px;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--foreground);
   font-size: 0.875rem;
   font-weight: 500;
@@ -296,7 +296,7 @@
 
 .plan-folder__course {
   max-width: 100%;
-  padding: 3px 6px;
+  padding: 4px 8px;
   border: 0;
   border-radius: var(--radius-sm);
   background: transparent;
@@ -320,7 +320,7 @@
 .plan-folder__unknown,
 .plan-folder__empty,
 .plan-folder__loading {
-  padding: 3px 6px;
+  padding: 4px 8px;
   color: var(--muted);
   font-size: 0.75rem;
 }
@@ -335,7 +335,7 @@
   margin: 12px 0 0;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   color: var(--muted);
   font-size: 0.75rem;
   line-height: 1.5;
@@ -356,7 +356,7 @@
 }
 
 .plan-card__link {
-  padding: 0 2px;
+  padding: 0 4px;
   border: 0;
   background: transparent;
   color: var(--accent);
@@ -375,7 +375,7 @@
 @media (max-width: 760px) {
   .ask-card,
   .plan-card {
-    padding: 10px 11px;
+    padding: 12px;
   }
 
   .ask-option {

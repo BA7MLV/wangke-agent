@@ -4,7 +4,7 @@ export const WIDGET_STYLES = `
     color-scheme: light;
     --wbw-foreground: CanvasText; --wbw-muted: GrayText;
     --wbw-surface: Canvas; --wbw-border: GrayText; --wbw-accent: Highlight;
-    --wbw-accent-foreground: HighlightText; --wbw-focus: Highlight; --wbw-radius: .375rem;
+    --wbw-accent-foreground: HighlightText; --wbw-focus: Highlight; --wbw-radius: .5rem;
     --wbw-font-family: -apple-system, BlinkMacSystemFont, 'PingFang SC', sans-serif;
     --wbw-font-size: 14px; --wbw-font-size-small: 12px;
     --wbw-series-1: var(--wbw-accent);
@@ -17,9 +17,13 @@ export const WIDGET_STYLES = `
     color-scheme: dark;
   }
   *, *::before, *::after { box-sizing: border-box; }
+  @supports (corner-shape: superellipse(1.25)) {
+    :where(*, *::before, *::after) { corner-shape: superellipse(1.25); }
+    input[type="radio"] { corner-shape: round; }
+  }
   html { --wbw-available-height: 560px; }
   body {
-    margin: 0; padding: 4px 2px; min-width: 0;
+    margin: 0; padding: 4px; min-width: 0;
     font-family: var(--wbw-font-family);
     font-size: var(--wbw-font-size); font-weight: 400; line-height: 1.5;
     color: var(--wbw-foreground); background: transparent; overflow-wrap: anywhere;
@@ -73,14 +77,14 @@ export const WIDGET_STYLES = `
   .wbw-table { max-width: 100%; overflow-x: auto; }
   .wbw-table table { width: 100%; }
   .wbw-num { text-align: end; font-variant-numeric: tabular-nums; }
-  .wbw-badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: var(--wbw-radius); background: var(--wbw-surface); font-size: var(--wbw-font-size-small); }
+  .wbw-badge { display: inline-flex; align-items: center; padding: 4px 8px; border-radius: var(--wbw-radius); background: var(--wbw-surface); font-size: var(--wbw-font-size-small); }
   .wbw-badge[data-tone="success"] { color: var(--wbw-success); }
   .wbw-badge[data-tone="warning"] { color: var(--wbw-warning); }
   .wbw-badge[data-tone="error"], .wbw-error { color: var(--wbw-danger); }
   .wbw-error { margin: 0; font-size: var(--wbw-font-size-small); }
   [aria-invalid="true"] { border-color: var(--wbw-danger); }
   .wbw-legend { display: flex; flex-wrap: wrap; gap: 8px 16px; margin-block: 8px; }
-  .wbw-legend > span { display: inline-flex; align-items: center; gap: 6px; }
+  .wbw-legend > span { display: inline-flex; align-items: center; gap: 8px; }
   .wbw-swatch { display: inline-block; width: 1.5em; border-top: 3px solid var(--series-color, var(--wbw-series-1)); }
   @media (pointer: coarse) {
     button, select, input:not([type="checkbox"]):not([type="radio"]) { min-height: 44px; }

@@ -31,7 +31,7 @@ targets:
         SWIFT_VERSION: "5.9"
         TARGETED_DEVICE_FAMILY: "1,2"
         GENERATE_INFOPLIST_FILE: YES
-        INFOPLIST_KEY_CFBundleDisplayName: 网课助手
+        INFOPLIST_KEY_CFBundleDisplayName: DeepStudent Go
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_UIApplicationSceneManifest_Generation: YES
         INFOPLIST_KEY_UISupportedInterfaceOrientations: "UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight"
@@ -43,4 +43,4 @@ targets:
         # 自建服务常见的是局域网 http 地址；只放行本地网络，公网仍然要求 https。
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-        NSLocalNetworkUsageDescription: 连接你在局域网里部署的网课助手服务。
+        NSLocalNetworkUsageDescription: 连接你在局域网里部署的 DeepStudent Go 服务。

@@ -15,7 +15,7 @@
  */
 .page-study {
   --heat-cell: 11px;
-  --heat-gap: 3px;
+  --heat-gap: 4px;
   --heat-pitch: calc(var(--heat-cell) + var(--heat-gap));
   --heat-label-w: 20px;
   --heat-label-gap: 4px;
@@ -40,8 +40,8 @@
 }
 
 .study-tile {
-  padding: 12px 14px;
-  border-radius: var(--radius);
+  padding: 12px 16px;
+  border-radius: var(--radius-panel);
   background: var(--background-secondary);
 }
 
@@ -72,7 +72,7 @@
   display: block;
   width: 76px;
   height: 20px;
-  border-radius: 6px;
+  border-radius: var(--radius-chip);
 }
 
 .study-tile .skel-bar--sub {
@@ -102,7 +102,7 @@
 .study-live {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
 }
 
 .study-live__dot {
@@ -139,7 +139,7 @@
   position: relative;
   overflow-x: auto;
   overflow-y: hidden;
-  padding: 34px 0 6px;
+  padding: 36px 0 8px;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -209,7 +209,7 @@
 .heat-cell {
   width: var(--heat-cell);
   height: var(--heat-cell);
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: var(--heat-l0);
 }
 
@@ -244,7 +244,7 @@
   transform: translate(-50%, -100%);
   display: flex;
   flex-direction: column;
-  padding: 5px 9px;
+  padding: 4px 8px;
   border-radius: var(--radius-xs);
   background: var(--heat-tip-bg);
   color: var(--heat-tip-fg);
@@ -283,7 +283,7 @@
 .study-recent {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
 }
 
 .study-recent__row {
@@ -291,7 +291,7 @@
   /* 日期列要放得下「9月16日 周三」（12px 字号约 78px），否则文字会顶到条形上 */
   grid-template-columns: 88px 1fr 84px;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   font-size: 12px;
 }
 
@@ -302,7 +302,7 @@
 
 .study-recent__bar {
   height: 10px;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--heat-l0);
   overflow: hidden;
 }
@@ -310,7 +310,7 @@
 .study-recent__fill {
   display: block;
   height: 100%;
-  border-radius: 5px;
+  border-radius: var(--radius-xs);
   background: var(--heat-l2);
 }
 

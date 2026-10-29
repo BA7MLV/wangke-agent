@@ -76,6 +76,16 @@ try {
   service.append(scopedThread, 'assistant', 'attachment', JSON.stringify({ fileId: scopedExport.id }));
   assert.ok(resources.list(owner).entries.some(e => e.name === 'scoped-export.csv'), 'blob exports from project conversations are visible too');
 
+  const batchFiles = await Promise.all(['batch-a.txt', 'batch-b.txt'].map(name => upload(owner, name)));
+  const batch = { attachments: batchFiles.map(file => ({ fileId: file.id })), caption: 'Read both' };
+  const beforeBatch = store.db.prepare('SELECT COUNT(*) n FROM runs WHERE thread_id=?').get(thread.id).n;
+  service.send(owner, thread.id, { clientNonce: 'batch', kind: 'attachment', content: JSON.stringify(batch) });
+  assert.equal(store.db.prepare('SELECT COUNT(*) n FROM runs WHERE thread_id=?').get(thread.id).n, beforeBatch + 1, 'one run for the entire composed message');
+  assert.ok(resources.list(owner).entries.some(e => e.name === 'batch-a.txt'));
+  assert.ok(resources.list(owner).entries.some(e => e.name === 'batch-b.txt'), 'every batched file reaches the resource library');
+  assert.throws(() => service.send(owner, thread.id, { clientNonce: 'foreign-batch', kind: 'attachment', content: JSON.stringify({ attachments: [{ fileId: photo.id }, { fileId: privateFile.id }] }) }), /invalid_message/);
+  assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE client_nonce='foreign-batch'").get(), undefined, 'mixed-owner batches are rejected atomically');
+
   const pref = (id, value) => store.db.prepare("INSERT INTO cloud_records(owner_id,table_name,record_key,value) VALUES(?,'preferences',?,?) ON CONFLICT(owner_id,table_name,record_key) DO UPDATE SET value=excluded.value").run(owner, JSON.stringify(id), JSON.stringify({ id, value }));
   const provider = { id: 'main', name: 'Main', baseUrl: 'https://model.invalid/v1', protocol: 'openai-chat', apiKey: 'test', serves: ['chat'], catalogId: '' };
   config.save(owner, { ...config.get(owner, true), providers: [provider], llmModel: { providerId: 'main', model: 'custom' }, botBudget: { runTokens: 250000, dayTokens: 1000000, activeMs: 900000, contextTokens: 32000, prices: [] } });

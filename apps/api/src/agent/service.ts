@@ -1,5 +1,6 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
+import { parseBotAttachments } from '@wangke/contracts';
 import type { DatabaseStore } from '../storage/database.js';
 import type { BotRunner } from './runner.js';
 import type { ProjectRepository } from '../projects/repository.js';
@@ -46,12 +47,13 @@ export class BotApplicationService {
     }
     if (!input.clientNonce || input.clientNonce.length > 200 || typeof input.content !== 'string' || input.content.length > 100000) throw new Error('invalid_message');
     if (input.kind === 'attachment') {
-      const attachment = JSON.parse(input.content);
-      if (thread.project_id) {
+      const parsed = parseBotAttachments(input.content);
+      if (!parsed) throw new Error('invalid_message');
+      for (const attachment of parsed.files) if (thread.project_id) {
         if (attachment.projectId !== thread.project_id || typeof attachment.projectPath !== 'string') throw new Error('invalid_message');
         if (process.platform !== 'linux') this.projects!.assertIdle(thread.project_id);
         const file = this.projects!.files.open(thread.project_id, attachment.projectPath); fs.closeSync(file.fd);
-      } else if (!this.store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(attachment.fileId, owner)) throw new Error('invalid_message');
+      } else if (!attachment.fileId || !this.store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(attachment.fileId, owner)) throw new Error('invalid_message');
     }
     const message = this.store.transaction(() => {
       const old = this.store.db.prepare('SELECT * FROM messages WHERE thread_id=? AND client_nonce=?').get(threadId, input.clientNonce) as any;
@@ -72,7 +74,7 @@ export class BotApplicationService {
     const runs = this.store.db.prepare("SELECT id FROM runs WHERE thread_id=? AND (status IN ('queued','running','waiting_user','paused') OR id IN (SELECT parent_run_id FROM cloud_tasks WHERE status IN ('queued','running','waiting_user')))").all(threadId) as any[];
     this.store.transaction(() => {
       this.store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE thread_id=? AND status IN ('queued','running','waiting_user','paused')").run(now(), threadId);
-      if (runs.length) this.append(threadId, 'assistant', 'progress', '任务已停止。');
+      if (runs.length) this.append(threadId, 'assistant', 'text', '任务已停止。');
     });
     for (const run of runs) this.runner.cancel(run.id);
     return { stopped: runs.length };
@@ -109,7 +111,7 @@ export class BotApplicationService {
     if (!row) return null;
     this.store.transaction(() => {
       const changed = this.store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=? AND status NOT IN ('completed','failed','cancelled')").run(now(), id);
-      if (changed.changes) this.append(row.thread_id, 'assistant', 'progress', `任务 ${id} 已取消。`);
+       if (changed.changes) this.append(row.thread_id, 'assistant', 'text', '任务已取消。');
     });
     this.runner.cancel(id);
     const updated = this.store.db.prepare('SELECT * FROM runs WHERE id=?').get(id) as any;

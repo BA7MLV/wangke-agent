@@ -20,7 +20,7 @@ Worker 本身**不存储任何数据**，只做请求转发，源码全部可见
    ```
    https://bili-proxy.yourname.workers.dev
    ```
-5. 打开网课学习助手 → **设置 → 哔哩哔哩导入 → 代理地址**，粘贴该地址并保存。
+5. 打开 DeepStudent Go → **设置 → 哔哩哔哩导入 → 代理地址**，粘贴该地址并保存。
 
 ## 可选：限制只允许你的前端访问
 
@@ -42,7 +42,7 @@ const ALLOWED_ORIGIN = 'https://wangke.example.com';
 
 > 这些差别来自 B 站自己的权限判定，不是本工具的能力。请遵守哔哩哔哩用户协议，勿用它下载会员专享内容。
 
-登录方式：在浏览器里登录 bilibili.com，按 F12 → Application → Cookies → `https://www.bilibili.com`，把 `SESSDATA` 的值复制到网课学习助手的「设置 → 哔哩哔哩导入 → B 站 Cookie」里，格式：
+登录方式：在浏览器里登录 bilibili.com，按 F12 → Application → Cookies → `https://www.bilibili.com`，把 `SESSDATA` 的值复制到 DeepStudent Go 的「设置 → 哔哩哔哩导入 → B 站 Cookie」里，格式：
 
 ```
 SESSDATA=你的SESSDATA值

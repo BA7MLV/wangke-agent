@@ -108,11 +108,17 @@ try {
   const secretWrite = await runTool('settings', { action: 'set_provider', expectedRevision: revision(), providerId: 'model', provider: { apiKey: 'forged' } });
   assert.match(secretWrite.result, /invalid_provider/);
 
-  await runTool('shell', { command: 'node -e "console.log(42)"' });
+  const privateShell = await runTool('shell', { command: 'node -e "console.log(42)"' });
+  assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE thread_id=? AND kind='progress' AND content LIKE '%console.log%' ").get(threadId), undefined);
+  assert.match(store.db.prepare('SELECT arguments FROM run_steps WHERE run_id=? AND tool=\'shell\'').get(privateShell.id).arguments, /console.log/, 'command stays in internal execution evidence');
   assert.equal(commands, 1);
   await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: false });
   assert.equal(commands, 1);
-  await runTool('shell', { command: 'python publish.py', requiresApproval: true }, { approved: false });
+  await runTool('shell', { command: 'python publish.py', description: '将生成的报告发布到指定网站', requiresApproval: true }, { approved: false, beforeResolve: () => {
+    const prompt = store.db.prepare("SELECT content FROM messages WHERE thread_id=? AND kind='approval' ORDER BY seq DESC LIMIT 1").get(threadId).content;
+    assert.match(prompt, /将生成的报告发布到指定网站/);
+    assert.doesNotMatch(prompt, /python|publish.py/);
+  } });
   assert.equal(commands, 1);
   await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: true, restart: true });
   assert.equal(commands, 2, 'one approved operation is executed exactly once after restart');

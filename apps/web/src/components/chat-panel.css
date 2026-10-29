@@ -20,7 +20,7 @@
   flex: 0 0 auto;
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .chat-effort-label {
@@ -60,7 +60,7 @@
 .chat-message-actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-top: 4px;
   margin-left: -6px; /* 抵消图标自身留白，让第一个图标与正文左缘对齐 */
   opacity: 0;
@@ -153,7 +153,7 @@
 /* 用户发言：右对齐药丸。面板本身是 --surface，气泡改用淡一档的底色才看得见。 */
 .chat-bubble--user {
   max-width: min(86%, 560px);
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-radius: var(--radius-2xl);
   background: var(--default-soft);
   color: var(--foreground);
@@ -204,7 +204,7 @@
   gap: 4px;
   color: var(--muted);
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .chat-user-expand:hover {
@@ -252,7 +252,7 @@
 
 /* 回答中断的消息：整体降为错误容器色，让「失败」一眼可见 */
 .chat-msg[data-error='true'] .chat-bubble--ai {
-  padding: 12px 14px;
+  padding: 12px 16px;
   border-radius: var(--radius-lg);
   background: var(--danger-soft);
   color: var(--danger-soft-foreground);
@@ -293,8 +293,8 @@
   position: absolute;
   left: 2px;
   bottom: 2px;
-  padding: 0 3px;
-  border-radius: 2px;
+  padding: 0 4px;
+  border-radius: var(--radius-xs);
   font-size: 10px;
   color: #fff;
   background: rgba(0, 0, 0, 0.55);
@@ -363,7 +363,7 @@ html[data-keyboard='open'] .chat-composer {
   gap: 4px;
   padding: 8px 12px;
   border: 1px solid var(--border);
-  border-radius: 24px;
+  border-radius: var(--radius-2xl);
   background: var(--background);
   box-shadow: var(--shadow-sm);
 }
@@ -387,7 +387,7 @@ html[data-keyboard='open'] .chat-composer {
   width: 100%;
   min-height: calc(1.6em + 10px);
   max-height: min(180px, 25dvh);
-  padding: 5px 0;
+  padding: 4px 0;
   resize: none;
   border: 0;
   background: transparent;
@@ -449,14 +449,14 @@ html[data-keyboard='open'] .chat-composer {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  padding-bottom: 6px;
+  padding-bottom: 8px;
 }
 
 .chat-ref {
   display: flex;
   align-items: flex-start;
   gap: 8px;
-  padding: 6px 6px 6px 8px;
+  padding: 8px;
   border-radius: var(--radius-sm);
   background: var(--default-soft);
   border-left: 3px solid var(--accent);
@@ -467,7 +467,7 @@ html[data-keyboard='open'] .chat-composer {
   width: 40px;
   height: 40px;
   object-fit: cover;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
   background: #fff;
 }
 
@@ -476,14 +476,14 @@ html[data-keyboard='open'] .chat-composer {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   font-size: 12px;
   line-height: 1.45;
 }
 
 .chat-ref__where {
   align-self: flex-start;
-  padding: 0 6px;
+  padding: 0 8px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-soft-foreground);
@@ -517,7 +517,7 @@ html[data-keyboard='open'] .chat-composer {
 .chat-quote {
   display: block;
   margin-bottom: 6px;
-  padding: 6px 8px;
+  padding: 8px;
   border-left: 3px solid var(--accent);
   border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
   background: rgba(var(--default), 0.7);
@@ -555,7 +555,7 @@ html[data-keyboard='open'] .chat-composer {
   align-items: flex-start;
   gap: 8px;
   margin: 0 0 6px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-size: 12px;
   line-height: 1.5;
   border-radius: var(--radius-sm);

@@ -1,11 +1,11 @@
 .ink-toolbar { flex: none; padding: 8px 12px; border-bottom: 1px solid var(--border); background: var(--surface); }
 .ink-toolbar__header { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
-.ink-toolbar__header button { min-height: 44px; gap: 6px; }
+.ink-toolbar__header button { min-height: 44px; gap: 8px; }
 .ink-toolbar > [hidden] { display: none; }
 .ink-toolbar__header + div:not([hidden]) { margin-top: 4px; }
 .ink-toolbar__tools { display: flex; flex-wrap: wrap; align-items: center; gap: 4px; }
 .ink-toolbar__tools :is(button, select, input) { min-height: 44px; }
-.ink-toolbar__tools button { gap: 6px; }
+.ink-toolbar__tools button { gap: 8px; }
 .ink-toolbar__hint { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 4px 16px; margin-top: 4px; font-size: 12px; color: var(--muted); text-wrap: pretty; }
 .ink-color { display: flex; align-items: center; padding: 0 4px; }
 .ink-color input { width: 36px; padding: 4px; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); cursor: pointer; }

@@ -19,8 +19,7 @@ import '@fontsource/roboto/latin-500.css';
 // 那是个纯 JS 模块（只导出 buttonVariants 之类的样式函数），**不含任何 CSS**。
 // 症状很有迷惑性：DOM 上 class="button button--md button--secondary" 齐全、
 // 组件也渲染出来了，但 computed style 一条都对不上（按钮 56×25、Switch 0×0）。
-// 放在应用自己的样式之前，让 theme.css 保持在最后一层。
-import '@heroui/styles/css';
+// 在 theme.css 的同一个 CSS 入口先引入 HeroUI，再覆盖圆角主题令牌。
 import './theme.css';
 import './transitions.css';
 import './handout-doc.css';

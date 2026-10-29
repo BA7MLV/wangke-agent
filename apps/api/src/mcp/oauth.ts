@@ -23,7 +23,7 @@ export class McpOAuthProvider implements OAuthClientProvider {
   }
   private update(fn: (data: OAuthData) => OAuthData) { this.repository.updateOAuth(this.owner, this.id, this.revision, fn); }
   get redirectUrl() { return this.data().redirectUrl; }
-  get clientMetadata() { return { client_name: 'Wangke MCP', redirect_uris: this.redirectUrl ? [this.redirectUrl] : [], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' }; }
+  get clientMetadata() { return { client_name: 'DeepStudent Go', redirect_uris: this.redirectUrl ? [this.redirectUrl] : [], grant_types: ['authorization_code', 'refresh_token'], response_types: ['code'], token_endpoint_auth_method: 'none' }; }
   clientInformation() { return this.data().client; }
   saveClientInformation(client: OAuthClientInformationMixed) { this.update(d => ({ ...d, client })); }
   tokens() { return this.data().tokens; }

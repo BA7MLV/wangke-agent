@@ -19,6 +19,7 @@ import ImagePreview from '../components/ImagePreview';
 import { formatSize } from '../utils/format';
 import { probeDuration } from '../utils/mediaDuration';
 import { useIsMobile } from '../utils/useMobile';
+import { canDropResourceInto, createFolderSpringLoader, RESOURCE_DRAG_TYPE } from '../utils/resourceDrag';
 import './library.css';
 import '../projects/projects.css';
 import './resources.css';
@@ -61,6 +62,10 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const [settings, setSettings] = useState<{ project: ProjectDetailDto; agents: AgentProfileDto[] } | null>(null);
   const [editor, setEditor] = useState<{ projectId: string; path: string; text: string; revision: string | null } | null>(null);
   const [image, setImage] = useState<ResourceEntry | null>(null);
+  const [draggedEntry, setDraggedEntry] = useState<ResourceEntry | null>(null);
+  const [dropTarget, setDropTarget] = useState<string | null>(null);
+  const [springLoader] = useState(createFolderSpringLoader);
+  const dragSession = useRef<{ entry: ResourceEntry; search: string; query: string; opened: boolean } | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const locationKey = `${projectId ?? ''}:${directory}`;
   const loadedLocation = useRef('');
@@ -85,9 +90,42 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
     return () => { clearInterval(timer); window.removeEventListener('focus', update); };
   }, []);
   const openDirectory = (id?: string, path = '') => {
+    springLoader.cancel();
+    setDropTarget(null);
     setQuery('');
     setSearch(id ? { folder: id, ...(path ? { path } : {}) } : {});
   };
+  const finishResourceDrag = (committed = false) => {
+    const session = dragSession.current;
+    if (!session) return;
+    springLoader.cancel();
+    setDropTarget(null);
+    dragSession.current = null;
+    setDraggedEntry(null);
+    if (session.opened && !committed) {
+      setQuery(session.query);
+      setSearch(new URLSearchParams(session.search), { replace: true });
+    }
+  };
+  const finishDragRef = useRef(finishResourceDrag);
+  finishDragRef.current = finishResourceDrag;
+  useEffect(() => {
+    const finish = () => finishDragRef.current();
+    const escape = (event: KeyboardEvent) => { if (event.key === 'Escape') finish(); };
+    window.addEventListener('dragend', finish);
+    window.addEventListener('drop', finish);
+    window.addEventListener('keydown', escape);
+    return () => {
+      springLoader.cancel();
+      window.removeEventListener('dragend', finish);
+      window.removeEventListener('drop', finish);
+      window.removeEventListener('keydown', escape);
+    };
+  }, [springLoader]);
+  useEffect(() => {
+    springLoader.cancel();
+    setDropTarget(null);
+  }, [locationKey, busy, loading, data?.project?.archived, springLoader]);
   const perform = async (action: () => Promise<unknown>) => {
     if (busy) return;
     setBusy(true);
@@ -166,10 +204,12 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   };
   const moveInto = (event: React.DragEvent, id: string, path: string) => {
     event.preventDefault(); event.stopPropagation();
+    springLoader.cancel();
     if (event.dataTransfer.files.length) { if (id === (projectId ?? data?.rootId) && path === directory) void uploadFiles([...event.dataTransfer.files]); return; }
     try {
-      const entry = JSON.parse(event.dataTransfer.getData('application/x-resource-entry')) as ResourceEntry;
-      if (!entry.path || entry.scope || (entry.projectId === id && entry.path === join(path, entry.name))) return;
+      const entry = JSON.parse(event.dataTransfer.getData(RESOURCE_DRAG_TYPE)) as ResourceEntry;
+      if (!canDropResourceInto(entry, id, path)) { finishResourceDrag(); return; }
+      finishResourceDrag(true);
       void perform(() => request('/resources/move', { method: 'POST', body: JSON.stringify({ projectId: entry.projectId, path: entry.path, targetProjectId: id, target: join(path, entry.name), revision: entry.revision }) }));
     } catch { /* Unrelated drag payload. */ }
   };
@@ -178,10 +218,38 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const entryCount = entries.length + Number(showSystemFolder);
   const breadcrumbs = directory.split('/').filter(Boolean);
   const readOnly = Boolean(data?.project?.archived);
+  const dragOverFolder = (event: React.DragEvent, entry: ResourceEntry) => {
+    // Do not change native file-import behavior: spring loading is for internal moves.
+    if (entry.kind !== 'directory' || !event.dataTransfer.types.includes(RESOURCE_DRAG_TYPE)) return;
+    event.preventDefault(); event.stopPropagation();
+    const session = dragSession.current;
+    if (!session || busy || loading || readOnly || entry.scope?.archived || !canDropResourceInto(session.entry, entry.projectId, entry.path)) {
+      springLoader.cancel(); setDropTarget(null); event.dataTransfer.dropEffect = 'none'; return;
+    }
+    event.dataTransfer.dropEffect = 'move';
+    const key = keyOf(entry);
+    setDropTarget(key);
+    springLoader.schedule(key, () => {
+      if (dragSession.current !== session) return;
+      session.opened = true;
+      springLoader.cancel();
+      setDropTarget(null);
+      setQuery('');
+      // Spring navigation is temporary, not a new browser-history entry per level.
+      setSearch({ folder: entry.projectId, ...(entry.path ? { path: entry.path } : {}) }, { replace: true });
+    });
+  };
+  // Keep the actual native drag source mounted across directory loads. Removing it
+  // ends the browser's drag session before the user can descend to another level.
+  const visibleEntries = loading || showSkeleton ? [] : entries;
+  const retainedKey = draggedEntry && !visibleEntries.some(entry => keyOf(entry) === keyOf(draggedEntry)) ? keyOf(draggedEntry) : null;
+  const renderedEntries = retainedKey && draggedEntry ? [...visibleEntries, draggedEntry] : visibleEntries;
   return <PageShell title={t('resources')} rail={nav} fill rootClassName="page-library">
     <ImagePreview isOpen={Boolean(image)} onOpenChange={open => { if (!open) setImage(null); }} title={image?.name ?? ''} content={image ? { kind: 'image', src: serverClient.projectDownloadUrl(image.projectId, image.path) } : undefined} onDownload={image ? () => download(image) : undefined} downloadLabel={t('download')} />
     <section className="finder-window resource-window" data-mobile={mobile || undefined} aria-label={t('resources')}
-      onDragOver={e => { if (!busy && !readOnly) e.preventDefault(); }} onDrop={e => { if (data && !busy && !readOnly) moveInto(e, projectId ?? data.rootId, directory); }}>
+      onDragOver={e => { springLoader.cancel(); setDropTarget(null); if (!busy && !loading && !readOnly) e.preventDefault(); }}
+      onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget as Node | null)) { springLoader.cancel(); setDropTarget(null); } }}
+      onDrop={e => { if (data && !busy && !loading && !readOnly) moveInto(e, projectId ?? data.rootId, directory); }}>
       <header className="finder-toolbar">
         <div className="finder-navigation"><Button isIconOnly variant="ghost" aria-label={t('back')} isDisabled={!projectId} onPress={() => openDirectory(directory ? projectId : undefined, breadcrumbs.slice(0, -1).join('/'))}><Sym name="chevron_left" /></Button></div>
         <h2 className="finder-title">{breadcrumbs.at(-1) ?? data?.project?.name ?? t('resources')}</h2>
@@ -205,13 +273,31 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
       {error && <div role="alert" className="project-error resource-notice">{error}<Button size="sm" onPress={refresh}>{t('retry')}</Button></div>}
       {readOnly && <p className="resource-notice">{t('readOnly')}</p>}
       <div className="finder-canvas" data-testid="resource-list" aria-busy={loading || busy}>
-        <SkeletonReveal show={showSkeleton} skeleton={<ResourceSkeleton view={view} count={mobile ? 3 : 6} />}>
-        {!loading && !showSkeleton && <>
+        <SkeletonReveal show={showSkeleton && !draggedEntry} skeleton={<ResourceSkeleton view={view} count={mobile ? 3 : 6} />}>
+        <>
           <ul className="resource-grid" data-view={view}>
-            {showSystemFolder && <li className="resource-tile" data-kind="directory" data-testid="system-folder"><button className="resource-open" title="/system" disabled={busy} onClick={() => useLibraryNavigation.getState().setFolderHistory(h => ({ entries: [...h.entries.slice(0, h.index + 1), 'system'], index: h.index + 1 }))}><FolderIcon color="gray" /><span>system</span><small>{t('systemFiles')}</small></button></li>}
-            {entries.map(entry => <li key={keyOf(entry)} className="resource-tile" data-kind={entry.kind} data-testid="resource-entry"
-              draggable={!entry.scope && !entry.missing && !busy && !readOnly} onDragStart={e => { e.dataTransfer.setData('application/x-resource-entry', JSON.stringify(entry)); e.dataTransfer.effectAllowed = 'move'; }}
-              onDragOver={e => { if (entry.kind === 'directory' && !entry.scope?.archived) e.preventDefault(); }} onDrop={e => { if (entry.kind === 'directory' && !busy && !entry.scope?.archived) moveInto(e, entry.projectId, entry.path); }}>
+            {!loading && !showSkeleton && showSystemFolder && <li className="resource-tile" data-kind="directory" data-testid="system-folder"><button className="resource-open" title="/system" disabled={busy} onClick={() => useLibraryNavigation.getState().setFolderHistory(h => ({ entries: [...h.entries.slice(0, h.index + 1), 'system'], index: h.index + 1 }))}><FolderIcon color="gray" /><span>system</span><small>{t('systemFiles')}</small></button></li>}
+            {renderedEntries.map(entry => <li key={keyOf(entry)} className="resource-tile" data-kind={entry.kind} data-testid="resource-entry"
+              data-drag-retained={retainedKey === keyOf(entry) || undefined} aria-hidden={retainedKey === keyOf(entry) || undefined}
+              data-drop-target={dropTarget === keyOf(entry) || undefined}
+              draggable={!entry.scope && !entry.missing && !busy && !readOnly} onDragStart={e => {
+                dragSession.current = { entry, search: search.toString(), query, opened: false };
+                setDraggedEntry(entry);
+                e.dataTransfer.setData(RESOURCE_DRAG_TYPE, JSON.stringify(entry)); e.dataTransfer.effectAllowed = 'move';
+              }}
+              onDragEnter={e => dragOverFolder(e, entry)} onDragOver={e => dragOverFolder(e, entry)}
+              onDragLeave={e => {
+                if (e.currentTarget.contains(e.relatedTarget as Node | null)) return;
+                const key = keyOf(entry);
+                springLoader.cancel(key);
+                setDropTarget(current => current === key ? null : current);
+              }}
+              onDrop={e => {
+                if (entry.kind !== 'directory') return;
+                e.preventDefault(); e.stopPropagation();
+                if (!busy && !loading && !readOnly && !entry.scope?.archived) moveInto(e, entry.projectId, entry.path);
+                else finishResourceDrag();
+              }}>
               <button className="resource-open" disabled={busy} onClick={() => void open(entry)} title={entry.scope?.workspacePath ?? entry.path}>
                 {entry.kind === 'directory' ? <FolderIcon /> : <ResourceFileIcon entry={entry} />}
                 <span>{entry.name}</span><small>{entry.scope?.archived ? t('archived') : entry.kind === 'directory' ? t('folder') : entry.missing ? t('learningRecord') : formatSize(entry.size)}</small>
@@ -226,8 +312,8 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
               ]} />
             </li>)}
           </ul>
-          {!entryCount && (projectId || query) && !error && <div className="project-empty">{query ? t('noResults') : t('folderEmpty')}</div>}
-        </>}
+          {!loading && !showSkeleton && !entryCount && (projectId || query) && !error && <div className="project-empty">{query ? t('noResults') : t('folderEmpty')}</div>}
+        </>
         </SkeletonReveal>
       </div>
       <footer className="finder-footer"><nav className="finder-path" aria-label={t('workspace')}><Button variant="ghost" size="sm" onPress={() => openDirectory()}>{t('resources')}</Button>

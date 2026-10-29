@@ -24,7 +24,7 @@
 
 @media (max-width: 640px) {
   .hd-doc {
-    padding: 16px 14px 32px;
+    padding: 16px 16px 32px;
     box-shadow: none;
   }
 }
@@ -114,21 +114,21 @@
   font-weight: normal;
   font-size: 14px;
   text-align: center;
-  padding: 4px 6px;
+  padding: 4px 8px;
   border-bottom: 0.5px solid #000;
 }
 
 .hd-table td {
   font-family: '仿宋_GB2312', 'FangSong', '仿宋', serif;
   font-size: 14px;
-  padding: 4px 6px;
+  padding: 4px 8px;
 }
 
 /* 编辑态表格（在 Modal 内，属 chrome）：边框走 outline-variant，深色自动成立 */
 .hd-table-edit th,
 .hd-table-edit td {
   border: 1px solid var(--border-secondary);
-  padding: 2px 4px;
+  padding: 4px;
 }
 
 .hd-figure {
@@ -251,7 +251,7 @@
 .hd-ai-panel {
   border: 1px solid rgba(var(--accent), 0.25);
   background: var(--accent-soft);
-  border-radius: 6px;
+  border-radius: var(--radius-panel);
   padding: 8px;
   margin: 4px 0 8px;
   font-family: -apple-system, 'PingFang SC', sans-serif;
@@ -259,7 +259,7 @@
 
 .hd-chips {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
   margin-bottom: 6px;
 }
@@ -267,7 +267,7 @@
 .hd-chip {
   border: 1px solid var(--border-secondary);
   border-radius: 999px;
-  padding: 2px 10px;
+  padding: 4px 12px;
   font-size: 12px;
   background: var(--default-soft);
   cursor: pointer;

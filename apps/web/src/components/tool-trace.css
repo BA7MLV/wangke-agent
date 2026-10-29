@@ -82,13 +82,13 @@
 }
 
 .tool-trace__body {
-  padding: 2px 2px 4px;
+  padding: 4px;
 }
 
 .tool-trace__list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 8px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -100,8 +100,8 @@
   position: relative;
   display: grid;
   grid-template-columns: 14px minmax(0, 1fr) auto;
-  column-gap: 6px;
-  padding-left: 2px;
+  column-gap: 8px;
+  padding-left: 4px;
   border-left: 2px solid var(--border-secondary);
   color: var(--muted);
   line-height: 1.5;
@@ -181,7 +181,7 @@
   grid-column: 2;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 

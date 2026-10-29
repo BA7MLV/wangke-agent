@@ -186,7 +186,7 @@ export default function SettingsModal() {
             避免它取消时让 React Aria 的退出等待悬空。HeroUI 的 keyframe 动画不受影响。 */}
         <Modal.Container placement="center" className={`${MODAL_CONTAINER_CLASS} transition-none`}>
           <Modal.Dialog
-            className="flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-[14px] bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full"
+            className="flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-3xl bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full max-[760px]:rounded-none"
             data-testid="settings-modal"
           >
             <Modal.CloseTrigger className="z-10" aria-label={common('closeSettings')}>
@@ -271,7 +271,7 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
     return (
       <Button
         variant="ghost"
-        className="min-h-9 w-full justify-start gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background"
+        className="min-h-9 w-full justify-start gap-3 rounded-full px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background"
         data-testid={testId}
         aria-label={t('settings')}
         onPress={open}

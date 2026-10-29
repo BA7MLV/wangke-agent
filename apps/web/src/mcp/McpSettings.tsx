@@ -66,7 +66,7 @@ export default function McpSettings() {
       {error && <p role="alert" className="text-danger">{error}</p>}
       {!loaded && !error ? <p role="status">{t('mcp.loading')}</p> : null}
       {loaded && !servers.length ? <p className="text-muted">{t('mcp.empty')}</p> : null}
-      {servers.map(server => <section key={server.id} className="rounded-xl bg-background-secondary p-4 flex flex-col gap-3">
+      {servers.map(server => <section key={server.id} className="rounded-3xl bg-background-secondary p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0"><h3 className="font-semibold break-words">{server.name}</h3><p className="text-sm text-muted break-all">{server.transport === 'stdio' ? server.command : server.url}</p></div>
           <Switch aria-label={t('mcp.enableServer', { name: server.name })} isSelected={server.enabled} isDisabled={!!busy} onChange={enabled => void action(server.id, () => saveMcpServer({ ...server, enabled }, server.id))}><Switch.Control><Switch.Thumb /></Switch.Control></Switch>
@@ -82,7 +82,7 @@ export default function McpSettings() {
         </div>
         {expanded === server.id && tools[server.id] ? <div className="flex flex-col gap-3">
           {tools[server.id].length === 0 && <p>{t('mcp.noTools')}</p>}
-          {tools[server.id].map(tool => <div key={tool.name} className="rounded-lg bg-background p-3">
+          {tools[server.id].map(tool => <div key={tool.name} className="rounded-xl bg-background p-3">
             <div className="flex justify-between gap-2"><strong className="break-all">{tool.originalName}</strong><Switch aria-label={t('mcp.enableTool', { name: tool.originalName })} isSelected={!server.disabledTools.includes(tool.originalName)} isDisabled={!!busy} onChange={enabled => void action(server.id, () => saveMcpServer({ ...server, disabledTools: enabled ? server.disabledTools.filter(n => n !== tool.originalName) : [...server.disabledTools, tool.originalName] }, server.id))}><Switch.Control><Switch.Thumb /></Switch.Control></Switch></div>
             <p className="text-sm whitespace-pre-wrap break-words">{tool.description}</p>
             <details><summary className="text-sm text-muted cursor-pointer">{t('mcp.parameters')}</summary><pre className="text-xs overflow-x-auto max-h-60">{JSON.stringify(tool.inputSchema, null, 2)}</pre></details>

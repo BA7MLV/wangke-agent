@@ -116,8 +116,8 @@
   align-items: center;
   gap: 8px;
   margin-bottom: 10px;
-  padding: 8px 10px;
-  border-radius: var(--mdui-shape-corner-small);
+  padding: 8px 12px;
+  border-radius: var(--radius-panel);
   background: rgb(var(--mdui-color-tertiary-container));
   color: rgb(var(--mdui-color-on-tertiary-container));
   font-size: 12px;

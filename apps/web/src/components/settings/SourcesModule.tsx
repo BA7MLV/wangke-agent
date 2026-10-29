@@ -157,7 +157,7 @@ export default function SourcesModule() {
           收起时内容仍在 DOM 里 —— 与上面这条不变量冲突。触发器用 HeroUI 的 `Button`。 */}
       <Button
         variant="ghost"
-        className="h-auto min-h-12 w-full justify-start gap-1.5 px-0 text-sm font-normal text-muted"
+        className="h-auto min-h-12 w-full justify-start gap-2 px-0 text-sm font-normal text-muted"
         data-testid="bili-adv-toggle"
         aria-expanded={advOpen}
         aria-controls="bili-advanced-settings"

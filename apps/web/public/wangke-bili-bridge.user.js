@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         网课学习助手 · B 站导入桥
+// @name         DeepStudent Go · B 站导入桥
 // @namespace    https://wangke.local
 // @version      2.1.2
-// @description  在网课学习助手页面注入 B 站请求桥：用本机 IP 直连 API/CDN，带 Referer，绕过 CORS。不经过 Cloudflare。
+// @description  在 DeepStudent Go 页面注入 B 站请求桥：用本机 IP 直连 API/CDN，带 Referer，绕过 CORS。不经过 Cloudflare。
 // @author       wangke
 // @match        *://*/*
 // @grant        GM_xmlhttpRequest
@@ -19,7 +19,7 @@
 (function () {
   'use strict';
 
-  const TAG = '[网课助手·B站桥]';
+  const TAG = '[DeepStudent Go·B站桥]';
   const VERSION = '2.1.2';
 
   function isWangkePage() {

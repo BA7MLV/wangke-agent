@@ -75,6 +75,7 @@ import { cloud } from '../cloud/state';
 import ResourceLibrary from './ResourceLibrary';
 import { FOLDER_COLORS, FolderIcon } from '../components/FolderIcon';
 import { AgentInstructionsIcon } from '../components/AgentInstructionsIcon';
+import { FOLDER_SPRING_OPEN_MS } from '../ui/interactionTiming';
 
 function formatDuration(sec: number): string {
   const h = Math.floor(sec / 3600);
@@ -209,14 +210,14 @@ type LibraryFilter = (typeof LIBRARY_FILTERS)[number]['value'];
 
 /** 简介弹窗复用原资料卡片；主画布使用 Finder 的图标 / 列表布局。 */
 /** 卡片根：表面 / 圆角 / 阴影由 HeroUI `Card` 自带，这里只补内边距与纵向排布 */
-const CARD_CLS = 'video-row group relative gap-0 p-1.5 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]';
+const CARD_CLS = 'video-row group relative gap-0 p-2 pb-2 select-none [-webkit-touch-callout:none] [-webkit-user-select:none]';
 const THUMB_CLS =
   'video-row__thumb relative block aspect-video w-full cursor-pointer overflow-hidden rounded-2xl bg-default-soft';
-const MAIN_CLS = 'video-row__main mt-2 min-w-0 px-0.5';
+const MAIN_CLS = 'video-row__main mt-2 min-w-0 px-1';
 const NAME_CLS = 'video-row__name line-clamp-2 text-[15px] font-medium leading-snug text-foreground';
 const META_CLS = 'video-row__meta mt-0.5 truncate text-xs text-muted';
-const TAGS_CLS = 'video-row__tags mt-1.5 flex items-center gap-1.5 px-0.5';
-const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap-1 px-0.5 [&>[data-slot=button]:first-child]:mr-auto';
+const TAGS_CLS = 'video-row__tags mt-1.5 flex items-center gap-2 px-1';
+const ACTIONS_CLS = 'video-row__actions mt-1.5 flex items-center justify-end gap-1 px-1 [&>[data-slot=button]:first-child]:mr-auto';
 /** 骨架里的灰块：与真内容同级元素等尺寸（能靠父级继承的绝不手写像素） */
 const SKEL_CLS = 'skel-breathe block rounded-md bg-background-tertiary';
 
@@ -1250,7 +1251,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
             setDropHint(`已打开「${name}」· 松手放入，或继续拖到子文件夹`);
             if (canvasRef.current) canvasRef.current.scrollTop = 0;
             clearSpring();
-          }, 850);
+          }, FOLDER_SPRING_OPEN_MS);
         }
       } else clearSpring();
       return valid;
@@ -2658,7 +2659,7 @@ function VideoRow({
             )}
           </span>
         )}
-        <span className="video-row__duration absolute right-1.5 bottom-1.5 rounded-md bg-black/80 px-1.5 py-0.5 text-xs font-medium tabular-nums text-white">
+        <span className="video-row__duration absolute right-1.5 bottom-1.5 rounded-md bg-black/80 px-2 py-1 text-xs font-medium tabular-nums text-white">
           {isMaterial ? (v.unitCount ? `${v.unitCount} ${noun}` : '—') : formatDuration(v.duration)}
         </span>
         {/* 置顶徽标：压在缩略图右上角。标签行里也有一条「已置顶」，
@@ -2696,7 +2697,7 @@ function VideoRow({
           {meta}
         </div>
         {activeJob && (
-          <div className="video-row__job mt-1.5 flex items-center gap-1.5 text-xs text-accent" data-testid="video-job">
+          <div className="video-row__job mt-1.5 flex items-center gap-2 text-xs text-accent" data-testid="video-job">
             {/* 与导入进度条同一套映射：算得出百分比就定量显示，算不出走不确定态。 */}
             <ProgressBar
               maxValue={100}

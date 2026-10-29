@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import sharp from 'sharp';
 import { DatabaseStore } from '../apps/api/src/storage/database.ts';
 import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';
 import { CloudRecords } from '../apps/api/src/cloud/records.ts';
@@ -203,7 +204,7 @@ try {
   }
   console.log('Review 7: owner-only failed/uncertain head discard unblocks subsequent delivery without resending head');
 
-  const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+  const png = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'white' } }).png().toBuffer();
   const feishu = new FeishuPlugin(async () => { throw new Error('unused'); }, async url => String(url).includes('tenant_access_token') ? Response.json({ tenant_access_token: 'token' }) : new Response(png, { headers: { 'content-type': 'application/octet-stream' } }));
   assert.equal((await feishu.download({}, envelope(''), { key: 'image', name: 'image.png', mime: 'image/png' }, c.signal)).mime, 'image/png');
   const ilink = new IlinkPlugin(async () => { throw new Error('unused'); }, async () => new Response(png));
@@ -213,7 +214,12 @@ try {
   const image = await receiveFile(store, files, owner, Readable.from([png]), 'wrong.jpg', 'image/jpeg', 1024);
   for (const protocol of ['openai-chat','openai-responses','anthropic-messages']) {
     config.save(owner, { ...config.get(owner, true), providers: [{ ...config.get(owner, true).providers[0], protocol }], visionModel: { providerId: 'mock', model: 'vision' } });
-    const vision = new StudyTools(store, config, files, async (_url, init) => { assert.match(init.body, protocol === 'anthropic-messages' ? /"media_type":"image\/png"/ : /data:image\/png;base64/); return Response.json({}); });
+    const vision = new StudyTools(store, config, files, async (_url, init) => {
+      assert.match(init.body, protocol === 'anthropic-messages' ? /"media_type":"image\/jpeg"/ : /data:image\/jpeg;base64/);
+      return Response.json(protocol === 'anthropic-messages' ? { content: [{ type: 'text', text: 'Image received' }] }
+        : protocol === 'openai-responses' ? { output: [{ content: [{ type: 'output_text', text: 'Image received' }] }] }
+        : { choices: [{ message: { content: 'Image received' } }] });
+    });
     await vision.plugins.get('study_file').execute({ fileId: image.id }, c);
   }
   assert.equal(normalizeIlink({ message_id: Number.MAX_SAFE_INTEGER }).messageId, String(Number.MAX_SAFE_INTEGER));

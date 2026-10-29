@@ -100,7 +100,7 @@
     "archived": "已归档",
     "conversation": "与 {{name}} 的对话",
     "composer": "消息",
-    "taskPlaceholder": "交给 BOT 一个任务…",
+    "taskPlaceholder": "随便问点什么，或长按说话",
     "projectPurpose": "在当前项目中处理文件与任务",
     "attach": "添加附件",
     "attachment": "附件",

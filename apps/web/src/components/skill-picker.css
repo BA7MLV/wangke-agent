@@ -19,7 +19,7 @@
   color: var(--muted);
 }
 .skill-picker__toolbar { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
-.skill-picker__presets { display: flex; flex-wrap: wrap; gap: .375rem; }
+.skill-picker__presets { display: flex; flex-wrap: wrap; gap: .5rem; }
 .skill-picker__count { font-size: .8125rem; font-variant-numeric: tabular-nums; color: var(--muted); }
 .skill-picker__notice { font-size: .8125rem; line-height: 1.5; color: var(--muted); }
 
@@ -32,7 +32,7 @@
 .skill-picker .skill-picker__content {
   display: flex;
   align-items: center;
-  gap: .875rem;
+  gap: 1rem;
   width: 100%;
   min-width: 0;
   padding: .75rem;
@@ -53,7 +53,7 @@
 .skill-picker__name { font-size: .875rem; font-weight: 600; color: var(--foreground); }
 .skill-picker__dependency { font-size: .75rem; line-height: 1.5; color: var(--muted); }
 .skill-picker__control { width: 1.125rem; height: 1.125rem; }
-.skill-picker__empty { display: flex; min-height: 11rem; flex-direction: column; align-items: center; justify-content: center; gap: .625rem; padding: 1.5rem; text-align: center; color: var(--muted); }
+.skill-picker__empty { display: flex; min-height: 11rem; flex-direction: column; align-items: center; justify-content: center; gap: .75rem; padding: 1.5rem; text-align: center; color: var(--muted); }
 .skill-picker__empty strong { font-weight: 500; color: var(--foreground); }
 .skill-picker__empty p { max-width: 26rem; line-height: 1.6; }
 .skill-picker__footer.modal__footer { flex-shrink: 0; justify-content: space-between; gap: .5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border); }
@@ -61,6 +61,6 @@
 @media (max-width: 540px) {
   .skill-picker-dialog.modal__dialog { width: calc(100% - 1.25rem); max-height: calc(100% - 1.25rem); padding: 1rem; }
   .skill-picker__header { gap: .75rem; }
-  .skill-picker .skill-picker__content { padding: .75rem; gap: .625rem; }
+  .skill-picker .skill-picker__content { padding: .75rem; gap: .75rem; }
   .skill-picker__footer.modal__footer { flex-wrap: wrap; margin-top: .75rem; padding-top: .75rem; }
 }

@@ -201,7 +201,7 @@
 .md-table-progress {
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   margin-top: 6px;
   color: var(--muted);
   font-size: 0.75rem;
@@ -282,7 +282,7 @@
      visual-viewport-height 是 React Aria 写进遮罩的真实像素，软键盘弹出时比 dvh 稳。 */
   max-height: min(920px, calc(var(--visual-viewport-height, 100dvh) - 16px));
   overflow: hidden;
-  border-radius: 24px 24px 0 0;
+  border-radius: var(--radius-dialog) var(--radius-dialog) 0 0;
   padding: 0 0 max(12px, env(safe-area-inset-bottom));
   background: var(--background);
   /* 同时保留 HeroUI 的 translate 进场/退场；只写 height 会把它的滑动动画顶掉 */
@@ -315,7 +315,7 @@
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  padding-block: 4px 10px;
+  padding-block: 4px 12px;
   padding-inline: 16px;
 }
 

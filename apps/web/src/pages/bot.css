@@ -44,7 +44,7 @@
   flex-wrap: wrap;
   align-items: center;
   justify-content: center;
-  gap: 10px;
+  gap: 12px;
   padding: 16px;
   color: var(--danger);
   font-size: 0.875rem;
@@ -78,7 +78,7 @@
 .bot-access__form {
   display: grid;
   justify-items: center;
-  gap: 14px;
+  gap: 16px;
   width: min(100%, 340px);
   animation: bot-rise var(--duration-slow) var(--ease-smooth-out) both;
 }
@@ -92,7 +92,7 @@
   place-items: center;
   width: 64px;
   height: 64px;
-  border-radius: 16px;
+  border-radius: var(--radius-panel);
   background: var(--accent);
   color: var(--accent-foreground);
   font-size: 32px;
@@ -110,7 +110,7 @@
   display: grid;
   width: 100%;
   overflow: hidden;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
 }
@@ -129,7 +129,7 @@
 .bot-access__secret {
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-right: 8px;
 }
 
 .bot-access__error {
@@ -156,7 +156,7 @@
   align-items: center;
   gap: 4px;
   min-height: 56px;
-  padding: max(8px, env(safe-area-inset-top)) 8px 6px 12px;
+  padding: max(8px, env(safe-area-inset-top)) 8px 8px 12px;
 }
 
 .bot-panel__title,
@@ -188,7 +188,7 @@
 .bot-panel__actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-left: auto;
 }
 
@@ -219,7 +219,7 @@
 .bh-list {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 12px;
   min-height: 0;
   padding: 4px 8px 0 12px;
 }
@@ -228,16 +228,16 @@
 .bh-segment {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 2px;
-  padding: 2px;
-  border-radius: 10px;
+  gap: 4px;
+  padding: 4px;
+  border-radius: var(--radius-lg);
   background: color-mix(in oklab, var(--foreground) 7%, transparent);
 }
 
 .bh-segment__item {
   height: 32px;
   min-height: 32px;
-  border-radius: 8px;
+  border-radius: var(--radius-chip);
   color: var(--foreground);
   font-weight: 500;
 }
@@ -260,8 +260,8 @@
   gap: 4px;
   width: 72px;
   height: auto;
-  padding: 6px 2px;
-  border-radius: 12px;
+  padding: 8px 4px;
+  border-radius: var(--radius-panel);
 }
 
 .bh-pin[aria-pressed='true'] { background: var(--surface); }
@@ -293,10 +293,10 @@
 .bh-thread {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   min-height: 60px;
-  padding: 8px 10px;
-  border-radius: 12px;
+  padding: 8px 12px;
+  border-radius: var(--radius-panel);
 }
 
 .bh-thread[data-hovered='true']:not([data-selected='true']) { background: color-mix(in oklab, var(--foreground) 4%, transparent); }
@@ -305,7 +305,7 @@
 
 .bh-thread__body {
   display: grid;
-  gap: 2px;
+  gap: 4px;
   min-width: 0;
   flex: 1;
 }
@@ -313,7 +313,7 @@
 .bh-thread__top {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
 }
 
@@ -441,7 +441,7 @@
 .imsg-stamp {
   display: flex;
   justify-content: center;
-  padding: 16px 0 6px;
+  padding: 16px 0 8px;
   color: var(--muted);
   font-size: 0.75rem;
 }
@@ -451,7 +451,7 @@
   padding-top: 4px;
 }
 
-.imsg-row[data-first] { padding-top: 14px; }
+.imsg-row[data-first] { padding-top: 16px; }
 .imsg-row--mine { justify-content: flex-end; }
 
 .imsg-bubble {
@@ -463,7 +463,7 @@
 /* 用户：右侧 --surface 气泡，与 .course-chat__bubble--user 同值 */
 .imsg-row--mine .imsg-bubble {
   max-width: min(82%, 560px);
-  padding: 9px 14px;
+  padding: 12px 16px;
   border-radius: var(--radius-2xl);
   background: var(--surface);
   color: var(--foreground);
@@ -487,7 +487,7 @@
 
 .imsg-receipt {
   min-height: calc(1.5em + 3px);
-  padding: 3px 4px 0;
+  padding: 4px 4px 0;
   color: var(--muted);
   font-size: 0.6875rem;
   line-height: 1.5;
@@ -520,9 +520,9 @@
   grid-template-columns: 36px minmax(0, 1fr);
   grid-template-areas: 'icon name' 'icon size';
   align-items: center;
-  column-gap: 10px;
-  padding: 10px 14px 10px 10px;
-  border-radius: 14px;
+  column-gap: 12px;
+  padding: 12px 16px 12px 12px;
+  border-radius: var(--radius-2xl);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
 }
@@ -533,7 +533,7 @@
   place-items: center;
   width: 36px;
   height: 36px;
-  border-radius: 10px;
+  border-radius: var(--radius-lg);
   background: color-mix(in oklab, var(--accent) 14%, transparent);
   color: var(--accent);
 }
@@ -557,9 +557,9 @@
 /* 审批 / 提问：一张卡，操作是两颗等宽按钮（HIG：破坏性在前、确认在后） */
 .imsg-bubble--action {
   display: grid;
-  gap: 10px;
-  padding: 12px 14px;
-  border-radius: 14px;
+  gap: 12px;
+  padding: 12px 16px;
+  border-radius: var(--radius-2xl);
   background: var(--surface);
   box-shadow: 0 0 0 1px var(--border);
 }
@@ -587,7 +587,7 @@
   margin: 0;
   padding: 12px;
   overflow: auto;
-  border-radius: 12px;
+  border-radius: var(--radius-panel);
   background: var(--surface);
   font-size: 0.8125rem;
 }
@@ -600,11 +600,10 @@
   -webkit-backdrop-filter: none;
 }
 
-.bot-composer .imsg-composer__attach {
-  width: 44px;
-  min-width: 44px;
-  height: 44px;
-}
+.bot-message-attachments { width: min(320px, 100%); }
+.bot-attachment-message { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: min(100%, 320px); }
+.bot-message-attachments .imsg-bubble--file { width: 100%; max-width: 100%; }
+.imsg-row--mine .bot-attachment-message { align-items: flex-end; }
 
 @keyframes bot-bubble-in {
   from { opacity: 0; transform: translateY(var(--distance-base)); }

@@ -22,15 +22,25 @@ try {
   await page.goto(base);
   await page.waitForFunction(() => !document.querySelector('textarea.course-chat__input')?.disabled);
 
-  const logo = page.getByTestId('nav-rail-toggle');
+  const toggle = page.getByTestId('nav-rail-toggle');
   const newChat = page.getByTestId('nav-rail-chat');
-  const checkLogo = async label => {
-    assert.equal(await logo.getAttribute('aria-label'), label);
-    assert.equal(await logo.getAttribute('aria-expanded'), String(label === '收起侧边栏'));
-    assert.equal(await logo.locator('svg[viewBox="0 0 126 126"]').count(), 1, 'brand logo is the toggle');
-    assert.equal(await logo.locator('svg.tabler-icon').count(), 0, 'no separate menu icon');
-    const { width, height } = await logo.boundingBox();
-    assert(width >= 44 && height >= 44, 'logo retains a touch-sized target');
+  const checkToggle = async label => {
+    const expanded = label === '收起侧边栏';
+    assert.equal(await toggle.getAttribute('aria-label'), label);
+    assert.equal(await toggle.getAttribute('aria-expanded'), String(expanded));
+    assert.equal(await toggle.locator('svg[viewBox="0 0 126 126"]').count(), expanded ? 0 : 1,
+      'only the collapsed toggle uses the brand logo');
+    assert.equal(await toggle.locator('svg.tabler-icon-layout-sidebar').count(), expanded ? 1 : 0,
+      'expanded sidebar has a separate panel toggle');
+    const { width, height } = await toggle.boundingBox();
+    assert(width >= 44 && height >= 44, 'toggle retains a touch-sized target');
+    const brand = page.getByTestId('app-brand');
+    assert.equal(await brand.innerText(), expanded ? 'DeepStudent Go' : '');
+    if (expanded) {
+      const brandBox = await brand.boundingBox();
+      const toggleBox = await toggle.boundingBox();
+      assert(toggleBox.x >= brandBox.x + brandBox.width, 'collapse button sits to the right of the brand');
+    }
   };
   const checkNeutral = async (button, label) => {
     await button.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))));
@@ -103,31 +113,35 @@ try {
       useSettings.setState({ theme });
     }, theme);
     await page.waitForFunction(theme => document.documentElement.classList.contains('dark') === (theme === 'dark'), theme);
-    await checkLogo('收起侧边栏');
+    await checkToggle('收起侧边栏');
     await checkInteractionColors(newChat, `${theme} expanded`);
     await checkSelected(`${theme} expanded`);
     await page.screenshot({ path: `${out}/${theme}-expanded.png`, animations: 'disabled' });
-    await logo.click();
+    await toggle.click();
     await page.getByTestId('nav-rail-compact').waitFor();
-    await checkLogo('展开侧边栏');
+    await checkToggle('展开侧边栏');
     await checkInteractionColors(newChat, `${theme} compact`);
     await checkSelected(`${theme} compact`);
     await page.screenshot({ path: `${out}/${theme}-compact.png`, animations: 'disabled' });
-    await logo.focus();
+    await toggle.focus();
     await page.keyboard.press('Enter');
     await page.getByTestId('nav-rail').waitFor();
-    await checkLogo('收起侧边栏');
+    await checkToggle('收起侧边栏');
   }
 
-  await logo.click();
+  await toggle.click();
   await page.reload();
   await page.getByTestId('nav-rail-compact').waitFor();
-  await checkLogo('展开侧边栏');
-  await logo.click();
+  await checkToggle('展开侧边栏');
+  await toggle.click();
   await page.getByTestId('nav-rail').waitFor();
 
   await page.setViewportSize({ width: 390, height: 844 });
-  await page.getByTestId('nav-rail-open').click();
+  const mobileMenu = page.getByTestId('nav-rail-open');
+  await mobileMenu.waitFor({ state: 'visible' });
+  assert.equal(await mobileMenu.locator('svg.tabler-icon-menu-2').count(), 1, 'mobile keeps the hamburger menu');
+  assert.equal(await mobileMenu.locator('svg[viewBox="0 0 126 126"]').count(), 0, 'mobile menu is not replaced by the logo');
+  await mobileMenu.click();
   const drawer = page.getByRole('dialog', { name: 'DeepStudent Go' });
   await drawer.waitFor();
   await checkNeutral(newChat, 'mobile drawer');
@@ -140,7 +154,7 @@ try {
   await drawer.waitFor({ state: 'detached' });
   await checkNeutral(page.getByTestId('chat-new-session'), 'mobile app bar');
   assert.deepEqual(errors, []);
-  console.log('PASS: logo controls and persistence; new chat defaults to hover styling; selected navigation stays neutral in light/dark, compact, and mobile navigation.');
+  console.log('PASS: desktop panel toggle, collapsed logo, persistence and keyboard controls; mobile hamburger; new chat and selected navigation stay neutral in light/dark, compact, and mobile navigation.');
 } finally {
   await browser.close();
 }

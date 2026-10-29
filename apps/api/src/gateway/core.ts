@@ -19,6 +19,13 @@ const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
 const PAIR_ALPHABET = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
 const pairCode = () => Array.from(crypto.randomBytes(8), byte => PAIR_ALPHABET[byte % 32]).join('');
 const pairHash = (code: string) => hash(code.replace(/[\s-]/g, '').toUpperCase());
+type ApprovalReply = { id?: string; approved: boolean };
+type InboundEnvelope = GatewayEnvelope & { approvalReply?: ApprovalReply };
+const approvalPrompt = (content: string, id: string) => {
+  // Old shell approval records contain source code; only show their purpose.
+  const text = content.startsWith('请求执行命令') ? '需要你的确认：在工作区运行程序，处理当前任务。是否允许这次操作？' : content;
+  return `${text}\n回复“同意”或“拒绝”即可。若有多项待确认，请回复：\n批准 ${id}\n拒绝 ${id}`;
+};
 export type PluginFactory = (account?: { id: string; owner_id: string }) => ChannelPlugin;
 /** Single-instance durable gateway. ACK only includes the synchronous receive transaction. */
 export class GatewayCore {
@@ -308,9 +315,12 @@ export class GatewayCore {
         const capacity = this.store.db.prepare("SELECT COUNT(*) AS total,SUM(CASE WHEN status='pending' THEN 1 ELSE 0 END) AS pending FROM gateway_inbox WHERE account_id=?").get(id) as { total: number; pending: number };
         if (capacity.total >= gatewayLimits().dedupe || capacity.pending >= gatewayLimits().pending && message.text.trim() !== '/stop') throw new Error('gateway_inbox_capacity');
         if (JSON.stringify(message).length > 128000) throw new Error('gateway_envelope_too_large');
-        const inserted = this.store.db.prepare('INSERT OR IGNORE INTO gateway_inbox(account_id,external_id,envelope,received_at) VALUES(?,?,?,?)').run(id, external, this.secrets.seal(JSON.stringify(message)), Date.now());
-        if (!inserted.changes) continue;
         const b = this.binding(id, message);
+        // Capture the exact approval when the reply arrives, not after queued
+        // downloads/model work. A delayed "同意" must never approve a newer ask.
+        const envelope: InboundEnvelope = { ...message, approvalReply: b && !b.revoked && !message.attachments?.length ? this.approvalReply(b, message.text) : undefined };
+        const inserted = this.store.db.prepare('INSERT OR IGNORE INTO gateway_inbox(account_id,external_id,envelope,received_at) VALUES(?,?,?,?)').run(id, external, this.secrets.seal(JSON.stringify(envelope)), Date.now());
+        if (!inserted.changes) continue;
         // Control path never waits behind media, model, or another inbox item.
         if (b && !b.revoked && message.text.trim() === '/stop') {
           if (message.context) this.store.db.prepare('UPDATE gateway_bindings SET context=? WHERE id=?').run(this.secrets.seal(message.context), b.id);
@@ -328,6 +338,24 @@ export class GatewayCore {
   }
   private binding(id: string, m: GatewayEnvelope): any {
     return this.store.db.prepare('SELECT * FROM gateway_bindings WHERE account_id=? AND tenant=? AND peer=? AND chat=? AND topic=?').get(id, m.tenant, m.peer, m.chat, m.topic);
+  }
+  private approvalReply(binding: any, text: string): ApprovalReply | undefined {
+    const exact = /^(\/?approve|\/?reject|批准|同意|拒绝)\s+([\w-]{1,100})$/i.exec(text.trim());
+    if (exact) return { id: exact[2], approved: !/reject|拒绝/i.test(exact[1]) };
+    const word = text.trim().replace(/[。！!]+$/, '').toLowerCase();
+    const yes = ['同意', '批准', '允许', '确认', 'approve', '/approve'];
+    const no = ['拒绝', '不同意', '不允许', 'reject', '/reject'];
+    if (!yes.includes(word) && !no.includes(word)) return undefined;
+    const pending = this.store.db.prepare(`SELECT a.id,m.content,e.event_id FROM approvals a JOIN messages m ON m.id=a.message_id
+      JOIN message_events e ON e.thread_id=m.thread_id AND e.seq=m.seq AND e.type='message.accepted'
+      WHERE a.thread_id=? AND a.status='pending' ORDER BY m.seq LIMIT 2`).all(binding.thread_id) as { id: string; content: string; event_id: number }[];
+    if (!pending.length && !word.startsWith('/')) return undefined;
+    const approved = yes.includes(word);
+    if (pending.length !== 1) return { approved };
+    const lastPart = Math.ceil(Array.from(approvalPrompt(pending[0].content, pending[0].id)).length / 1500) - 1;
+    const promptId = hash(`${binding.id}:event:${pending[0].event_id}:${lastPart}`).slice(0, 32);
+    const delivered = this.store.db.prepare("SELECT 1 FROM gateway_outbox WHERE id=? AND status='sent'").get(promptId);
+    return { approved, ...(delivered ? { id: pending[0].id } : {}) };
   }
   async tick() {
     if (this.stopped || this.busy) return;
@@ -371,7 +399,7 @@ export class GatewayCore {
       const live = this.live.get(row.account_id); if (!live) continue;
       const controller = new AbortController();
       try {
-        const m: GatewayEnvelope = JSON.parse(this.secrets.open(row.envelope));
+        const m: InboundEnvelope = JSON.parse(this.secrets.open(row.envelope));
         let b = this.binding(row.account_id, m);
         if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(row.id) as any)?.status !== 'pending') continue;
         if (b) this.inbound.set(row.id, { binding: b.id, controller });
@@ -386,19 +414,28 @@ export class GatewayCore {
             this.store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(thread.id, row.agent_id, stamp());
             this.store.db.prepare(`INSERT INTO gateway_bindings(id,account_id,tenant,peer,chat,topic,thread_id,context) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(account_id,tenant,peer,chat,topic) DO UPDATE SET revoked=0,context=excluded.context`).run(crypto.randomUUID(), row.account_id, m.tenant, m.peer, m.chat, m.topic, thread.id, m.context ? this.secrets.seal(m.context) : null);
             this.store.db.prepare('DELETE FROM gateway_pairings WHERE account_id=?').run(row.account_id);
-            this.bot.append(thread.id, 'assistant', 'text', '本人绑定成功。可直接提出学习任务。/stop 停止；/status 状态；/approve <精确ID> 或 /reject <精确ID> 审批。');
+            this.bot.append(thread.id, 'assistant', 'text', '绑定成功，可以直接发消息了。需要确认时回复“同意”或“拒绝”即可；多项待确认时请带上审批 ID。/stop 停止；/status 查看状态。');
             this.secrets.audit(row.owner_id, 'gateway.paired', { account: row.account_id, peer: m.peer });
           });
         } else if (b && !b.revoked) {
           if (m.context) this.store.db.prepare('UPDATE gateway_bindings SET context=? WHERE id=?').run(this.secrets.seal(m.context), b.id);
-          const approval = /^\/(approve|reject) ([\w-]{1,100})$/.exec(m.text.trim());
+          const legacyApproval = /^\/(approve|reject) ([\w-]{1,100})$/.exec(m.text.trim());
+          const approval = m.approvalReply ?? (legacyApproval ? { id: legacyApproval[2], approved: legacyApproval[1] === 'approve' } : undefined);
           if (approval) {
-            const result = this.bot.resolve(row.owner_id, approval[2], approval[1] === 'approve', 'IM exact approval', b.thread_id);
-            this.bot.append(b.thread_id, 'assistant', 'progress', result.error ?? `审批 ${result.status}`);
+            this.store.transaction(() => {
+              const result = approval.id ? this.bot.resolve(row.owner_id, approval.id, approval.approved, m.text.trim(), b.thread_id) : { error: 'approval_selection_required' };
+              const text = result.error === 'approval_selection_required' ? '请回复“批准 审批ID”或“拒绝 审批ID”，指定要确认的操作。'
+                : result.error ? '这项确认已失效或已处理，请以最新的确认消息为准。'
+                : result.status === 'approved' ? '已同意，将继续处理。' : '已拒绝这次操作。';
+              this.bot.append(b.thread_id, 'assistant', 'text', text, `im:${row.id}:approval`);
+              this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
+            });
           } else if (m.text.trim() === '/status') {
-            this.bot.append(b.thread_id, 'assistant', 'progress', JSON.stringify(this.bot.status(row.owner_id, b.thread_id)));
+            const latest = (this.bot.status(row.owner_id, b.thread_id) as { status: string }[])[0];
+            const labels: Record<string, string> = { queued: '等待处理', running: '正在处理', waiting_user: '等待你的确认', completed: '已完成', failed: '未能完成', cancelled: '已停止', paused: '已暂停' };
+            this.bot.append(b.thread_id, 'assistant', 'text', latest ? `最近的任务：${labels[latest.status] ?? latest.status}。` : '当前没有任务。');
           } else {
-            const descriptions: string[] = [];
+            const attachments: { fileId: string; originalName: string; mimeType: string; sizeBytes: number }[] = [];
             for (const attachment of m.attachments ?? []) {
               if (!live.plugin.download) throw new Error('media_not_supported');
               const a = this.account(row.owner_id, row.account_id);
@@ -407,14 +444,14 @@ export class GatewayCore {
               live.controller.signal.throwIfAborted();
               if (!this.binding(row.account_id, m) || this.binding(row.account_id, m).revoked) throw new Error('binding_revoked');
               const f = await receiveFile(this.store, this.filesDir, row.owner_id, Readable.from([media.bytes]), media.name.slice(0, 255), media.mime, 20 * 1024 * 1024);
-              descriptions.push(`Attachment fileId=${f.id}, name=${f.originalName}, mime=${f.mimeType}. Use study_file to read/understand it.`);
+              attachments.push({ fileId: f.id, originalName: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes });
             }
             this.store.transaction(() => {
               controller.signal.throwIfAborted();
               live.controller.signal.throwIfAborted();
               const current = this.binding(row.account_id, m); if (!current || current.revoked) throw new Error('binding_revoked');
               if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(row.id) as any)?.status !== 'pending') throw new Error('inbound_cancelled');
-              this.bot.send(row.owner_id, b.thread_id, { clientNonce: `im:${row.id}`, content: [m.text, ...descriptions].filter(Boolean).join('\n') });
+              this.bot.send(row.owner_id, b.thread_id, { clientNonce: `im:${row.id}`, ...(attachments.length ? { kind: 'attachment' } : {}), content: attachments.length ? JSON.stringify({ ...attachments[0], attachments, caption: m.text }) : m.text });
               this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
             });
           }
@@ -436,13 +473,18 @@ export class GatewayCore {
           try { this.store.transaction(() => {
           const m = JSON.parse(event.payload);
           if (!m || typeof m !== 'object' || (event.type === 'message.accepted' && (typeof m.content !== 'string' || typeof m.role !== 'string'))) throw new Error('invalid_projection');
-          if (event.type === 'message.accepted' && m.role === 'assistant') {
+          if (event.type === 'message.accepted' && m.role === 'assistant' && ['text', 'question', 'approval', 'attachment'].includes(m.kind)) {
             let text = m.content;
             let fileId: string | undefined;
             if (m.kind === 'attachment') { try { const f = JSON.parse(text); if (f.fileId) { fileId = f.fileId; text = f.caption ?? f.name ?? '文件'; } } catch { /* legacy plain text */ } }
             if (m.kind === 'approval') {
-              const a = this.store.db.prepare('SELECT id FROM approvals WHERE message_id=?').get(m.id) as any;
-              if (a) text += `\n/approve ${a.id}\n/reject ${a.id}`;
+              const a = this.store.db.prepare('SELECT id,status FROM approvals WHERE message_id=?').get(m.id) as any;
+              if (!a || a.status !== 'pending') {
+                this.store.db.prepare('UPDATE gateway_bindings SET checkpoint=? WHERE id=?').run(event.event_id, b.id);
+                this.store.db.prepare('DELETE FROM gateway_projection_failures WHERE binding_id=? AND event_id=?').run(b.id, event.event_id);
+                return;
+              }
+              text = approvalPrompt(text, a.id);
             }
             const chars = Array.from(String(text));
             for (let i = 0; i < Math.max(1, Math.ceil(chars.length / 1500)); i++) this.enqueue(b.id, `event:${event.event_id}:${i}`, { text: chars.slice(i * 1500, (i + 1) * 1500).join(''), ...(i === 0 && fileId ? { fileId } : {}) });

@@ -71,7 +71,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
     </div>}>
     <div className="flex flex-col gap-4">
       {note && <p role={note.startsWith('拉取失败') ? 'alert' : 'status'} className="text-xs text-pretty text-muted" data-testid={`provider-note-${providerId}`}>{note}</p>}
-      {editor && <form className="flex flex-col gap-4 rounded-xl border border-border bg-background-secondary p-4" data-testid="model-editor" onSubmit={(event) => {
+      {editor && <form className="flex flex-col gap-4 rounded-3xl border border-border bg-background-secondary p-4" data-testid="model-editor" onSubmit={(event) => {
         event.preventDefault();
         try {
           const { contextWindowText, maxOutputTokensText, ...draft } = editor.draft;

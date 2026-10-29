@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import crypto from 'node:crypto';
 import { Readable } from 'node:stream';
+import sharp from 'sharp';
 import { DatabaseStore } from '../apps/api/src/storage/database.ts';
 import { CloudConfiguration } from '../apps/api/src/cloud/config.ts';
 import { BotApplicationService } from '../apps/api/src/agent/service.ts';
@@ -90,9 +91,13 @@ try {
   gateway.receive(account, [envelope('stop', '/stop')]);
   assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id).status, 'cancelled');
   release(); await work; downloadGate = undefined;
-  assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE content LIKE '%Attachment fileId=%'").get(), undefined, 'stop must not enqueue a stale media-triggered run');
+   assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE role='user' AND kind='attachment'").get(), undefined, 'stop must not enqueue a stale media-triggered run');
   gateway.receive(account, [envelope('media-after-stop', 'read new attachment', { attachments: [{ key: 'k2', name: 'notes.txt', mime: 'text/plain' }] })]); await gateway.tick();
-  assert.ok(store.db.prepare("SELECT 1 FROM messages WHERE content LIKE '%Attachment fileId=%'").get());
+   const inboundAttachment = store.db.prepare("SELECT content FROM messages WHERE role='user' AND kind='attachment'").get();
+   assert.ok(inboundAttachment);
+   assert.equal(JSON.parse(inboundAttachment.content).caption, 'read new attachment');
+   assert.equal(JSON.parse(inboundAttachment.content).attachments[0].originalName, 'notes.txt');
+   assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE content LIKE '%Attachment fileId=%'").get(), undefined, 'model-only hints are not visible conversation text');
 
   // Atomic inbox batch+cursor rollback simulates crash before commit.
   const { id: ilink } = await gateway.save(owner, { channel: 'ilink', agentId: 'agent', enabled: true, config: {} });
@@ -107,6 +112,52 @@ try {
   const ilinkPair = gateway.pair(owner, ilink); gateway.receive(ilink, [envelope('ilink-pair', ilinkPair.command)]); await gateway.tick();
   const ilinkBinding = store.db.prepare('SELECT * FROM gateway_bindings WHERE account_id=?').get(ilink);
   assert.notEqual(ilinkBinding.thread_id, binding.thread_id);
+  // Gateway sends chosen results and questions, never execution/process messages.
+  const outboxCount = () => store.db.prepare('SELECT COUNT(*) n FROM gateway_outbox WHERE binding_id=?').get(ilinkBinding.id).n;
+  const beforeProcess = outboxCount();
+  bot.append(ilinkBinding.thread_id, 'assistant', 'progress', '执行第 1 步：\npython3 private.py');
+  bot.append(ilinkBinding.thread_id, 'assistant', 'widget', '<script>internal tool</script>');
+  gateway.project();
+  assert.equal(outboxCount(), beforeProcess);
+  bot.append(ilinkBinding.thread_id, 'assistant', 'text', '处理结果');
+  bot.append(ilinkBinding.thread_id, 'assistant', 'question', '你需要哪种格式？');
+  gateway.project();
+  assert.equal(outboxCount(), beforeProcess + 2);
+  const ask = id => {
+    const m = bot.append(ilinkBinding.thread_id, 'assistant', 'approval', '需要确认生成文档。');
+    store.db.prepare('INSERT INTO approvals(id,thread_id,message_id,status,created_at) VALUES(?,?,?,?,?)').run(id, ilinkBinding.thread_id, m.id, 'pending', at);
+  };
+  const flush = async () => { for (let i = 0; i < 15; i++) await gateway.tick(); };
+  const decision = id => store.db.prepare('SELECT status FROM approvals WHERE id=?').get(id).status;
+  ask('text-approval');
+  gateway.receive(ilink, [envelope('before-prompt', '同意')]);
+  await flush();
+  assert.equal(decision('text-approval'), 'pending', 'plain replies cannot approve a prompt that was not delivered');
+  assert.ok(sent.some(s => /批准 text-approval/.test(s.payload.text)));
+  const runsBeforeReply = countRuns();
+  gateway.receive(ilink, [envelope('natural-yes', '同意。')]); await flush();
+  assert.equal(decision('text-approval'), 'approved');
+  assert.equal(countRuns(), runsBeforeReply, 'approval reply resumes authorization instead of creating a new task');
+  gateway.receive(ilink, [envelope('natural-yes', '同意。')]); await gateway.tick();
+  assert.equal(countRuns(), runsBeforeReply, 'duplicate inbound approval stays one-shot');
+  ask('text-reject'); await flush();
+  gateway.receive(ilink, [envelope('natural-no', '拒绝')]); await flush();
+  assert.equal(decision('text-reject'), 'rejected');
+  ask('choice-a'); ask('choice-b'); await flush();
+  gateway.receive(ilink, [envelope('ambiguous-yes', '同意')]); await flush();
+  assert.equal(decision('choice-a'), 'pending'); assert.equal(decision('choice-b'), 'pending');
+  gateway.receive(ilink, [envelope('choose-a', '批准 choice-a'), envelope('choose-b', '拒绝 choice-b')]); await flush();
+  assert.equal(decision('choice-a'), 'approved'); assert.equal(decision('choice-b'), 'rejected');
+  ask('old-choice'); await flush();
+  gateway.receive(ilink, [envelope('delayed-yes', '同意')]);
+  bot.resolve(owner, 'old-choice', false, '', ilinkBinding.thread_id);
+  ask('new-choice');
+  await flush();
+  assert.equal(decision('new-choice'), 'pending', 'a queued yes cannot authorize a newer operation');
+  gateway.receive(ilink, [envelope('cross-thread-approval', '批准 new-choice', { peer: 'intruder' })]); await gateway.tick();
+  assert.equal(decision('new-choice'), 'pending');
+  bot.resolve(owner, 'new-choice', false, '', ilinkBinding.thread_id);
+  console.log('Gateway: results-only projection, delivered text approvals, rejection, ambiguity, delayed replies and peer isolation passed');
   // iLink has no verified remote deduplication window: an unknown send cannot auto-replay.
   store.db.prepare("UPDATE gateway_outbox SET status='sent' WHERE status='pending'").run();
   gateway.enqueue(ilinkBinding.id, 'unknown-ilink', { text: 'result' });
@@ -205,12 +256,13 @@ try {
   const pdf = await receiveFile(store, files, owner, Readable.from([fs.readFileSync(new URL('./fixtures/sample-zh.pdf', import.meta.url))]), 'lecture.pdf', 'application/pdf', 20 * 1024 * 1024);
   const pdfRead = await study.plugins.get('study_file').execute({ fileId: pdf.id }, ctx);
   assert.ok(pdfRead.text.trim().length > 10);
-  const image = await receiveFile(store, files, owner, Readable.from([Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64')]), 'diagram.png', 'image/png', 1024);
+  const imageBytes = await sharp({ create: { width: 2, height: 2, channels: 3, background: 'white' } }).png().toBuffer();
+  const image = await receiveFile(store, files, owner, Readable.from([imageBytes]), 'diagram.png', 'image/png', 1024);
   store.db.prepare("INSERT INTO runs(id,thread_id,mode,status,created_at) VALUES('vision-fixture',?,'bot','running',?)").run(binding.thread_id, at);
   for (const protocol of ['openai-chat', 'openai-responses', 'anthropic-messages']) {
     cfg.save(owner, { ...cfg.get(owner, true), providers: [{ ...cfg.get(owner, true).providers[0], protocol }], visionModel: { providerId: 'mock', model: 'vision' } });
     const vision = new StudyTools(store, cfg, files, async (_url, init) => {
-      const body = JSON.parse(init.body); assert.equal(body.model, 'vision'); assert.match(init.body, /iVBOR/);
+      const body = JSON.parse(init.body); assert.equal(body.model, 'vision'); assert.match(init.body, /\/9j\//, 'vision uses the normalized JPEG, not the unvalidated original');
       return Response.json(protocol === 'anthropic-messages' ? { content: [{ type: 'text', text: 'Cell diagram' }] } : protocol === 'openai-responses' ? { output: [{ content: [{ type: 'output_text', text: 'Cell diagram' }] }] } : { choices: [{ message: { content: 'Cell diagram' } }] });
     });
     assert.equal((await vision.plugins.get('study_file').execute({ fileId: image.id, question: 'Read this diagram' }, { ...ctx, run: 'vision-fixture' })).description, 'Cell diagram');

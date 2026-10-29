@@ -55,7 +55,7 @@ export default function ArchivedSessionsCard() {
           {sessions.map((session) => (
             <div
               key={session.id}
-              className="flex items-center gap-3 border-b border-border py-2.5 last:border-b-0"
+              className="flex items-center gap-3 border-b border-border py-3 last:border-b-0"
               data-testid={`archived-${session.id}`}
             >
               <span className="grid size-4 shrink-0 place-items-center text-muted" aria-hidden="true">

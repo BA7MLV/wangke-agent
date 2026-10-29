@@ -38,7 +38,7 @@
 
 /* 空态引导：比 EmptyState 轻（问答面板是卡片里的一段，不是整页） */
 .live-chat__empty {
-  padding: 12px 2px;
+  padding: 12px 4px;
   font-size: 13px;
   line-height: 1.6;
   color: rgb(var(--mdui-color-on-surface-variant));
@@ -52,10 +52,10 @@
   align-items: flex-start;
   gap: 8px;
   margin-bottom: 6px;
-  padding: 8px 10px;
+  padding: 8px 12px;
   font-size: 12px;
   line-height: 1.5;
-  border-radius: var(--mdui-shape-corner-small);
+  border-radius: var(--radius-panel);
   background: rgb(var(--mdui-color-surface-container-high));
   color: rgb(var(--mdui-color-on-surface-variant));
 }

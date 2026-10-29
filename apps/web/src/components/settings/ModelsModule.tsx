@@ -148,7 +148,7 @@ function ModelOptionRow({
       id={`${idPrefix ?? ''}${providerId}::${model}`}
       textValue={label || model}
       data-testid={`model-option-${model}`}
-      className="relative flex flex-1 min-w-0 items-center gap-3.5 rounded-sm pr-[38px]"
+      className="relative flex flex-1 min-w-0 items-center gap-4 rounded-sm pr-10"
       onAction={onSelect}
     >
       <span className="flex flex-1 min-w-0 items-center gap-2">
@@ -156,7 +156,7 @@ function ModelOptionRow({
         {selected && <Sym name="check" />}
         <CapBadges catalogId={catalogId} model={model} overrides={overrides} />
       </span>
-      <span className="flex shrink-0 items-baseline gap-2.5 text-[11px] text-muted">
+      <span className="flex shrink-0 items-baseline gap-3 text-[11px] text-muted">
         <span className="max-w-[120px] truncate text-right">{providerName}</span>
         <span
           className="min-w-12 text-right tabular-nums"
@@ -343,8 +343,8 @@ function SlotModelSelect({
   const totalResults = favRows.length + orphanFavs.length + groups.reduce((n, g) => n + g.ids.length, 0);
 
   return (
-    <div data-model-field={name} className={`flex flex-col gap-2.5 rounded-xl bg-background-secondary p-3 px-3.5 transition-shadow hover:shadow-sm ${issue ? 'ring-1 ring-danger' : ''}`}>
-      <div className="flex min-w-0 items-center gap-2.5">
+    <div data-model-field={name} className={`flex flex-col gap-3 rounded-3xl bg-background-secondary p-4 transition-shadow hover:shadow-sm ${issue ? 'ring-1 ring-danger' : ''}`}>
+      <div className="flex min-w-0 items-center gap-3">
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-background text-[17px] text-muted" aria-hidden="true">
           {SLOT_ICON[slot]}
         </span>
@@ -394,7 +394,7 @@ function SlotModelSelect({
           <button
             ref={triggerRef}
             type="button"
-             className="mt-2.5 box-border flex min-h-[48px] w-full cursor-pointer items-center gap-2.5 rounded-lg border border-border bg-background px-3 py-2 text-left font-[inherit] text-foreground shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-accent/45 hover:shadow-md focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-2 aria-expanded:border-accent/55 aria-expanded:shadow-lg"
+             className="mt-2.5 box-border flex min-h-[48px] w-full cursor-pointer items-center gap-3 rounded-xl border border-border bg-background px-3 py-2 text-left font-[inherit] text-foreground shadow-sm transition-[border-color,box-shadow] duration-200 hover:border-accent/45 hover:shadow-md focus-visible:outline-2 focus-visible:outline-focus focus-visible:outline-offset-2 aria-expanded:border-accent/55 aria-expanded:shadow-lg"
             data-testid={`model-button-${name}`}
             aria-label={`选择${SLOT_LABEL[slot]}模型，当前为 ${ref.model || '未设置'}`}
             aria-expanded={open}
@@ -406,7 +406,7 @@ function SlotModelSelect({
             <span className="flex flex-1 min-w-0 items-center gap-2">
               {ref.model ? (
                 <>
-                  <span className="flex min-w-0 flex-col gap-0.5">
+                  <span className="flex min-w-0 flex-col gap-1">
                     <span className="truncate font-mono text-[13px] font-medium" title={ref.model}>{modelLabel(settings, ref)}</span>
                     <span className="truncate text-xs text-muted">{provider?.name ?? '原供应商已不存在'}</span>
                   </span>
@@ -462,7 +462,7 @@ function SlotModelSelect({
                 value={kw}
                 onChange={(v) => setKw(v)}
               >
-                <SearchField.Group className="px-3 py-2.5 pb-1.5">
+                <SearchField.Group className="px-3 py-3 pb-2">
                   <SearchField.SearchIcon />
                   <SearchField.Input placeholder={`搜索 ${candidates.length} 家供应商的模型`} />
                   <SearchField.ClearButton />
@@ -486,7 +486,7 @@ function SlotModelSelect({
                         节点就走错分支，React 会在 commit 阶段抛
                         "getOwnerDocumentFromRootContainer(...).createTextNode is not a function"，
                         整棵树崩掉 —— 面板打不开、截图全白，只有列表为空时才看不出问题。 */}
-                    <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-muted" data-testid={`fav-group-${slot}`}>
+                    <Header className="sticky top-0 z-[1] flex items-center gap-2 bg-surface px-3 py-2 pb-1 text-[11px] font-semibold tracking-wide text-muted" data-testid={`fav-group-${slot}`}>
                       <Sym name="star" filled />
                       收藏
                     </Header>
@@ -512,7 +512,7 @@ function SlotModelSelect({
 
                 {orphanFavs.length > 0 && (
                   <ListBox.Section>
-                    <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-danger" data-testid={`orphan-group-${slot}`}>
+                    <Header className="sticky top-0 z-[1] flex items-center gap-2 bg-surface px-3 py-2 pb-1 text-[11px] font-semibold tracking-wide text-danger" data-testid={`orphan-group-${slot}`}>
                       <Sym name="warning" />
                       收藏里指向已不可用的供应商
                     </Header>
@@ -540,7 +540,7 @@ function SlotModelSelect({
                 {groups.map(({ provider, ids }) =>
                   ids.length > 0 ? (
                     <ListBox.Section key={provider.id}>
-                      <Header className="sticky top-0 z-[1] flex items-center gap-1.5 bg-surface px-3 py-[7px] pb-1 text-[11px] font-semibold tracking-wide text-muted">
+                      <Header className="sticky top-0 z-[1] flex items-center gap-2 bg-surface px-3 py-2 pb-1 text-[11px] font-semibold tracking-wide text-muted">
                         {provider.name}
                         <span className="font-normal tabular-nums opacity-75">{ids.length}</span>
                       </Header>
@@ -565,7 +565,7 @@ function SlotModelSelect({
                 )}
               </ListBox>
 
-              <div className="flex items-center justify-between gap-2 border-t border-border/70 px-3 py-2.5">
+              <div className="flex items-center justify-between gap-2 border-t border-border/70 px-3 py-3">
                 {totalResults === 0 ? (
                   <span className="min-w-0 truncate text-xs text-muted">
                     {Object.keys(options).length === 0
@@ -671,27 +671,27 @@ function ProviderRow({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-2xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
+      className={`relative overflow-hidden rounded-3xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
       data-testid={`provider-card-${provider.id}`}
       data-open={open ? 'true' : undefined}
     >
       <button
         type="button"
-        className={`box-border flex w-full cursor-pointer flex-col items-stretch gap-5 border-0 bg-transparent p-5 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[640px]:gap-2.5 max-[640px]:p-2.5 ${open ? 'min-h-[96px]' : 'min-h-[218px] max-[640px]:min-h-[150px]'}`}
+        className={`box-border flex w-full cursor-pointer flex-col items-stretch gap-5 border-0 bg-transparent p-4 text-left font-[inherit] text-foreground transition-colors duration-200 hover:bg-foreground/4 focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-focus max-[640px]:gap-3 ${open ? 'min-h-[96px]' : 'min-h-[218px] max-[640px]:min-h-[150px]'}`}
         data-testid={`provider-summary-${provider.id}`}
         aria-expanded={open}
         onClick={onToggle}
       >
         <span className="flex items-start justify-between gap-3">
-          <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true">
+          <span className="grid size-16 shrink-0 place-items-center rounded-xl bg-background text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:text-lg" aria-hidden="true">
             {preset ? <ProviderLogo id={preset.id} /> : <Sym name="dns" />}
           </span>
-          {status !== 'ready' && <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-1.5 max-[640px]:py-0.5 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
+          {status !== 'ready' && <span className={`max-w-full truncate rounded-full px-3 py-1 text-xs font-medium max-[640px]:px-2 max-[640px]:py-1 max-[640px]:text-[9px] ${removable ? 'mr-10 max-[640px]:mr-9' : ''} ${statusColor} ${status === 'failed' || status === 'unconfigured' ? 'bg-danger/12' : 'bg-foreground/8'}`}>
             {STATUS_HINT[status]}
           </span>}
         </span>
         <span className="flex min-w-0 flex-1 flex-col justify-end gap-1">
-          <span className="flex min-w-0 items-center gap-1.5 text-lg font-semibold text-foreground max-[640px]:text-xs">
+          <span className="flex min-w-0 items-center gap-2 text-lg font-semibold text-foreground max-[640px]:text-xs">
             <span className="truncate">{provider.name.trim() || '未命名供应商'}</span>
             {status === 'ready' && <span className="inline-flex shrink-0 items-center text-success" title={STATUS_HINT[status]} data-testid={`provider-ready-${provider.id}`}>
               <Sym name="check_circle" size={18} />
@@ -1213,7 +1213,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         title="选择模型"
         testId="card-models"
       >
-        <div className="flex flex-col gap-2.5">
+        <div className="flex flex-col gap-3">
           {SLOT_ORDER.filter((slot) => !serverManaged || slot !== 'decision' || Boolean(settings.decisionModel.model)).map((slot) => {
             const name = (
               { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel', decision: 'decisionModel' } as const

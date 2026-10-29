@@ -1,4 +1,4 @@
-import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ChangeEvent, type ReactNode } from 'react';
+import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from 'react';
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Avatar, Button, Dropdown, ListBox, Modal, Spinner, cn } from '@heroui/react';
 import { PageShell, Sym, toast, promptDialog, confirmDialog } from '../ui';
@@ -9,6 +9,8 @@ import { MoreMenu, type MenuAction } from '../ui';
 import { useBotPanel } from '../store/botPanel';
 import { serverClient, ServerApiError, type ApprovalDto, type ThreadDetail, type Session } from '../api/serverClient';
 import type { AgentProfileDto, MessageDto, ProjectDetailDto, SseEvent, ThreadDto } from '@wangke/contracts';
+import { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS, type BotAttachment } from '@wangke/contracts';
+import { BotAttachmentDraft, BotMessageAttachments, type BotDraftFile } from '../components/BotAttachments';
 import { botProgressText } from '@wangke/contracts/cloud';
 import { browserSupportsWebAuthn, startRegistration } from '@simplewebauthn/browser';
 import MessageComposer from '../components/MessageComposer';
@@ -36,26 +38,6 @@ const looksRich = (text: string) => /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|
  *   - 项目页（默认导出）：PageShell 里左列会话、右列对话或文件；手机上两列变两屏。
  * 视觉与课程问答一致：没有气泡尾巴、送达勾和浮动日期。
  */
-
-function parseAttachment(content: string, fallback: string): { name: string; size?: number; uploading?: boolean } {
-  try {
-    const value = JSON.parse(content) as { originalName?: unknown; name?: unknown; fileId?: unknown; sizeBytes?: unknown; uploading?: unknown };
-    return {
-      name: typeof value.originalName === 'string' ? value.originalName : typeof value.name === 'string' ? value.name : fallback,
-      size: typeof value.sizeBytes === 'number' ? value.sizeBytes : undefined,
-      uploading: value.uploading === true,
-    };
-  } catch {
-    return { name: content.slice(0, 80) || fallback };
-  }
-}
-
-function formatBytes(size?: number) {
-  if (size === undefined) return '';
-  if (size < 1024) return `${size} B`;
-  if (size < 1024 * 1024) return `${(size / 1024).toFixed(1)} KB`;
-  return `${(size / 1024 / 1024).toFixed(1)} MB`;
-}
 
 /** 窄屏：两栏收成两屏。和 bot.css 里的断点保持一致。 */
 const NARROW_QUERY = '(max-width: 760px)';
@@ -119,6 +101,8 @@ const Bubble = memo(function Bubble({
   // 只有刚到的消息播入场动效；虚拟列表滚回来重新挂载的旧消息不再动一遍。
   const [fresh] = useState(() => Date.now() - timeOf(message) < 4000);
   const pending = message.id.startsWith('pending-');
+  const attachment = message.kind === 'attachment' ? parseBotAttachments(message.content)
+    : mine && message.kind === 'text' ? parseLegacyBotAttachments(message.content) : null;
   let body;
   if (message.kind === 'progress') {
     const progress = botProgressText(message.content, i18n.language);
@@ -129,21 +113,11 @@ const Bubble = memo(function Bubble({
         {progress && <span className="imsg-typing__text">{progress}</span>}
       </div>
     );
-  } else if (message.kind === 'attachment') {
-    const file = parseAttachment(message.content, t('botHome.attachment'));
-    let download: string | undefined;
-    try {
-      const attachment = JSON.parse(message.content);
-      if (projectId && attachment.projectId === projectId && typeof attachment.projectPath === 'string') download = serverClient.projectDownloadUrl(projectId, attachment.projectPath);
-      else if (!projectId && typeof attachment.fileId === 'string') download = serverClient.fileDownloadUrl(attachment.fileId);
-    } catch { /* The message may be a plain-text attachment description. */ }
+  } else if (attachment) {
     body = (
-      <div className="imsg-bubble imsg-bubble--file">
-        <span className="imsg-file__icon" aria-hidden="true">
-          {file.uploading ? <Spinner size="sm" color="current" /> : <Sym name="description" />}
-        </span>
-        {download ? <a className="imsg-file__name" href={download} download>{file.name}</a> : <span className="imsg-file__name">{file.name}</span>}
-        <span className="imsg-file__size">{formatBytes(file.size)}</span>
+      <div className="bot-attachment-message">
+        <BotMessageAttachments files={attachment.files} projectId={projectId} />
+        {attachment.text && <div className="imsg-bubble"><p className="imsg-text">{attachment.text}</p></div>}
       </div>
     );
   } else if (message.kind === 'approval' || message.kind === 'question') {
@@ -283,8 +257,8 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const draftKey = activeId ?? `new:${agentId}`;
   const draft = drafts[draftKey] ?? '';
   const setDraft = (value: string) => setDrafts(old => ({ ...old, [draftKey]: value }));
-  const [uploadBusy, setUploadBusy] = useState(false);
-  const uploadInputRef = useRef<HTMLInputElement>(null);
+  const [attachmentDrafts, setAttachmentDrafts] = useState<Record<string, BotDraftFile[]>>({});
+  const draftFiles = attachmentDrafts[draftKey] ?? [];
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const cursorRef = useRef(0);
@@ -304,9 +278,9 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const rows = useMemo(() => {
     // Optimistic "running" only controls the stop/typing UI, not a read receipt.
     const grouped = groupMessages(messages, locale);
-    // Bot 在处理、又还没发出进度时，补一枚「正在输入」气泡，像对面的人在打字。
-    const tail = messages[messages.length - 1];
-    if (activeRunning && tail && tail.kind !== 'progress') {
+    // 只显示无执行细节的输入指示，历史工具进度已在分组前过滤。
+    const tail = grouped.at(-1)?.message;
+    if (activeRunning && tail) {
       const typing: MessageDto = { id: 'typing', threadId: tail.threadId, clientNonce: null, seq: Number.MAX_SAFE_INTEGER, role: 'assistant', kind: 'progress', content: '', createdAt: new Date().toISOString(), replyTo: null };
       grouped.push({ key: 'typing', message: typing, first: true, last: true, stamp: null, day: grouped[grouped.length - 1]?.day ?? '', time: '' });
     }
@@ -480,59 +454,74 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const mergeThread = (updated: ThreadDto) => setThreads(old => old.map(thread => thread.id === updated.id ? { ...thread, ...updated } : thread));
 
   const send = async () => {
-    if (!canChat || !draft.trim() || sendLock.current || (activeId && !active)) return;
+    if (!canChat || (!draft.trim() && !draftFiles.length) || sendLock.current || (activeId && !active)) return;
     sendLock.current = true; setSendBusy(true);
     const content = draft.trim();
     const nonce = crypto.randomUUID();
     const sourceKey = draftKey;
+    const files = draftFiles;
     let targetId: string | undefined;
     let pending: MessageDto | undefined;
+    let clearedDraft = false;
     try {
       const target = active ?? await create();
       if (!target) return;
       targetId = target.id;
-      pending = appendPending(target.id, 'text', content, nonce);
-      setDrafts(old => ({ ...old, [sourceKey]: '' }));
-      settlePending(target.id, pending.id, await serverClient.sendMessage(target.id, content, nonce));
+      // A first send creates a thread; move its draft without touching other conversations.
+      if (sourceKey !== target.id) {
+        setDrafts(old => { const next = { ...old, [target.id]: old[sourceKey] ?? '' }; delete next[sourceKey]; return next; });
+        setAttachmentDrafts(old => { const next = { ...old, [target.id]: old[sourceKey] ?? [] }; delete next[sourceKey]; return next; });
+      }
+      const uploaded = await Promise.allSettled(files.map(async item => {
+        if (item.uploaded) return item.uploaded;
+        try {
+          let uploadedFile: BotAttachment;
+          if (projectId) {
+            const result = await serverClient.uploadProjectFile(projectId, item.file.name, item.file);
+            uploadedFile = { projectId, projectPath: result.path, originalName: item.file.name, mimeType: item.file.type, sizeBytes: item.file.size };
+          } else {
+            const result = await serverClient.uploadFile(item.file);
+            uploadedFile = { fileId: result.id, originalName: result.originalName, mimeType: result.mimeType, sizeBytes: result.sizeBytes };
+          }
+          setAttachmentDrafts(old => ({ ...old, [target.id]: (old[target.id] ?? []).map(file => file.id === item.id ? { ...file, uploaded: uploadedFile, error: undefined } : file) }));
+          return uploadedFile;
+        } catch (error) {
+          setAttachmentDrafts(old => ({ ...old, [target.id]: (old[target.id] ?? []).map(file => file.id === item.id ? { ...file, error: projectError(error) } : file) }));
+          throw error;
+        }
+      }));
+      const failed = uploaded.find(result => result.status === 'rejected');
+      if (failed?.status === 'rejected') throw failed.reason;
+      const attachments = uploaded.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
+      const payload = attachments.length ? JSON.stringify({ ...attachments[0], attachments, caption: content }) : content;
+      pending = appendPending(target.id, attachments.length ? 'attachment' : 'text', payload, nonce);
+      // Keep edits made during upload. A failed send restores the submitted draft.
+      if ((drafts[sourceKey] ?? '').trim() === content) {
+        clearedDraft = true;
+        setDrafts(old => old[target.id]?.trim() === content ? { ...old, [target.id]: '' } : old);
+      }
+      settlePending(target.id, pending.id, await (attachments.length
+        ? serverClient.sendAttachment(target.id, payload, nonce)
+        : serverClient.sendMessage(target.id, payload, nonce)));
+      setAttachmentDrafts(old => ({ ...old, [target.id]: (old[target.id] ?? []).filter(item => !files.some(file => file.id === item.id)) }));
       setRunning(old => ({ ...old, [target.id]: true }));
       if (target.title === tp('newTitle')) {
-        const updated = await serverClient.updateThread(target.id, { title: content.slice(0, 60) }).catch(() => null);
+        const updated = await serverClient.updateThread(target.id, { title: (content || files[0]?.file.name || '').slice(0, 60) }).catch(() => null);
         if (updated) mergeThread(updated);
       }
     } catch (error) {
       if (targetId && pending) settlePending(targetId, pending.id, null);
-      setDrafts(old => ({ ...old, [targetId ?? sourceKey]: content }));
+      if (clearedDraft) setDrafts(old => ({ ...old, [targetId ?? sourceKey]: old[targetId ?? sourceKey] || content }));
       toast.error(projectError(error));
     } finally { sendLock.current = false; setSendBusy(false); }
   };
 
-  const upload = async (event: ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    event.target.value = '';
-    if (!file || !canChat) return;
-    setUploadBusy(true);
-    const nonce = crypto.randomUUID();
-    let active: { id: string } | null = null;
-    try { active = (activeId ? details[activeId] : null) ?? await create(); }
-    catch (error) { toast.error(projectError(error)); }
-    if (!active) { setUploadBusy(false); return; }
-    const pending = appendPending(active.id, 'attachment', JSON.stringify({ originalName: file.name, sizeBytes: file.size, uploading: true }), nonce);
-    try {
-      let content: string;
-      if (projectId) {
-        const uploaded = await serverClient.uploadProjectFile(projectId, file.name, file);
-        content = JSON.stringify({ projectId, projectPath: uploaded.path, originalName: file.name, sizeBytes: file.size });
-      } else {
-        const uploaded = await serverClient.uploadFile(file);
-        content = JSON.stringify({ fileId: uploaded.id, originalName: uploaded.originalName, mimeType: uploaded.mimeType, sizeBytes: uploaded.sizeBytes, sha256: uploaded.sha256 });
-      }
-      settlePending(active.id, pending.id, await serverClient.sendAttachment(active.id, content, nonce));
-    } catch (error) {
-      settlePending(active.id, pending.id, null);
-      toast.error(projectError(error));
-    } finally {
-      setUploadBusy(false);
-    }
+  const addFiles = (files: File[]) => {
+    if (!canChat) return;
+    if (files.some(file => !file.size || file.size > 20 * 1024 * 1024)) { toast.error('附件不能为空，单个附件不能超过 20 MB'); return; }
+    if (files.length + draftFiles.length > MAX_BOT_ATTACHMENTS) { toast.error(`最多添加 ${MAX_BOT_ATTACHMENTS} 个附件`); return; }
+    const items = files.map(file => ({ id: crypto.randomUUID(), file }));
+    setAttachmentDrafts(old => ({ ...old, [draftKey]: [...(old[draftKey] ?? []), ...items].slice(0, MAX_BOT_ATTACHMENTS) }));
   };
 
   const react = useCallback(async (messageId: string) => {
@@ -712,20 +701,25 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     </div>
 
     <MessageComposer
+      key={draftKey}
       className="bot-composer"
       ariaLabel={t('botHome.composer')}
       placeholder={project?.archived ? tp('readOnly') : t('botHome.taskPlaceholder')}
       value={draft}
       onChange={setDraft}
       onSubmit={() => void send()}
-      disabled={!canChat || sendBusy || Boolean(activeId && !active)}
+      disabled={!canChat || Boolean(activeId && !active)}
+      sending={sendBusy}
+      hasAttachments={draftFiles.length > 0}
       busy={activeRunning}
       onStop={() => void stop()}
-      onAttach={() => uploadInputRef.current?.click()}
-      attachBusy={uploadBusy}
+      onFiles={addFiles}
+      onFocus={followEnd}
+      onScope={active && !projectId ? () => setMcpOpen(true) : undefined}
+      onSettings={() => projectId ? setSettingsOpen(true) : openSettings(cloud.enabled ? 'bot' : 'agent')}
       attachLabel={t('botHome.attach')}
+      accessory={draftFiles.length ? <BotAttachmentDraft files={draftFiles} sending={sendBusy} onRemove={id => setAttachmentDrafts(old => ({ ...old, [draftKey]: (old[draftKey] ?? []).filter(file => file.id !== id) }))} /> : undefined}
     />
-    <input ref={uploadInputRef} className="bot-hidden-file" type="file" aria-label={t('botHome.attach')} onChange={upload} disabled={!canChat || uploadBusy} />
   </>;
 
   const modals = <>

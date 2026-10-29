@@ -14,7 +14,7 @@
   --media-slider-thumb-size: 12px;
   --media-slider-track-bg: rgb(255 255 255 / 0.25);
   --media-slider-track-fill-bg: var(--bili-blue);
-  --media-slider-track-border-radius: 2px;
+  --media-slider-track-border-radius: var(--radius-xs);
   --media-button-size: 36px;
   --media-button-icon-size: 62%;
   --media-button-hover-bg: transparent;
@@ -54,7 +54,7 @@
 }
 
 .bili-player .vds-video-layout:not([data-sm]) .vds-controls-group:last-child {
-  padding: 2px 16px 8px;
+  padding: 4px 16px 8px;
   gap: 4px;
 }
 
@@ -127,7 +127,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 14px;
 }
 
@@ -154,7 +154,7 @@
 
 .bili-player .player-speed-options {
   min-width: 124px;
-  padding: 6px;
+  padding: 8px;
   max-height: min(320px, calc(var(--player-height, 400px) - 76px));
   overflow-y: auto;
   overscroll-behavior: contain;
@@ -214,7 +214,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 16px;
-  padding: 5px 0;
+  padding: 4px 0;
 }
 
 .player-shortcuts-content dd {
@@ -240,7 +240,7 @@
   z-index: 14;
   width: 60px;
   height: 52px;
-  border-radius: 12px;
+  border-radius: var(--radius-control);
   --button-bg: rgb(0 0 0 / 0.45);
   --button-bg-hover: rgb(0 0 0 / 0.65);
   --button-bg-pressed: rgb(0 0 0 / 0.75);
@@ -264,7 +264,7 @@
   left: 24px;
   z-index: 60;
   max-width: calc(100% - 48px);
-  padding: 8px 14px;
+  padding: 8px 16px;
   border-radius: 4px;
   background: rgb(0 0 0 / 0.72);
   color: #fff;
@@ -347,9 +347,9 @@
   bottom: 4px;
   transform: translateX(-50%);
   margin: 0;
-  padding: 2px 6px;
+  padding: 4px 8px;
   border: 0;
-  border-radius: 2px;
+  border-radius: var(--radius-xs);
   background: rgb(0 0 0 / 0.8);
   color: #fff;
   font-size: 12px;
@@ -401,7 +401,7 @@
   max-width: 86%;
   margin: 0 auto;
   padding: 8px 16px;
-  border-radius: 18px;
+  border-radius: var(--radius-2xl);
   background: rgb(0 0 0 / 0.62);
   color: #fff;
   font-size: 16px;
@@ -419,7 +419,7 @@
 .dm-tag {
   display: inline-block;
   margin-right: 8px;
-  padding: 0 7px;
+  padding: 0 8px;
   border-radius: 4px;
   background: #1677ff;
   font-size: 12px;

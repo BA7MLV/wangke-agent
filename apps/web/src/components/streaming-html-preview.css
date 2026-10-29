@@ -6,7 +6,7 @@
   max-width: 100%;
   overflow-wrap: anywhere;
   border: 1px solid var(--border-secondary);
-  border-radius: var(--radius, 10px);
+  border-radius: var(--radius-panel);
   background: var(--background-secondary, var(--background));
   color: var(--foreground);
   line-height: 1.55;
@@ -15,7 +15,7 @@
 .widget-stream-preview__status {
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 8px;
   margin-bottom: 8px;
   color: var(--muted);
   font-size: 0.75rem;

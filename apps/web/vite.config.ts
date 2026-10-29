@@ -183,7 +183,7 @@ export default defineConfig({
       manifest: {
         name: 'DeepStudent Go',
         short_name: 'DeepStudent Go',
-        description: '上传网课视频，自动生成字幕、公文格式讲义，支持 AI 问答',
+        description: '导入课程视频与文档，转写字幕、整理讲义，结合原文提问和复习。',
         theme_color: '#ebebeb',
         background_color: '#ebebeb',
         display: 'standalone',

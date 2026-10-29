@@ -131,7 +131,7 @@ export class McpManager {
           log.text = (log.text + decoder.write(chunk)).slice(-12000);
         });
       }
-      const client = new Client({ name: 'wangke-agent', version: '0.1.0' }, { capabilities: {} });
+      const client = new Client({ name: 'deepstudent-go', version: '0.1.0' }, { capabilities: {} });
       const c: Connection = { client, transport, revision: server.revision, tools: [], touched: Date.now(), active: 0, controller };
       try {
         await client.connect(transport, { timeout: server.timeoutMs, signal: AbortSignal.any([controller.signal, handshake.signal]) });

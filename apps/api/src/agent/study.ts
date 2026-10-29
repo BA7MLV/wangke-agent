@@ -27,6 +27,8 @@ export interface StudyContext {
   append(kind: string, text: string): unknown;
   /** Recheck run, cancellation and the exact operation's current permissions before commits. */
   checkActive(): void;
+  /** Read only the current thread/project sandbox, with its execution lease. */
+  readWorkspaceFile?(path: string): Promise<Uint8Array>;
 }
 export interface StudyToolPlugin {
   name: string; description: string; properties: Record<string, unknown>; required: string[];
@@ -35,6 +37,18 @@ export interface StudyToolPlugin {
   execute(args: any, context: StudyContext): Promise<unknown>;
 }
 const learningTables = new Set(['videos','folders','segments','materialBlocks','handouts','cards','studyDays','courseFiles','files','subtitleTracks','comments','danmakus']);
+const operationFileId = (owner: string, step: string, purpose: string) => {
+  const key = crypto.createHash('sha256').update(`${owner}:${step}:${purpose}`).digest('hex').slice(0, 32);
+  return `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20)}`;
+};
+const fileMime: Record<string, string> = {
+  '.pdf': 'application/pdf', '.zip': 'application/zip', '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json', '.html': 'text/html',
+  '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',
+  '.mp4': 'video/mp4', '.mp3': 'audio/mpeg', '.wav': 'audio/wav',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+};
 /** Learning extensions do not import an IM SDK. A registry can be supplied in tests/deployments. */
 export class StudyTools {
   readonly plugins = new Map<string, StudyToolPlugin>();
@@ -130,17 +144,32 @@ export class StudyTools {
       c.checkActive();
       return { fileId: a.fileId, name: f.name, text, truncated: false };
     } });
-    this.register({ name: 'study_export', description: 'Generate a downloadable UTF-8 text/Markdown/CSV/JSON file, persist it, and send it to the user via Web and IM.', properties: { name: { type: 'string' }, content: { type: 'string' } }, required: ['name','content'], capability: () => 'write', execute: async (a, c) => {
+    this.register({ name: 'study_upload_file', description: 'Register a binary or text file from the CURRENT /workspace and return a real owned fileId, name, MIME and size. Accepts /workspace/... or a workspace-relative path; up to 20 MB, no links or outside paths. Transfers bytes directly, never print/base64 the file into shell output. Does NOT send a chat message. Decide which finished artifacts the user needs, then call study_send_file(fileId, caption). Works for generated PDF, DOCX, ZIP, images and other files.', properties: { path: { type: 'string', minLength: 1, maxLength: 2048 }, name: { type: 'string', minLength: 1, maxLength: 255 } }, required: ['path'], capability: () => 'write', permissions: () => ['read', 'write'], execute: async (a, c) => {
+      if (typeof a.path !== 'string' || a.path.length > 2048 || /[\\\u0000-\u001f\u007f]/.test(a.path)) throw new Error('invalid_workspace_path');
+      const relative = a.path.startsWith('/workspace/') ? a.path.slice(11) : a.path;
+      if (relative.split('/').some((part: string) => !part || part === '.' || part === '..' || Buffer.byteLength(part) > 255)) throw new Error('invalid_workspace_path');
+      const name = a.name ?? path.posix.basename(relative);
+      if (typeof name !== 'string' || !name || name.length > 255 || /[/\\\u0000-\u001f\u007f]/.test(name)) throw new Error('invalid_export');
+      c.checkActive();
+      if (!c.readWorkspaceFile) throw new Error('workspace_file_unavailable');
+      const id = operationFileId(c.owner, c.step, 'workspace');
+      const saved = store.db.prepare('SELECT id AS fileId,original_name AS name,mime_type AS mimeType,size_bytes AS sizeBytes FROM files WHERE id=? AND owner_id=?').get(id, c.owner);
+      if (saved) return saved;
+      const bytes = await c.readWorkspaceFile(relative);
+      c.checkActive();
+      const mime = mediaMime(bytes, fileMime[path.extname(name).toLowerCase()] ?? 'application/octet-stream');
+      const f = await receiveFile(store, filesDir, c.owner, Readable.from([bytes]), name, mime, 20 * 1024 * 1024, undefined, c.checkActive, id);
+      return { fileId: f.id, name: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes };
+    } });
+    this.register({ name: 'study_export', description: 'Generate and register a UTF-8 text/Markdown/CSV/JSON file. Set send=false to return its fileId without a chat message, then decide whether to study_send_file; defaults to sending for compatibility. For an existing workspace file or any binary format use study_upload_file instead.', properties: { name: { type: 'string' }, content: { type: 'string' }, send: { type: 'boolean' } }, required: ['name','content'], capability: () => 'write', execute: async (a, c) => {
       if (typeof a.name !== 'string' || !/^[^/\\]{1,120}\.(md|txt|csv|json)$/i.test(a.name) || typeof a.content !== 'string' || a.content.length > 100000) throw new Error('invalid_export');
       c.checkActive();
-      const key = crypto.createHash('sha256').update(`${c.owner}:${c.step}:export`).digest('hex').slice(0, 32);
-      const operationFileId = `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20)}`;
-      const f = await receiveFile(store, filesDir, c.owner, Readable.from([Buffer.from(a.content)]), a.name, 'text/plain', 1024 * 1024, undefined, c.checkActive, operationFileId);
+      const f = await receiveFile(store, filesDir, c.owner, Readable.from([Buffer.from(a.content)]), a.name, fileMime[path.extname(a.name).toLowerCase()] ?? 'text/plain', 1024 * 1024, undefined, c.checkActive, operationFileId(c.owner, c.step, 'export'));
       c.checkActive();
-      c.append('attachment', JSON.stringify({ fileId: f.id, name: f.originalName, caption: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes }));
+      if (a.send !== false) c.append('attachment', JSON.stringify({ fileId: f.id, name: f.originalName, caption: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes }));
       return { fileId: f.id, name: f.originalName };
     } });
-    this.register({ name: 'study_send_file', description: 'Send one existing owned image or file of any type to the current Web/IM conversation, optionally with a short caption. This sends a separate message immediately and keeps the turn open. Call again for another file, send_message for conversational text, or finish_turn when done. Use a real fileId returned by upload/export/resource tools.', properties: { fileId: { type: 'string' }, caption: { type: 'string', maxLength: 2000 } }, required: ['fileId'], capability: () => 'read', execute: async (a, c) => {
+    this.register({ name: 'study_send_file', description: 'Send one existing owned image or file of any type to the current Web/IM conversation, optionally with a short caption. This queues a separate message immediately and keeps the turn open; IM transport delivery is asynchronous. For workspace paths, FIRST call study_upload_file(path) to obtain fileId. Choose only useful final artifacts to send. Call again for another file, send_message for conversational text, or finish_turn when done.', properties: { fileId: { type: 'string' }, caption: { type: 'string', maxLength: 2000 } }, required: ['fileId'], capability: () => 'read', execute: async (a, c) => {
       if (a.caption !== undefined && (typeof a.caption !== 'string' || a.caption.length > 2000)) throw new Error('invalid_caption');
       const f = await this.file(c.owner, a.fileId); c.checkActive(); c.append('attachment', JSON.stringify({ fileId: a.fileId, name: f.name, ...(a.caption ? { caption: a.caption } : {}), mimeType: f.mime, sizeBytes: f.bytes.length })); return { sent: true, fileId: a.fileId };
     } });

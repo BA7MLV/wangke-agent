@@ -46,7 +46,7 @@
   text-align: center;
   font-size: 11px;
   color: var(--muted);
-  padding: 14px 0 4px;
+  padding: 16px 0 4px;
   background: linear-gradient(transparent, var(--background-tertiary) 55%);
 }
 
@@ -73,7 +73,7 @@
   height: 120px;
   width: 70%;
   margin: 18px auto;
-  border-radius: 6px;
+  border-radius: var(--radius-chip);
   background: var(--default-soft);
 }
 
@@ -125,14 +125,14 @@
 .hd-hover-actions .hd-act {
   flex: none;
   min-width: 56px;
-  padding: 0 10px;
+  padding: 0 12px;
   border-radius: var(--radius-sm);
 }
 
 /* ── AI 改写输入行 / 列表编辑行 / 表格字段标签 ─────────────────────────── */
 .hd-ai-input {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   align-items: flex-start;
 }
 
@@ -147,7 +147,7 @@
 /* handout-doc.css 已定义 .hd-editor / .hd-editor-bar；列表行与字段标签补在此处 */
 .hd-list-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   margin-bottom: 6px;
   align-items: flex-start;
 }

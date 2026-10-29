@@ -124,7 +124,7 @@ function EditableArtifact({ kind, source, location = 'fence', libraries, widgetI
       <Button ref={statusButtonRef} size="sm" variant="tertiary" onPress={edit}>{running ? '查看进度' : draft.next ? '查看修改' : '继续修改'}</Button>
       {running && <Button size="sm" variant="tertiary" onPress={() => cancelArtifactDraft(key)}>停止生成</Button>}
     </div>}
-    {draft.open && <section ref={panelRef} tabIndex={-1} aria-labelledby={headingId} data-testid="artifact-edit-panel" className="my-3 flex min-w-0 flex-col gap-4 rounded-xl border border-border bg-surface p-4">
+    {draft.open && <section ref={panelRef} tabIndex={-1} aria-labelledby={headingId} data-testid="artifact-edit-panel" className="my-3 flex min-w-0 flex-col gap-4 rounded-3xl border border-border bg-surface p-4">
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
           <h3 id={headingId} className="m-0 text-balance text-sm font-medium">{kind === 'html' ? '调整这块内容' : '调整这幅图'}</h3>
@@ -132,7 +132,7 @@ function EditableArtifact({ kind, source, location = 'fence', libraries, widgetI
         </div>
         <Button size="sm" variant="tertiary" isDisabled={applying} onPress={collapse}>收起</Button>
       </div>
-      {running ? <div className="flex flex-wrap items-center gap-3 rounded-lg bg-default p-3">
+      {running ? <div className="flex flex-wrap items-center gap-3 rounded-xl bg-default p-3">
         <div className="min-w-0 flex-1" role="status">
           <p className="m-0 text-pretty text-sm font-medium">正在生成修改…</p>
           <p className="mb-0 mt-1 text-pretty text-xs text-muted">可以收起后继续阅读、操作其他图形或发送消息。原内容不会改变。</p>

@@ -355,7 +355,7 @@ function SkillItem({
       data-skill-id={skill.id}
     >
       <div className="min-w-0 flex-1">
-        <div className="flex flex-wrap items-center gap-1.5">
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-base text-foreground">{skill.name}</span>
           {/* 静态标记用 Chip：这里不在 label 里，没有嵌套可交互元素的问题 */}
           {!!skill.builtin && (

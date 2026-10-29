@@ -113,6 +113,22 @@ try {
   const agents = await app.inject({ method: 'GET', url: '/api/v1/agents', headers: { cookie } });
   assert.equal(agents.statusCode, 200);
   assert.equal(agents.json().agents.length, 1);
+  const defaultAgent = agents.json().agents[0];
+  assert.equal(defaultAgent.name, 'DeepStudent Go', 'new accounts use the current product name');
+  const brandingDb = new Database(path.join(dir, 'db/wangke.sqlite'));
+  const originalPrompt = brandingDb.prepare('SELECT system_prompt FROM agent_profiles WHERE id=?').get(defaultAgent.id).system_prompt;
+  try {
+    brandingDb.prepare('UPDATE agent_profiles SET name=?, system_prompt=? WHERE id=?').run('Wangke Bot', 'Keep my existing instructions.', defaultAgent.id);
+    for (let i = 0; i < 2; i++) {
+      const legacyAgents = await app.inject({ method: 'GET', url: '/api/v1/agents', headers: { cookie } });
+      assert.equal(legacyAgents.statusCode, 200);
+      assert.deepEqual(legacyAgents.json().agents.map(({ id, name }) => ({ id, name })), [{ id: defaultAgent.id, name: 'Wangke Bot' }], 'reuse the legacy default without duplicating or renaming it');
+    }
+    assert.equal(brandingDb.prepare('SELECT system_prompt FROM agent_profiles WHERE id=?').get(defaultAgent.id).system_prompt, 'Keep my existing instructions.');
+  } finally {
+    brandingDb.prepare('UPDATE agent_profiles SET name=?, system_prompt=? WHERE id=?').run(defaultAgent.name, originalPrompt, defaultAgent.id);
+    brandingDb.close();
+  }
   const specialist = await app.inject({ method: 'POST', url: '/api/v1/agents', headers: { cookie }, payload: { name: '课程研究员', role: '检索协作', systemPrompt: '只提供课程范围内的安全建议。' } });
   assert.equal(specialist.statusCode, 201);
   const joined = await app.inject({ method: 'POST', url: `/api/v1/threads/${botThread.id}/participants`, headers: { cookie }, payload: { agentId: specialist.json().id } });

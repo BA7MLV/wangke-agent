@@ -4,6 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { chromium } from 'playwright';
 import { createServer } from 'vite';
+import { FOLDER_SPRING_OPEN_MS } from '../apps/web/src/ui/interactionTiming.ts';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-resource-ui-'));
 Object.assign(process.env, { NODE_ENV: 'test', DATA_DIR: directory, FILES_DIR: path.join(directory, 'files'), BOOTSTRAP_SECRET_FILE: path.join(directory, 'secret'), CLOUD_WORKER_DISABLED: '1' });
@@ -98,6 +99,95 @@ try {
     await page.getByTestId('resource-entry').filter({ hasText: '子文件夹' }).waitFor();
     assert.ok(fs.statSync(path.join(physical, '子文件夹')).isDirectory());
     assert.equal(await page.locator('[data-testid="resource-entry"] > .resource-open > :is(svg, .resource-file-icon)').count(), await page.getByTestId('resource-entry').count(), 'all files and folders have a visible icon');
+
+    // Existing click menus must retain their keyboard/focus and pointer-leave behavior.
+    const more = page.getByRole('button', { name: '更多操作', exact: true });
+    await more.focus();
+    await page.keyboard.press('Enter');
+    await page.getByRole('menu').waitFor();
+    await page.mouse.move(5, 5);
+    await page.waitForTimeout(400);
+    assert.equal(await page.getByRole('menu').isVisible(), true, 'click menu does not close on pointer leave');
+    await page.keyboard.press('ArrowDown');
+    assert.equal(await page.evaluate(() => document.activeElement?.getAttribute('role')), 'menuitem');
+    await page.keyboard.press('Escape');
+    await page.getByRole('menu').waitFor({ state: 'hidden' });
+    assert.equal(await more.evaluate(el => el === document.activeElement), true, 'Escape restores focus to the anchor');
+    await more.click();
+    await page.getByRole('menu').waitFor();
+    // React Aria makes the background inert while open; hit-test a real outside
+    // point rather than asking Playwright to click through the dismiss layer.
+    const titleBox = await page.locator('.finder-title').boundingBox();
+    await page.mouse.click(titleBox.x + titleBox.width / 2, titleBox.y + titleBox.height / 2);
+    await page.getByRole('menu').waitFor({ state: 'hidden' });
+
+    await call('POST', `/projects/${fixture.id}/directories?path=${encodeURIComponent('子文件夹/深层')}`);
+    await page.evaluate(() => {
+      window.resourceDragEvents = [];
+      for (const name of ['dragstart', 'dragenter', 'dragover', 'dragleave', 'dragend', 'drop']) {
+        window.addEventListener(name, event => {
+          const row = event.target.closest?.('.resource-tile');
+          const record = { name, row: row?.querySelector('.resource-open > span:last-of-type')?.textContent, types: [...event.dataTransfer.types], x: event.clientX, y: event.clientY };
+          window.resourceDragEvents.push(record);
+          if (window.resourceDragEvents.length > 80) window.resourceDragEvents.shift();
+        }, true);
+      }
+    });
+    const originalDirectoryUrl = page.url();
+    const tile = name => page.locator('[data-testid="resource-entry"]:not([data-drag-retained])').filter({ has: page.locator('.resource-open > span', { hasText: name }) });
+    const hoverDragTarget = async name => {
+      const box = await tile(name).boundingBox();
+      assert.ok(box, `drag target ${name} exists`);
+      await page.mouse.move(box.x + box.width / 2, box.y + 28, { steps: 12 });
+      // Chromium's native DnD needs another move after dragenter for dragover.
+      await page.mouse.move(box.x + box.width / 2 + 1, box.y + 28);
+    };
+    const startDrag = async () => {
+      const box = await tile('上传.txt').boundingBox();
+      assert.ok(box);
+      await page.mouse.move(box.x + box.width / 2, box.y + 30);
+      await page.mouse.down();
+      await page.mouse.move(box.x + box.width / 2 + 14, box.y + 30, { steps: 6 });
+      await hoverDragTarget('子文件夹');
+      await page.locator('[data-drop-target="true"]').waitFor();
+    };
+    const waitForPath = p => page.waitForURL(url => new URLSearchParams(url.hash.split('?')[1]).get('path') === p);
+
+    await startDrag();
+    await page.mouse.move(5, 5, { steps: 6 });
+    await page.waitForTimeout(FOLDER_SPRING_OPEN_MS + 100);
+    assert.equal(page.url(), originalDirectoryUrl, 'brief folder hover followed by leaving does not navigate');
+    await page.mouse.up();
+
+    await startDrag();
+    await waitForPath('子文件夹');
+    await tile('深层').waitFor();
+    assert.equal(await page.locator('[data-drag-retained="true"]').count(), 1, 'native source survives directory navigation');
+    await hoverDragTarget('深层');
+    await waitForPath('子文件夹/深层');
+    await page.keyboard.press('Escape');
+    await page.mouse.up();
+    await page.waitForURL(originalDirectoryUrl);
+    await tile('上传.txt').waitFor();
+    assert.equal(fs.existsSync(path.join(physical, '上传.txt')), true, 'canceling a nested drag never moves the file');
+    assert.equal(await page.locator('[data-drag-retained="true"]').count(), 0);
+
+    await startDrag();
+    await waitForPath('子文件夹');
+    await tile('深层').waitFor();
+    await hoverDragTarget('深层');
+    await waitForPath('子文件夹/深层');
+    await page.getByTestId('resource-list').filter({ has: page.locator('.project-empty') }).waitFor();
+    const dropBox = await page.getByTestId('resource-list').boundingBox();
+    await page.mouse.move(dropBox.x + dropBox.width - 24, dropBox.y + dropBox.height - 24, { steps: 8 });
+    await page.mouse.up();
+    await tile('上传.txt').waitFor();
+    assert.equal(fs.existsSync(path.join(physical, '上传.txt')), false);
+    assert.equal(fs.readFileSync(path.join(physical, '子文件夹/深层/上传.txt'), 'utf8'), 'uploaded', 'native drag can move through two folder levels');
+    assert.equal(await page.locator('[data-drag-retained="true"]').count(), 0);
+    await page.getByRole('button', { name: '设计资料', exact: true }).click();
+    await material.waitFor();
+
     await page.screenshot({ path: path.join(screenshots, 'resources-desktop.png') });
     await page.setViewportSize({ width: 390, height: 844 });
     assert.equal(await material.locator('.finder-document').evaluate(el => getComputedStyle(el).width), '60px', 'mobile retains the document shape');
@@ -105,7 +195,7 @@ try {
     await page.screenshot({ path: path.join(screenshots, 'resources-mobile.png') });
     assert.equal(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth), true, 'mobile must not overflow');
     await page.getByTestId('resource-entry').filter({ hasText: '子文件夹' }).locator('.resource-open').click();
-    await page.getByText('文件夹还是空的', { exact: false }).waitFor();
+    await tile('深层').waitFor();
     const markdown = '# 共享 Markdown\n\n阅读器直接读取真实文件。';
     await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('子文件夹/阅读笔记.md')}`, { text: markdown, expectedRevision: null });
     const indexed = (await call('GET', `/resources?projectId=${fixture.id}&path=${encodeURIComponent('子文件夹')}`)).entries.find(e => e.name === '阅读笔记.md');
@@ -155,11 +245,11 @@ try {
     await page.getByTestId('resource-entry').filter({ hasText: '笔记.txt' }).waitFor();
     assert.match(page.url(), /library\?folder=/, 'legacy project links open real folders');
     assert.deepEqual(errors, []);
-    console.log(`Resource UI: desktop/mobile/list Markdown covers and live updates, real mkdir/upload, shared external files, Markdown reader/edit/index/conflicts, directory return, Bilibili import entry, old links and no page errors OK. Screenshots: ${screenshots}`);
+    console.log(`Resource UI: native nested spring drag/drop/cancel, menu keyboard/focus/outside dismissal, desktop/mobile/list Markdown covers and live updates, real mkdir/upload, shared external files, Markdown reader/edit/index/conflicts, directory return, Bilibili import entry, old links and no page errors OK. Screenshots: ${screenshots}`);
   }
 } catch (error) {
   if (page && !page.isClosed()) {
-    fs.writeFileSync(path.join(screenshots, 'failure.txt'), JSON.stringify({ url: page.url(), errors, text: await page.locator('body').innerText() }, null, 2));
+    fs.writeFileSync(path.join(screenshots, 'failure.txt'), JSON.stringify({ url: page.url(), errors, dragEvents: await page.evaluate(() => window.resourceDragEvents), text: await page.locator('body').innerText() }, null, 2));
     await page.screenshot({ path: path.join(screenshots, 'failure.png') }).catch(() => {});
   }
   throw error;

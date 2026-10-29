@@ -7,6 +7,7 @@ import helmet from '@fastify/helmet';
 import argon2 from 'argon2';
 import { generateAuthenticationOptions, generateRegistrationOptions, verifyAuthenticationResponse, verifyRegistrationResponse } from '@simplewebauthn/server';
 import type { BootstrapInitializeRequest, ConversationMode, MessageRole } from '@wangke/contracts';
+import { parseBotAttachments } from '@wangke/contracts';
 import { DatabaseStore } from './storage/database.js';
 import { BootstrapRepository } from './storage/bootstrapRepository.js';
 import { BotRunner } from './agent/runner.js';
@@ -464,10 +465,11 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     return { id: row.id, name: row.name, avatar: row.avatar ?? null, role: row.role, enabled: Boolean(row.enabled) };
   }
   function ensureDefaultAgent(userId: string) {
-    const existing = store.db.prepare("SELECT * FROM agent_profiles WHERE owner_id=? AND name='Wangke Bot'").get(userId) as any;
+    // Reuse the old default profile so a branding change does not create a second Bot.
+    const existing = store.db.prepare("SELECT * FROM agent_profiles WHERE owner_id=? AND name IN ('DeepStudent Go', 'Wangke Bot') ORDER BY created_at LIMIT 1").get(userId) as any;
     if (existing) return existing;
     const timestamp = now();
-    const row = { id: crypto.randomUUID(), owner_id: userId, name: 'Wangke Bot', avatar: null, role: '本机学习助手', system_prompt: 'You are Wangke Bot, a safe learning assistant.', enabled: 1, created_at: timestamp, updated_at: timestamp };
+    const row = { id: crypto.randomUUID(), owner_id: userId, name: 'DeepStudent Go', avatar: null, role: '本机学习助手', system_prompt: 'You are DeepStudent Go, a safe learning assistant.', enabled: 1, created_at: timestamp, updated_at: timestamp };
     store.db.prepare('INSERT INTO agent_profiles(id,owner_id,name,avatar,role,system_prompt,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(row.id, row.owner_id, row.name, row.avatar, row.role, row.system_prompt, row.enabled, row.created_at, row.updated_at);
     return row;
   }
@@ -668,13 +670,16 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
         typeof b.content !== 'string' || b.content.length > 100000 ||
         (kind === 'attachment' && (() => {
           try {
-            const value = JSON.parse(b.content);
-            if (thread.project_id) {
-              if (value.projectId !== thread.project_id || typeof value.projectPath !== 'string') return true;
-              if (process.platform !== 'linux') projects.assertIdle(thread.project_id);
-              const file = projects.files.open(thread.project_id, value.projectPath); fs.closeSync(file.fd); return false;
-            }
-            return typeof value?.fileId !== 'string' || !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(value.fileId, user.id);
+            const parsed = parseBotAttachments(b.content);
+            if (!parsed) return true;
+            return parsed.files.some(value => {
+              if (thread.project_id) {
+                if (value.projectId !== thread.project_id || typeof value.projectPath !== 'string') return true;
+                if (process.platform !== 'linux') projects.assertIdle(thread.project_id);
+                const file = projects.files.open(thread.project_id, value.projectPath); fs.closeSync(file.fd); return false;
+              }
+              return typeof value.fileId !== 'string' || !store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(value.fileId, user.id);
+            });
           } catch { return true; }
         })())) return bad(reply, 400, 'invalid_message');
     if (b.replyTo && !store.db.prepare('SELECT 1 FROM messages WHERE id=? AND thread_id=?').get(b.replyTo, thread.id)) return bad(reply, 400, 'invalid_reply_to');

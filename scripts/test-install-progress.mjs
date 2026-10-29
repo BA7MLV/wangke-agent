@@ -82,6 +82,9 @@ test('prints completed-step percentages, seven stages, timing and live Docker lo
   assert.equal(up.dataDir, build.dataDir);
   assert.ok(build.uid && build.gid);
   assert.ok(fs.existsSync(path.join(f.dataDir, 'bin/wangke-agent')));
+  const environment = fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8');
+  assert.match(environment, /^WEBAUTHN_RP_NAME=DeepStudent Go$/m);
+  assert.match(environment, /^DB_PATH=\/data\/db\/wangke\.sqlite$/m, 'branding keeps the existing database path');
 });
 
 test('managed installation refuses implicit replacement; script refresh does not rewrite config or invoke Docker', async t => {

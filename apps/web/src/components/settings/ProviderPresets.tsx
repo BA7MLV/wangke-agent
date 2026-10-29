@@ -41,12 +41,12 @@ export default function ProviderPresets({ providers, onSelect, onCustom, renderP
       <div className="provider-overview-grid grid grid-cols-3 gap-4 max-[640px]:grid-cols-1 max-[640px]:gap-2" data-testid="provider-overview-grid">
         <Button
           variant="ghost"
-          className="h-auto min-h-[218px] w-full flex-col items-center justify-center gap-4 whitespace-normal rounded-2xl border border-dashed border-border bg-transparent p-5 text-center text-muted hover:bg-background-secondary max-[640px]:min-h-[150px] max-[640px]:gap-2 max-[640px]:p-2"
+          className="h-auto min-h-[218px] w-full flex-col items-center justify-center gap-4 whitespace-normal rounded-3xl border border-dashed border-border bg-transparent p-4 text-center text-muted hover:bg-background-secondary max-[640px]:min-h-[150px] max-[640px]:gap-2"
           data-testid="provider-add-card"
           aria-label="自定义添加"
           onPress={onCustom}
         >
-          <span className="grid size-16 place-items-center rounded-2xl bg-background-secondary text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl max-[640px]:text-lg" aria-hidden="true"><Sym name="add" /></span>
+          <span className="grid size-16 place-items-center rounded-xl bg-background-secondary text-3xl text-foreground shadow-sm max-[640px]:size-9 max-[640px]:text-lg" aria-hidden="true"><Sym name="add" /></span>
           <span className="text-lg font-semibold text-foreground max-[640px]:text-xs">自定义</span>
           <span className="text-sm font-normal leading-relaxed text-pretty max-[640px]:text-[10px]">填写 API 地址与密钥</span>
         </Button>
@@ -55,12 +55,12 @@ export default function ProviderPresets({ providers, onSelect, onCustom, renderP
             {provider ? renderProvider(provider) : (
               <Button
                 variant="ghost"
-                className="h-auto min-h-[218px] w-full flex-col items-stretch justify-start gap-5 whitespace-normal rounded-2xl border border-border/80 bg-background-secondary p-5 text-left text-foreground hover:bg-foreground/5 max-[640px]:min-h-[150px] max-[640px]:gap-2.5 max-[640px]:p-2.5"
+                className="h-auto min-h-[218px] w-full flex-col items-stretch justify-start gap-5 whitespace-normal rounded-3xl border border-border/80 bg-background-secondary p-4 text-left text-foreground hover:bg-foreground/5 max-[640px]:min-h-[150px] max-[640px]:gap-3"
                 data-testid={`provider-preset-${preset.id}`}
                 aria-label={`连接 ${preset.name}`}
                 onPress={() => onSelect(preset)}
               >
-                <span className="grid size-16 shrink-0 place-items-center rounded-2xl bg-background shadow-sm max-[640px]:size-9 max-[640px]:rounded-xl">
+                <span className="grid size-16 shrink-0 place-items-center rounded-xl bg-background shadow-sm max-[640px]:size-9">
                   <ProviderLogo id={preset.id} />
                 </span>
                 <span className="flex flex-1 flex-col justify-end gap-1">

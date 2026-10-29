@@ -23,7 +23,7 @@
   padding: var(--padding-code-inline);
   margin: var(--margin-code-inline);
   font-size: var(--code-inline-text);
-  border-radius: var(--small-border-radius);
+  border-radius: var(--radius-xs);
 }
 .x-markdown :where(pre code):not(:where(.md-embedded-ui *)) {
   padding: 0;

@@ -35,7 +35,7 @@
   padding: 8px;
   margin-inline-start: -8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-chip);
   background: transparent;
   color: var(--muted);
   font: inherit;
@@ -48,13 +48,6 @@
 .reasoning-chain .reasoning-chain__toggle[data-hovered='true'] {
   background: color-mix(in oklch, var(--foreground) 8%, transparent);
   color: var(--foreground);
-}
-
-/* 与导入课程入口保持相同的连续曲率；不支持时回退为常规圆角。 */
-@supports (corner-shape: squircle) {
-  .reasoning-chain .reasoning-chain__toggle {
-    corner-shape: squircle;
-  }
 }
 
 .reasoning-chain__title,
@@ -96,7 +89,7 @@
 .reasoning-chain__failure {
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   margin: 4px 0;
   overflow-wrap: anywhere;
 }
@@ -110,8 +103,8 @@
 @media (max-width: 480px) {
   .reasoning-chain .reasoning-chain__toggle {
     flex-wrap: wrap;
-    column-gap: 6px;
-    row-gap: 2px;
+    column-gap: 8px;
+    row-gap: 4px;
   }
   .reasoning-chain__title { max-width: 100%; }
 }

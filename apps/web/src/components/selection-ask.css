@@ -20,9 +20,9 @@
   pointer-events: none;
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   max-width: min(560px, calc(100vw - 24px));
-  padding: 8px 10px;
+  padding: 8px 12px;
   border-radius: var(--radius-lg);
   background: var(--default-soft);
   box-shadow: 0 6px 20px rgb(0 0 0 / 0.22);
@@ -47,7 +47,7 @@
   flex: 1;
   display: flex;
   align-items: baseline;
-  gap: 6px;
+  gap: 8px;
   font-size: 12px;
   line-height: 1.4;
   color: var(--muted);
@@ -55,7 +55,7 @@
 
 .ask-float__where {
   flex: none;
-  padding: 1px 6px;
+  padding: 0 8px;
   border-radius: 999px;
   background: var(--accent-soft);
   color: var(--accent-soft-foreground);
@@ -83,7 +83,7 @@
   flex: none;
   display: flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
 }
 
 .ask-float--fixed .ask-float__actions {

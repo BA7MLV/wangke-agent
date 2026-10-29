@@ -48,10 +48,11 @@ test('legacy model failure notices are hidden before grouping', () => {
   assert.deepEqual(groupMessages([notice]), []);
 });
 
-test('ordinary progress and user-authored failure text remain visible', () => {
+test('tool progress is hidden while user-authored text remains visible', () => {
   const progress = { ...msg('progress', 'assistant', 0), kind: 'progress', content: '正在整理资料' };
   const user = { ...msg('user', 'user', 1), content: '模型暂时不可用，请稍后重试。' };
-  assert.deepEqual(groupMessages([progress, user]).map((r) => r.message.id), ['progress', 'user']);
+  const command = { ...progress, id: 'shell', content: '执行第 1 步：\npython3 generate.py' };
+  assert.deepEqual(groupMessages([progress, command, user]).map((r) => r.message.id), ['user']);
 });
 
 test('a pending message keeps its UI identity after the server acknowledges it', () => {

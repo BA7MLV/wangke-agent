@@ -92,8 +92,8 @@
 /* 空首页的输入卡比消息态更突出一点：它是用户进入应用后的第一步，
    但仍沿用消息态的色板和焦点反馈，不制造第二套组件语言。 */
 .course-chat--empty .course-chat__composer {
-  padding: 10px 14px;
-  border-radius: 24px;
+  padding: 12px 16px;
+  border-radius: var(--radius-2xl);
   box-shadow:
     0 1px 2px rgb(0 0 0 / 0.04),
     0 12px 32px rgb(0 0 0 / 0.07);
@@ -180,7 +180,7 @@
 .course-chat__history-skel {
   position: relative;
   display: grid;
-  gap: 10px;
+  gap: 12px;
   padding: 24px 0;
 }
 
@@ -191,7 +191,7 @@
   inset: auto;
   z-index: auto;
   display: grid;
-  gap: 18px;
+  gap: 20px;
   width: 100%;
   opacity: 1;
   filter: none;
@@ -293,7 +293,7 @@
   height: auto;
   justify-content: flex-start;
   padding: 8px 12px;
-  gap: 10px;
+  gap: 12px;
   border-radius: var(--radius-full);
   border-color: var(--border);
   background: color-mix(in oklch, var(--background) 88%, var(--default));
@@ -353,9 +353,9 @@
   padding: 8px 20px 24px;
   justify-content: flex-start;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
   border: 0;
-  border-radius: 22px 22px 0 0;
+  border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
   background: color-mix(in oklch, var(--default) 96%, var(--foreground));
   color: var(--foreground);
   box-shadow: none;
@@ -379,7 +379,7 @@
   margin-inline-start: -8px;
   gap: 8px;
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-panel);
   background: transparent;
   color: var(--foreground);
   font: inherit;
@@ -390,16 +390,6 @@
 .course-chat__import .course-chat__import-label[data-hovered='true'],
 .course-chat__import .course-chat__import-label[data-focus-visible='true'] {
   background: color-mix(in oklch, var(--foreground) 8%, transparent);
-}
-
-/* 连续曲率圆角让直边自然过渡到转角，避免输入卡像半圆封口的药丸。
-   不支持 corner-shape 的浏览器仍保留常规圆角、边框和阴影。 */
-@supports (corner-shape: squircle) {
-  .course-chat__composer,
-  .course-chat__composer-wrap .course-chat__import,
-  .course-chat__import .course-chat__import-label {
-    corner-shape: squircle;
-  }
 }
 
 .course-chat__import .course-chat__import-close {
@@ -483,7 +473,7 @@
   width: min(72%, 300px);
   height: 32px;
   margin-bottom: 10px; /* 对齐 h2 的 margin-bottom */
-  border-radius: 8px;
+  border-radius: var(--radius-chip);
 }
 
 .course-chat__empty-skel .course-chat__empty-skel__line {
@@ -554,7 +544,7 @@
    两种主题下都比画布亮一档，正好对应 showcase 里「气泡比画布亮」的那层关系。 */
 .course-chat__bubble--user {
   max-width: min(76%, 560px);
-  padding: 10px 16px;
+  padding: 12px 16px;
   border-radius: var(--radius-2xl);
   background: var(--surface);
   color: var(--foreground);
@@ -606,7 +596,7 @@
   gap: 4px;
   color: var(--muted);
   background: transparent;
-  border-radius: 4px;
+  border-radius: var(--radius-xs);
 }
 
 .course-chat__user-expand:hover {
@@ -626,7 +616,7 @@
 
 /* 错误态：唯一还给助手气泡的场景 —— 出错时需要把这一条从正文流里「拎出来」 */
 .course-chat__message[data-error='true'] .course-chat__bubble--ai {
-  padding: 12px 14px;
+  padding: 12px 16px;
   border-radius: var(--radius-lg);
   background: var(--danger-soft);
   color: var(--danger-soft-foreground);
@@ -651,7 +641,7 @@
 .course-chat__bubble--ai pre:not(:where(.md-embedded-ui *)) {
   max-width: 100%;
   overflow: auto;
-  padding: 14px;
+  padding: 16px;
   border-radius: var(--radius);
   background: var(--background-secondary);
 }
@@ -662,7 +652,7 @@
 
 .course-chat__bubble--ai blockquote:not(:where(.md-embedded-ui *)) {
   margin-left: 0;
-  padding-left: 14px;
+  padding-left: 16px;
   border-left: 3px solid color-mix(in oklch, var(--muted) 50%, transparent);
   color: var(--muted);
 }
@@ -678,7 +668,7 @@
 .course-chat__actions {
   display: flex;
   align-items: center;
-  gap: 2px;
+  gap: 4px;
   margin-top: 4px;
   margin-left: -6px; /* 抵消图标自身的留白，让第一个图标的视觉左缘与正文对齐 */
   opacity: 0;
@@ -857,14 +847,14 @@
   margin-top: 6px;
   display: flex;
   flex-direction: column;
-  gap: 7px;
+  gap: 8px;
 }
 
 .course-chat__source {
   display: flex;
   flex-wrap: wrap;
   align-items: baseline;
-  gap: 4px 10px;
+  gap: 4px 12px;
   min-width: 0;
   font-size: 0.8125rem;
 }
@@ -872,7 +862,7 @@
 .course-chat__source-link {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 8px;
   min-width: 0;
   color: var(--foreground);
   text-decoration: none;
@@ -1104,7 +1094,7 @@
   box-sizing: border-box;
   width: min(100%, var(--course-chat-column));
   margin: 0 auto 6px;
-  padding: 6px 10px 8px;
+  padding: 8px 12px 8px;
   border-radius: var(--radius-2xl);
   border: 1px solid var(--border);
   background: color-mix(in oklab, var(--accent) 4%, var(--background));
@@ -1115,13 +1105,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  padding: 0 2px 2px;
+  padding: 0 4px 4px;
 }
 
 .course-chat__queue-label {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 4px;
   font-size: 0.75rem;
   color: var(--muted);
 }
@@ -1245,12 +1235,12 @@
     --reasoning-sticky-gap: 20px;
     --course-chat-message-inset: 14px;
     padding: calc(var(--app-bar-h, 60px) + var(--reasoning-sticky-gap)) var(--course-chat-message-inset)
-      calc(var(--chat-composer-height, 116px) + 48px + 6px);
+      calc(var(--chat-composer-height, 116px) + 48px + 8px);
     scrollbar-gutter: auto;
   }
 
   .course-chat__empty {
-    padding: 24px 2px 28px;
+    padding: 24px 4px 28px;
   }
 
   .course-chat__empty h2 {
@@ -1258,7 +1248,7 @@
   }
 
   .course-chat__starters {
-    gap: 6px;
+    gap: 8px;
   }
 
   .course-chat__message {
@@ -1270,7 +1260,7 @@
   }
 
   .course-chat__composer-wrap {
-    padding: 6px 10px max(10px, env(safe-area-inset-bottom));
+    padding: 8px 12px max(12px, env(safe-area-inset-bottom));
   }
 
   .course-chat__scroll-bottom {
@@ -1291,13 +1281,13 @@
   }
 
   .course-chat__starter-list {
-    gap: 6px;
+    gap: 8px;
   }
 
   .course-chat__starter {
     min-width: 0;
-    padding: 7px 8px;
-    gap: 7px;
+    padding: 8px;
+    gap: 8px;
     white-space: normal;
   }
 
@@ -1309,7 +1299,7 @@
   .course-chat__composer {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;
-    border-radius: 24px;
+    border-radius: var(--radius-2xl);
     padding: 8px;
     gap: 0 4px;
   }
@@ -1320,14 +1310,14 @@
 
   .course-chat--empty .course-chat__composer {
     padding: 8px;
-    border-radius: 24px;
+    border-radius: var(--radius-2xl);
   }
 
   .course-chat__composer-wrap .course-chat__import {
     width: calc(100% - 24px);
     padding-inline: 16px;
     gap: 8px;
-    border-radius: 20px 20px 0 0;
+    border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
   }
 
   .course-chat__composer-tools {
@@ -1342,12 +1332,12 @@
 
   .course-chat__composer-tools .model-picker__trigger {
     padding-inline: 4px;
-    gap: 2px;
+    gap: 4px;
   }
 
   .course-chat__send-mode [role='radio'],
   .course-chat__send-mode button {
-    padding-inline: 6px;
+    padding-inline: 8px;
   }
 }
 
@@ -1378,6 +1368,6 @@ html[data-keyboard='open'] .course-chat--empty .course-chat__composer-wrap {
 
 @media (max-width: 760px) {
   html[data-keyboard='open'] .course-chat__composer-wrap {
-    padding-bottom: 10px;
+    padding-bottom: 12px;
   }
 }

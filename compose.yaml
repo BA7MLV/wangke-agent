@@ -16,7 +16,7 @@ services:
       BOOTSTRAP_TTL_MS: "${BOOTSTRAP_TTL_MS:-86400000}"
       PUBLIC_ORIGIN: "${PUBLIC_ORIGIN:-http://localhost:${PORT:-3000}}"
       WEBAUTHN_RP_ID: "${WEBAUTHN_RP_ID:-localhost}"
-      WEBAUTHN_RP_NAME: "${WEBAUTHN_RP_NAME:-Wangke Agent}"
+      WEBAUTHN_RP_NAME: "${WEBAUTHN_RP_NAME:-DeepStudent Go}"
       CORS_ORIGINS: "${CORS_ORIGINS:-}"
       COOKIE_SAMESITE: "${COOKIE_SAMESITE:-lax}"
       TOKEN_TTL_MS: "${TOKEN_TTL_MS:-7776000000}"

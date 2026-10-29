@@ -5,6 +5,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { sandboxArgs, uuid } from './arguments.mjs';
+import { workspacePath, workspaceFileLimit } from './file-read.mjs';
 export { sandboxArgs } from './arguments.mjs';
 
 const token = process.env.SANDBOX_TOKEN;
@@ -43,14 +44,19 @@ const server = http.createServer(async (req, res) => {
   const supplied = Buffer.from(req.headers.authorization || '');
   const expected = Buffer.from(`Bearer ${token}`);
   if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return reply(401, { error: 'unauthorized' });
-  if (!['/execute', '/cancel'].includes(req.url) || req.method !== 'POST') return reply(404, { error: 'not_found' });
+  if (!['/execute', '/cancel', '/files/read'].includes(req.url) || req.method !== 'POST') return reply(404, { error: 'not_found' });
+  const readingFile = req.url === '/files/read';
   let body;
   try {
     let bytes = 0; const chunks = [];
     for await (const chunk of req) { bytes += chunk.length; if (bytes > 32_768) throw new Error(); chunks.push(chunk); }
     body = JSON.parse(Buffer.concat(chunks).toString());
     if (!body || !uuid.test(body.executionId)) throw new Error();
-    if (req.url === '/execute' && (!uuid.test(body.threadId) || (body.projectId !== undefined && !uuid.test(body.projectId)) || (body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000)) throw new Error();
+    if (req.url !== '/cancel' && (!uuid.test(body.threadId) || (body.projectId !== undefined && !uuid.test(body.projectId)))) throw new Error();
+    if (readingFile) body = { threadId: body.threadId, projectId: body.projectId, executionId: body.executionId, filePath: workspacePath(body.path) };
+    else if (req.url === '/execute') {
+      if ((body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000 || body.filePath !== undefined) throw new Error();
+    }
   } catch { return reply(400, { error: 'invalid_request' }); }
   for (const [id, expires] of cancelled) if (expires < Date.now()) cancelled.delete(id);
   if (req.url === '/cancel') {
@@ -74,6 +80,7 @@ const server = http.createServer(async (req, res) => {
   catch { finish(); return reply(400, { error: 'invalid_project_workspace' }); }
   if (res.destroyed || execution.cancelled) { finish(); return reply(409, { error: 'execution_cancelled' }); }
   let stdout = ''; let stderr = ''; let size = 0; let timer;
+  const fileChunks = []; let fileBytes = 0; let fileOverflow = false;
   const child = spawn('docker', args, { stdio: ['ignore', 'pipe', 'pipe'] });
   let removing;
   const stop = () => { child.kill('SIGKILL'); removing ??= remove(name).catch(() => {}); };
@@ -82,6 +89,11 @@ const server = http.createServer(async (req, res) => {
   res.on('close', disconnected);
   timer = setTimeout(stop, 130_000);
   const collect = (kind, chunk) => {
+    if (readingFile && kind === 'stdout') {
+      fileBytes += chunk.length;
+      if (fileBytes > workspaceFileLimit) { fileOverflow = true; stop(); return; }
+      fileChunks.push(chunk); return;
+    }
     size += chunk.length;
     if (size > 128_000) { stop(); return; }
     if (kind === 'stdout') stdout += chunk.toString(); else stderr += chunk.toString();
@@ -95,7 +107,12 @@ const server = http.createServer(async (req, res) => {
       await removing;
       await remove(name);
       finish();
-      reply(200, { stdout: stdout.slice(0, 60_000), stderr: stderr.slice(0, 60_000), exitCode: code ?? 137 });
+      if (readingFile) {
+        if (code === 4 || fileOverflow) return reply(413, { error: 'workspace_file_too_large_or_empty' });
+        if (code === 2) return reply(404, { error: 'workspace_file_not_found' });
+        if (code !== 0 || !fileBytes) return reply(400, { error: 'workspace_file_unavailable' });
+        if (!res.destroyed) { res.writeHead(200, { 'content-type': 'application/octet-stream', 'content-length': fileBytes }); res.end(Buffer.concat(fileChunks)); }
+      } else reply(200, { stdout: stdout.slice(0, 60_000), stderr: stderr.slice(0, 60_000), exitCode: code ?? 137 });
     } catch { finish(); reply(503, { error: 'sandbox_cleanup_pending' }); }
   });
 });

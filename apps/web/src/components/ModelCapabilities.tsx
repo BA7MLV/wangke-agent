@@ -22,8 +22,8 @@ export function ModelCapabilities({ catalogId, model, overrides, compact = false
     <span className="inline-flex size-6 shrink-0 items-center justify-center text-foreground" role="img" aria-label={kindLabel} title={kindLabel}>
       <Sym name={visionFallback ? 'visibility' : MODEL_KIND_ICON[kind]} className="size-3.5" />
     </span>
-    {!compact && meta?.declaredReasoning === true && <span className="rounded-md bg-default px-2 py-0.5 text-muted">推理</span>}
-    {!compact && meta?.toolCall === true && <span className="rounded-md bg-default px-2 py-0.5 text-muted">{meta.declaredToolCall === undefined ? '工具调用（默认）' : '工具调用'}</span>}
+    {!compact && meta?.declaredReasoning === true && <span className="rounded-md bg-default px-2 py-1 text-muted">推理</span>}
+    {!compact && meta?.toolCall === true && <span className="rounded-md bg-default px-2 py-1 text-muted">{meta.declaredToolCall === undefined ? '工具调用（默认）' : '工具调用'}</span>}
     {!compact && meta?.declaredContext != null && <span className="px-1 text-muted tabular-nums">{formatModelTokens(meta.declaredContext)} 上下文</span>}
   </span>;
 }

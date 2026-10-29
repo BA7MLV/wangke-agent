@@ -85,7 +85,7 @@
    所以各页自己带父级前缀去写（如 `.study-tile .skel-bar--sub`）。 */
 .skel-bar {
   height: 12px;
-  border-radius: 6px;
+  border-radius: var(--radius-chip);
   background: var(--background-tertiary);
   animation: skel-breathe var(--pulse-dur, 1000ms) var(--ease-linear, linear) infinite;
 }

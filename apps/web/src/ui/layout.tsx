@@ -49,8 +49,8 @@ function useIsNarrow(): boolean {
  * 侧栏、顶栏、内容列会跟着令牌一起变，不需要逐条改 CSS。
  *
  * 侧栏宽屏可折叠、窄屏走抽屉，两条路径各只有一个入口：
- *   - 宽屏：侧栏顶部的品牌 Logo 收起 / 展开，收起后保留图标导航；
- *   - 窄屏：顶栏品牌 Logo 弹出 Drawer。
+ *   - 宽屏：品牌右侧按钮收起侧栏，收起后用品牌 Logo 展开，保留图标导航；
+ *   - 窄屏：顶栏汉堡按钮弹出 Drawer。
  * 折叠状态见 `ui/rail.ts`（全局一份 + 记本机）。
  *
  * 结构：
@@ -290,7 +290,7 @@ function Sidebar({
           hit?.onClick();
           onNavigate?.();
         }}
-        className="gap-0.5"
+        className="gap-1"
       >
         {rail.items.filter((it) => !it.isAction).map((it) => (
           <ListBox.Item
@@ -302,7 +302,7 @@ function Sidebar({
                试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
                ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
                留着只会让后来的人以为它在生效。 */
-            className="min-h-11 gap-2.5 rounded-full px-2.5 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+            className="min-h-11 gap-3 rounded-full px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
           >
             <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
               {it.icon}
@@ -320,7 +320,7 @@ function Sidebar({
         <>
           <Separator className="my-3" />
           <div className="flex min-h-0 flex-1 flex-col">
-            <div className="shrink-0 px-2.5 pb-2 text-[0.8125rem] text-muted">{recent.label}</div>
+            <div className="shrink-0 px-3 pb-2 text-[0.8125rem] text-muted">{recent.label}</div>
             {/* ScrollShadow：会话多起来时滚动区上下缘浮出阴影，比给整块侧栏加边框轻。
                 min-h-0 必需 —— 否则 flex 子项的默认 min-height:auto 会让它按内容撑开，
                 flex-1 形同虚设。 */}
@@ -408,7 +408,7 @@ function Sidebar({
                             }
                           : undefined
                       }
-                      className="recent-item group min-h-9 gap-2.5 rounded-full px-2.5 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+                      className="recent-item group min-h-9 gap-3 rounded-full px-3 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
                     >
                       {item.pendingReply ? (
                         <span className="grid size-6 shrink-0 place-items-center text-sm"
@@ -638,14 +638,14 @@ export function PageShell({
     <Button
       isIconOnly
       variant="ghost"
-      className="page-shell__nav-logo relative shrink-0 rounded-full"
+      className={`relative shrink-0 rounded-full${railCollapsed ? ' page-shell__nav-logo' : ''}`}
       data-testid="nav-rail-toggle"
       aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
       aria-expanded={!railCollapsed}
       aria-pressed={railCollapsed}
       onPress={toggleRail}
     >
-      <BrandLogo />
+      {railCollapsed ? <BrandLogo /> : <Sym name="panel_left" />}
       <DotBadge open={hasUnread} className="nav-unread"
         label="有已完成的会话未查看" testId="nav-unread-dot" />
     </Button>
@@ -658,7 +658,7 @@ export function PageShell({
       <a
         href={`#${mainId}`}
         data-testid="skip-link"
-        className="absolute top-2 left-4 z-100 -translate-y-[calc(100%+16px)] rounded-full bg-accent px-[18px] py-2.5 text-sm text-accent-foreground no-underline focus-visible:translate-y-0"
+        className="absolute top-2 left-4 z-100 -translate-y-[calc(100%+16px)] rounded-full bg-accent px-5 py-3 text-sm text-accent-foreground no-underline focus-visible:translate-y-0"
         onClick={(event) => {
           // HashRouter 拥有 URL 的 hash；跳过导航只移动焦点，不触发路由。
           event.preventDefault();
@@ -674,9 +674,9 @@ export function PageShell({
             aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
             <div className="page-shell__rail-header">
               <div className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand">
-                {railToggle}
-                {!railCollapsed && <span>DeepStudent Go</span>}
+                {railCollapsed ? railToggle : <><BrandLogo /><span>DeepStudent Go</span></>}
               </div>
+              {!railCollapsed && railToggle}
             </div>
             {railCollapsed ? <>{rail.items.map(item => (
               <span key={item.value} title={item.label}>
@@ -731,8 +731,8 @@ export function PageShell({
              * 右内边距仍保留横屏的安全区避让：那是刘海 / 圆角，与对齐无关。
              */
             className={[
-              'absolute inset-x-0 top-0 z-[5] flex min-h-[60px] items-center gap-1.5 px-5',
-              'pt-[max(10px,env(safe-area-inset-top))] pb-2.5 text-foreground',
+              'absolute inset-x-0 top-0 z-[5] flex min-h-[60px] items-center gap-2 px-5',
+              'pt-[max(12px,env(safe-area-inset-top))] pb-3 text-foreground',
               'landscape:pr-[env(safe-area-inset-right)]',
             ].join(' ')}
           >
@@ -745,17 +745,17 @@ export function PageShell({
               <span />
               <span />
             </div>
-            {/* Logo 同时承担品牌与导航入口；宽屏收放、窄屏开抽屉。 */}
+             {/* 窄屏保留汉堡菜单；宽屏的收放入口在侧栏顶部。 */}
             {rail && isNarrow && (
               <Button
                 isIconOnly
                 variant="ghost"
-                className="page-shell__nav-logo relative shrink-0 rounded-full"
+                className="relative shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
                 onPress={() => setDrawerOpen(true)}
               >
-                <BrandLogo />
+                <Sym name="menu" />
                 <DotBadge open={hasUnread} className="nav-unread"
                   label="有已完成的会话未查看" testId="nav-unread-dot" />
               </Button>
@@ -867,7 +867,7 @@ export function AppBarSearch({ label = '搜索', onClick, testId = 'app-bar-sear
   return (
     <Button
       variant="secondary"
-      className="h-[34px] min-h-[34px] shrink-0 gap-[7px] px-3 text-[0.8125rem] font-normal"
+      className="h-[34px] min-h-[34px] shrink-0 gap-2 px-3 text-[0.8125rem] font-normal"
       data-testid={testId}
       aria-label={label}
       onPress={() => {
@@ -973,7 +973,7 @@ export function Field({
       className={[
         'border-b border-border/70 last:border-b-0',
         row
-          ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-x-5 py-3.5 last:pb-0.5 max-[760px]:block max-[760px]:py-3'
+          ? 'grid grid-cols-[minmax(0,1fr)_minmax(0,auto)] items-center gap-x-5 py-4 last:pb-1 max-[760px]:block max-[760px]:py-3'
           : 'py-3',
         className,
       ]
@@ -998,7 +998,7 @@ export function Field({
         </>
       ) : (
         <>
-          <div className="mb-1.5 flex items-center gap-1.5 text-[13px] leading-snug text-muted">
+          <div className="mb-1.5 flex items-center gap-2 text-[13px] leading-snug text-muted">
             {label}
           </div>
           <div>{children}</div>
@@ -1136,7 +1136,7 @@ export function Banner({
     <Alert status={status} className="mb-4" data-testid={testId} role="note">
       <Alert.Indicator>{icon}</Alert.Indicator>
       <Alert.Content>
-        <Alert.Title className="flex items-center gap-0.5">
+        <Alert.Title className="flex items-center gap-1">
           <span className="min-w-0">{title}</span>
           {help}
         </Alert.Title>
