@@ -8,6 +8,7 @@ import { allowSettingsLeave, closeSettingsAndClearHash, openSettings, useSetting
 import { cloud } from '../cloud/state';
 import { useTranslation } from 'react-i18next';
 import SheetChrome from '../ui/SheetChrome';
+import SidebarAccount from './SidebarAccount';
 
 /**
  * 设置模块登记表：桌面左侧导航，移动端顶部横向模块栏，只渲染当前模块。
@@ -259,29 +260,7 @@ export function SettingsButton({ variant = 'icon', testId = 'open-settings' }: S
   const open = () => openSettings();
 
   if (variant === 'rail') {
-    /**
-     * 视觉上要与侧栏导航项**逐个属性对齐**（见 `ui/layout.tsx` 的 `ListBox.Item`）：
-     * 同一个竖列里，「设置」是导航的邻居，不是另一种控件 —— 字号 / 字重 / 高度 /
-     * 图标槽 / 圆角 / 文字色 / 悬浮底色都得是同一套，只差没有选中态。
-     *
-     * 这份类名是**故意重复**导航项那一串的：设置不是一个「页面」，不能进
-     * `ListBox`（进去就会有一个永远点不亮的选中态）；而只要它落在同一列里，
-     * 两处的版式就必须一起改。改导航项时记得回来对一遍。
-     */
-    return (
-      <Button
-        variant="ghost"
-        className="min-h-9 w-full justify-start gap-3 rounded-full px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background"
-        data-testid={testId}
-        aria-label={t('settings')}
-        onPress={open}
-      >
-        <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
-          <Sym name="settings" />
-        </span>
-        <span className="min-w-0 truncate">{t('settings')}</span>
-      </Button>
-    );
+    return <SidebarAccount settingsTestId={testId} />;
   }
 
   return (

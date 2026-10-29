@@ -366,6 +366,12 @@ const MIGRATIONS: Array<[number, string]> = [
       PRIMARY KEY(owner_id,file_id)
     );
   `],
+  [21, `
+    CREATE TABLE bot_workspaces (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE
+    );
+  `],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -460,6 +466,7 @@ export class DatabaseStore {
           { version: 20, tables: ['system_file_entries'], extra: [], sql: MIGRATIONS.find(([v]) => v === 18)![1] },
           { version: 21, tables: ['resource_roots', 'resource_folders', 'resource_files'], extra: [], sql: MIGRATIONS.find(([v]) => v === 19)![1] },
           { version: 22, tables: ['resource_attachments'], extra: [], sql: MIGRATIONS.find(([v]) => v === 20)![1] },
+          { version: 23, tables: ['bot_workspaces'], extra: [], sql: MIGRATIONS.find(([v]) => v === 21)![1] },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -500,6 +507,7 @@ export class DatabaseStore {
         apply(18, groups[6], 6);
         apply(19, groups[7], 7);
         apply(20, groups[8], 8);
+        apply(21, groups[9], 9);
       } finally { expected.close(); }
     })();
   }

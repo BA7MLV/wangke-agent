@@ -23,9 +23,76 @@
   --course-chat-column: 820px;
 }
 
-/* 模糊贴着聊天可视区，不随消息滚走；顶栏下方再留一段柔和的衰减区。 */
+/* 模糊贴着聊天可视区，不随消息滚走。实色安全区不参与模糊梯度。 */
 .page-course-chat .page-app-bar__blur {
-  bottom: -24px;
+  bottom: 0;
+}
+
+@supports ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) and ((mask-image: linear-gradient(#000, transparent)) or (-webkit-mask-image: linear-gradient(#000, transparent))) {
+  .page-course-chat .page-app-bar__blur {
+    bottom: -48px;
+  }
+
+  .page-course-chat .page-app-bar__blur > span {
+    top: var(--app-edge-solid-height);
+    -webkit-mask-image: var(--chat-bar-mask);
+    mask-image: var(--chat-bar-mask);
+  }
+
+  /* 低半径层保持覆盖，强模糊层依次交接；不是把同一张模糊图逐渐变透明。
+     标题背后保留强模糊，再在栏下 48px 内连续回到清晰正文。 */
+  .page-course-chat .page-app-bar__blur > span:nth-child(1) {
+    --app-bar-blur: 1px;
+    --chat-bar-mask: linear-gradient(to bottom, #000 85%, transparent 100%);
+  }
+
+  .page-course-chat .page-app-bar__blur > span:nth-child(2) {
+    --app-bar-blur: 4px;
+    --chat-bar-mask: linear-gradient(to bottom, #000 60%, transparent 85%);
+  }
+
+  .page-course-chat .page-app-bar__blur > span:nth-child(3) {
+    --app-bar-blur: 12px;
+    --chat-bar-mask: linear-gradient(to bottom, #000 35%, transparent 65%);
+  }
+
+  .page-course-chat .page-app-bar__blur > span:nth-child(4) {
+    --app-bar-blur: 24px;
+    --chat-bar-mask: linear-gradient(to bottom, #000 10%, transparent 40%);
+  }
+
+  .page-course-chat .page-app-bar__blur::after {
+    background: linear-gradient(
+      to bottom,
+      var(--app-edge-color) var(--app-edge-solid-height),
+      color-mix(in oklch, var(--chat-chrome-color, var(--background-secondary)) 28%, transparent) calc(var(--app-edge-solid-height) + 8px),
+      transparent 85%
+    );
+  }
+}
+
+@media (min-width: 901px) {
+  .page-course-chat {
+    --chat-chrome-color: var(--background);
+  }
+
+  /* Chromium 在圆角 overflow:hidden 祖先下会把子级 backdrop 的渐变 mask
+     画成全不透明，产生等强度毛玻璃 + 硬切边。独立 clip-path 保留同样的圆角
+     裁切，但不走这条合成路径；main 自己仍负责限制消息与输入区的溢出。 */
+  .page-course-chat .page-shell__surface {
+    overflow: visible;
+    clip-path: inset(0 round var(--radius-2xl));
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .page-course-chat .page-app-bar__blur {
+    bottom: 0;
+  }
+
+  .page-course-chat .page-app-bar__blur::after {
+    background: var(--app-edge-color);
+  }
 }
 
 .course-chat {

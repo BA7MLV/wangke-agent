@@ -255,8 +255,8 @@
 
 /* Button 默认把内部 SVG 缩成 1em，品牌标记不跟随普通图标尺寸。 */
 .page-shell__nav-logo[data-testid] > svg {
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   flex-shrink: 0;
 }
 
@@ -662,11 +662,27 @@
 }
 
 .page-shell__rail-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; }
-.page-shell__brand { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--foreground); font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+.page-shell__brand { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 13px; color: var(--foreground); font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
 .page-shell__brand svg { flex-shrink: 0; }
 .page-shell__compact-rail .page-shell__rail-header { flex-direction: column; }
-.page-shell__compact-rail .page-shell__brand { justify-content: center; width: 44px; height: 44px; }
+.page-shell__compact-rail .page-shell__brand { justify-content: center; width: 44px; height: 44px; padding: 0; }
 .page-shell__rail-content { display: flex; flex: 1; flex-direction: column; min-height: 0; width: calc(16.5rem - 24px); }
+
+/* Logo 与导航图标共享左缘：行内 12px padding + 1px 边框（导航项为透明边框）。 */
+.page-shell__nav-icon {
+  display: grid;
+  width: 20px;
+  height: 20px;
+  flex-shrink: 0;
+  place-items: center;
+}
+
+/* 覆盖 Button 对后代 SVG 的响应式缩放与负 margin，避免动作行和导航行错位。 */
+.page-shell__nav-item .page-shell__nav-icon > svg {
+  width: 20px;
+  height: 20px;
+  margin: 0;
+}
 
 .page-shell__compact-rail {
   align-items: center;
@@ -680,11 +696,6 @@
   border-radius: var(--radius-full);
 }
 
-/* 新会话是动作入口，默认即呈现对应 Button variant 的中性 hover 底色。 */
-.page-shell__new-chat {
-  --button-bg: var(--button-bg-hover);
-}
-
 .page-shell__rail-icon[aria-current='page'] {
   background: var(--surface);
   color: var(--foreground);
@@ -692,7 +703,6 @@
 
 .page-shell__compact-footer { margin-top: auto; }
 .page-shell__compact-footer button { width: 44px; height: 44px; justify-content: center; padding: 0; }
-.page-shell__compact-footer button > span:last-child { display: none; }
 
 .app-aside-drawer[data-placement='right'] {
   display: flex;

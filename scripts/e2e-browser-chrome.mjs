@@ -82,7 +82,7 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
       const light = await consistent();
       assert.ok(light.brightness > 200);
       assert.equal(light.height, 4);
-      assert.deepEqual(light.blur, ['blur(1px)', 'blur(2px)', 'blur(4px)', 'blur(8px)']);
+      assert.deepEqual(light.blur, ['blur(1px)', 'blur(4px)', 'blur(12px)', 'blur(24px)']);
       assert.match(light.overlay, /gradient/);
       await settings({ theme: 'dark' });
       await page.waitForFunction(() => document.documentElement.classList.contains('dark'));

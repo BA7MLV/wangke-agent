@@ -28,7 +28,7 @@
     "test:api": "tsx scripts/test-api.mjs",
     "test:api-split": "tsx scripts/test-api-split.mjs",
     "test:migration": "node scripts/test-migration.mjs",
-    "test:bot": "tsx scripts/test-bot-runtime.mjs && tsx scripts/test-bot-conversation.mjs && tsx scripts/test-bot-permissions.mjs && tsx scripts/test-bot-workspace-files.mjs",
+    "test:bot": "tsx scripts/test-bot-runtime.mjs && tsx scripts/test-bot-conversation.mjs && tsx scripts/test-bot-permissions.mjs && tsx scripts/test-bot-workspace-files.mjs && tsx scripts/test-bot-default-workspace.mjs",
     "test:system-files": "tsx scripts/test-system-files.mjs && tsx scripts/test-notebook-tools.mjs && tsx scripts/test-agent-instructions.mjs",
     "test:memory-context": "tsx scripts/test-memory-context.mjs",
     "test:system-files:e2e": "tsx scripts/e2e-system-files.mjs",

@@ -76,8 +76,8 @@ export interface NavItem {
   /**
    * 这一项是**动作**（「新会话」）而不是目的地，因此**永不进入选中态**。
    *
-   * 导航栏里混一个动作是刻意的：它是这一页唯一的「从头开始」入口，默认就有
-   * 中性 hover 底色，但「选中」对它没有意义 —— 高亮的含义是
+   * 导航栏里混一个动作是刻意的：它是这一页唯一的「从头开始」入口，外观与其他
+   * 导航项一致，但「选中」对它没有意义 —— 高亮的含义是
    * 「你现在在哪」，而动作不是一个地方。所以它被排除在 `selectedKeys` 之外：
    * 点它不留下高亮，草稿态下侧栏也不会出现「好像选中了新会话」的假象。
    *
@@ -180,7 +180,7 @@ export interface PageShellProps {
   rail?: NavConfig;
   /** 侧栏 Recent 分组（会话列表等）。传了就渲染这一段 */
   recent?: { label: string; items: RecentItem[]; loading?: boolean };
-  /** 侧栏底部自定义按钮（如「设置」入口） */
+  /** 侧栏底部账号区（头像 / 称呼菜单与设置快捷入口）。 */
   railFooter?: ReactNode;
   /**
    * 右侧辅助栏（Bot 等「随手可用的功能」）。
@@ -253,64 +253,67 @@ function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   return (
     <>
-      {rail.items.filter((it) => it.isAction).map((it) => (
-        <Button key={it.value} variant="outline" data-testid={it.testId}
-          className="page-shell__new-chat mb-3 min-h-11 w-full justify-start gap-3 rounded-full border border-border px-3 text-sm font-medium text-foreground shadow-sm"
-          onPress={() => { it.onClick(); onNavigate?.(); }}>
-          {it.icon}<span>{it.label}</span>
-        </Button>
-      ))}
-      {/* 这里曾经有一块「身份块」（头像 + 网课学习助手 + 本机课程库 · N 门课程），
-          是照着 showcase 截图加的，落地当天被用户否掉、连 `railIdentity` prop 一起删了。
-          侧栏第一屏该是导航，不是一句自我介绍 —— 一句话说清的东西不值得占一行。
-          见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */}
-
-      {/* 导航用 ListBox 而不是一堆 <button>：选中态、键盘上下键、aria-current
-          全由 React Aria 处理，手写 button 这三样都得自己补，而补齐之前往往漏了后两样。
-
-          ⚠️ 跳转必须挂在 `onSelectionChange` 上，**不能**用 `onAction`：
-          `onAction` 只在键盘 Enter/Space 那类「激活」动作里触发，鼠标单击一个
-          ListBoxItem 走的是「选择」路径，onAction 根本不响 —— 症状是侧栏点了没反应
-          且不报错。`onSelectionChange` 才是选中语义的入口。
-
-          点「已经选中的那一项」时 keys 会是空的（RAC 把它当成取消选中），
-          此时 hit 为 undefined，但抽屉仍然要收起，所以 onNavigate 放在条件之外。 */}
-      <ListBox
-        id={navigationId}
-        aria-label="主导航"
-        selectionMode="single"
-        /* 动作项（`NavItem.isAction`，当前是「新会话」）不进 `selectedKeys`：
-           它不是「一个地方」，高亮对它不成立。剩下的项里只有与 `rail.value`
-           相符的那一项高亮 —— 首页传的 `value='chat'` 因此不会点亮任何东西，
-           这是对的：首页在草稿态时本来就没有「在哪」。见 `NavItem.isAction`。 */
-        selectedKeys={rail.items.filter((it) => !it.isAction && it.value === rail.value).map((it) => it.value)}
-        onSelectionChange={(keys) => {
-          const next = [...keys][0];
-          const hit = next == null ? undefined : rail.items.find((it) => it.value === String(next));
-          hit?.onClick();
-          onNavigate?.();
-        }}
-        className="gap-1"
-      >
-        {rail.items.filter((it) => !it.isAction).map((it) => (
-          <ListBox.Item
-            key={it.value}
-            id={it.value}
-            textValue={it.label}
-            data-testid={it.testId}
-            /* 「当前在哪一项」由 ListBox 自己的 `aria-selected` 承担。
-               试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
-               ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
-               留着只会让后来的人以为它在生效。 */
-            className="min-h-11 gap-3 rounded-full px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
-          >
-            <span className="grid size-5 shrink-0 place-items-center" aria-hidden="true">
-              {it.icon}
-            </span>
-            <span className="min-w-0 truncate">{it.label}</span>
-          </ListBox.Item>
+      <div className="flex shrink-0 flex-col gap-1">
+        {rail.items.filter((it) => it.isAction).map((it) => (
+          <Button key={it.value} variant="ghost" data-testid={it.testId}
+            className="page-shell__nav-item h-11 min-h-11 w-full justify-start gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background"
+            onPress={() => { it.onClick(); onNavigate?.(); }}>
+            <span className="page-shell__nav-icon" aria-hidden="true">{it.icon}</span>
+            <span>{it.label}</span>
+          </Button>
         ))}
-      </ListBox>
+        {/* 这里曾经有一块「身份块」（头像 + 网课学习助手 + 本机课程库 · N 门课程），
+            是照着 showcase 截图加的，落地当天被用户否掉、连 `railIdentity` prop 一起删了。
+            侧栏第一屏该是导航，不是一句自我介绍 —— 一句话说清的东西不值得占一行。
+            见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */}
+
+        {/* 导航用 ListBox 而不是一堆 <button>：选中态、键盘上下键、aria-current
+            全由 React Aria 处理，手写 button 这三样都得自己补，而补齐之前往往漏了后两样。
+
+            ⚠️ 跳转必须挂在 `onSelectionChange` 上，**不能**用 `onAction`：
+            `onAction` 只在键盘 Enter/Space 那类「激活」动作里触发，鼠标单击一个
+            ListBoxItem 走的是「选择」路径，onAction 根本不响 —— 症状是侧栏点了没反应
+            且不报错。`onSelectionChange` 才是选中语义的入口。
+
+            点「已经选中的那一项」时 keys 会是空的（RAC 把它当成取消选中），
+            此时 hit 为 undefined，但抽屉仍然要收起，所以 onNavigate 放在条件之外。 */}
+        <ListBox
+          id={navigationId}
+          aria-label="主导航"
+          selectionMode="single"
+          /* 动作项（`NavItem.isAction`，当前是「新会话」）不进 `selectedKeys`：
+             它不是「一个地方」，高亮对它不成立。剩下的项里只有与 `rail.value`
+             相符的那一项高亮 —— 首页传的 `value='chat'` 因此不会点亮任何东西，
+             这是对的：首页在草稿态时本来就没有「在哪」。见 `NavItem.isAction`。 */
+          selectedKeys={rail.items.filter((it) => !it.isAction && it.value === rail.value).map((it) => it.value)}
+          onSelectionChange={(keys) => {
+            const next = [...keys][0];
+            const hit = next == null ? undefined : rail.items.find((it) => it.value === String(next));
+            hit?.onClick();
+            onNavigate?.();
+          }}
+          className="gap-1 p-0"
+        >
+          {rail.items.filter((it) => !it.isAction).map((it) => (
+            <ListBox.Item
+              key={it.value}
+              id={it.value}
+              textValue={it.label}
+              data-testid={it.testId}
+              /* 「当前在哪一项」由 ListBox 自己的 `aria-selected` 承担。
+                 试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
+                 ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
+                 留着只会让后来的人以为它在生效。 */
+              className="page-shell__nav-item h-11 min-h-11 gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+            >
+              <span className="page-shell__nav-icon" aria-hidden="true">
+                {it.icon}
+              </span>
+              <span className="min-w-0 truncate">{it.label}</span>
+            </ListBox.Item>
+          ))}
+        </ListBox>
+      </div>
 
       {recent && !recent.loading && recent.items.length === 0 && (
         <div className="mt-4 px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
@@ -530,11 +533,8 @@ function Sidebar({
       )}
 
       {railFooter && (
-        <div className="mt-auto shrink-0 border-t border-border pt-2">
-          {/* 导航项由 ListBox 自带的 `p-1`（`.list-box { padding: var(--spacing) }`）
-              往内缩了 4px，底部的设置项也在同一列里，得跟着缩同样的距离，
-              否则它的图标会比上面每一项都多探出 4px。分隔线仍铺满，只缩内容。 */}
-          <div className="px-1">{railFooter}</div>
+        <div className="mt-auto shrink-0 pt-2" data-testid="nav-rail-footer">
+          {railFooter}
         </div>
       )}
     </>
@@ -673,14 +673,14 @@ export function PageShell({
           <nav className={`page-shell__rail t-resize${railCollapsed ? ' page-shell__compact-rail' : ''}`}
             aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
             <div className="page-shell__rail-header">
-              <div className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand">
-                {railCollapsed ? railToggle : <><BrandLogo /><span>DeepStudent Go</span></>}
+              <div className="page-shell__brand" role={railCollapsed ? undefined : 'img'} aria-label="DeepStudent Go" data-testid="app-brand">
+                {railCollapsed ? railToggle : <BrandLogo />}
               </div>
               {!railCollapsed && railToggle}
             </div>
             {railCollapsed ? <>{rail.items.map(item => (
               <span key={item.value} title={item.label}>
-                <Button isIconOnly variant="ghost" className={`page-shell__rail-icon${item.isAction ? ' page-shell__new-chat' : ''}`}
+                <Button isIconOnly variant="ghost" className="page-shell__rail-icon"
                   aria-label={item.label} aria-current={!item.isAction && item.value === rail.value ? 'page' : undefined}
                   data-testid={item.testId} onPress={item.onClick}>{item.icon}</Button>
               </span>
@@ -829,8 +829,8 @@ export function PageShell({
           <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
           <Drawer.Content placement="left">
             <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent Go">
-              <Drawer.Header className="mb-4 flex items-center justify-between p-0">
-                <Drawer.Heading className="page-shell__brand"><BrandLogo /><span>DeepStudent Go</span></Drawer.Heading>
+              <Drawer.Header className="mb-4 flex flex-row items-center justify-between p-0">
+                <Drawer.Heading className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand"><BrandLogo /></Drawer.Heading>
                 <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
               </Drawer.Header>
               <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">

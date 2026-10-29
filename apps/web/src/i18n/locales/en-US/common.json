@@ -3,6 +3,14 @@
   "settings": "Settings",
   "closeSettings": "Close settings",
   "settingsModules": "Settings sections",
+  "account": {
+    "defaultName": "User",
+    "menu": "Account menu for {{name}}",
+    "actions": "Account actions",
+    "archived": "Archived",
+    "closeArchived": "Close archived conversations",
+    "logout": "Log out"
+  },
   "serverUnavailable": "The server is temporarily unavailable. Please refresh and try again.",
   "language": {
     "label": "Interface language / 语言",

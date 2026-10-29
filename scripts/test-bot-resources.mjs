@@ -42,20 +42,23 @@ try {
   const tools = new StudyTools(store, config, files);
   const ctx = { owner, thread: thread.id, run: '', step: 'export-once', signal: new AbortController().signal, checkActive() {}, append: (kind, text) => service.append(thread.id, 'assistant', kind, text) };
   const exported = await tools.plugins.get('study_export').execute({ name: 'notes.md', content: '# Generated notes' }, ctx);
-  let listing = resources.list(owner);
+  const rootListing = resources.list(owner), root = rootListing.rootId;
+  const bot = projects.botWorkspace(owner);
+  assert.deepEqual(rootListing.entries.map(e => e.name), ['Bot'], 'Bot files do not clutter the resource root');
+  let listing = resources.list(owner, bot);
   assert.deepEqual(listing.entries.map(e => e.name).sort(), ['notes.md', 'photo (2).png', 'photo.png']);
-  const root = listing.rootId;
-  assert.equal(resources.list(other).entries[0].name, 'private.txt');
+  resources.list(other);
+  assert.equal(resources.list(other, projects.botWorkspace(other)).entries[0].name, 'private.txt');
   assert.ok(listing.entries.find(e => e.name === 'notes.md').courseId, 'export is a usable learning resource');
-  assert.equal(projects.files.read(root, 'notes.md').text, '# Generated notes');
+  assert.equal(projects.files.read(bot, 'notes.md').text, '# Generated notes');
   await tools.plugins.get('study_send_file').execute({ fileId: exported.fileId }, ctx);
-  assert.equal(resources.list(owner).entries.length, 3, 're-sending the same file is not another library item');
-  projects.files.move(root, 'photo.png', root, 'renamed.png', listing.entries.find(e => e.name === 'photo.png').revision);
-  listing = resources.list(owner);
+  assert.equal(resources.list(owner, bot).entries.length, 3, 're-sending the same file is not another library item');
+  projects.files.move(bot, 'photo.png', bot, 'renamed.png', listing.entries.find(e => e.name === 'photo.png').revision);
+  listing = resources.list(owner, bot);
   assert.ok(listing.entries.some(e => e.name === 'renamed.png'));
   assert.ok(!listing.entries.some(e => e.name === 'photo.png'));
-  projects.files.remove(root, 'renamed.png', listing.entries.find(e => e.name === 'renamed.png').revision);
-  assert.equal(resources.list(owner).entries.length, 2, 'deleted attachments are not resurrected');
+  projects.files.remove(bot, 'renamed.png', listing.entries.find(e => e.name === 'renamed.png').revision);
+  assert.equal(resources.list(owner, bot).entries.length, 2, 'deleted attachments are not resurrected');
 
   // Crash recovery after installation but before marking a receipt done.
   const pending = await upload(owner, 'recover.txt', 'complete bytes');
@@ -74,15 +77,15 @@ try {
   store.db.prepare("INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at,project_id) VALUES(?,?,'bot','Scoped',?,?,?)").run(scopedThread, owner, at, at, scopedProject.id);
   const scopedExport = await upload(owner, 'scoped-export.csv', 'a,b');
   service.append(scopedThread, 'assistant', 'attachment', JSON.stringify({ fileId: scopedExport.id }));
-  assert.ok(resources.list(owner).entries.some(e => e.name === 'scoped-export.csv'), 'blob exports from project conversations are visible too');
+  assert.ok(resources.list(owner, bot).entries.some(e => e.name === 'scoped-export.csv'), 'blob exports from project conversations are visible too');
 
   const batchFiles = await Promise.all(['batch-a.txt', 'batch-b.txt'].map(name => upload(owner, name)));
   const batch = { attachments: batchFiles.map(file => ({ fileId: file.id })), caption: 'Read both' };
   const beforeBatch = store.db.prepare('SELECT COUNT(*) n FROM runs WHERE thread_id=?').get(thread.id).n;
   service.send(owner, thread.id, { clientNonce: 'batch', kind: 'attachment', content: JSON.stringify(batch) });
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM runs WHERE thread_id=?').get(thread.id).n, beforeBatch + 1, 'one run for the entire composed message');
-  assert.ok(resources.list(owner).entries.some(e => e.name === 'batch-a.txt'));
-  assert.ok(resources.list(owner).entries.some(e => e.name === 'batch-b.txt'), 'every batched file reaches the resource library');
+  assert.ok(resources.list(owner, bot).entries.some(e => e.name === 'batch-a.txt'));
+  assert.ok(resources.list(owner, bot).entries.some(e => e.name === 'batch-b.txt'), 'every batched file reaches the resource library');
   assert.throws(() => service.send(owner, thread.id, { clientNonce: 'foreign-batch', kind: 'attachment', content: JSON.stringify({ attachments: [{ fileId: photo.id }, { fileId: privateFile.id }] }) }), /invalid_message/);
   assert.equal(store.db.prepare("SELECT 1 FROM messages WHERE client_nonce='foreign-batch'").get(), undefined, 'mixed-owner batches are rejected atomically');
 
@@ -111,9 +114,11 @@ try {
   pref('savedModels', [{ providerId: 'main', model: 'custom', contextWindow: 50 }]);
   assert.equal(ledger.limits(owner).contextTokens, 50, 'valid main-model input must not turn into invalid_bot_budget');
   assert.equal(botProgressText('预算已暂停任务：context_capacity_exceeded。请调整预算后显式继续。'), botPauseMessage('context_capacity_exceeded'));
+  store.db.prepare("UPDATE runs SET status='completed' WHERE id=?").run(run);
 
   store.close(); store = new DatabaseStore(filename);
   projects = new ProjectRepository(store, path.join(directory, 'projects')); resources = new ResourceFiles(projects, files);
-  assert.ok(!resources.list(owner).entries.some(e => e.name === 'photo.png' || e.name === 'renamed.png'), 'receipts survive restart');
+  assert.equal(projects.botWorkspace(owner), bot, 'default workspace identity survives restart');
+  assert.ok(!resources.list(owner, bot).entries.some(e => e.name === 'photo.png' || e.name === 'renamed.png'), 'receipts survive restart');
   console.log('Bot resources/model settings: Web + legacy IM attachments, exports, deduplication, owner isolation, move/delete/restart, crash recovery, shared model window/output, legacy defaults passed');
 } finally { store.close(); fs.rmSync(directory, { recursive: true, force: true }); }

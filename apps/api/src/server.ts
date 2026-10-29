@@ -251,7 +251,10 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
    registerSystemRoutes(app, systemMaterials, cloudConfig, requireAuth, checkOrigin);
    registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
    registerProjectRoutes(app, { projects, requireAuth, checkOrigin, maxFileBytes, stopProject: (id) => {
-     const runs = store.db.prepare("SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.project_id=? AND r.status IN ('queued','running','waiting_user')").all(id) as Array<{ id: string }>;
+     const runs = store.db.prepare(`SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id
+       LEFT JOIN bot_workspaces b ON b.owner_id=t.owner_id AND t.mode='bot'
+         AND (t.agent_id IS NOT NULL OR EXISTS(SELECT 1 FROM thread_participants WHERE thread_id=t.id))
+       WHERE COALESCE(t.project_id,b.project_id)=? AND r.status IN ('queued','running','waiting_user')`).all(id) as Array<{ id: string }>;
      for (const run of runs) { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=?").run(now(), run.id); runner.cancel(run.id); }
    } });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
@@ -471,6 +474,7 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     const timestamp = now();
     const row = { id: crypto.randomUUID(), owner_id: userId, name: 'DeepStudent Go', avatar: null, role: '本机学习助手', system_prompt: 'You are DeepStudent Go, a safe learning assistant.', enabled: 1, created_at: timestamp, updated_at: timestamp };
     store.db.prepare('INSERT INTO agent_profiles(id,owner_id,name,avatar,role,system_prompt,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(row.id, row.owner_id, row.name, row.avatar, row.role, row.system_prompt, row.enabled, row.created_at, row.updated_at);
+    projects.provisionAgent(userId, row.id);
     return row;
   }
   function ownedThread(userId: string, threadId: string) { return store.db.prepare('SELECT * FROM threads WHERE id=? AND owner_id=?').get(threadId, userId) as any; }
@@ -496,6 +500,7 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     if ((store.db.prepare('SELECT COUNT(*) AS count FROM agent_profiles WHERE owner_id=?').get(user.id) as { count: number }).count >= 16) return bad(reply, 409, 'agent_limit_reached');
     const timestamp = now(); const row = { id: crypto.randomUUID(), name, avatar: avatar || null, role: role || '协作 Agent', system_prompt: systemPrompt || `You are ${name}, a safe collaborative learning assistant.`, enabled: 1, created_at: timestamp, updated_at: timestamp };
     try { store.db.prepare('INSERT INTO agent_profiles(id,owner_id,name,avatar,role,system_prompt,enabled,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)').run(row.id, user.id, row.name, row.avatar, row.role, row.system_prompt, row.enabled, row.created_at, row.updated_at); } catch (error: any) { if (String(error?.code) === 'SQLITE_CONSTRAINT_UNIQUE') return bad(reply, 409, 'agent_name_taken'); throw error; }
+    projects.provisionAgent(user.id, row.id);
     return reply.code(201).send(agentDto(row));
   });
 

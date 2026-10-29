@@ -41,16 +41,10 @@ export class ResourceFiles {
   }
   private next(owner: string, table: string) { return this.rows(owner, table).reduce((max, r) => Math.max(max, Number(r.id) || 0), 0) + 1; }
   private defaultAgent(owner: string) {
-    return (this.db.prepare('SELECT id FROM agent_profiles WHERE owner_id=? AND enabled=1 ORDER BY created_at,id LIMIT 1').get(owner) as { id: string } | undefined)?.id;
+    return this.projects.defaultAgent(owner);
   }
   root(owner: string) {
-    const row = this.db.prepare('SELECT project_id FROM resource_roots WHERE owner_id=?').get(owner) as { project_id: string } | undefined;
-    if (row) return row.project_id;
-    return this.projects.store.transaction(() => {
-      const project = this.projects.create(owner, '资源', this.defaultAgent(owner));
-      this.db.prepare('INSERT INTO resource_roots(owner_id,project_id) VALUES(?,?)').run(owner, project.id);
-      return project.id;
-    });
+    return this.projects.resourceRoot(owner);
   }
   private folder(owner: string, id: number): Folder | undefined {
     return this.db.prepare('SELECT folder_id,project_id,path FROM resource_folders WHERE owner_id=? AND folder_id=?').get(owner, id) as Folder | undefined;
@@ -184,7 +178,7 @@ export class ResourceFiles {
       this.remember(owner, course.id, projectId, filename, sourceId);
       if (edited) this.put(owner, 'files', course.id, null);
     }
-    importBotAttachments(this.projects, this.filesDir, owner, root);
+    importBotAttachments(this.projects, this.filesDir, owner);
   }
   private entry(projectId: string, filename: string) {
     const parent = path.posix.dirname(filename) === '.' ? '' : path.posix.dirname(filename);

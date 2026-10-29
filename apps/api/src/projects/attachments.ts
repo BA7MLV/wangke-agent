@@ -10,8 +10,10 @@ type Receipt = { project_id: string; path: string; status: 'pending' | 'done' };
 /** Project committed Bot attachments into the real resource tree. The receipt is
  * durable even after a user moves/deletes the copy, so history never resurrects it.
  * Old Gateway text attachments are included, but unattached uploads are not. */
-export function importBotAttachments(projects: ProjectRepository, filesDir: string, owner: string, root: string) {
+export function importBotAttachments(projects: ProjectRepository, filesDir: string, owner: string, activeWorkspace?: string) {
   const db = projects.store.db;
+  // A runner owns this scope exclusively before its first tool starts.
+  const idle = (id: string) => { if (id !== activeWorkspace) projects.assertIdle(id); else if (projects.hasExecution(id)) throw new Error('workspace_busy'); };
   // Start with message references, not every upload (course frames can be numerous).
   const rows = db.prepare(`SELECT f.id,f.storage_name,f.original_name,f.sha256,f.created_at
     FROM threads t JOIN messages m ON m.thread_id=t.id JOIN files f
@@ -58,11 +60,12 @@ export function importBotAttachments(projects: ProjectRepository, filesDir: stri
         db.prepare("INSERT INTO resource_attachments VALUES(?,?,?,?,'done')").run(owner, source.id, mapped.project_id, mapped.path);
         continue;
       }
-      projects.writable(owner, root); projects.assertIdle(root);
-      receipt = { project_id: root, path: allocate(source, root), status: 'pending' };
-      db.prepare("INSERT INTO resource_attachments VALUES(?,?,?,?,'pending')").run(owner, source.id, root, receipt.path);
+      const workspace = projects.botWorkspace(owner);
+      projects.writable(owner, workspace); idle(workspace);
+      receipt = { project_id: workspace, path: allocate(source, workspace), status: 'pending' };
+      db.prepare("INSERT INTO resource_attachments VALUES(?,?,?,?,'pending')").run(owner, source.id, workspace, receipt.path);
     }
-    projects.writable(owner, receipt.project_id); projects.assertIdle(receipt.project_id);
+    projects.writable(owner, receipt.project_id); idle(receipt.project_id);
     // Recover a crash between the atomic file installation and receipt commit.
     const entry = projects.files.list(receipt.project_id, '').find(f => f.path === receipt!.path);
     if (entry) {

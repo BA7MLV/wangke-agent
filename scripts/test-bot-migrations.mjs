@@ -114,7 +114,7 @@ try {
       const store = new DatabaseStore(filename);
       let manager, runner, gateway;
       try {
-        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 20);
+        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 21);
         assert.deepEqual(store.db.pragma('foreign_key_check'), []);
         preserved(store.db, expected);
         const config = new CloudConfiguration(store, configDir);

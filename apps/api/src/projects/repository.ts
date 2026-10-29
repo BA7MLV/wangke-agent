@@ -22,6 +22,45 @@ export class ProjectRepository {
   onChange: (owner: string, id: string) => void = () => {};
   constructor(readonly store: DatabaseStore, directory: string) { this.files = new ProjectFiles(directory); }
 
+  defaultAgent(owner: string) {
+    return (this.store.db.prepare('SELECT id FROM agent_profiles WHERE owner_id=? AND enabled=1 ORDER BY created_at,id LIMIT 1').get(owner) as { id: string } | undefined)?.id;
+  }
+
+  resourceRoot(owner: string) {
+    const row = this.store.db.prepare('SELECT project_id FROM resource_roots WHERE owner_id=?').get(owner) as { project_id: string } | undefined;
+    if (row) return row.project_id;
+    return this.store.transaction(() => {
+      const project = this.create(owner, '资源', this.defaultAgent(owner));
+      this.store.db.prepare('INSERT INTO resource_roots(owner_id,project_id) VALUES(?,?)').run(owner, project.id);
+      return project.id;
+    });
+  }
+
+  /** Stable identity, independent of the display name. Never restore revoked grants. */
+  botWorkspace(owner: string) {
+    const row = this.store.db.prepare('SELECT project_id FROM bot_workspaces WHERE owner_id=?').get(owner) as { project_id: string } | undefined;
+    if (row) return row.project_id;
+    return this.store.transaction(() => {
+      const names = new Set(this.list(owner).map(project => project.name.toLowerCase()));
+      let name = 'Bot', suffix = 2;
+      while (names.has(name.toLowerCase())) name = `Bot (${suffix++})`;
+      const project = this.create(owner, name);
+      // The default workspace follows the existing global execution policy.
+      this.update(owner, project.id, { policy: { shell: 'allow', network: 'allow' } });
+      this.store.db.prepare('INSERT INTO bot_workspaces(owner_id,project_id) VALUES(?,?)').run(owner, project.id);
+      this.store.db.prepare("INSERT INTO project_agents(project_id,agent_id,role) SELECT ?,id,'manage' FROM agent_profiles WHERE owner_id=? AND enabled=1").run(project.id, owner);
+      return project.id;
+    });
+  }
+
+  provisionAgent(owner: string, agentId: string) {
+    this.agent(owner, agentId);
+    const id = this.botWorkspace(owner);
+    this.grant(owner, id, agentId, 'manage');
+  }
+
+  workspaceId(thread: ProjectThread) { return thread.project_id ?? (thread.agent_id ? this.botWorkspace(thread.owner_id) : undefined); }
+
   list(owner: string): ProjectDto[] {
     return (this.store.db.prepare('SELECT * FROM projects WHERE owner_id=? ORDER BY updated_at DESC,id').all(owner) as ProjectRow[]).map(dto);
   }
@@ -89,13 +128,17 @@ export class ProjectRepository {
   }
 
   thread(id: string): ProjectThread {
-    const thread = this.store.db.prepare('SELECT id,owner_id,project_id,agent_id,archived FROM threads WHERE id=?').get(id) as ProjectThread | undefined;
+    const thread = this.store.db.prepare(`SELECT id,owner_id,project_id,
+      COALESCE(agent_id,(SELECT agent_id FROM thread_participants WHERE thread_id=threads.id ORDER BY joined_at,agent_id LIMIT 1)) AS agent_id,archived FROM threads WHERE id=?`).get(id) as ProjectThread | undefined;
     if (!thread) throw new ProjectError('thread_not_found', 404);
     return thread;
   }
 
   assertIdle(id: string) {
-    if (this.isActive(id) || this.hasExecution(id) || this.store.db.prepare("SELECT 1 FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.project_id=? AND r.status='running' LIMIT 1").get(id)) throw new ProjectError('project_busy', 409);
+    if (this.isActive(id) || this.hasExecution(id) || this.store.db.prepare(`SELECT 1 FROM runs r JOIN threads t ON t.id=r.thread_id
+      LEFT JOIN bot_workspaces b ON b.owner_id=t.owner_id AND t.mode='bot'
+        AND (t.agent_id IS NOT NULL OR EXISTS(SELECT 1 FROM thread_participants WHERE thread_id=t.id))
+      WHERE COALESCE(t.project_id,b.project_id)=? AND r.status='running' LIMIT 1`).get(id)) throw new ProjectError('project_busy', 409);
   }
 
   hasExecution(id: string) { return Boolean(this.store.db.prepare('SELECT 1 FROM project_executions WHERE project_id=?').get(id)); }

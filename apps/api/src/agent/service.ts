@@ -18,7 +18,7 @@ export class BotApplicationService {
     return this.store.transaction(() => {
       if (agent && !this.store.db.prepare('SELECT 1 FROM agent_profiles WHERE id=? AND owner_id=? AND enabled=1').get(agent, owner)) throw new Error('agent_not_found');
       const id = crypto.randomUUID(), timestamp = now();
-      this.store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,?,?)').run(id, owner, mode, title, timestamp, timestamp);
+      this.store.db.prepare('INSERT INTO threads(id,owner_id,mode,title,agent_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(id, owner, mode, title, agent ?? null, timestamp, timestamp);
       if (agent) this.store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(id, agent, timestamp);
       return { id, mode, title, createdAt: timestamp, updatedAt: timestamp };
     });

@@ -13,6 +13,15 @@ import { useCourseChat } from '../../store/courseChat';
  * 每条给两个出口：**恢复**（回到 Recent）与**删除**（真删，不可逆）。
  */
 export default function ArchivedSessionsCard() {
+  return (
+    <SectionCard title="已归档会话" testId="card-archived-sessions">
+      <ArchivedSessionsList />
+    </SectionCard>
+  );
+}
+
+/** 设置卡片和账号菜单弹窗共用同一套恢复 / 删除逻辑。 */
+export function ArchivedSessionsList() {
   const sessions = useCourseChat((s) => s.archivedSessions);
   const refresh = useCourseChat((s) => s.refreshArchived);
   const setArchived = useCourseChat((s) => s.setArchived);
@@ -44,10 +53,7 @@ export default function ArchivedSessionsCard() {
   };
 
   return (
-    <SectionCard
-      title="已归档会话"
-      testId="card-archived-sessions"
-    >
+    <>
       {sessions.length === 0 ? (
         <EmptyState data-testid="archived-empty">还没有归档任何会话</EmptyState>
       ) : (
@@ -87,6 +93,6 @@ export default function ArchivedSessionsCard() {
           ))}
         </div>
       )}
-    </SectionCard>
+    </>
   );
 }

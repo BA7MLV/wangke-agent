@@ -1,0 +1,79 @@
+.sidebar-account {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-width: 0;
+  gap: 4px;
+}
+
+.sidebar-account__trigger {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  justify-content: flex-start;
+  min-width: 0;
+  height: 48px;
+  gap: 12px;
+  padding: 8px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  color: var(--foreground);
+  box-shadow: none;
+  text-align: left;
+}
+
+.sidebar-account__trigger[data-hovered='true'],
+.sidebar-account__trigger[data-pressed='true'],
+.sidebar-account__trigger[aria-expanded='true'] {
+  background: var(--background);
+}
+
+.sidebar-account__trigger[data-focus-visible='true'] {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.sidebar-account__avatar {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  flex-shrink: 0;
+  place-items: center;
+  overflow: hidden;
+  border-radius: var(--radius-full);
+  background: var(--default);
+  color: var(--foreground);
+  font-size: 0.875rem;
+  font-weight: 500;
+  line-height: 1;
+}
+
+.sidebar-account__name {
+  min-width: 0;
+  overflow: hidden;
+  font-size: 0.875rem;
+  font-weight: 500;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sidebar-account__settings[data-testid] {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  flex-shrink: 0;
+  padding: 0;
+  border-radius: var(--radius-full);
+  color: var(--muted);
+}
+
+.sidebar-account__settings[data-testid] > svg {
+  width: 20px;
+  height: 20px;
+}
+
+/* 收起后保留头像入口，设置仍可从账号菜单访问。 */
+.page-shell__compact-footer .sidebar-account { width: 44px; }
+.page-shell__compact-footer .sidebar-account__name,
+.page-shell__compact-footer .sidebar-account__settings { display: none; }

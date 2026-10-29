@@ -7,6 +7,7 @@ import { serverClient } from '../api/serverClient';
 import { SectionCard, confirmDialog, promptDialog, toast } from '../ui';
 import { SettingRow } from '../components/settings/controls';
 import ArchivedSessionsCard from '../components/settings/ArchivedSessionsCard';
+import { logoutCloud } from './logout';
 
 /**
  * 设置 → 数据（云端）。
@@ -60,14 +61,7 @@ export default function DataSettings() {
     await loadPasskeys();
   });
 
-  const logout = () => run('logout', async () => {
-    let flushed = true;
-    try { await flushCloud(); } catch { flushed = false; }
-    if ((!flushed || useCloudSync.getState().pending > 0)
-      && !await confirmDialog({ headline: '还有改动没有同步', description: '现在退出会丢失这些改动。', confirmText: '仍然退出', danger: true })) return;
-    await serverClient.logout();
-    stopCloud();
-  });
+  const logout = () => run('logout', logoutCloud);
 
   const reset = () => run('reset', async () => {
     if (!await confirmDialog({

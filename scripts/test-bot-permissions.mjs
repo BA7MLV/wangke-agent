@@ -67,11 +67,13 @@ try {
   configuration.save(owner, { ...get(), policy: { ...get().policy, write: 'allow', shell: 'allow', remove: 'allow' } });
 
   const created = JSON.parse((await runTool('projects', { action: 'create', name: 'Bot-created project' })).result);
-  assert.equal(created.grants[0].role, 'manage');
-  assert.equal(created.grants[0].agentId, agent);
-  assert.equal(created.url, `#/library?folder=${created.id}`);
+  const workspace = projects.get(owner, created.projectId);
+  assert.equal(workspace.grants[0].role, 'manage');
+  assert.equal(workspace.grants[0].agentId, agent);
+  assert.equal(created.url, `#/library?folder=${workspace.id}&path=${encodeURIComponent(created.path)}`);
   assert.equal(projects.list(owner).length, 1);
-  assert.deepEqual(projects.files.list(created.id, ''), []);
+  assert.equal(projects.files.list(workspace.id, '')[0].name, 'Bot-created project');
+  assert.deepEqual(projects.files.list(workspace.id, created.path), []);
 
   const read = await runTool('settings', { action: 'get' });
   assert.ok(JSON.parse(read.result).providers[0].configured);
@@ -124,12 +126,12 @@ try {
   assert.equal(commands, 2, 'one approved operation is executed exactly once after restart');
 
   const projectThread = crypto.randomUUID();
-  store.db.prepare("INSERT INTO threads(id,owner_id,agent_id,project_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,'bot','Project',?,?)").run(projectThread, owner, agent, created.id, now, now);
+  store.db.prepare("INSERT INTO threads(id,owner_id,agent_id,project_id,mode,title,created_at,updated_at) VALUES(?,?,?,?,'bot','Project',?,?)").run(projectThread, owner, agent, workspace.id, now, now);
   const denied = await runTool('settings', { action: 'get' }, { targetThread: projectThread });
   assert.match(denied.result, /settings_access_denied/);
-  const file = projects.files.write(created.id, 'keep.txt', 'keep', null);
+  const file = projects.files.write(workspace.id, 'keep.txt', 'keep', null);
   await runTool('workspace', { action: 'remove', path: 'keep.txt', expectedRevision: file.revision }, { targetThread: projectThread, approved: false });
-  assert.equal(projects.files.read(created.id, 'keep.txt').text, 'keep');
+  assert.equal(projects.files.read(workspace.id, 'keep.txt').text, 'keep');
 
   configuration.save(owner, { ...get(), policy: { ...get().policy, write: 'deny' } });
   assert.match((await runTool('projects', { action: 'create', name: 'Forbidden' })).result, /denied/);

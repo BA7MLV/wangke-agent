@@ -86,6 +86,14 @@ body,
   /* Motion tokens have one source of truth: transitions.css. */
 }
 
+/* 浅色外壳：左侧浅灰、正文近白，用低对比度的中性分隔线区分两块画布。
+   只覆盖浅色令牌，深色仍沿用 HeroUI 的完整色板。 */
+:root:not(.dark) {
+  --background: #f8f8f8;
+  --background-secondary: #f0f0f0;
+  --border: #dedede;
+}
+
 /* 保留 border-radius 作为回退；不支持连续圆角的浏览器忽略整个增强块。
    伪元素也遵循相同曲线，避免装饰层与容器边缘错位。 */
 @supports (corner-shape: superellipse(1.25)) {

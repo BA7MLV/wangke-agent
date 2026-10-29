@@ -3,6 +3,14 @@
   "settings": "设置",
   "closeSettings": "关闭设置",
   "settingsModules": "设置模块",
+  "account": {
+    "defaultName": "用户",
+    "menu": "{{name}} 的账号菜单",
+    "actions": "账号操作",
+    "archived": "已归档",
+    "closeArchived": "关闭已归档",
+    "logout": "登出"
+  },
   "serverUnavailable": "服务器暂时不可用，请刷新重试",
   "language": {
     "label": "界面语言 / Language",
