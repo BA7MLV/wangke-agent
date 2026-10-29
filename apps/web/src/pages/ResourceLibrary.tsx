@@ -5,10 +5,8 @@ import { useTranslation } from 'react-i18next';
 import type { AgentProfileDto, ProjectDetailDto } from '@wangke/contracts';
 import type { ResourceDirectory, ResourceEntry } from '@wangke/contracts/resources';
 import { request, serverClient } from '../api/serverClient';
-import { useAppNav } from '../components/appNav';
 import { FolderIcon } from '../components/FolderIcon';
 import { ResourceFileIcon } from '../components/ResourceFileIcon';
-import { SettingsButton } from '../components/SettingsModal';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { db } from '../store/db';
 import { flushCloud } from '../cloud/sync';
@@ -46,7 +44,6 @@ function ResourceSkeleton({ view, count }: { view: 'icons' | 'list'; count: numb
 export default function ResourceLibrary({ onImport }: { onImport: (folderId?: number) => void }) {
   const { t } = useTranslation('projects');
   const navigate = useNavigate();
-  const nav = useAppNav('home');
   const mobile = useIsMobile();
   const [search, setSearch] = useSearchParams();
   const projectId = search.get('folder') ?? undefined;
@@ -201,7 +198,9 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
       return;
     }
     if (!await confirmDialog({ headline: t('deleteConfirm', { name: entry.name }), description: t('removeHint'), confirmText: t('delete'), cancelText: t('cancel'), danger: true })) return;
-    await perform(() => serverClient.deleteProjectFile(entry.projectId, entry.path, entry.revision));
+    await perform(() => entry.courseId
+      ? serverClient.deleteResourceFile(entry.projectId, entry.path, entry.revision)
+      : serverClient.deleteProjectFile(entry.projectId, entry.path, entry.revision));
   };
   const moveInto = (event: React.DragEvent, id: string, path: string) => {
     event.preventDefault(); event.stopPropagation();
@@ -245,7 +244,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const visibleEntries = loading || showSkeleton ? [] : entries;
   const retainedKey = draggedEntry && !visibleEntries.some(entry => keyOf(entry) === keyOf(draggedEntry)) ? keyOf(draggedEntry) : null;
   const renderedEntries = retainedKey && draggedEntry ? [...visibleEntries, draggedEntry] : visibleEntries;
-  return <PageShell title={t('resources')} rail={nav} railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />} fill rootClassName="page-library">
+  return <PageShell title={t('resources')} fill rootClassName="page-library">
     <ImagePreview isOpen={Boolean(image)} onOpenChange={open => { if (!open) setImage(null); }} title={image?.name ?? ''} content={image ? { kind: 'image', src: serverClient.projectDownloadUrl(image.projectId, image.path) } : undefined} onDownload={image ? () => download(image) : undefined} downloadLabel={t('download')} />
     <section className="finder-window resource-window" data-mobile={mobile || undefined} aria-label={t('resources')}
       onDragOver={e => { springLoader.cancel(); setDropTarget(null); if (!busy && !loading && !readOnly) e.preventDefault(); }}

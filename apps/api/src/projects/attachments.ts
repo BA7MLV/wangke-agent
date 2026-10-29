@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { parseBotAttachments } from '@wangke/contracts';
 import type { ProjectRepository } from './repository.js';
+import { safeFileName } from '../cloud/file-names.js';
 
 type Source = { id: string; storage_name: string; original_name: string; sha256: string; created_at: string };
 type Receipt = { project_id: string; path: string; status: 'pending' | 'done' };
@@ -43,8 +44,8 @@ export function importBotAttachments(projects: ProjectRepository, filesDir: stri
   const allocate = (source: Source, projectId: string) => {
     const names = new Set(projects.files.list(projectId, '').map(f => f.name));
     for (const row of db.prepare("SELECT path FROM resource_attachments WHERE owner_id=? AND project_id=? AND status='pending'").all(owner, projectId) as { path: string }[]) names.add(row.path);
-    const name = source.original_name.replace(/[\\/\u0000-\u001f\u007f]/g, '_').replace(/^\.+$/, '_') || 'Attachment';
-    const ext = path.extname(name).slice(0, 16), stem = Array.from(name.slice(0, name.length - path.extname(name).length)).slice(0, 45).join('') || 'Attachment';
+    const name = safeFileName(source.original_name);
+    const ext = path.extname(name), stem = name.slice(0, name.length - ext.length);
     let candidate = `${stem}${ext}`, n = 2;
     while (names.has(candidate)) candidate = `${stem} (${n++})${ext}`;
     return candidate;

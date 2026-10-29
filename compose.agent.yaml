@@ -14,7 +14,7 @@ services:
     environment:
       SANDBOX_TOKEN: ${SANDBOX_TOKEN:?Set SANDBOX_TOKEN in .env}
       SANDBOX_IMAGE: "${WANGKE_SANDBOX_IMAGE:-wangke-sandbox:0.1.0}"
-      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-none}
+      SANDBOX_NETWORK: ${SANDBOX_NETWORK:-bridge}
       SANDBOX_PROJECTS_DIR: /data/files/projects
       SANDBOX_UID: ${WANGKE_UID:-1000}
       SANDBOX_GID: ${WANGKE_GID:-1000}

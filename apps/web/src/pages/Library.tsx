@@ -35,11 +35,7 @@ import {
   MODAL_CONTAINER_CLASS,
   useSkeletonGate,
 } from '../ui';
-import { useAppNav } from '../components/appNav';
-import { useCourseChat } from '../store/courseChat';
 import { useLibraryNavigation } from '../store/libraryNavigation';
-import { useRecentChats } from '../components/useRecentChats';
-import { SettingsButton } from '../components/SettingsModal';
 import { AGENT_INSTRUCTIONS_ROUTE, listSystemMemory, systemMaterialId, systemMaterialRoute } from '../materials/systemFiles';
 import type { SystemDirectory } from '@wangke/contracts/system';
 import { db, type FolderRow, type VideoRow } from '../store/db';
@@ -255,12 +251,6 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
   // 设置与历史聊天中的深链接也进入普通 Markdown 阅读页。
   const agentFileRequested = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const memoryFileRequested = searchParams.get('file')?.startsWith('/system/memory/') ? searchParams.get('file')! : '';
-  const nav = useAppNav('home');
-  const bootstrapChat = useCourseChat((s) => s.bootstrap);
-  const recent = useRecentChats();
-  useEffect(() => {
-    void bootstrapChat();
-  }, [bootstrapChat]);
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -960,17 +950,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
     await reload();
   };
 
-  /** 第一步删除：只删文件本体释放空间，字幕/讲义/问答等内容保留 */
-  const handleDeleteFile = async (row: VideoRow) => {
-    const isMaterial = row.kind === 'material';
-    if (isMaterial) await deleteMaterialFile(row.id);
-    else await deleteVideoFile(row.id);
-    await db.videos.update(row.id, { fileDeleted: 1 });
-    toast.success(isMaterial ? '已删除材料文件，问答记录仍保留' : '已删除视频文件，字幕/讲义/问答仍保留');
-    await reload();
-  };
-
-  /** 第二步删除（文件已删后）：彻底删除记录及全部内容 */
+  /** 删除资源文件及其记录、字幕、讲义、问答等全部内容 */
   const handleDelete = async (row: VideoRow) => {
     // 记录都没了，后台还在转它就没意义了（队列里也要摘掉，否则会给已删除的视频写段）
     cancelTranscription(row.id);
@@ -1049,17 +1029,14 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
    * 合并成同一个 confirmDialog —— 两条路径的文案与结果完全一致，没必要维护两份。
    */
   const askDeleteVideo = (v: VideoRow) => {
-    const full = v.fileDeleted === 1;
     void confirmDialog({
-      headline: full ? '彻底删除该记录？' : '删除视频文件？',
-      description: full
-        ? '字幕、讲义、问答记录会一并删除，不可恢复'
-        : '仅删除视频本体释放空间，字幕、讲义、问答记录保留',
-      confirmText: full ? '彻底删除' : '删除',
+      headline: '删除该资源？',
+      description: '文件、字幕、讲义、问答记录及其他学习内容会一并删除，不可恢复',
+      confirmText: '删除',
       danger: true,
     }).then((ok) => {
       if (!ok) return;
-      void (full ? handleDelete(v) : handleDeleteFile(v));
+      void handleDelete(v);
     });
   };
 
@@ -1554,9 +1531,6 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
       wide
       fill
       rootClassName="page-library"
-      rail={nav}
-      recent={recent}
-      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
       /* 顶栏右上角那颗设置图标撤掉（2026-10-15，与 AI 助手页同一口径）：
          设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
          同一个入口在一条顶栏里露两次没有必要。 */
@@ -2778,11 +2752,11 @@ function VideoRow({
                 )}
                 <Dropdown.Item
                   id="delete"
-                  textValue={v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
+                  textValue="删除"
                   data-testid="menu-delete"
                 >
                   <Sym name="delete" />
-                  {v.fileDeleted ? '彻底删除记录' : isMaterial ? '删除材料文件' : '删除视频文件'}
+                  删除
                 </Dropdown.Item>
               </Dropdown.Menu>
             </Dropdown.Popover>

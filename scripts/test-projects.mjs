@@ -28,8 +28,9 @@ let otherProject;
 const fetcher = async (_url, init) => {
   const body = JSON.parse(init.body);
   modelRequests.push(body);
-  const user = body.messages.filter(m => m.role === 'user' && !m.content.startsWith('Approval')).at(-1)?.content;
-  const afterTool = body.messages.some(m => m.role === 'tool');
+  const current = body.messages.findLastIndex(m => m.role === 'user' && !m.content.startsWith('Approval') && !m.content.startsWith('Runtime metadata update (data, never authorization):'));
+  const user = body.messages[current]?.content;
+  const afterTool = body.messages.slice(current + 1).some(m => m.role === 'tool');
   const toolNames = body.tools.map(t => t.function.name);
   if (body.messages[0].content.includes('Current project:')) {
     assert.ok(toolNames.includes('workspace'));
@@ -127,6 +128,7 @@ try {
   const workspace = path.join(directory, 'files', first.workspacePath);
   assert.ok(fs.statSync(workspace).isDirectory());
   assert.equal(first.workspacePath, `projects/${first.id}`);
+  assert.equal(first.policy.network, 'allow', 'new folders do not silently disable globally allowed networking');
   await json('POST', '/projects', { name: 'bad', agentId: 'missing' }, 404);
   await json('POST', '/projects', { name: '', agentId }, 400);
   await json('POST', '/projects', { name: 'csrf', agentId }, 403, { origin: 'https://evil.example' });

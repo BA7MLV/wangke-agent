@@ -1,4 +1,4 @@
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { Sym, type NavConfig, type NavItem } from '../ui';
 import { useCourseChat } from '../store/courseChat';
 import { useBotPanel } from '../store/botPanel';
@@ -12,35 +12,34 @@ import { focusChatComposer } from './chatComposerFocus';
  * 不是另一个独立页面（见 pages/CourseChat.tsx 与 store/botPanel.ts）。
  * 「设置」也不在这里：它是全局弹窗，入口在侧栏底部。
  */
-export function useAppNav(active: 'home' | 'chat' | 'study' | 'projects'): NavConfig {
+export function useAppNav(): NavConfig {
+  const { pathname } = useLocation();
   const navigate = useNavigate();
   const createSession = useCourseChat((s) => s.createSession);
-  const botActive = useBotPanel((s) => active === 'chat' && s.open);
+  const activeId = useCourseChat((s) => s.activeId);
+  const botOpen = useBotPanel((s) => s.open);
+  const chatPage = ['/', '/chat', '/course-chat'].includes(pathname) || pathname.startsWith('/settings');
+  const value = chatPage ? (botOpen ? 'bot' : activeId == null ? 'home' : '')
+    : /^\/(library|player)(\/|$)/.test(pathname) ? 'resources' : '';
   const items: NavItem[] = [
     {
-      /**
-       * 首项是动作而不是页面（`isAction`，没有选中态）：它回答「想不想从头开始」。
-       *
-       * 懒创建让新会话零成本：切到草稿态既不落库也不留空会话。已经在草稿里时
-       * 不弹提示，直接把焦点交给输入框 —— 用户点「新会话」就是想开始打字。
-       * 生成中也允许：当前那条被 park 到后台继续跑。
-       */
-      value: 'chat',
-      label: '新会话',
-      isAction: true,
-      icon: <Sym name="edit" />,
+      // 主页就是待输入的新会话；后台生成和已有草稿仍沿用会话 store 的保留规则。
+      value: 'home',
+      label: '主页',
+      icon: <Sym name="home" />,
       onClick: () => {
         void createSession();
+        useBotPanel.getState().setOpen(false);
         navigate('/');
         focusChatComposer();
       },
       testId: 'nav-rail-chat',
     },
     {
-      value: 'home',
+      value: 'resources',
       label: '资源',
       icon: <Sym name="video_library" />,
-      onClick: () => navigate('/library'),
+      to: '/library',
       testId: 'nav-rail-home',
     },
     {
@@ -54,5 +53,5 @@ export function useAppNav(active: 'home' | 'chat' | 'study' | 'projects'): NavCo
       testId: 'nav-rail-bot',
     },
   ];
-  return { value: botActive ? 'bot' : active, items };
+  return { value, items };
 }

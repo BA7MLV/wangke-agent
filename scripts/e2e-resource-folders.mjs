@@ -28,6 +28,11 @@ try {
   const config = await call('GET', '/cloud/config');
   await call('PUT', '/cloud/config', { ...config, providers: [{ id: 'offline', name: 'Offline', baseUrl: 'https://offline.invalid/v1', protocol: 'openai-chat', apiKey: 'test-only', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'offline', model: 'test' }, visionModel: { providerId: '', model: '' }, asrModel: { providerId: '', model: '' }, decisionModel: { providerId: '', model: '' } });
   await call('POST', '/cloud/records', { mutations: [{ id: 'language', table: 'preferences', key: 'uiLanguage', before: null, after: { id: 'uiLanguage', value: 'zh-CN' } }] });
+  const recentSession = { id: 91001, videoId: '__library_assistant__', title: '最近的学习对话', createdAt: Date.now() };
+  await call('POST', '/cloud/records', { mutations: [
+    { id: 'recent-session', table: 'chatSessions', key: recentSession.id, before: null, after: recentSession },
+    { id: 'recent-message', table: 'chats', key: 91001, before: null, after: { id: 91001, sessionId: recentSession.id, videoId: recentSession.videoId, role: 'user', content: '资源页也能继续这段对话', createdAt: recentSession.createdAt } },
+  ] });
   const fixture = await call('POST', '/resources/folders', { name: '设计资料' });
   await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('笔记.txt')}`, { text: '人和 Bot 读写同一份文件。', expectedRevision: null });
   await call('PUT', `/projects/${fixture.id}/text?path=${encodeURIComponent('资料.md')}`, { text: '# 学习资料\n\nMarkdown 继续使用原来的封面文件样式。', expectedRevision: null });
@@ -55,6 +60,17 @@ try {
     page.on('pageerror', e => errors.push(e.message));
     await page.goto(`${origin}/__fixture_login`);
     await page.getByTestId('resource-list').waitFor({ timeout: 60000 });
+    await page.getByTestId('chat-recent-91001').waitFor();
+    await page.evaluate(() => { window.resourceSidebar = document.querySelector('[data-testid="nav-rail"]'); });
+    await page.getByTestId('chat-recent-91001').click();
+    await page.getByTestId('course-chat-messages').getByText('资源页也能继续这段对话', { exact: true }).waitFor();
+    await page.getByTestId('nav-rail-chat').click();
+    assert.equal(await page.getByTestId('page-title').innerText(), '主页');
+    await page.getByTestId('nav-rail-home').click();
+    await page.getByTestId('resource-list').waitFor();
+    assert.equal(await page.evaluate(() => window.resourceSidebar === document.querySelector('[data-testid="nav-rail"]')), true,
+      'cloud resource/home/history share one persistent sidebar');
+    await page.getByTestId('chat-recent-91001').waitFor();
     assert.equal(await page.getByTestId('nav-rail-projects').count(), 0);
     await page.getByTestId('btn-new-folder').click();
     const dialog = page.getByRole('dialog');
@@ -230,6 +246,14 @@ try {
     await page.getByTestId('nav-back').click();
     await page.getByTestId('resource-entry').filter({ hasText: '阅读笔记.md' }).waitFor();
     assert.equal(new URLSearchParams(page.url().split('?')[1]).get('path'), '子文件夹', 'reader returns to the original directory, including after reload');
+    const resourceToDelete = page.getByTestId('resource-entry').filter({ hasText: '阅读笔记.md' });
+    await resourceToDelete.locator('.resource-more').click();
+    await page.getByRole('menuitem', { name: '删除', exact: true }).click();
+    const deleteDialog = page.getByTestId('confirm-dialog-danger');
+    await deleteDialog.getByRole('button', { name: '删除', exact: true }).click();
+    await resourceToDelete.waitFor({ state: 'detached' });
+    assert.equal(fs.existsSync(markdownPath), false, 'Resource Library deletion removes the source file');
+    assert.equal((await call('GET', `/cloud/record?table=videos&key=${encodeURIComponent(JSON.stringify(indexed.courseId))}`)).value, null, 'Resource Library deletion removes the learning record');
     await page.getByRole('button', { name: '更多操作', exact: true }).click();
     await page.getByRole('menuitem', { name: '导入课程 / B 站视频' }).click();
     await dialog.getByTestId('btn-bili-import').click();

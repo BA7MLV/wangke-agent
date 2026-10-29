@@ -15,7 +15,7 @@
   height: var(--vvh, 100%);
 }
 
-.live-share-host > .page {
+.live-share-host > :is(.page, .page-shell, .app-navigation-shell) {
   /* height:auto + flex 而不是继续用 var(--vvh)：高度改由 flex 容器分配 */
   height: auto;
   flex: 1 1 auto;

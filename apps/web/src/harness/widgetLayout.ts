@@ -1,5 +1,6 @@
 import type { WidgetPayload } from './widgetRuntime.ts';
 import { artifactFences } from '../utils/artifactEdit.ts';
+export { widgetReference } from '@wangke/study-core/widgets';
 
 export interface WidgetCollection {
   /** Legacy single-widget replies remain readable. */
@@ -11,10 +12,6 @@ export function messageWidgets(message: WidgetCollection): WidgetPayload[] {
   const items = Array.isArray(message.widgets) && message.widgets.length ? message.widgets : message.widget ? [message.widget] : [];
   // Preserve a failed placeholder instead of crashing or silently hiding corrupt imported entries.
   return items.map(item => item && typeof item === 'object' && !Array.isArray(item) ? item : { html: '' });
-}
-
-export function widgetReference(ref: string): string {
-  return `\`\`\`wbw-widget\n${ref}\n\`\`\``;
 }
 
 /** Only actual, closed Markdown fences count. Examples inside other fences do not. */

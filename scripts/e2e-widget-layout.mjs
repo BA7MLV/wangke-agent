@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { openCodeMenu, openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const shots = new URL('../e2e-shots/', import.meta.url);
@@ -56,8 +57,9 @@ try {
   assert.equal(row.widget.id, row.widgets[1].id, 'legacy alias remains compatible');
   assert.notEqual(row.widgets[0].id, row.widgets[1].id);
   assert.equal(requests.length, 2, 'one tool round and one final explanation');
-  assert.match(requests[0].messages[0].content, /当前回答内容区约 \d+px 宽/, 'generation receives the actual answer-column dimensions');
+  assert.match(JSON.stringify(requests[0].messages), /当前回答内容区约 \d+px 宽/, 'generation receives the actual answer-column dimensions');
   const blocks = page.getByTestId('widget-block');
+  await openWidgetPreviews(page);
   await blocks.nth(1).getByTestId('widget-frame').contentFrame().getByRole('slider').waitFor();
   assert.equal(await blocks.count(), 2, 'inline references do not duplicate end-of-answer visuals');
   assert.equal(await page.getByRole('button', { name: '修改此 HTML', exact: true }).count(), 0, 'no persistent technical edit row');
@@ -149,8 +151,8 @@ try {
   }
   await page.setViewportSize({ width: 1280, height: 1000 });
   const siblingToken = await second().locator('section').getAttribute('data-run-token');
-  await blocks.first().getByTestId('widget-more').click();
-  await page.getByTestId('widget-edit').click();
+  await openCodeMenu(page, page.getByTestId('code-block').first());
+  await page.getByRole('menuitem', { name: '修改 HTML', exact: true }).click();
   await page.getByRole('textbox', { name: '修改要求', exact: true }).fill('只把标题改为修改后的开口');
   // Exercise the native disclosure's keyboard path after the mobile/desktop resize cycle.
   await page.getByTestId('artifact-edit-panel').getByText('更多选项', { exact: true }).press('Enter');
@@ -173,6 +175,8 @@ try {
   await page.reload();
   await page.waitForFunction(async () => (await window.__widgetTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await page.evaluate(async (id) => (await window.__widgetTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), row.sessionId);
+  await page.getByTestId('code-block').first().waitFor();
+  await openWidgetPreviews(page);
   await second().getByRole('slider').waitFor();
   assert.equal(await blocks.count(), 2);
   assert.equal(await first().getByRole('slider').inputValue(), '1');

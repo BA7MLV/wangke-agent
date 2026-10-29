@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir, readFile } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const shots = new URL('../e2e-shots/', import.meta.url);
@@ -60,6 +61,8 @@ try {
       element.dispatchEvent(new Event('change', { bubbles: true }));
     }, String(value));
   };
+  await page.getByTestId('code-block').waitFor();
+  await openWidgetPreviews(page);
   await input().waitFor().catch(async (error) => {
     throw new Error(`${error.message}\nPage errors: ${JSON.stringify(errors)}\n${await page.locator('body').innerText()}`);
   });
@@ -123,6 +126,8 @@ try {
     const { db } = await window.__widgetTestImport('/src/store/db.ts');
     await (await window.__widgetTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession((await db.chats.get(id)).sessionId);
   }, rowId);
+  await page.getByTestId('code-block').waitFor();
+  await openWidgetPreviews(page);
   await input().waitFor();
   assert.equal(await input().inputValue(), '2.5', 'refresh restores persisted parameters');
   assert.equal(requests.length, 1, 'restoration must not create more model requests');
@@ -161,6 +166,8 @@ try {
     return { forkId, hasWidget: rows.some((row) => row.widget), hasSnapshot: rows.some((row) => row.widgetState) };
   }, rowId);
   assert.ok(forkState.forkId && forkState.hasWidget && !forkState.hasSnapshot, 'forks preserve the explainer, not the original UI snapshot');
+  await page.getByTestId('code-block').waitFor();
+  await openWidgetPreviews(page);
 
   const nextPopup = page.waitForEvent('popup');
   await openPreview();
@@ -176,6 +183,19 @@ try {
   await page.waitForFunction(async () => !(await window.__widgetTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loading);
   assert.equal(requests.length, 2, 'confirmed preview prompts reach the original conversation exactly once');
   assert.ok(!JSON.stringify(requests[1]).includes('PRIVATE_STATE_SENTINEL'));
+  // Model completion precedes the cross-window availability update. Re-request
+  // the latest payload and wait for the preview to commit it before closing.
+  await followUpPreview.evaluate(async () => {
+    const { widgetPreviewChannelName, WIDGET_PREVIEW_MSG } = await window.__widgetTestImport('/src/components/WidgetBlock.tsx');
+    const token = new URLSearchParams(location.hash.split('?')[1]).get('token');
+    const channel = new BroadcastChannel(widgetPreviewChannelName(token));
+    await new Promise(resolve => {
+      channel.onmessage = event => { if (event.data.type === WIDGET_PREVIEW_MSG.payload && event.data.canPrompt) resolve(); };
+      channel.postMessage({ type: WIDGET_PREVIEW_MSG.ready });
+    });
+    channel.close();
+    await new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+  });
   // The popout stays useful for local controls, but must not claim a lost follow-up was sent.
   await page.close();
   try {

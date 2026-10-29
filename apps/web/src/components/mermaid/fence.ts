@@ -20,6 +20,8 @@
  */
 
 import { isSvgCode } from '../../utils/artifactEdit';
+import { MAX_FENCE_TITLE } from '@wangke/study-core/widgets';
+export { MAX_FENCE_TITLE } from '@wangke/study-core/widgets';
 
 /** 前端支持的图表围栏类型 */
 export type DiagramKind = 'mermaid' | 'diagram' | 'svg';
@@ -62,8 +64,6 @@ export function diagramKindOf(props: { block?: unknown; lang?: unknown; children
  * 标题长度上限。模型偶尔会把整段结论塞进 title —— 块头一行放不下（会把标题栏撑成两行），
  * 下载的文件名也会长得离谱。超了**截断**而不是丢弃：图表还在，别因为标题长就不显示。
  */
-export const MAX_FENCE_TITLE = 40;
-
 /**
  * 取 `title=` 的值。三种写法照 HTML 的属性来，优先级即书写顺序：
  * `title="…"`（可含空格与 `=`）/ `title='…'` / 裸值 `title=…`（到空白为止）。

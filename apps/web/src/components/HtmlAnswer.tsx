@@ -11,6 +11,7 @@ import { copyText } from '../utils/clipboard';
 import { toast } from '../ui';
 import type { ArtifactActions } from './ArtifactEditor';
 import { useArtifactRowId } from './ArtifactEditor';
+import CodeBlock from './CodeBlock';
 
 /** Compatibility surface only. New works arrive as structured show_widget payloads. */
 export default function HtmlAnswer({ source, streaming = false, editActions, allowPopout = true, contentType = 'example', persistLegacy = true }: {
@@ -23,8 +24,7 @@ export default function HtmlAnswer({ source, streaming = false, editActions, all
 
 function HtmlSource({ source }: { source: string }) {
   return <div className="md-embedded-ui min-w-0" data-testid="html-code-example">
-    <Button size="sm" variant="tertiary" onPress={() => void copyText(source).then(ok => ok ? toast.success('源码已复制') : toast.error('复制失败'))}>复制代码</Button>
-    <pre className="my-2 max-h-96 overflow-auto rounded-lg bg-default p-3 text-xs"><code>{source}</code></pre>
+    <CodeBlock source={source} language="html" />
   </div>;
 }
 

@@ -1,3 +1,7 @@
+import fs from 'node:fs/promises';
+import sharp from 'sharp';
+import { hasRasterExtension, isRasterImage } from './file-names.js';
+
 /** Sniff supported raster formats, never trust a platform MIME label for vision. */
 export function imageMime(bytes: Uint8Array): string | undefined {
   const b = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
@@ -11,4 +15,25 @@ export function mediaMime(bytes: Uint8Array, declared: string): string {
   if (mime) return mime;
   if (declared.startsWith('image/')) throw new Error('invalid_image_format');
   return declared;
+}
+
+/** Format/header validation only, without re-encoding the original or reading a
+ * potentially huge non-image upload into memory. Vision separately decodes pixels. */
+export async function uploadedImageMime(filename: string, name: string, declared: string, header?: Uint8Array) {
+  if (!header) {
+    const handle = await fs.open(filename, 'r');
+    try { const buffer = Buffer.alloc(32); const { bytesRead } = await handle.read(buffer, 0, 32, 0); header = buffer.subarray(0, bytesRead); }
+    finally { await handle.close(); }
+  }
+  const mime = imageMime(header);
+  const invalid = () => Object.assign(new Error('invalid_image_format'), { statusCode: 400 });
+  if (!mime) {
+    if (isRasterImage(declared) || hasRasterExtension(name)) throw invalid();
+    return undefined;
+  }
+  try {
+    const metadata = await sharp(filename, { limitInputPixels: 40_000_000 }).metadata();
+    if (!metadata.width || !metadata.height || metadata.width * metadata.height > 40_000_000) throw invalid();
+  } catch { throw invalid(); }
+  return mime;
 }

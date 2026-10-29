@@ -2,7 +2,6 @@ import { Suspense, lazy, memo, useCallback, useEffect, useMemo, useRef, useState
 import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { Avatar, Button, Dropdown, ListBox, Modal, Spinner, cn } from '@heroui/react';
 import { PageShell, Sym, toast, promptDialog, confirmDialog } from '../ui';
-import { useAppNav } from '../components/appNav';
 import { openSettings } from '../components/settingsDialogStore';
 import { cloud } from '../cloud/state';
 import { MoreMenu, type MenuAction } from '../ui';
@@ -245,7 +244,6 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const [sendBusy, setSendBusy] = useState(false);
   const sendLock = useRef(false);
   const loadVersion = useRef(0);
-  const nav = useAppNav('home');
   const [status, setStatus] = useState<{ initialized: boolean } | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [connectError, setConnectError] = useState('');
@@ -624,7 +622,7 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   );
   const frame = (body: ReactNode, title = 'Bot') => embedded
     ? <section className="bot-panel" aria-label="Bot">{panelBar()}{body}</section>
-    : <PageShell title={title} rail={nav} onBack={() => navigate('/library')}>{body}</PageShell>;
+    : <PageShell title={title} onBack={() => navigate('/library')}>{body}</PageShell>;
 
   if (!status) {
     return frame(
@@ -873,7 +871,6 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     <PageShell
       title={project?.name ?? tp('title')}
       fill
-      rail={nav}
       rootClassName="page-project"
       onBack={() => (narrow && pane === 'chat' ? setPane('list') : navigate(`/library?folder=${projectId}`))}
       actions={<>

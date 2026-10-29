@@ -9,9 +9,10 @@
 - 普通 html/htm 围栏（含 SVG、完整文档、恶意脚本教学示例）回归代码展示，不创建运行 iframe。裸 HTML 作品形态显示转义源码；普通语义 HTML 仍遵循正文净化规则。
 - 新载荷在原 `WidgetPayload` 上增加 `kind: html`、`schemaVersion: 1`、`revision`、`source`。宿主分配 `ref` 稳定引用和 `id` 修订身份；编辑/撤销递增 revision、更换 id、清除旧状态，单次重试还有独立桥接令牌。模型不能指定宿主身份。布局短 hash 不用于授权。
 - 类型和已保存标记均不代表可信。每次构造运行文档仍校验结构、协议版本、源码与依赖白名单及文档大小；未知版本显示失败且允许看源码。源码只进入隔离 iframe。
-- 完整工具调用校验通过后，先提交本机消息载荷，再交付预览与工具成功引用，不等待整段回答结束。后续文字、停止或收尾更新同一行，避免重复消息；临时检查点标明后续回答未完成。本机提交不代表云端已送达。未完成参数、取消或校验失败不执行脚本；独立编辑预览仍是临时内容。
+- 完整工具调用校验通过后，浏览器编排先提交本机消息；服务器编排先提交服务器消息，再返回工具成功引用，不等待整段回答结束。云端进度中的作品同步到本机消息后才交付预览，避免本机还没有持久化归属的时序错误。后续文字、停止或收尾更新同一行，避免重复消息；临时检查点标明后续回答未完成。本机状态提交不代表云端已确认。未完成参数、取消或校验失败不执行脚本；独立编辑预览仍是临时内容。
 - 旧 `widget`/`widgets` 缺失元数据时，在原消息事务内幂等补齐。旧 `html interactive` 继续作为显式兼容声明，按精确原源码在 `legacyHtmlWorks` 缓存惰性解析结果；源码保留不改写，当前运行策略仍生效。只读/未落库展示在内存适配。编辑预览不写兼容缓存。
-- 成功作品不再常驻“静态预览／运行交互”提示。更多菜单统一提供源码、复制、独立预览和适用的编辑操作；失败直接给原因、查看源码及“重试预览”。重试不请求模型、不修复源码、不放宽权限。ready 只说明运行环境已启动，不证明作品业务正确。
+- 聊天中的 HTML 作品默认显示代码卡片，左上角标注 `html`，右上角菜单提供“复制代码”“预览”及适用的编辑/撤销。只有点击“预览”才挂载运行 iframe；切回“查看代码”保留已打开的运行状态。普通代码示例没有运行入口。预览内继续保留独立窗口与运行诊断；失败直接给原因、查看源码及“重试预览”。重试不请求模型、不修复源码、不放宽权限。ready 只说明运行环境已启动，不证明作品业务正确。
+- 普通代码栏与展开的“已思考”标题在各自内容范围内吸顶。消息区仍保留输入区裁剪，仅吸顶工具栏通过 portal 提升到渐进模糊之上，且不覆盖导航按钮；离开当前块后恢复原位。
 
 ### 安全声明与实测限制
 
@@ -22,6 +23,14 @@ iframe 的不透明源、禁同源权限、CSP、受限消息桥继续构成运�
 新增 `scripts/e2e-widget-protocol.mjs` 直接走真实 show_widget 执行器，覆盖静态/交互作品、先保存再交付、同版本不重挂、脚本错误、源码、本地重试、未知版本、宿主提交失败与窄屏。支持 `BROWSER=webkit`。测试使用固定源码/假模型，不代表真实模型已稳定选对工具入口。
 
 验收：协议、流式拆块、DOM 惰性解析、状态与持久化、局部编辑、课程执行器测试通过；HTML 示例/旧作品、连续多作品、状态恢复、布局、样式隔离、阅读与编辑浏览器回归通过；新协议及恢复流程在 Chromium/WebKit 均通过。Web 构建与类型检查通过。构建仍输出现有 UI 依赖 CSS 压缩及混合动态/静态导入警告。课程执行器额外采用已有 nextChatTurnTimes 保证相邻快速回合的历史顺序，避免同毫秒排序误删上一轮回答。
+
+## 服务器编排链路
+
+- `apps/api/runtime/node.ts` 的 `chat` / `qa` 均注册 `show_widget`，包括空资料库、视频课程和阅读材料。工具定义、HTML 参数校验、载荷类型及流式 JSON 字符串前缀解码来自 `packages/study-core`，API 不引用 Web 应用源码或 DOM 运行时。
+- HTML 通过校验后由服务器分配独立 `id/ref`，按调用顺序追加 `widgets`，并保留最后一幅的 `widget` 兼容别名；同一用户/助手消息对持续更新。源码不塞进展示正文，引用在交付处固定，模型重复引用不会重复展示。任务 `progress`、`result` 和同步消息均带作品载荷和消息 ID。
+- 流式参数只提供惰性的源码卡，不生成作品或执行脚本。完整校验并落库后才开放作品预览。断线、停止和服务重启不会删除已交付作品；下一轮从持久化工具记录恢复上下文。已删除的回答不会被后续快照重建，后续写入保留已同步的交互快照。
+- 服务器没有浏览器技能读取器，因此在系统提示词中直接提供作品契约。Node 侧 `diagram` 校验共享 schema 和安全表达式；SVG / Mermaid 只做结构预检，回执明确完整语法、净化和渲染仍由客户端执行；不声称服务器已经渲染成功。HTML 仍只在用户点击预览后进入原有隔离运行文档。
+- `scripts/test-server-widgets.mjs` 覆盖实际 Node 任务执行器、三种模型协议、校验失败及重试、多作品、流式参数、保存时序、取消/断线/重启和视频/材料问答。`scripts/e2e-server-widgets.mjs` 使用实际本地 API、数据库和生产 Web 产物，仅外部模型为固定假流，覆盖云端进度、生成中刷新、源码优先、预览、状态恢复和课程侧栏；不消耗真实模型 tokens，也不证明真实模型一定选对工具。测试仅在主动刷新/导航前暂停旧页面的新轮询并等待已有请求完成，避免 WebKit 卸载请求时产生原生 access-control 通知；不忽略任何 access-control 错误，不修改 API 响应。
 
 ## 交互与费用边界
 
@@ -60,7 +69,7 @@ iframe 内未被可滚动控件消费的 wheel/touch/阅读键意图会暂停聊
 
 `show_widget` 返回不含源码的 `wbw-widget` 引用围栏，模型把引用原样放在正文相应位置。多个调用按 `widgets` 顺序保留，不再互相覆盖；每幅图有独立快照。只能引用当前消息自身的载荷，重复引用只展示一次；旧消息与遗漏引用的图形仍在末尾兼容显示。`widget` 保留为最后一幅图的旧客户端兼容别名，不重复渲染。
 
-源码局部编辑通过低干扰的“更多交互图形操作”菜单进入，与独立预览、撤销共享一个入口；编辑只失效该图的快照，保留引用位置及同消息其他图的快照。技术操作不再占据两行常驻工具栏，不依赖悬停发现。
+源码局部编辑通过代码卡片右上角“更多 HTML 操作”菜单进入，与复制、预览、撤销共享一个入口；编辑只失效该图的快照，保留引用位置及同消息其他图的快照。技术操作不再占据两行常驻工具栏，不依赖悬停发现。
 
 外层透明无框，主图占据视觉中心；教学参数与设计原型调参不是同一种需求，不给模拟器自动加 Tweak 面板。字体、字号、强调色、前景、边界、表面色与控件圆角读取实际宿主表面的令牌并实时同步，独立预览保留原表面样式；不是另维护固定的深浅色板。示例图按实际宽度绘制，有数值刻度、量与单位，窄屏减少刻度而不缩字。
 
@@ -70,17 +79,21 @@ iframe 内未被可滚动控件消费的 wheel/touch/阅读键意图会暂停聊
 
 - 正式交互件及局部修改预览都在各自的隔离 iframe 中执行，宿主只向内同步主题令牌，不接受修改宿主 CSS 的消息。
 - 正文不是另一种组件宿主。普通聊天、课程问答与 LiveLink 共用 Markdown 净化策略：移除 style/link 等标签、内联样式、class/id 和任意 data 属性；只保留公式、围栏与流式占位所需的内部字段。安全的语义 HTML 仍可阅读，已有消息源码不改写。需要样式和脚本的内容应走 show_widget，而不是混进正文。
-- 流式 HTML 继续使用去样式、去脚本的静态预览。宿主编辑面板、图块与预览通过 `md-embedded-ui` 标明正文样式的终点，Markdown 的段落、列表、表格和代码块规则不再深入这些界面。
-- 上述流式预览仅用于 show_widget 参数及显式兼容作品；普通 HTML 代码围栏在生成中也保持代码展示。
+- 流式 show_widget 参数保持转义源码展示，完成且通过校验后才提供预览菜单。旧显式兼容作品的流式阶段继续使用去样式、去脚本的静态预览。宿主编辑面板、代码卡、图块与预览通过 `md-embedded-ui` 标明正文样式的终点，Markdown 的段落、列表、表格和代码块规则不再深入这些界面。
+- 普通 HTML 代码围栏在生成中也保持代码展示，不自动变成作品。
 
 ## 验证
 
 ```sh
 npx tsx scripts/test-widget-state.mjs
-node scripts/test-widget.mjs
+npx tsx scripts/test-widget.mjs
 node scripts/test-ask-visual.mjs
 npx tsx scripts/test-artifact-edit.mjs
-npx tsc -b --pretty false
+npx tsc -b apps/web --pretty false
+# 自建临时 API/数据库/生产预览，执行后自行关闭；不部署、不使用线上数据
+npm run test:server-widgets
+npm run test:server-widgets:e2e
+BROWSER=webkit npx tsx scripts/e2e-server-widgets.mjs
 # 先运行 npm run dev；以下使用独立浏览器上下文和假模型，不消耗真实 API tokens
 node scripts/e2e-widget-state.mjs
 node scripts/e2e-ask-visual.mjs
@@ -91,6 +104,8 @@ node scripts/probe-widget-sandbox.mjs
 BROWSER=webkit node scripts/probe-widget-sandbox.mjs
 node scripts/e2e-widget-protocol.mjs
 BROWSER=webkit node scripts/e2e-widget-protocol.mjs
+node scripts/e2e-code-toolbar.mjs
+BROWSER=webkit node scripts/e2e-code-toolbar.mjs
 # 或只跑本轮新增验证（编排器会使用正确 TS loader）
 node scripts/e2e-all.mjs --only=test-widget-state,e2e-widget-state,e2e-widget-layout,e2e-widget-style-isolation
 ```

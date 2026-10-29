@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { openCodeMenu, openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
@@ -75,8 +76,12 @@ try {
   await page.getByText('下面生成交互题目。', { exact: true }).waitFor();
   await release('2-1');
   await release('2-2');
-  await page.getByTestId('widget-stream-preview').waitFor();
+  await page.getByTestId('code-block').waitFor();
+  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'partial tool source is inert');
   await release('2-3');
+  await page.getByTestId('editable-artifact').getByTestId('code-block').waitFor();
+  await openCodeMenu(page, page.getByTestId('editable-artifact').getByTestId('code-block'));
+  await page.getByRole('menuitem', { name: '预览', exact: true }).click();
   const frame = page.getByTestId('widget-frame').contentFrame();
   await frame.getByRole('heading', { name: '交互题目' }).waitFor();
   const execution = await frame.locator('section').getAttribute('data-execution');
@@ -108,9 +113,12 @@ try {
   await page.reload();
   await page.waitForFunction(async () => (await window.__orderImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await page.evaluate(async id => (await window.__orderImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), sessionId);
+  await page.getByTestId('code-block').first().waitFor();
+  await openWidgetPreviews(page);
   await page.getByTestId('widget-frame').contentFrame().getByRole('heading', { name: '交互题目' }).waitFor();
   assert.deepEqual(await snapshot(), ordered, 'history replays exactly the same process/content order');
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForFunction(() => document.documentElement.scrollWidth <= innerWidth);
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
   assert.deepEqual(errors, []);
   console.log('PASS: true incremental stream, text/process/widget chronology, duplicate references, iframe state through persistence, reload and mobile.');

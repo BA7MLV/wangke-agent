@@ -42,10 +42,10 @@ import type { WidgetTheme } from './widgetTheme.ts';
 import { MAX_WIDGET_DIAGNOSTICS } from './widgetDiagnostics.ts';
 import { validateWidgetPayload } from './widgetProtocol.ts';
 import { MAX_WIDGET_DOC } from './widget.ts';
+import type { WidgetLib, WidgetPayload } from '@wangke/study-core/widgets';
+export type { WidgetLib, WidgetPayload } from '@wangke/study-core/widgets';
 
 /** widget 可以声明需要的宿主库；只有被声明的才会内联进去，避免每张图都背上 200KB */
-export type WidgetLib = 'chart.js';
-
 const LIBS: Record<WidgetLib, () => Promise<string>> = {
   // `?raw` 拿到的是**源码字符串**，不会把 Chart.js 的执行体打进主 chunk。
   // 只有真的有 widget 要画图表时才付出这 204KB。
@@ -55,22 +55,6 @@ const LIBS: Record<WidgetLib, () => Promise<string>> = {
   // `window.Chart`，widget 自己的内联 <script>（经典脚本）才能直接用到它。
   'chart.js': () => import('@widget/chart-runtime?raw').then((m) => m.default as string),
 };
-
-export interface WidgetPayload {
-  kind?: 'html';
-  schemaVersion?: 1;
-  /** Monotonic source revision. The per-run bridge token is separate. */
-  revision?: number;
-  source?: 'tool' | 'legacy-widget' | 'legacy-html';
-  /** 宿主生成的实例 ID，旧消息第一次打开时补齐；模型不能指定。 */
-  id?: string;
-  /** Stable inline reference; source revisions rotate id but retain this placement. */
-  ref?: string;
-  /** widget 的 HTML 片段（不含 <html>/<body>） */
-  html: string;
-  /** 声明需要的宿主库 */
-  libs?: WidgetLib[];
-}
 
 /** 宿主 ↔ iframe 的消息类型。带 `wbw` 前缀，避免和 widget 自己的 postMessage 撞车。 */
 export const WIDGET_MSG = {

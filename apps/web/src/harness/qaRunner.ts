@@ -97,6 +97,9 @@ export type QaCard =
   | { kind: 'widget'; widget: WidgetPayload };
 
 export interface QaSink {
+  /** A server checkpoint is already a durable owner for delivered widgets. */
+  onPersist?: (rowId: number) => void;
+  onWidgetPreview?: (preview: { html: string } | undefined) => void;
   onTools?: (tools: ChatToolCall[]) => void;
   onReasoning?: (text: string) => void;
   onDelta?: (text: string) => void;
@@ -130,6 +133,7 @@ export interface QaRunResult {
 export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRunResult> {
   if (remoteTasks()) {
     let content = '', reasoning = '';
+    const delivered = new Set<string>();
     return runCloudTask('qa', `session:${input.sessionId}`, { ...input, modelTarget: undefined, modelRef: input.modelTarget ? { providerId: input.modelTarget.providerId, model: input.modelTarget.model } : getSettings().llmModel }, p => {
       if (typeof p.content === 'string') {
         if (!p.content.startsWith(content)) { sink.onRoundStart?.(0); content = ''; }
@@ -137,6 +141,13 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       }
       if (typeof p.reasoning === 'string') { sink.onReasoning?.(p.reasoning.slice(reasoning.length)); reasoning = p.reasoning; }
       if (Array.isArray(p.tools)) sink.onTools?.(p.tools);
+      if (typeof p.rowId === 'number') sink.onPersist?.(p.rowId);
+      sink.onWidgetPreview?.(p.widgetPreview as { html: string } | undefined);
+      if (Array.isArray(p.widgets)) for (const widget of p.widgets as WidgetPayload[]) {
+        if (!widget?.id || delivered.has(widget.id)) continue;
+        delivered.add(widget.id);
+        sink.onCard?.({ kind: 'widget', widget });
+      }
     }, sink.signal);
   }
   const settings = getSettings();

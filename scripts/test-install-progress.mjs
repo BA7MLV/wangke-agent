@@ -127,6 +127,7 @@ test('Agent and HTTPS configuration are passed to build, startup and setup-link 
   const token = env.match(/^SANDBOX_TOKEN=(.+)$/m)[1];
   assert.ok(!output.includes(token), 'stage logs must not expose secrets');
   assert.match(env, /^PUBLIC_ORIGIN=https:\/\/learn.example.com$/m);
+  assert.match(env, /^SANDBOX_NETWORK=bridge$/m, 'new agent deployments support the settings network switch by default');
 });
 
 test('rerunning keeps existing configuration and never prints its credentials', async t => {
@@ -142,6 +143,17 @@ test('rerunning keeps existing configuration and never prints its credentials', 
   assert.match(updated, /^WANGKE_WEB_IMAGE=wangke-agent-web:custom$/m);
   assert.match(output, /检测到已有配置/);
   assert.ok(!output.includes('private-fixture-key'));
+});
+
+test('enabling Agent preserves an explicit deployment network opt-out', async t => {
+  const f = fixture(t);
+  fs.mkdirSync(f.dataDir);
+  fs.writeFileSync(path.join(f.dataDir, '.env'), 'APP_VERSION=custom\nSANDBOX_NETWORK=none\n');
+  const { code, output } = await f.run(['--agent', '--no-start']);
+  assert.equal(code, 0, output);
+  const env = fs.readFileSync(path.join(f.dataDir, '.env'), 'utf8');
+  assert.deepEqual(env.match(/^SANDBOX_NETWORK=.+$/gm), ['SANDBOX_NETWORK=none']);
+  assert.match(env, /^SANDBOX_TOKEN=.+$/m);
 });
 
 for (const [stage, step, name] of [

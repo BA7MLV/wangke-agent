@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { cloud, remoteTasks } from '../cloud/state';
-import { cancelResourceTasks, commandChatTask, submitCloudTask } from '../cloud/tasks';
+import { cancelResourceTasks, commandChatTask, submitCloudTask, syncTaskWidgets } from '../cloud/tasks';
 import type { CloudTask } from '@wangke/contracts/cloud';
 import { useChatNotifications } from './chatNotifications';
 import { readChatPage, readChatHistory } from './chatHistory';
@@ -787,6 +787,7 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
       // normal course-chat loop locally.
       writeView(id, { ...view, loaded: true, loading: true });
     } else if (task.kind === 'chat' && task.progress) {
+      if (!await syncTaskWidgets(task.progress) || reflection !== cloudReflection) continue;
       /**
        * Node tasks stream through the durable task row instead of owning a
        * browser Zustand store.  Reconcile only the synthetic turn here; the
@@ -800,6 +801,7 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
       const content = typeof progress.content === 'string' ? progress.content : '';
       const reasoning = typeof progress.reasoning === 'string' ? progress.reasoning : '';
       const tools = Array.isArray(progress.tools) ? progress.tools as ChatToolCall[] : undefined;
+      const widgets = Array.isArray(progress.widgets) ? progress.widgets as WidgetPayload[] : undefined;
       const phase: ProcessPhase = progress.phase === 'thinking' || progress.phase === 'tool' || progress.phase === 'answer'
         ? (progress.phase === 'answer' ? 'answering' : progress.phase) : 'preparing';
       const messages = [...current.messages];
@@ -814,6 +816,10 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
         content,
         reasoning,
         tools,
+        widgets,
+        widget: widgets?.at(-1),
+        widgetPreview: progress.widgetPreview as { html: string } | undefined,
+        rowId: typeof progress.rowId === 'number' ? progress.rowId : undefined,
         streaming: true,
         processPhase: phase,
         processStartedAt: Date.parse(task.createdAt) || Date.now(),
@@ -829,7 +835,7 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
     const id = Number(task.input.sessionId);
     if (submittingIds.has(id)) continue;
     const current = readView(id);
-    const result = task.result as { content?: string; reasoning?: string; tools?: ChatToolCall[]; rowId?: number; userRowId?: number } | null;
+    const result = task.result as { content?: string; reasoning?: string; tools?: ChatToolCall[]; widgets?: WidgetPayload[]; widget?: WidgetPayload; rowId?: number; userRowId?: number } | null;
     let changed = false;
     const messages = current.messages.map(message => {
       if (message.taskId !== task.id && message.key !== `cloud-user-${task.id}` && message.key !== `cloud-answer-${task.id}`) return message;
@@ -841,10 +847,12 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
       if (message.role === 'user') return { ...message, committedRowId: result?.userRowId ?? message.committedRowId,
         syncPending: task.status === 'completed' ? message.syncPending : false };
       return { ...message, streaming: false, hint: undefined,
+        widgetPreview: undefined,
         syncPending: task.status === 'completed' ? message.syncPending : false,
         committedRowId: result?.rowId ?? message.committedRowId,
         content: result?.content ?? (message.content || task.error || (task.status === 'completed' ? '' : '生成已停止')),
         reasoning: result?.reasoning ?? message.reasoning, tools: result?.tools ?? message.tools,
+        widgets: result?.widgets ?? message.widgets, widget: result?.widget ?? message.widget,
         interrupted: task.status !== 'completed', interruptReason: task.error ?? undefined };
     });
     if (changed || current.loading && !runningIds.includes(id)) {

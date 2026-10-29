@@ -112,11 +112,23 @@
   display: contents;
 }
 
-.course-chat--empty .course-chat__empty > h2,
+.course-chat--empty .course-chat__welcome,
 .course-chat--empty .course-chat__empty-skel {
   grid-row: 1;
   margin: 0;
   text-align: center;
+}
+
+.course-chat__welcome p {
+  margin: 12px 0 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+  line-height: 1.7;
+  text-wrap: balance;
+}
+
+.course-chat--empty {
+  --course-chat-column: 760px;
 }
 
 .course-chat__sync-status {
@@ -206,6 +218,7 @@
   /* 首屏消息让出浮动顶栏，再留 28px 阅读间距；吸顶标题单独贴顶栏下沿，
      不继承首屏的阅读间距。 */
   --reasoning-sticky-gap: 28px;
+  --chat-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
   --course-chat-message-inset: max(48px, calc((100cqw - var(--course-chat-column)) / 2));
   flex: 1 1 auto;
   min-height: 0;
@@ -271,11 +284,6 @@
 .course-chat__messages .reasoning-chain[data-mode='expanded'] {
   /* sticky 包含消息区的 padding 起点，减掉阅读间距后恰好落在顶栏下沿。 */
   --reasoning-sticky-top: calc(-1 * var(--reasoning-sticky-gap));
-}
-
-.course-chat__messages .reasoning-chain[data-mode='expanded'] .reasoning-chain__toggle {
-  align-items: center;
-  padding-top: 0;
 }
 
 /* 空状态：showcase 的空对话区只有一个居中的问句 + 一排推荐入口，
@@ -1074,24 +1082,6 @@
   margin: 0;
   color: var(--muted);
   font-size: 0.75rem;
-}
-
-.page-course-chat .course-chat__new-chat {
-  width: 44px;
-  height: 44px;
-  min-width: 44px;
-  padding: 0;
-  flex: none;
-  border: 1px solid var(--border);
-  border-radius: var(--radius-full);
-  background: var(--background);
-  color: var(--foreground);
-}
-
-.course-chat__new-chat:hover,
-.course-chat__new-chat:active {
-  background: var(--surface-secondary);
-  color: var(--foreground);
 }
 
 .course-chat__send {

@@ -228,16 +228,14 @@ await check('PDF 封面的 source 记为 material-page、取自第 1 页', async
 // v10 给「彻底删除」的级联清单加了 covers；漏掉它就会留下一堆孤儿 blob 永远占着配额，
 // 而这种泄漏在界面上完全看不出来（卡片已经没了），只能靠脚本守。
 console.log('\n▸ 删除级联');
-await check('两步删除后 covers 不留孤儿行', async () => {
+await check('一次删除后 covers 不留孤儿行', async () => {
   if (!DB_AVAILABLE) return skip(DBSkip);
   const dlg = page.locator('mdui-dialog:has([data-testid="confirm-dialog-danger"])');
   const row = page.locator(`[data-testid="video-item"][data-video-id="${videoId}"]`);
-  for (let step = 0; step < 2; step++) {
-    await row.locator('[data-testid="btn-delete"]').click();
-    await dlg.waitFor({ state: 'attached', timeout: 5000 });
-    await dlg.locator('mdui-button[slot="action"]').last().click();
-    await page.waitForTimeout(1500);
-  }
+  await row.locator('[data-testid="btn-delete"]').click();
+  await dlg.waitFor({ state: 'attached', timeout: 5000 });
+  await dlg.locator('mdui-button[slot="action"]').last().click();
+  await page.waitForTimeout(1500);
   const left = await readDb(videoId, ['covers', 'videos']);
   assert.equal(left.videos, null, '记录还在，删除没生效');
   assert.equal(left.covers, null, '封面成了孤儿行（级联清单漏了 covers）');

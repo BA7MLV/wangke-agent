@@ -40,6 +40,12 @@ try {
   assert.equal(first.exitCode, 0); assert.match(first.stdout, /1000/);
   const second = await call('set -e; cat marker; test ! -e /var/run/docker.sock; test ! -e /data/db/wangke.sqlite; test -z "$MODEL_API_KEY"; ! touch /outside-workspace');
   assert.equal(second.exitCode, 0); assert.match(second.stdout, /persisted/);
+  const save = await call("printf 'artifact content' > /tmp/staged.txt && wangke-save /tmp/staged.txt '分析报告/计算结果.txt'");
+  assert.equal(save.exitCode, 0, save.stderr); assert.equal(JSON.parse(save.stdout).reused, false);
+  const saveRetry = await call("printf 'artifact content' > /tmp/staged.txt && wangke-save /tmp/staged.txt '分析报告/计算结果.txt'");
+  assert.equal(saveRetry.exitCode, 0, saveRetry.stderr); assert.equal(JSON.parse(saveRetry.stdout).reused, true);
+  const saveNew = await call("printf 'new artifact content' > /tmp/staged.txt && wangke-save /tmp/staged.txt '分析报告/计算结果.txt'");
+  assert.equal(saveNew.exitCode, 0, saveNew.stderr); assert.equal(JSON.parse(saveNew.stdout).path, '分析报告/计算结果 (2).txt');
   const readFile = (filePath, scope = {}) => fetch('http://127.0.0.1:3001/files/read', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), path: filePath, ...scope }) });
   assert.equal((await readFile('../etc/passwd')).status, 400);
   assert.equal((await readFile('/etc/passwd')).status, 400);

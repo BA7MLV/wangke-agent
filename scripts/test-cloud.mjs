@@ -112,7 +112,7 @@ try {
   const agent = crypto.randomUUID();
   store.db.prepare('INSERT INTO agent_profiles(id,owner_id,name,role,system_prompt,created_at,updated_at) VALUES(?,?,?,?,?,?,?)').run(agent, owner, 'Trusted', 'assistant', '', timestamp, timestamp);
   store.db.prepare('INSERT INTO thread_participants(thread_id,agent_id,joined_at) VALUES(?,?,?)').run(thread, agent, timestamp);
-  config.save(owner, { ...config.get(owner), trustedAgentIds: [agent] });
+  config.save(owner, { ...config.get(owner), trustedAgentIds: [agent], policy: { ...config.get(owner).policy, network: 'deny' } });
   assert.equal(config.policy(owner, thread).shell, 'allow');
   assert.equal(config.policy(owner, thread).network, 'deny');
   config.save(owner, { ...config.get(owner), policy: { ...config.get(owner).policy, shell: 'deny' } });

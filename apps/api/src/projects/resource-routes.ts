@@ -27,6 +27,14 @@ export function registerResourceRoutes(app: FastifyInstance, resources: Resource
     resources.move(user.id, b.projectId, b.path, b.targetProjectId, b.target, b.revision);
     return { moved: true };
   });
+  app.delete<{ Querystring: { projectId?: string; path?: string; revision?: string } }>('/api/v1/resources/file', async (request, reply) => {
+    if (!checkOrigin(request, reply)) return;
+    const user = requireAuth(request, reply); if (!user) return;
+    const { projectId, path: filename, revision } = request.query;
+    if (![projectId, filename, revision].every(value => typeof value === 'string')) throw new ProjectError('invalid_project_path');
+    resources.remove(user.id, projectId!, filename!, revision!);
+    return { deleted: true };
+  });
   const readCourse = async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const user = requireAuth(request, reply); if (!user) return;
     const file = resources.openCourse(user.id, request.params.id);

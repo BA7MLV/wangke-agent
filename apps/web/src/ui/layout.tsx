@@ -1,4 +1,6 @@
-import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
+import { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState, type ReactNode } from 'react';
+import { Link } from 'react-router-dom';
+import { buttonVariants } from '@heroui/styles';
 import {
   Alert,
   Button,
@@ -40,52 +42,21 @@ function useIsNarrow(): boolean {
   return narrow;
 }
 
-/**
- * 应用外壳：宽屏左侧导航栏 + 顶部标题栏 + 内容区；窄屏顶栏汉堡按钮弹出侧栏抽屉。
- *
- * 版式全部由 HeroUI 组件（ListBox / Button / Drawer / ScrollShadow / Separator）
- * 与 Tailwind 工具类表达，配色只读 HeroUI 语义令牌（bg-surface-secondary / text-muted /
- * border-border / bg-accent-soft …），**不再有自写的类名与样式表** —— 换主题时
- * 侧栏、顶栏、内容列会跟着令牌一起变，不需要逐条改 CSS。
- *
- * 侧栏宽屏可折叠、窄屏走抽屉，两条路径各只有一个入口：
- *   - 宽屏：品牌右侧按钮收起侧栏，收起后用品牌 Logo 展开，保留图标导航；
- *   - 窄屏：顶栏汉堡按钮弹出 Drawer。
- * 折叠状态见 `ui/rail.ts`（全局一份 + 记本机）。
- *
- * 结构：
- *   .page（--vvh 满高，flex column）
- *     └ .app-shell（flex row，flex-1，min-h-0）
- *         ├ 侧栏（宽屏常驻，收起时不渲染；窄屏 CSS 隐藏，改由 Drawer 承载）
- *         └ .app-shell__main（flex column，flex-1，min-w-0）
- *             ├ .app-bar（顶部标题栏）
- *             └ .page-main（flex-1，滚动容器）
- *                 └ .page-inner（内容列：narrow / wide / fill 三档）
- *
- * **只有一份导航 DOM**：窄屏把同一个 `<Sidebar>` 渲染进 Drawer，宽屏直接就地渲染。
- */
+/** 导航由共享 NavigationShell 持有；PageShell 只负责当前页面的标题与内容。 */
 
-export interface NavItem {
+export type NavItem = {
   /** 与 `NavConfig.value` 比对来决定哪一项高亮 */
   value: string;
   label: string;
   /** 图标（放 <Sym>） */
   icon: ReactNode;
-  onClick: () => void;
   testId?: string;
-  /**
-   * 这一项是**动作**（「新会话」）而不是目的地，因此**永不进入选中态**。
-   *
-   * 导航栏里混一个动作是刻意的：它是这一页唯一的「从头开始」入口，外观与其他
-   * 导航项一致，但「选中」对它没有意义 —— 高亮的含义是
-   * 「你现在在哪」，而动作不是一个地方。所以它被排除在 `selectedKeys` 之外：
-   * 点它不留下高亮，草稿态下侧栏也不会出现「好像选中了新会话」的假象。
-   *
-   * 换句话说，侧栏里回答「你在哪」的只有两处：课程库导航项与
-   * Recent 里那条当前会话。见 docs/plans/2026-10-15-懒创建会话-design.md §七。
-   */
+  /** 非目的地动作不显示当前页高亮。 */
   isAction?: boolean;
-}
+} & (
+  | { to: string; onClick?: never }
+  | { to?: never; onClick: () => void }
+);
 
 export interface NavConfig {
   items: NavItem[];
@@ -176,12 +147,8 @@ export interface PageShellProps {
   rootRef?: (el: HTMLDivElement | null) => void;
   /** 追加到根节点上的类名（页面级的样式挂载点） */
   rootClassName?: string;
-  /** 宽屏左侧导航。窄屏由 CSS 隐藏，此时导航走顶栏汉堡按钮弹出的 Drawer。 */
-  rail?: NavConfig;
-  /** 侧栏 Recent 分组（会话列表等）。传了就渲染这一段 */
-  recent?: { label: string; items: RecentItem[]; loading?: boolean };
-  /** 侧栏底部账号区（头像 / 称呼菜单与设置快捷入口）。 */
-  railFooter?: ReactNode;
+  /** 嵌套页面在窄屏只显示返回按钮，不显示顶栏汉堡入口。 */
+  hideRailOnNarrow?: boolean;
   /**
    * 右侧辅助栏（Bot 等「随手可用的功能」）。
    *
@@ -212,6 +179,44 @@ function useAsideInline(): boolean {
     return () => mq.removeEventListener('change', onChange);
   }, []);
   return inline;
+}
+
+/** 纯跳转保留链接语义；新建、聚焦和面板切换仍用按钮。三种侧栏共用同一入口。 */
+function NavigationItem({ item, active, compact = false, onNavigate }: {
+  item: NavItem;
+  active: boolean;
+  compact?: boolean;
+  onNavigate?: () => void;
+}) {
+  const className = compact
+    ? 'sidebar-control page-shell__rail-icon'
+    : 'sidebar-control page-shell__nav-item h-11 min-h-11 w-full justify-start gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted';
+  const common = {
+    'aria-current': !item.isAction && active ? 'page' as const : undefined,
+    'aria-label': compact ? item.label : undefined,
+    'data-testid': item.testId,
+  };
+  const content = compact ? item.icon : <>
+    <span className="page-shell__nav-icon" aria-hidden="true">{item.icon}</span>
+    <span className="min-w-0 truncate">{item.label}</span>
+  </>;
+
+  if (item.to !== undefined) {
+    return <Link {...common} to={item.to}
+      className={buttonVariants({ variant: 'ghost', isIconOnly: compact, className })}
+      onClick={(event) => {
+        // 修饰键和中键仍交给浏览器开新页，不收起当前页的手机抽屉。
+        if (!event.defaultPrevented && event.button === 0
+          && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) onNavigate?.();
+      }}>
+      {content}
+    </Link>;
+  }
+
+  return <Button {...common} variant="ghost" isIconOnly={compact} className={className}
+    onPress={() => { item.onClick(); onNavigate?.(); }}>
+    {content}
+  </Button>;
 }
 
 /** 侧栏内部：主导航 / Recent / 底部入口。宽屏就地渲染，窄屏进 Drawer。 */
@@ -253,77 +258,20 @@ function Sidebar({
   const [menuId, setMenuId] = useState<string | null>(null);
   return (
     <>
-      <div className="flex shrink-0 flex-col gap-1">
-        {rail.items.filter((it) => it.isAction).map((it) => (
-          <Button key={it.value} variant="ghost" data-testid={it.testId}
-            className="sidebar-control page-shell__nav-item h-11 min-h-11 w-full justify-start gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted"
-            onPress={() => { it.onClick(); onNavigate?.(); }}>
-            <span className="page-shell__nav-icon" aria-hidden="true">{it.icon}</span>
-            <span>{it.label}</span>
-          </Button>
+      <div id={navigationId} className="flex shrink-0 flex-col gap-1">
+        {rail.items.map((it) => (
+          <NavigationItem key={it.value} item={it} active={it.value === rail.value} onNavigate={onNavigate} />
         ))}
-        {/* 这里曾经有一块「身份块」（头像 + 网课学习助手 + 本机课程库 · N 门课程），
-            是照着 showcase 截图加的，落地当天被用户否掉、连 `railIdentity` prop 一起删了。
-            侧栏第一屏该是导航，不是一句自我介绍 —— 一句话说清的东西不值得占一行。
-            见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */}
-
-        {/* 导航用 ListBox 而不是一堆 <button>：选中态、键盘上下键、aria-current
-            全由 React Aria 处理，手写 button 这三样都得自己补，而补齐之前往往漏了后两样。
-
-            ⚠️ 跳转必须挂在 `onSelectionChange` 上，**不能**用 `onAction`：
-            `onAction` 只在键盘 Enter/Space 那类「激活」动作里触发，鼠标单击一个
-            ListBoxItem 走的是「选择」路径，onAction 根本不响 —— 症状是侧栏点了没反应
-            且不报错。`onSelectionChange` 才是选中语义的入口。
-
-            点「已经选中的那一项」时 keys 会是空的（RAC 把它当成取消选中），
-            此时 hit 为 undefined，但抽屉仍然要收起，所以 onNavigate 放在条件之外。 */}
-        <ListBox
-          id={navigationId}
-          aria-label="主导航"
-          selectionMode="single"
-          /* 动作项（`NavItem.isAction`，当前是「新会话」）不进 `selectedKeys`：
-             它不是「一个地方」，高亮对它不成立。剩下的项里只有与 `rail.value`
-             相符的那一项高亮 —— 首页传的 `value='chat'` 因此不会点亮任何东西，
-             这是对的：首页在草稿态时本来就没有「在哪」。见 `NavItem.isAction`。 */
-          selectedKeys={rail.items.filter((it) => !it.isAction && it.value === rail.value).map((it) => it.value)}
-          onSelectionChange={(keys) => {
-            const next = [...keys][0];
-            const hit = next == null ? undefined : rail.items.find((it) => it.value === String(next));
-            hit?.onClick();
-            onNavigate?.();
-          }}
-          className="gap-1 p-0"
-        >
-          {rail.items.filter((it) => !it.isAction).map((it) => (
-            <ListBox.Item
-              key={it.value}
-              id={it.value}
-              textValue={it.label}
-              data-testid={it.testId}
-              /* 「当前在哪一项」由 ListBox 自己的 `aria-selected` 承担。
-                 试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
-                 ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
-                 留着只会让后来的人以为它在生效。 */
-              className="sidebar-control page-shell__nav-item h-11 min-h-11 gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted"
-            >
-              <span className="page-shell__nav-icon" aria-hidden="true">
-                {it.icon}
-              </span>
-              <span className="min-w-0 truncate">{it.label}</span>
-            </ListBox.Item>
-          ))}
-        </ListBox>
       </div>
 
-      {recent && !recent.loading && recent.items.length === 0 && (
-        <div className="mt-4 px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
-      )}
-
-      {recent && recent.items.length > 0 && (
+      {recent && (
         <>
           <Separator className="my-3" />
           <div className="flex min-h-0 flex-1 flex-col">
             <div className="shrink-0 px-3 pb-2 text-[0.8125rem] text-muted">{recent.label}</div>
+            {!recent.loading && recent.items.length === 0 && (
+              <div className="px-3 text-xs leading-6 text-muted">开始对话后，会话会显示在这里</div>
+            )}
             {/* ScrollShadow：会话多起来时滚动区上下缘浮出阴影，比给整块侧栏加边框轻。
                 min-h-0 必需 —— 否则 flex 子项的默认 min-height:auto 会让它按内容撑开，
                 flex-1 形同虚设。 */}
@@ -337,7 +285,7 @@ function Sidebar({
               {/* Recent 也是 ListBox，而不是一列 <Button>。
                   改之前它没有任何选中态：**当前正在看的会话和别的会话长得一模一样**，
                   会话一多就分不清自己看的是哪一条。换成 ListBox 顺带拿到上下键导航与
-                  `aria-selected`，和上面的主导航同一套做法。
+                  `aria-selected`；会话选择由 store 控制，与主导航的链接 / 动作区分开。
 
                   `disallowEmptySelection` 必需：RAC 把「再点一次已选中项」当成取消选中，
                   不设它的话点当前会话会把高亮弄没，而页面并没有切走。
@@ -540,24 +488,20 @@ function Sidebar({
   );
 }
 
-export function PageShell({
-  title,
-  subtitle,
-  onBack,
-  actions,
-  narrow,
-  wide,
-  fill,
-  rootRef,
-  rootClassName,
+const NavigationContext = createContext<{ isNarrow: boolean; open: () => void } | null>(null);
+
+/** 挂在布局路由上一次；子页面加载或切换时，导航、Recent 滚动和账号区不卸载。 */
+export function NavigationShell({
   rail,
   recent,
   railFooter,
-  aside,
   children,
-}: PageShellProps) {
-  const asideInline = useAsideInline();
-  /** 窄屏抽屉开合。宽屏不渲染抽屉，所以不需要额外判宽度。 */
+}: {
+  rail: NavConfig;
+  recent: { label: string; items: RecentItem[]; loading?: boolean };
+  railFooter: ReactNode;
+  children: ReactNode;
+}) {
   const [drawerOpen, setDrawerOpen] = useState(false);
   const hasUnread = useChatNotifications((s) => s.unreadIds.length > 0);
   const { open: settingsOpen } = useSettingsDialog();
@@ -565,39 +509,10 @@ export function PageShell({
     if (settingsOpen) setDrawerOpen(false);
   }, [settingsOpen]);
   const isNarrow = useIsNarrow();
-  /** 宽屏侧栏收起。全局一份（ui/rail.ts），所以跨页面切过去时侧栏状态不会跳。 */
   const [railCollapsed, toggleRail] = useRailCollapsed();
-  const shellId = useId();
-  const titleId = `${shellId}-title`;
-  const mainId = `${shellId}-main`;
-  const navigationId = `${shellId}-navigation`;
-  const edgeRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    if (edgeRef.current) return observeBrowserChrome(edgeRef.current);
-  }, []);
-
-  /**
-   * 顶栏浮在滚动内容之上后，内容要自己让出它的高度（见下面 `<header>` 的注释）。
-   *
-   * 高度**不是常量**：刘海安全区、可选副标题、右侧控件都可能把它撑高，写死一个数
-   * 必然在某档上对不齐。所以量一遍 `offsetHeight` 写进主列的 `--app-bar-h`，
-   * 由 `.page-shell__content` 与各 fill 页面消费；量到之前用 CSS 里的 60px 兜底。
-   *
-    * 直接写 DOM 内联样式而不是挂 state：顶栏高度变化只需更新消费它的 CSS 变量，
-    * 不必为此重渲整棵页面树。
-   */
-  const barRef = useRef<HTMLElement | null>(null);
-  const mainColRef = useRef<HTMLDivElement | null>(null);
-  useEffect(() => {
-    const bar = barRef.current;
-    const col = mainColRef.current;
-    if (!bar || !col) return;
-    const sync = () => col.style.setProperty('--app-bar-h', `${bar.offsetHeight}px`);
-    sync();
-    const observer = new ResizeObserver(sync);
-    observer.observe(bar);
-    return () => observer.disconnect();
-  }, []);
+  const navigationId = useId();
+  const open = useCallback(() => setDrawerOpen(true), []);
+  const navigation = useMemo(() => ({ isNarrow, open }), [isNarrow, open]);
 
   // 抽屉展开时锁住背景滚动，否则手指在遮罩边缘滑动会连带滚背后的内容
   useEffect(() => {
@@ -614,13 +529,111 @@ export function PageShell({
     if (!isNarrow) setDrawerOpen(false);
   }, [isNarrow]);
 
+  const railToggle = (
+    <Button isIconOnly variant="ghost"
+      className={`sidebar-control relative shrink-0 rounded-full${railCollapsed ? ' page-shell__nav-logo' : ''}`}
+      data-testid="nav-rail-toggle" aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
+      aria-expanded={!railCollapsed} aria-pressed={railCollapsed} onPress={toggleRail}>
+      {railCollapsed ? <BrandLogo /> : <Sym name="panel_left" />}
+      <DotBadge open={hasUnread} className="nav-unread" label="有已完成的会话未查看" testId="nav-unread-dot" />
+    </Button>
+  );
+
+  return (
+    <NavigationContext.Provider value={navigation}>
+      <div className="app-navigation-shell flex h-[var(--vvh,100%)] min-h-0 overflow-hidden bg-background-secondary text-foreground">
+        {!isNarrow && (
+          <nav className={`page-shell__rail t-resize${railCollapsed ? ' page-shell__compact-rail' : ''}`}
+            aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
+            <div className="page-shell__rail-header">
+              <div className="page-shell__brand" role={railCollapsed ? undefined : 'img'} aria-label="DeepStudent Go" data-testid="app-brand">
+                {railCollapsed ? railToggle : <BrandLogo />}
+              </div>
+              {!railCollapsed && railToggle}
+            </div>
+            {railCollapsed ? <>
+              {rail.items.map(item => (
+                <span key={item.value} title={item.label}>
+                  <NavigationItem item={item} active={item.value === rail.value} compact />
+                </span>
+              ))}
+              <div className="page-shell__compact-footer">{railFooter}</div>
+            </> : <div className="page-shell__rail-content">
+              <Sidebar rail={rail} recent={recent} railFooter={railFooter} navigationId={navigationId} />
+            </div>}
+          </nav>
+        )}
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        {isNarrow && (
+          <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
+            <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
+              <Drawer.Content placement="left">
+                <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent Go">
+                  <Drawer.Header className="mb-4 flex flex-row items-center justify-between p-0">
+                    <Drawer.Heading className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand"><BrandLogo /></Drawer.Heading>
+                    <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
+                  </Drawer.Header>
+                  <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">
+                    <Sidebar rail={rail} recent={recent} railFooter={railFooter} navigationId={navigationId}
+                      onNavigate={() => setDrawerOpen(false)} />
+                  </nav>
+                </Drawer.Dialog>
+              </Drawer.Content>
+            </Drawer.Backdrop>
+          </Drawer.Root>
+        )}
+      </div>
+    </NavigationContext.Provider>
+  );
+}
+
+export function PageShell({
+  title,
+  subtitle,
+  onBack,
+  actions,
+  narrow,
+  wide,
+  fill,
+  rootRef,
+  rootClassName,
+  hideRailOnNarrow = false,
+  aside,
+  children,
+}: PageShellProps) {
+  const navigation = useContext(NavigationContext);
+  const asideInline = useAsideInline();
+  const hasUnread = useChatNotifications((s) => s.unreadIds.length > 0);
+  const shellId = useId();
+  const titleId = `${shellId}-title`;
+  const mainId = `${shellId}-main`;
+  const edgeRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    if (edgeRef.current) return observeBrowserChrome(edgeRef.current);
+  }, []);
+
+  // 顶栏高度只写 CSS 变量，不为测量重新渲染整页。
+  const barRef = useRef<HTMLElement | null>(null);
+  const mainColRef = useRef<HTMLDivElement | null>(null);
+  useEffect(() => {
+    const bar = barRef.current;
+    const col = mainColRef.current;
+    if (!bar || !col) return;
+    const sync = () => col.style.setProperty('--app-bar-h', `${bar.offsetHeight}px`);
+    sync();
+    const observer = new ResizeObserver(sync);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
+
   /**
    * 内容列最大宽度挂在根节点上，只由内容区消费（顶栏不再跟着避让，
    * 见 `<header>` 的注释）。页面可以自己覆盖（如库页的 `page-library` 把它放宽到 1360px）。
    */
   const contentMax = narrow ? '[--page-content-max:720px]' : wide ? '[--page-content-max:960px]' : '';
   const rootClass = [
-    'page-shell flex h-[var(--vvh,100%)] flex-col overflow-hidden bg-background-secondary text-foreground',
+    'page-shell flex min-h-0 flex-col overflow-hidden bg-background-secondary text-foreground',
+    navigation ? 'h-full flex-1' : 'h-[var(--vvh,100%)]',
     contentMax,
     rootClassName,
   ]
@@ -633,22 +646,7 @@ export function PageShell({
       ? 'page-shell__content mx-auto w-full max-w-[var(--page-content-max,100%)] px-5 pb-5'
       : 'page-shell__content w-full px-5 pb-5';
 
-  const railToggle = (
-    <Button
-      isIconOnly
-      variant="ghost"
-      className={`sidebar-control relative shrink-0 rounded-full${railCollapsed ? ' page-shell__nav-logo' : ''}`}
-      data-testid="nav-rail-toggle"
-      aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
-      aria-expanded={!railCollapsed}
-      aria-pressed={railCollapsed}
-      onPress={toggleRail}
-    >
-      {railCollapsed ? <BrandLogo /> : <Sym name="panel_left" />}
-      <DotBadge open={hasUnread} className="nav-unread"
-        label="有已完成的会话未查看" testId="nav-unread-dot" />
-    </Button>
-  );
+  const showMobileRail = navigation?.isNarrow && !hideRailOnNarrow;
 
   return (
     <div className={rootClass} ref={rootRef}>
@@ -667,35 +665,7 @@ export function PageShell({
         跳到主要内容
       </a>
       <div className="flex min-h-0 flex-1 items-stretch">
-        {/* 同一个容器过渡宽度，主内容列随 flex 布局自然伸缩。 */}
-        {rail && !isNarrow && (
-          <nav className={`page-shell__rail t-resize${railCollapsed ? ' page-shell__compact-rail' : ''}`}
-            aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
-            <div className="page-shell__rail-header">
-              <div className="page-shell__brand" role={railCollapsed ? undefined : 'img'} aria-label="DeepStudent Go" data-testid="app-brand">
-                {railCollapsed ? railToggle : <BrandLogo />}
-              </div>
-              {!railCollapsed && railToggle}
-            </div>
-            {railCollapsed ? <>{rail.items.map(item => (
-              <span key={item.value} title={item.label}>
-                <Button isIconOnly variant="ghost" className="sidebar-control page-shell__rail-icon"
-                  aria-label={item.label} aria-current={!item.isAction && item.value === rail.value ? 'page' : undefined}
-                  data-testid={item.testId} onPress={item.onClick}>{item.icon}</Button>
-              </span>
-            ))}
-            {railFooter && <div className="page-shell__compact-footer">{railFooter}</div>}
-            </> : <div className="page-shell__rail-content">
-            <Sidebar
-              rail={rail}
-              recent={recent}
-              railFooter={railFooter}
-              navigationId={navigationId}
-            />
-            </div>}
-          </nav>
-        )}
-        <div ref={mainColRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col${rail ? ' page-shell__surface' : ''}`}>
+        <div ref={mainColRef} className={`relative flex min-h-0 min-w-0 flex-1 flex-col${navigation ? ' page-shell__surface' : ''}`}>
           <header
             ref={barRef}
             data-testid="top-app-bar"
@@ -744,15 +714,15 @@ export function PageShell({
               <span />
               <span />
             </div>
-             {/* 窄屏保留汉堡菜单；宽屏的收放入口在侧栏顶部。 */}
-            {rail && isNarrow && (
+            {/* 窄屏默认保留汉堡菜单；嵌套页可改为只显示返回按钮。 */}
+            {showMobileRail && (
               <Button
                 isIconOnly
-                variant="ghost"
-                className="relative shrink-0 rounded-full"
+                variant="tertiary"
+                className="page-shell__toolbar-button relative shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
-                onPress={() => setDrawerOpen(true)}
+                onPress={navigation?.open}
               >
                 <Sym name="menu" />
                 <DotBadge open={hasUnread} className="nav-unread"
@@ -772,10 +742,7 @@ export function PageShell({
               </Button>
             )}
             <div className="flex min-w-0 flex-col gap-px">
-              {/* `page-title` 是给断言用的：顶栏标题是「这条会话叫什么」的唯一出口，
-                  而它没有别的稳定选择器（h1 + 一串 Tailwind 类名经不起重构）。
-                  懒创建之后它还要承担一个语义：草稿态显示「新会话」而不是页面名 ——
-                  见 docs/plans/2026-10-15-懒创建会话-design.md §四.2。 */}
+              {/* 主页显示页面名，历史会话显示自己的标题。 */}
               <h1
                 id={titleId}
                 data-testid="page-title"
@@ -818,31 +785,6 @@ export function PageShell({
                 {aside.content}
               </Drawer.Dialog>
             </Drawer.Content>
-          </Drawer.Backdrop>
-        </Drawer.Root>
-      )}
-
-      {/* Backdrop 必须包住 Content：共用关闭生命周期与遮罩层级，保留正常退场。 */}
-      {rail && isNarrow && (
-        <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
-          <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
-          <Drawer.Content placement="left">
-            <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent Go">
-              <Drawer.Header className="mb-4 flex flex-row items-center justify-between p-0">
-                <Drawer.Heading className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand"><BrandLogo /></Drawer.Heading>
-                <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
-              </Drawer.Header>
-              <nav className="flex min-h-0 flex-1 flex-col gap-1 text-foreground" aria-label="主导航">
-                <Sidebar
-                  rail={rail}
-                  recent={recent}
-                  railFooter={railFooter}
-                  navigationId={navigationId}
-                  onNavigate={() => setDrawerOpen(false)}
-                />
-              </nav>
-            </Drawer.Dialog>
-          </Drawer.Content>
           </Drawer.Backdrop>
         </Drawer.Root>
       )}

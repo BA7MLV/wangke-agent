@@ -9,6 +9,7 @@ import HtmlAnswer from '../HtmlAnswer';
 import { htmlFenceContentType } from '../../utils/htmlContent';
 import { InlineWidget } from '../WidgetMessage';
 import { useMarkdownStreaming } from '../markdown/streaming';
+import CodeBlock from '../CodeBlock';
 
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
 
@@ -72,9 +73,10 @@ export function MarkdownPre({ children }: ComponentProps) {
   const items = React.Children.toArray(children as React.ReactNode).filter(
     (c) => !(typeof c === 'string' && c.trim() === ''),
   );
-  if (items.length === 1 && React.isValidElement(items[0]) && (diagramKindOf(items[0].props as CodeLikeProps) || isHtmlFence(items[0].props as CodeLikeProps)
-    || isWidgetFence(items[0].props as CodeLikeProps))) {
-    return <>{children as React.ReactNode}</>;
+  if (items.length === 1 && React.isValidElement(items[0])) {
+    const props = items[0].props as CodeLikeProps;
+    if (diagramKindOf(props) || isHtmlFence(props) || isWidgetFence(props)) return <>{children as React.ReactNode}</>;
+    if (props.block) return <CodeBlock source={String(props.children ?? '')} language={String(props.lang ?? 'text')} />;
   }
   return <pre>{children as React.ReactNode}</pre>;
 }

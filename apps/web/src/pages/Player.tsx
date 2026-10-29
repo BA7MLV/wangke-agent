@@ -16,8 +16,6 @@ import { setStudyMediaPlaying } from '../store/studyTime';
 import { useSelectionAsk } from '../store/selectionAsk';
 import type { Cue } from '../utils/vtt';
 import { PageShell, EmptyState, Sym, useDynamicColor, toast } from '../ui';
-import { useAppNav } from '../components/appNav';
-import { SettingsButton } from '../components/SettingsModal';
 import { useSettingsDialog } from '../components/settingsDialogStore';
 import type { MaterialReaderHandle } from '../materials/types';
 import SubtitlePanel from '../components/SubtitlePanel';
@@ -95,7 +93,6 @@ function PlayerResource({ id }: { id: string | undefined }) {
   const requestedReturn = location.state?.libraryReturn;
   const libraryReturn = typeof requestedReturn === 'string' && /^\/library(?:\?|$)/.test(requestedReturn) ? requestedReturn : '/library';
   // 播放页是资料库的下级页面：宽屏 rail 里高亮资料入口。
-  const nav = useAppNav('home');
   const [video, setVideo] = useState<VideoRow | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
   const [videoCrossOrigin, setVideoCrossOrigin] = useState<'use-credentials' | undefined>();
@@ -494,8 +491,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
         fill
         rootRef={colorSchemeRef}
         rootClassName="page-player"
-        rail={nav}
-        railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+        hideRailOnNarrow
         /* 顶栏右上角那颗设置图标撤掉（与 AI 助手页 / 课程库 / 学习页同一口径）：
            设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
            同一个入口在一条顶栏里露两次没有必要。 */
@@ -596,8 +592,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
       fill
       rootRef={colorSchemeRef}
       rootClassName="page-player"
-      rail={nav}
-      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
+      hideRailOnNarrow
       /* 顶栏右上角那颗设置图标撤掉（与 AI 助手页 / 课程库 / 学习页同一口径）：
          设置入口统一收在侧栏底部的 `railFooter`（窄屏在抽屉里）——
          同一个入口在一条顶栏里露两次没有必要。 */

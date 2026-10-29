@@ -28,23 +28,23 @@ try {
     const expanded = label === '收起侧边栏';
     assert.equal(await toggle.getAttribute('aria-label'), label);
     assert.equal(await toggle.getAttribute('aria-expanded'), String(expanded));
-    assert.equal(await toggle.locator('svg[viewBox="0 0 126 126"]').count(), expanded ? 0 : 1,
+    assert.equal(await toggle.locator('svg[viewBox="182 192 650 650"]').count(), expanded ? 0 : 1,
       'only the collapsed toggle uses the brand logo');
     assert.equal(await toggle.locator('svg.tabler-icon-layout-sidebar').count(), expanded ? 1 : 0,
       'expanded sidebar has a separate panel toggle');
     const { width, height } = await toggle.boundingBox();
     assert(width >= 44 && height >= 44, 'toggle retains a touch-sized target');
     const brand = page.getByTestId('app-brand');
-    assert.equal(await brand.innerText(), expanded ? 'DeepStudent Go' : '');
+    assert.equal(await brand.getAttribute('aria-label'), 'DeepStudent Go');
     if (expanded) {
       const brandBox = await brand.boundingBox();
       const toggleBox = await toggle.boundingBox();
       assert(toggleBox.x >= brandBox.x + brandBox.width, 'collapse button sits to the right of the brand');
     }
   };
-  const checkNeutral = async (button, label) => {
+  const checkNeutral = async (button, label, selected = 'page', textColor = '--foreground') => {
     await button.evaluate(el => Promise.all(el.getAnimations().map(animation => animation.finished.catch(() => {}))));
-    const colors = await button.evaluate(el => {
+    const colors = await button.evaluate((el, textColor) => {
       const probe = document.createElement('span');
       el.append(probe);
       const resolve = property => {
@@ -52,7 +52,7 @@ try {
         return getComputedStyle(probe).color;
       };
       const result = {
-        foreground: resolve('--foreground'),
+        foreground: resolve(textColor),
         color: getComputedStyle(el).color,
         icon: getComputedStyle(el.querySelector('svg')).color,
         background: getComputedStyle(el).backgroundColor,
@@ -64,22 +64,27 @@ try {
       };
       probe.remove();
       return result;
-    });
+    }, textColor);
     assert.equal(colors.color, colors.foreground, `${label}: neutral text`);
     assert.equal(colors.icon, colors.foreground, `${label}: neutral icon`);
     assert.notEqual(colors.background, colors.accent, `${label}: no accent background`);
     assert.notEqual(colors.background, colors.accentSoft, `${label}: no soft accent background`);
-    assert.equal(colors.selected, null, `${label}: new chat is an action, not a selected destination`);
+    assert.equal(colors.selected, selected, `${label}: home is a selected destination; new-session toolbar remains an action`);
     if (colors.persistentHover) {
       assert.equal(colors.background, colors.hoverBackground, `${label}: default appearance matches hover`);
     }
   };
   const checkSelected = async label => {
     const item = page.getByTestId('nav-rail-home');
+    assert.equal(await page.getByRole('link', { name: '资源', exact: true }).getAttribute('data-testid'), 'nav-rail-home',
+      `${label}: resources retain link semantics`);
+    assert.equal(await item.getAttribute('href'), '#/library', `${label}: resources expose a copyable URL`);
+    assert.equal(await newChat.evaluate(el => el.tagName), 'BUTTON', `${label}: home remains an action`);
     await item.click();
     if (page.viewportSize().width <= 900) {
       await page.getByRole('dialog', { name: 'DeepStudent Go' }).waitFor({ state: 'detached' });
-      await page.getByTestId('nav-rail-open').click();
+      // Suspense may briefly retain the previous PageShell as hidden DOM.
+      await page.getByRole('button', { name: '打开导航', exact: true }).click();
     }
     await page.waitForFunction(() => {
       const el = document.querySelector('[data-testid="nav-rail-home"]');
@@ -97,13 +102,13 @@ try {
       await item.evaluate(el => getComputedStyle(el).color), `${label}: selected icon inherits neutral text`);
     await newChat.click();
   };
-  const checkInteractionColors = async (button, label) => {
+  const checkInteractionColors = async (button, label, selected = 'page', idleTextColor = '--foreground') => {
     await page.mouse.move(1000, 700);
-    await checkNeutral(button, label);
+    await checkNeutral(button, label, selected, idleTextColor);
     await button.hover();
-    await checkNeutral(button, `${label} hovered`);
+    await checkNeutral(button, `${label} hovered`, selected);
     await page.mouse.down();
-    await checkNeutral(button, `${label} pressed`);
+    await checkNeutral(button, `${label} pressed`, selected);
     await page.mouse.up();
   };
 
@@ -115,12 +120,16 @@ try {
     await page.waitForFunction(theme => document.documentElement.classList.contains('dark') === (theme === 'dark'), theme);
     await checkToggle('收起侧边栏');
     await checkInteractionColors(newChat, `${theme} expanded`);
+    await checkInteractionColors(page.getByTestId('nav-rail-home'), `${theme} expanded resources`, null, '--muted');
+    await newChat.click();
     await checkSelected(`${theme} expanded`);
     await page.screenshot({ path: `${out}/${theme}-expanded.png`, animations: 'disabled' });
     await toggle.click();
     await page.getByTestId('nav-rail-compact').waitFor();
     await checkToggle('展开侧边栏');
     await checkInteractionColors(newChat, `${theme} compact`);
+    await checkInteractionColors(page.getByTestId('nav-rail-home'), `${theme} compact resources`, null);
+    await newChat.click();
     await checkSelected(`${theme} compact`);
     await page.screenshot({ path: `${out}/${theme}-compact.png`, animations: 'disabled' });
     await toggle.focus();
@@ -140,7 +149,7 @@ try {
   const mobileMenu = page.getByTestId('nav-rail-open');
   await mobileMenu.waitFor({ state: 'visible' });
   assert.equal(await mobileMenu.locator('svg.tabler-icon-menu-2').count(), 1, 'mobile keeps the hamburger menu');
-  assert.equal(await mobileMenu.locator('svg[viewBox="0 0 126 126"]').count(), 0, 'mobile menu is not replaced by the logo');
+  assert.equal(await mobileMenu.locator('svg[viewBox="182 192 650 650"]').count(), 0, 'mobile menu is not replaced by the logo');
   await mobileMenu.click();
   const drawer = page.getByRole('dialog', { name: 'DeepStudent Go' });
   await drawer.waitFor();
@@ -152,9 +161,9 @@ try {
   await page.screenshot({ path: `${out}/mobile-drawer.png`, animations: 'disabled' });
   await newChat.click();
   await drawer.waitFor({ state: 'detached' });
-  await checkNeutral(page.getByTestId('chat-new-session'), 'mobile app bar');
+  await checkNeutral(page.getByTestId('chat-new-session'), 'mobile app bar', null);
   assert.deepEqual(errors, []);
-  console.log('PASS: desktop panel toggle, collapsed logo, persistence and keyboard controls; mobile hamburger; new chat and selected navigation stay neutral in light/dark, compact, and mobile navigation.');
+  console.log('PASS: desktop panel toggle, collapsed logo, persistence and keyboard controls; mobile hamburger; home and resource navigation stay neutral in light/dark, compact, and mobile navigation.');
 } finally {
   await browser.close();
 }

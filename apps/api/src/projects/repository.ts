@@ -87,7 +87,8 @@ export class ProjectRepository {
     this.files.create(id);
     const now = timestamp();
     this.store.transaction(() => {
-      this.store.db.prepare('INSERT INTO projects(id,owner_id,name,created_at,updated_at) VALUES(?,?,?,?,?)').run(id, owner, cleanName, now, now);
+      // New folders follow the global network switch; existing denials stay intact.
+      this.store.db.prepare("INSERT INTO projects(id,owner_id,name,network_policy,created_at,updated_at) VALUES(?,?,?,'allow',?,?)").run(id, owner, cleanName, now, now);
       if (agentId) this.store.db.prepare('INSERT INTO project_agents(project_id,agent_id,role) VALUES(?,?,?)').run(id, agentId, role);
     });
     return this.get(owner, id);

@@ -613,9 +613,9 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     if (!body || (declaredSize !== undefined && (!Number.isSafeInteger(declaredSize) || declaredSize < 1 || declaredSize > maxFileBytes))) return bad(reply, 413, 'file_too_large_or_invalid');
     const encodedName = request.headers['x-file-name'];
     const mimeHeader = request.headers['x-file-mime'];
-    let originalName = typeof encodedName === 'string' ? encodedName : 'attachment';
+    let originalName = typeof encodedName === 'string' ? encodedName : '';
     try { originalName = decodeURIComponent(originalName); } catch { return bad(reply, 400, 'invalid_file_name'); }
-    if (!originalName || originalName.length > 255 || /[\u0000\\/]/.test(originalName)) return bad(reply, 400, 'invalid_file_name');
+    if ((encodedName !== undefined && !originalName) || originalName.length > 255 || /[\u0000\\/]/.test(originalName)) return bad(reply, 400, 'invalid_file_name');
     const mimeType = typeof mimeHeader === 'string' && /^[\w.+-]+\/[\w.+-]+$/.test(mimeHeader) ? mimeHeader.slice(0, 200) : 'application/octet-stream';
     return reply.code(201).send(await receiveFile(store, filesDir, user.id, body, originalName, mimeType, maxFileBytes, declaredSize));
   });

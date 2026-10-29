@@ -5,7 +5,6 @@ import { useTranslation } from 'react-i18next';
 import type { AgentProfileDto, ProjectDto } from '@wangke/contracts';
 import { serverClient } from '../api/serverClient';
 import { MoreMenu, PageShell, promptDialog, Sym, toast } from '../ui';
-import { useAppNav } from '../components/appNav';
 import { projectError } from '../projects/errors';
 import { formatListTime } from './botMessages';
 import '../projects/projects.css';
@@ -20,7 +19,6 @@ export default function Projects() {
   const { t } = useTranslation('projects');
   const { t: tc, i18n } = useTranslation();
   const navigate = useNavigate();
-  const nav = useAppNav('projects');
   const [projects, setProjects] = useState<ProjectDto[]>([]);
   const [agents, setAgents] = useState<AgentProfileDto[]>([]);
   const [error, setError] = useState('');
@@ -58,7 +56,7 @@ export default function Projects() {
   );
 
   return (
-    <PageShell title={t('title')} rail={nav} fill rootClassName="page-projects"
+    <PageShell title={t('title')} fill rootClassName="page-projects"
       actions={<><MoreMenu label={tc('botHome.more')} actions={filter} />{createButton}</>}>
       <div className="ph">
         <div className="ph-scroll">

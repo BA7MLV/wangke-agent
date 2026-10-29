@@ -80,6 +80,13 @@ export class ProjectFiles {
     return stat;
   }
 
+  /** Atomic no-replace installation. A prior lstat + rename can overwrite a
+   * concurrently created file. Both paths must be on the workspace filesystem. */
+  private installNew(temporary: string, file: string) {
+    fs.linkSync(temporary, file);
+    fs.unlinkSync(temporary);
+  }
+
   list(id: string, value = ''): ProjectFileDto[] {
     return this.directory(id, this.parts(value, true), directory => {
       const names = fs.readdirSync(directory);
@@ -128,7 +135,7 @@ export class ProjectFiles {
       try {
         fs.writeFileSync(temporary, text, { flag: 'wx', mode: 0o600 });
         this.workspaceOwner(temporary);
-        fs.renameSync(temporary, file);
+        if (stat) fs.renameSync(temporary, file); else this.installNew(temporary, file);
       } finally { fs.rmSync(temporary, { force: true }); }
       return { path: value, revision: revision(fs.statSync(file)) };
     });
@@ -143,7 +150,7 @@ export class ProjectFiles {
       try { fs.lstatSync(file); throw new ProjectError('project_file_exists', 409); }
       catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
       this.workspaceOwner(temporary);
-      fs.renameSync(temporary, file);
+      this.installNew(temporary, file);
     });
   }
 
@@ -165,7 +172,7 @@ export class ProjectFiles {
       try {
         fs.copyFileSync(source, temporary, fs.constants.COPYFILE_EXCL);
         fs.chmodSync(temporary, 0o600); this.workspaceOwner(temporary);
-        fs.renameSync(temporary, file);
+        if (stat) fs.renameSync(temporary, file); else this.installNew(temporary, file);
       } finally { fs.rmSync(temporary, { force: true }); }
     });
   }

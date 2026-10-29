@@ -58,7 +58,7 @@ async function runTool(name, args, { approved, beforeResolve, restart = false, t
 }
 
 try {
-  configuration.save(owner, { ...get(), providers: [{ id: 'model', name: 'Model', baseUrl: 'https://model.example/v1', apiKey: 'private-test-key', protocol: 'openai-chat', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'model', model: 'first' }, trustedAgentIds: [agent] });
+  configuration.save(owner, { ...get(), providers: [{ id: 'model', name: 'Model', baseUrl: 'https://model.example/v1', apiKey: 'private-test-key', protocol: 'openai-chat', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'model', model: 'first' }, trustedAgentIds: [agent], policy: { ...get().policy, network: 'deny' } });
   assert.equal(configuration.policy(owner, threadId).write, 'allow');
   assert.equal(configuration.policy(owner, threadId).shell, 'allow');
   configuration.save(owner, { ...get(), policy: { ...get().policy, write: 'deny', shell: 'deny' } });

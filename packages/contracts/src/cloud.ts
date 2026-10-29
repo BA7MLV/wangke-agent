@@ -58,7 +58,7 @@ export interface AgentPolicy {
   maxSteps: number;
 }
 export const DEFAULT_AGENT_POLICY: AgentPolicy = {
-  read: 'allow', write: 'ask', remove: 'ask', shell: 'ask', network: 'deny', maxSteps: 100,
+  read: 'allow', write: 'ask', remove: 'ask', shell: 'ask', network: 'allow', maxSteps: 100,
 };
 export interface CloudProvider {
   id: string;

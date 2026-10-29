@@ -25,6 +25,7 @@ jobs:
       - run: npm run test:release-plan
       - run: node scripts/test-release-ci.mjs
       - run: npm run test:system-files && npm run test:memory-context && npm run test:resources
+      - run: npm run test:file-names
   isolated-builds:
     runs-on: ubuntu-latest
     strategy:

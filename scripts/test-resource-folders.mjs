@@ -81,6 +81,7 @@ try {
   const destination = await json('POST', '/resources/folders', { name: '移动目标' }, 201);
   const child = (await listing(fresh.id)).entries.find(e => e.name === '子目录');
   const botNote = (await listing(fresh.id, '子目录')).entries.find(e => e.name === 'bot.md');
+  await json('POST', '/cloud/records', { mutations: [{ id: 'bot-material-block', table: 'materialBlocks', key: 2, before: null, after: { id: 2, materialId: botNote.courseId, unit: 1, text: 'Bot 资料块' } }] });
   const childFolderId = (await listing(fresh.id, '子目录')).folderId;
   await json('POST', '/resources/move', { projectId: fresh.id, path: child.path, targetProjectId: destination.id, target: '搬来的目录', revision: child.revision });
   assert.equal((await listing(destination.id, '搬来的目录')).folderId, childFolderId, 'moving a directory preserves its folder identity');
@@ -113,6 +114,15 @@ try {
   assert.ok(!fs.existsSync(path.join(path.dirname(renamed), '机器改名.md')), 'deleted files are never resurrected from legacy blobs');
   assert.ok((await listing(folder.projectId, nested.path)).entries.some(e => e.courseId === note.courseId && e.missing), 'learning history remains reachable after removing the source file');
   assert.ok(db.prepare("SELECT value FROM cloud_records WHERE table_name='videos' AND record_key=?").get(JSON.stringify(note.courseId)).value, 'learning history is retained');
+  const fullDelete = (await json('GET', '/resources')).entries.find(e => e.courseId === botNote.courseId);
+  assert.ok(fullDelete, 'mapped resource remains available for the resource-library delete path');
+  await json('DELETE', `/resources/file?projectId=${encodeURIComponent(fullDelete.projectId)}&path=${encodeURIComponent(fullDelete.path)}&revision=${encodeURIComponent(fullDelete.revision)}`);
+  assert.ok(!fs.existsSync(path.join(directory, 'files/projects', fullDelete.projectId, fullDelete.path)), 'resource-library deletion removes the authoritative file');
+  assert.ok(!(await json('GET', '/resources')).entries.some(e => e.courseId === botNote.courseId), 'resource-library deletion removes the learning entry');
+  for (const table of ['videos', 'materialBlocks', 'courseFiles']) {
+    const deleted = db.prepare(`SELECT value FROM cloud_records WHERE table_name=? AND record_key=?`).get(table, JSON.stringify(botNote.courseId));
+    assert.equal(deleted?.value ?? null, null, `${table} is deleted with the resource`);
+  }
   console.log('Resource folders: migration, real I/O, nested directories, shared Bot files, stable IDs, conflicts, ranges, permissions, restart and deletion OK');
 } finally {
   await app.close(); db?.close(); fs.rmSync(directory, { recursive: true, force: true });

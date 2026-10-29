@@ -4,7 +4,15 @@ import path from 'node:path';
 import { Transform, type Readable } from 'node:stream';
 import { pipeline } from 'node:stream/promises';
 import type { DatabaseStore } from '../storage/database.js';
+import { uploadedImageMime } from './image.js';
+import { imageFileName, safeFileName } from './file-names.js';
 const operationUploads = new Set<string>();
+
+/** Stable per operation, never content-global: owners and distinct uploads remain independent. */
+export const fileOperationId = (owner: string, step: string, purpose: string) => {
+  const key = crypto.createHash('sha256').update(`${owner}:${step}:${purpose}`).digest('hex').slice(0, 32);
+  return `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20)}`;
+};
 
 export async function receiveFile(store: DatabaseStore, directory: string, owner: string, stream: Readable,
   name: string, mime: string, limit: number, declared?: number, checkActive: () => void = () => {}, operationFileId?: string) {
@@ -24,10 +32,12 @@ export async function receiveFile(store: DatabaseStore, directory: string, owner
   const temporaryPath = path.join(directory, `.upload-${id}.tmp`);
   const storagePath = path.join(directory, storageName);
   const hash = crypto.createHash('sha256');
+  let header = Buffer.alloc(0);
   let bytes = 0;
   const counter = new Transform({ transform(chunk, _encoding, done) {
     bytes += chunk.length;
     if (bytes > limit) return done(Object.assign(new Error('file_too_large_or_invalid'), { statusCode: 413 }));
+    if (header.length < 32) header = Buffer.concat([header, chunk.subarray(0, 32 - header.length)]);
     hash.update(chunk); done(null, chunk);
   } });
   try {
@@ -36,6 +46,15 @@ export async function receiveFile(store: DatabaseStore, directory: string, owner
     const handle = await fs.promises.open(temporaryPath, 'r+');
     try { await handle.sync(); } finally { await handle.close(); }
     const sha256 = hash.digest('hex'); const createdAt = new Date().toISOString();
+    // Cache blobs carry application-level metadata and are not user-facing uploads.
+    // Sniff only a bounded header; even 512 MiB non-image uploads stay streaming.
+    if (name !== 'cache-blob') {
+      const detected = await uploadedImageMime(temporaryPath, name, mime, header);
+      if (detected) {
+        mime = detected;
+        name = imageFileName(name, mime, `图片_${createdAt.slice(0, 10).replace(/-/g, '')}_${id.slice(0, 8)}`);
+      } else name = safeFileName(name);
+    }
     if (name === 'cache-blob') {
       const existing = store.db.prepare("SELECT id,original_name AS originalName,mime_type AS mimeType,size_bytes AS sizeBytes,sha256,created_at AS createdAt FROM files WHERE owner_id=? AND sha256=? AND mime_type=? AND original_name='cache-blob' LIMIT 1").get(owner, sha256, mime);
       if (existing) { await fs.promises.rm(temporaryPath, { force: true }); return existing as { id: string; originalName: string; mimeType: string; sizeBytes: number; sha256: string; createdAt: string }; }

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
+import { openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const sse = (delta, finish_reason = 'stop') => `data: ${JSON.stringify({ choices: [{ delta, finish_reason }] })}\n\ndata: [DONE]\n\n`;
@@ -75,6 +76,7 @@ try {
   await composer.press('Enter');
   await page.getByText('连续出题完成。', { exact: true }).waitFor();
   await waitDone();
+  await openWidgetPreviews(page);
   const blocks = page.getByTestId('widget-block');
   for (let index = 0; index < 3; index++) {
     await blocks.nth(index).getByTestId('widget-frame').contentFrame().getByRole('heading', { name: `交互第 ${index + 1} 题` }).waitFor();

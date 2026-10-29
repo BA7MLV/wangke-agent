@@ -178,7 +178,10 @@ if [ -n "$DOMAIN" ]; then
   mv -f "$tmp" "$DATA_DIR/.env"
 fi
 if [ "$AGENT" -eq 1 ] && ! grep -q '^SANDBOX_TOKEN=' "$DATA_DIR/.env"; then
-  printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\nSANDBOX_NETWORK=none\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
+  printf '\nSANDBOX_TOKEN=%s\nBOT_MAX_STEPS=100\n' "$(openssl rand -hex 32)" >> "$DATA_DIR/.env"
+  if ! grep -q '^SANDBOX_NETWORK=' "$DATA_DIR/.env"; then
+    printf 'SANDBOX_NETWORK=bridge\n' >> "$DATA_DIR/.env"
+  fi
 fi
 step_done
 

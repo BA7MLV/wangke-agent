@@ -97,6 +97,7 @@ try {
   const strip = page.getByTestId('chat-import-strip');
   const importLink = page.getByTestId('chat-go-import');
   const closeImport = page.getByTestId('chat-import-close');
+  assert.equal(await importLink.innerText(), '选择项目', 'default folder entry matches the project label');
   assert.equal(await strip.getByText('让回答有据可依').count(), 0, 'extra explanation is removed');
   assert((await importLink.boundingBox()).width < 140, 'only the icon and text are the import target');
   await page.mouse.move(1200, 480);
@@ -181,8 +182,19 @@ try {
     const { useCourseChat } = await window.loadTestModule('/src/store/courseChat.ts');
     useCourseChat.setState({ courseCount: 1 });
   });
-  assert.equal(await page.getByTestId('chat-go-import').count(), 0, 'existing courses do not show the empty-library import strip');
+  await importLink.waitFor();
+  assert(await importLink.isVisible(), 'existing courses retain the default folder entry');
   await checkWelcome('with courses');
+
+  await page.evaluate(async () => {
+    const { useCourseChat } = await window.loadTestModule('/src/store/courseChat.ts');
+    useCourseChat.setState({ courseCount: null });
+  });
+  assert(await importLink.isVisible(), 'folder entry does not wait for the course count');
+  await page.evaluate(async () => {
+    const { useCourseChat } = await window.loadTestModule('/src/store/courseChat.ts');
+    useCourseChat.setState({ courseCount: 1 });
+  });
 
   await page.setViewportSize({ width: 390, height: 844 });
   await page.getByTestId('nav-rail-open').click();
@@ -210,12 +222,13 @@ try {
     ] });
   });
   await page.waitForFunction(() => !document.querySelector('.course-chat--empty'));
-  assert.equal(await page.getByTestId('chat-go-import').count(), 0, 'import strip disappears in a conversation');
+  await importLink.waitFor();
+  assert(await importLink.isVisible(), 'folder entry remains visible in a conversation');
   await settle();
   const composer = await page.locator('.course-chat__composer').boundingBox();
   assert(Math.abs(844 - composer.y - composer.height - 10) < 2, 'conversation composer remains bottom anchored');
   assert.deepEqual(errors, []);
-  console.log('PASS: welcome placement, shared icon/text hover and import, continuous corners, mouse and keyboard dismissal without navigation or draft loss, mobile close, light/dark themes, keyboard/long draft, bottom-anchored conversation.');
+  console.log('PASS: default folder entry with empty/populated/loading libraries and conversations, welcome placement, shared icon/text hover and navigation, continuous corners, mouse and keyboard dismissal without navigation or draft loss, mobile close, light/dark themes, keyboard/long draft, bottom-anchored conversation.');
 } finally {
   await browser.close();
 }

@@ -6,11 +6,7 @@ import { useCourseChat } from '../store/courseChat';
 import { confirmDialog, promptDialog, Sym, toast } from '../ui';
 import type { RecentItem } from '../ui/layout';
 
-// 页面切换会重挂 hook，但最近会话不应因此退回空态。
-// 只缓存查询结果；每次挂载仍订阅 liveQuery，删除、后台消息等会继续实时更新。
-let cachedActivity: Map<number, number> | null = null;
-
-/** 主页和资料页共用会话筛选、排序、状态与操作；只有主页显示当前会话高亮。 */
+/** 由共享布局持有查询和操作，切页不重挂；只有对话页显示当前会话高亮。 */
 export function useRecentChats(showActive = false) {
   const navigate = useNavigate();
   const sessions = useCourseChat((s) => s.sessions);
@@ -18,7 +14,7 @@ export function useRecentChats(showActive = false) {
   const runningIds = useCourseChat((s) => s.runningIds);
   const awaitingIds = useCourseChat((s) => s.awaitingIds);
   const ready = useCourseChat((s) => s.ready);
-  const [activity, setActivity] = useState(() => cachedActivity);
+  const [activity, setActivity] = useState<Map<number, number> | null>(null);
 
   useEffect(() => {
     if (!ready) return;
@@ -37,10 +33,7 @@ export function useRecentChats(showActive = false) {
         return [session.id!, user ? (latest?.createdAt ?? user.createdAt) : 0] as const;
       }),
     )))).subscribe({
-      next: (next) => {
-        cachedActivity = next;
-        setActivity(next);
-      },
+      next: setActivity,
       error: (error) => {
         console.error('[useRecentChats] 最近会话查询失败', error);
         toast.error('最近会话加载失败，请刷新重试');

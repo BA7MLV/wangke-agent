@@ -1,7 +1,7 @@
 /* eslint-disable no-console */
 // 首页（Library）迁移到 mdui 后的回归套件。这一页是阶段 2 的主体，
 // 但 17 个既有脚本只把它当「进播放页的跳板」（找个视频行点「学习」），
-// 库页自身的交互（分组 / 移动 / 折叠 / 两步删除 / 拖拽）没有被任何脚本覆盖。
+// 库页自身的交互（分组 / 移动 / 折叠 / 删除 / 拖拽）没有被任何脚本覆盖。
 //
 // 这里守的都是**构建与类型检查都抓不到**的静默失败：
 //   - 行内容整块不渲染（阶段 1 踩过 mdui-list-item 的 slot 坑，本页改用自建行）；
@@ -156,28 +156,16 @@ await page.waitForTimeout(1200);
 check((await groupKeys()).length === 1, '文件夹删除后只剩未分类组');
 check((await rowsInGroup('__uncat__')) === 1, '文件夹里的视频回到了未分类');
 
-// ── 11. 两步删除：先删文件、再删记录 ─────────────────────────────────────
+// ── 11. 删除资源：一次删除文件及全部学习内容 ───────────────────────────────
 // 注意：mdui-dialog 的 headline / description 渲染在**shadow DOM** 里，
 // 对宿主元素取 innerText 是拿不到的（实测）——要用能穿透 shadow 的文本定位。
 await rows.first().locator('[data-testid="btn-delete"]').click();
 await dlg.waitFor({ state: 'attached', timeout: 5000 });
-check((await dlg.getByText('删除视频文件').count()) > 0, '第一步确认框问的是「删除视频文件」');
-check((await dlg.getByText('仅删除视频本体').count()) > 0, '第一步确认框说明了后果');
+check((await dlg.getByText('删除该资源').count()) > 0, '确认框问的是「删除该资源」');
+check((await dlg.getByText('文件、字幕、讲义、问答记录').count()) > 0, '确认框说明会删除全部内容');
 await dlg.locator('mdui-button[slot="action"]').last().click();
 await page.waitForTimeout(1500);
-check((await rows.count()) === 1, '第一步删除后记录仍在（字幕/讲义保留）');
-check(/文件已删/.test(await rows.first().innerText()), '行上出现「文件已删」标记');
-
-await rows.first().locator('[data-testid="btn-delete"]').click();
-await dlg.waitFor({ state: 'attached', timeout: 5000 });
-check((await dlg.getByText('彻底删除该记录').count()) > 0, '第二步确认框问的是「彻底删除该记录」');
-check(
-  (await dlg.locator('mdui-button[slot="action"]').last().innerText()) === '彻底删除',
-  '危险操作的确认按钮文案是动作词',
-);
-await dlg.locator('mdui-button[slot="action"]').last().click();
-await page.waitForTimeout(1500);
-check((await rows.count()) === 0, '彻底删除后视频行消失');
+check((await rows.count()) === 0, '一次删除后视频行消失');
 check(await page.locator('[data-testid="empty-state"]').count() === 1, '回到空状态');
 
 await page.screenshot({ path: 'e2e-shots/library-e2e-final.png' });

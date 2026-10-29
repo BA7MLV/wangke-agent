@@ -62,7 +62,7 @@ import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
 import { canUpdateQuizPick, quizHistoryContent, type QuizPick } from '../harness/quiz';
 import WidgetMessage from './WidgetMessage';
-import StreamingHtmlPreview from './StreamingHtmlPreview';
+import CodeBlock from './CodeBlock';
 import { ArtifactEditProvider } from './ArtifactEditor';
 import AssistantContent from './AssistantContent';
 import { useResolvedDark } from '../ui/theme';
@@ -136,6 +136,7 @@ interface ChatMsg {
   widgetPreview?: { html: string };
   /** 落库后的 chats 行 id（作答状态回写用） */
   rowId?: number;
+  taskId?: string;
   streaming?: boolean;
   error?: boolean;
 }
@@ -858,13 +859,26 @@ export default function ChatPanel({
       if (!dataChanged && !task) return;
       const signature = JSON.stringify([task?.id, task?.status, task?.progress]);
       if (!dataChanged && signature === previous) return;
+      if (running && !await (await import('../cloud/tasks')).syncTaskWidgets(task.progress)) return;
       previous = signature;
       const page = await readChatPage(activeId);
       if (cancelled || localRequest.current) return;
-      const messages: ChatMsg[] = page.rows.map(row => ({ ...row, key: `h-${row.id}`, rowId: row.id, role: row.role === 'user' ? 'user' : 'ai' }));
-      if (running) messages.push({ key: `cloud-${task.id}`, role: 'ai', content: String(task.progress?.content ?? ''), reasoning: String(task.progress?.reasoning ?? ''), streaming: true });
+      const messages: ChatMsg[] = page.rows.filter(row => !running || row.taskId !== task.id || row.role !== 'assistant')
+        .map(row => ({ ...row, key: `h-${row.id}`, rowId: row.id, role: row.role === 'user' ? 'user' : 'ai' }));
+      if (running) messages.push({ key: `cloud-${task.id}`, taskId: task.id, role: 'ai', content: String(task.progress?.content ?? ''), reasoning: String(task.progress?.reasoning ?? ''),
+        rowId: typeof task.progress?.rowId === 'number' ? task.progress.rowId : undefined,
+        tools: Array.isArray(task.progress?.tools) ? task.progress.tools as ChatToolCall[] : undefined,
+        widgets: Array.isArray(task.progress?.widgets) ? task.progress.widgets as WidgetPayload[] : undefined,
+        widgetPreview: task.progress?.widgetPreview as { html: string } | undefined, streaming: true });
       else if (task && ['failed', 'interrupted', 'cancelled'].includes(task.status)) messages.push({ key: `cloud-${task.id}`, role: 'ai', content: task.error || '任务已停止，可重新提问。' });
-      setMsgs(messages); setHasOlder(page.hasOlder); setLoading(Boolean(running)); setLoadedSessionId(activeId);
+      // Reconciliation must not remount an already opened iframe when the
+      // in-flight message becomes a synced history row.
+      setMsgs(current => messages.map(message => {
+        const existing = current.find(item => item.role === message.role && (
+          message.rowId != null && item.rowId === message.rowId || message.taskId && item.taskId === message.taskId));
+        return existing ? { ...message, key: existing.key } : message;
+      }));
+      setHasOlder(page.hasOlder); setLoading(Boolean(running)); setLoadedSessionId(activeId);
     };
     const listener = (event: Event) => { void refresh(event).catch(() => setHistoryError(true)); };
     window.addEventListener('cloud-tasks-changed', listener);
@@ -1143,12 +1157,17 @@ export default function ChatPanel({
           materialKind, materialFormat, refsCount: curRefs.length, shotCount: curShots.length,
           images: curShots.flatMap(s => [{ type: 'text' as const, text: shotTag(s) }, { type: 'image_url' as const, image_url: { url: s.dataUrl } }]),
         }, { signal: abort.signal,
+          onPersist: rowId => patchAi({ rowId }),
+          onWidgetPreview: preview => patchAi({ widgetPreview: preview }),
           onTools: tools => patchAi({ tools, hint: tools.at(-1)?.status === 'running' ? tools.at(-1)?.name : undefined }),
           onDelta: text => { answer += text; updates.stream({ content: answer, processPhase: 'answering' }); },
           onReasoning: text => { reasoning += text; updates.stream({ reasoning, processPhase: 'thinking' }); },
           onRoundStart: () => { answer = ''; patchAi({ content: '' }); },
+          onCard: card => {
+            if (card.kind === 'widget') { widgets.push(card.widget); patchAi({ widgets: [...widgets], widget: card.widget }); }
+          },
         });
-        patchAi({ ...result, streaming: false, hint: undefined });
+        patchAi({ ...result, streaming: false, hint: undefined, widgetPreview: undefined });
         return;
       }
       // 用户消息立即落库：tier 2 描述可能耗时数秒，避免期间关页丢失已上屏消息
@@ -1887,7 +1906,7 @@ export default function ChatPanel({
                           />
                         )}
                         {m.widgetPreview && (
-                          <StreamingHtmlPreview html={m.widgetPreview.html} />
+                          <CodeBlock source={m.widgetPreview.html} language="html" />
                         )}
                   </div>
                   </ArtifactEditProvider>

@@ -9,7 +9,8 @@ export function normalizeFeishu(event: any): GatewayEnvelope {
   const m = event.message ?? {}, sender = event.sender ?? {};
   let content: any = {}; try { content = JSON.parse(m.content ?? '{}'); } catch { /* reject invalid content */ }
   const attachments: NonNullable<GatewayEnvelope['attachments']> = [];
-  if (m.message_type === 'image' && content.image_key) attachments.push({ key: content.image_key, name: 'image.png', mime: 'image/png' });
+  // The platform has no original image name. Name it after download, not as a guessed PNG.
+  if (m.message_type === 'image' && content.image_key) attachments.push({ key: content.image_key, name: '', mime: 'image/png' });
   if (m.message_type === 'file' && content.file_key) attachments.push({ key: content.file_key, name: String(content.file_name ?? 'attachment'), mime: 'application/octet-stream' });
   return { messageId: m.message_id ?? '', tenant: sender.tenant_key ?? event.tenant_key ?? '', peer: sender.sender_id?.open_id ?? '', chat: m.chat_id ?? '', topic: '',
     direct: m.chat_type === 'p2p', human: sender.sender_type === 'user', text: typeof content.text === 'string' ? content.text : '', attachments };

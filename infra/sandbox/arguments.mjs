@@ -17,7 +17,7 @@ export function sandboxArgs({ threadId, projectId, executionId, command, network
   return ['run', '--rm', '--name', `wangke-exec-${executionId}`, '--label', 'wangke.sandbox=true',
     '--init', '--user', `${uid}:${gid}`, '--cap-drop=ALL', '--security-opt=no-new-privileges:true',
     '--read-only', '--pids-limit=128', '--memory=1g', '--memory-swap=1g', '--cpus=1',
-    '--network', filePath === undefined && network ? process.env.SANDBOX_NETWORK || 'none' : 'none', '--tmpfs', '/tmp:rw,nosuid,size=256m',
+    '--network', filePath === undefined && network ? process.env.SANDBOX_NETWORK || 'bridge' : 'none', '--tmpfs', '/tmp:rw,nosuid,size=256m',
     '--mount', filePath === undefined ? mount : `${mount},readonly`, '--workdir', '/workspace', '--env', 'HOME=/workspace',
     process.env.SANDBOX_IMAGE || 'wangke-sandbox:0.1.0',
     'timeout', '--signal=KILL', '120', ...(filePath === undefined ? ['bash', '-lc', command] : ['python3', '-I', '-c', workspaceFileReader, workspacePath(filePath)])];

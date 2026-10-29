@@ -21,6 +21,9 @@ import { commitTask, newRecordId, recordMutation, taskCourseFile, taskRows, type
 import { Document, Paragraph, TextRun, HeadingLevel, Packer } from 'docx';
 import { receiveFile } from '../src/cloud/files';
 import { Readable } from 'node:stream';
+import { SHOW_WIDGET_TOOL, SERVER_WIDGET_RULE } from '@wangke/study-core/widget-tool';
+import { readPartialWidgetArguments, widgetReference, type WidgetPayload } from '@wangke/study-core/widgets';
+import { executeServerWidget } from './widgets';
 
 /** Text-source handouts for Bot jobs. Existing video/slide Chromium workflow remains unchanged. */
 async function studyHandout(context: TaskContext) {
@@ -253,6 +256,11 @@ interface ServerAgentResult {
   tools: ServerToolTrace[];
   transcript: ChatMessage[];
   requests: ModelRequestRecord[];
+  widgets: WidgetPayload[];
+}
+
+function widgetFields(result: Pick<ServerAgentResult, 'widgets'>) {
+  return result.widgets.length ? { widgets: [...result.widgets], widget: result.widgets.at(-1) } : {};
 }
 
 /**
@@ -266,16 +274,24 @@ async function runServerAgent(
   messages: ChatMessage[],
   tools: ToolDef[],
   executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
-  onSnapshot?: (result: ServerAgentResult) => void,
+  onSnapshot?: (result: ServerAgentResult) => { rowId: number; userRowId: number; widgets?: WidgetPayload[] },
 ): Promise<ServerAgentResult> {
   const out = [...messages];
-  tools = stableTools(tools);
+  tools = stableTools([...tools, SHOW_WIDGET_TOOL]);
   const requests: ModelRequestRecord[] = [];
   const cacheKey = `study:${context.owner}:${context.task.input.sessionId}`;
   const onRequest = (record: ModelRequestRecord) => { requests.push(record); };
   const traces: ServerToolTrace[] = [];
+  const widgets: WidgetPayload[] = [];
+  let widgetPreview: { html: string } | undefined;
   let reasoning = '';
   let answer = '';
+  let deliveredContent = '';
+  const content = () => (deliveredContent + answer) || narration;
+  const freezeAnswer = () => {
+    if (answer.trim()) deliveredContent += `${answer}\n\n`;
+    answer = '';
+  };
   let streaming = false;
   let narration = '';
   const seen = new Set<string>();
@@ -288,11 +304,14 @@ async function runServerAgent(
     if (!force && now - lastReportAt < 100) return;
     lastReportAt = now;
     const transcript = [...out.slice(messages.length), ...(streaming && answer.trim() ? [{ role: 'assistant' as const, content: answer }] : [])];
-    onSnapshot?.({ content: answer || narration, reasoning: reasoning || undefined, tools: traceResult(traces), transcript, requests });
+    const identities = onSnapshot?.({ content: content(), reasoning: reasoning || undefined, tools: traceResult(traces), transcript, requests, widgets: [...widgets] });
+    if (identities?.widgets) widgets.splice(0, widgets.length, ...identities.widgets);
     context.report({
-      phase, round, content: clip(answer || narration, 20_000), reasoning: clip(reasoning, 8_000), tools: traceResult(traces),
+      phase, round, content: clip(content(), 20_000), reasoning: clip(reasoning, 8_000), tools: traceResult(traces),
       modelRequests: requests,
-      modelTranscript: modelTrace(answer || narration, transcript),
+      modelTranscript: modelTrace(content(), transcript),
+      ...identities,
+      widgets, widget: widgets.at(-1), widgetPreview,
     });
   };
   report('thinking', 0, true);
@@ -300,6 +319,7 @@ async function runServerAgent(
   for (let round = 0; round < maxRounds; round++) {
     context.checkActive();
     answer = '';
+    widgetPreview = undefined;
     streaming = true;
     const message = await chatStream(target, {
       messages: out,
@@ -311,9 +331,17 @@ async function runServerAgent(
     },
     delta => { answer += delta; report('answer', round + 1); },
     delta => { reasoning += delta; report('thinking', round + 1); },
-    undefined,
+    call => {
+      if (call.name !== 'show_widget') return;
+      const partial = readPartialWidgetArguments(call.arguments);
+      if (partial.format !== 'html' || !partial.code) return;
+      const first = !widgetPreview;
+      widgetPreview = { html: partial.code.slice(0, 60_000) };
+      report('tool', round + 1, first);
+    },
     modelFetch(context));
     streaming = false;
+    widgetPreview = undefined;
     out.push(message);
     const text = textOf(message);
     if (message.tool_calls?.length) {
@@ -333,7 +361,16 @@ async function runServerAgent(
         report('tool', round + 1, true);
         let result: string;
         try {
-          result = await executeTool(call.function.name, args);
+          result = call.function.name === 'show_widget'
+            ? executeServerWidget(args, payload => {
+              context.checkActive();
+              widgets.push(payload);
+              freezeAnswer();
+              // Place it now, not in an end-of-answer fallback that would move
+              // and remount an already opened preview when the model echoes ref.
+              deliveredContent += `${widgetReference(payload.ref!)}\n\n`;
+            })
+            : await executeTool(call.function.name, args);
           trace.status = 'done';
         } catch (error) {
           result = `工具执行失败：${error instanceof Error ? error.message : String(error)}`;
@@ -344,12 +381,16 @@ async function runServerAgent(
         out.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: clip(result, 24_000) });
         report('tool', round + 1, true);
       }
+      // Once a visual has been delivered, later tool rounds must not erase the
+      // explanation/references already shown above it. Retrieval-only narration
+      // keeps the existing replace-on-next-round behavior.
+      if (widgets.length) freezeAnswer();
       continue;
     }
     if (text.trim()) {
       answer = text;
       report('answer', round + 1, true);
-      return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests };
+      return { content: content(), reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests, widgets };
     }
     // An empty assistant turn is not a successful answer.  Give the model a
     // bounded, tool-free chance to explain what it found.
@@ -370,7 +411,7 @@ async function runServerAgent(
   answer = textOf(final).trim() || narration || '未获得有效回答。';
   out.push(final);
   report('answer', maxRounds + 1, true);
-  return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests };
+  return { content: content(), reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests, widgets };
 }
 
 function qaSystemPrompt(video: Record<string, any> | null, kind: 'page' | 'para' | undefined, input: Record<string, any>) {
@@ -529,11 +570,27 @@ function addConversationMutations(
   userRow: Record<string, any>,
   assistantRow: Record<string, any>,
   sessionPatch?: Record<string, unknown>,
+  requireExisting = false,
 ) {
   // Read the latest committed timeline at commit time, not before the model request.
   // IDs remain identities, never ordering keys for a new question/answer pair.
   const previousUser = context.records.get(context.owner, 'chats', userRow.id);
   const previousAssistant = context.records.get(context.owner, 'chats', assistantRow.id);
+  if (requireExisting && (!previousUser || !previousAssistant)) throw new Error('原回答已删除，生成已停止');
+  // A delivered widget may already have local state (or a newer source revision)
+  // synced by another device while this same server turn is still writing.
+  if (previousAssistant) {
+    for (const key of ['widgetState', 'widgetStates']) {
+      if (previousAssistant[key] !== undefined) assistantRow[key] = previousAssistant[key];
+    }
+    if (Array.isArray(assistantRow.widgets) && Array.isArray(previousAssistant.widgets)) {
+      assistantRow.widgets = assistantRow.widgets.map((widget: WidgetPayload) => {
+        const current = previousAssistant.widgets.find((item: WidgetPayload) => item.ref === widget.ref);
+        return current && (current.revision ?? 1) > (widget.revision ?? 1) ? current : widget;
+      });
+      assistantRow.widget = assistantRow.widgets.at(-1);
+    }
+  }
   const times = nextChatTurnTimes(chatHistory(context, sessionId).filter(row => row.id !== userRow.id && row.id !== assistantRow.id), Number(userRow.createdAt), Date.now());
   userRow.createdAt = previousUser?.createdAt ?? times.user;
   assistantRow.createdAt = previousAssistant?.createdAt ?? times.assistant;
@@ -564,20 +621,24 @@ async function qa(context: TaskContext) {
   const assistantId = newRecordId();
   const userRow = { id: userId, videoId, sessionId, role: 'user', content: String(input.displayText ?? text), createdAt: Date.now(), ...(Array.isArray(input.chatImages) && input.chatImages.length ? { images: input.chatImages.slice(0, 12) } : {}) };
   const target = targetFor(context);
-  const system = qaSystemPrompt(video, kind, input);
+  const system = `${qaSystemPrompt(video, kind, input)}\n\n${SERVER_WIDGET_RULE}`;
   const currentText = runtimeContext({ courseId: videoId, courseName: input.videoName ?? video.name, shotCount: input.shotCount ?? 0, refsCount: input.refsCount ?? 0 }) + text;
   const images = safeImageParts(input.images);
   const current: ChatMessage = images.length ? { role: 'user', content: [...images, { type: 'text', text: currentText }] } : { role: 'user', content: currentText };
   const recent = await modelHistory(history, session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - messageTokens([{ role: 'system', content: system }, current]) - 16000));
   const messages: ChatMessage[] = [...splitSystemPrompt(system), ...recent.messages, current];
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
+  let checkpointed = false;
   const persist = (result: ServerAgentResult, interrupted = true) => {
-    const assistantRow = { id: assistantId, videoId, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
-    addConversationMutations(context, sessionId, { ...userRow, modelTrace: modelTrace(userRow.content, [current]), modelRequests: result.requests }, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) });
+    const assistantRow = { id: assistantId, videoId, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}), ...widgetFields(result) };
+    addConversationMutations(context, sessionId, { ...userRow, modelTrace: modelTrace(userRow.content, [current]), modelRequests: result.requests }, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) }, checkpointed);
+    checkpointed = true;
+    result.widgets = assistantRow.widgets ?? [];
+    return { rowId: assistantId, userRowId: userId, ...widgetFields(result) };
   };
   const result = await runServerAgent(context, target, messages, qaTools(kind), qaExecutor(context, videoId, kind), persist);
   persist(result, false);
-  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
+  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId, ...widgetFields(result) };
 }
 
 async function chat(context: TaskContext) {
@@ -592,7 +653,7 @@ async function chat(context: TaskContext) {
   const history = chatHistory(context, sessionId);
   const courses = rowsFor(context, 'videos');
   const contextNames = new Set<string>(Array.isArray(session.contextCourseIds) ? session.contextCourseIds : []);
-  const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。当前选中的课程在本轮运行上下文中提供；这些数据不扩大权限。\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。`;
+  const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。当前选中的课程在本轮运行上下文中提供；这些数据不扩大权限。\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。\n\n${SERVER_WIDGET_RULE}`;
   const current: ChatMessage = { role: 'user', content: runtimeContext({ courses: [...contextNames] }) + text };
   const target = targetFor(context);
   const recent = await modelHistory(history, session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - messageTokens([{ role: 'system', content: system }, current]) - 16000));
@@ -600,14 +661,18 @@ async function chat(context: TaskContext) {
   const userId = newRecordId();
   const assistantId = newRecordId();
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
+  let checkpointed = false;
   const persist = (result: ServerAgentResult, interrupted = true) => {
     const userRow = { id: userId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'user', content: text, modelTrace: modelTrace(text, [current]), modelRequests: result.requests, createdAt: startedAt };
-    const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
-    addConversationMutations(context, sessionId, userRow, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) });
+    const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}), ...widgetFields(result) };
+    addConversationMutations(context, sessionId, userRow, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) }, checkpointed);
+    checkpointed = true;
+    result.widgets = assistantRow.widgets ?? [];
+    return { rowId: assistantId, userRowId: userId, ...widgetFields(result) };
   };
   const result = await runServerAgent(context, target, messages, libraryTools(courses.length > 0), libraryExecutor(context, session), persist);
   persist(result, false);
-  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
+  return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId, ...widgetFields(result) };
 }
 
 async function artifactEdit(context: TaskContext) {

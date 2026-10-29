@@ -166,7 +166,11 @@ const META = {
   // show_widget 的纯逻辑：入参校验 + 两条回执文案。守住「拒绝时必须给出可执行的改法」——
   // 净化层的报错原文（已阻止渲染）对模型没有可操作性，那这工具就只是一块会说「不行」的牌子。
   // 「它是否真的走了渲染层同一个净化函数」由 probe-svg-sanitize 守（要真浏览器）。
-  'test-widget': { service: 'none', antd: false, timeout: 120 },
+  'test-widget': { service: 'none', antd: false, timeout: 120, tsx: true },
+  // Native API executor tests consume build:api; the full browser chain also
+  // consumes build:web and owns its own isolated API + production preview.
+  'test-server-widgets': { service: 'none', antd: false, timeout: 120, tsx: true },
+  'e2e-server-widgets': { service: 'none', antd: false, timeout: 180, tsx: true },
   'test-widget-runtime': { service: 'none', antd: false, timeout: 120, tsx: true },
   'test-streaming-html': { service: 'none', antd: false, timeout: 120, tsx: true },
   'test-html-answer-dom': { service: 'none', antd: false, timeout: 120 },
@@ -175,6 +179,7 @@ const META = {
   'e2e-chat-html-sequence': { service: 'dev', antd: false, timeout: 180, base: true },
   'e2e-artifact-edit': { service: 'dev', antd: false, timeout: 180, base: true },
   'e2e-widget-protocol': { service: 'dev', antd: false, timeout: 180, base: true },
+  'e2e-code-toolbar': { service: 'dev', antd: false, timeout: 180, base: true },
   'test-ask-visual': { service: 'none', antd: false, timeout: 120 },
   'e2e-ask-visual': { service: 'dev', antd: false, timeout: 180, base: true },
   'e2e-widget-reading': { service: 'dev', antd: false, timeout: 180, base: true },
@@ -353,7 +358,7 @@ const META = {
   'e2e-handout-position': { service: 'preview', antd: false, base: true, timeout: 300 },
   'e2e-import-insecure': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-import': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
-  // 首页自身交互（分组 / 移动 / 折叠 / 两步删除 / 拖拽）—— 既有脚本只把首页当跳板，没覆盖这些
+  // 首页自身交互（分组 / 移动 / 折叠 / 删除 / 拖拽）—— 既有脚本只把首页当跳板，没覆盖这些
   'e2e-library': { service: 'preview', antd: false, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   // 库页「长说明收进问号」：点问号不能冒泡开文件选择器 / 气泡不能塌成竖条 / 长说明不能铺回正文。
   // 不需要 key，也不需要测试视频（空库就能验），所以不带 testFile。

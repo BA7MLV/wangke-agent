@@ -1,0 +1,43 @@
+.code-block {
+  min-width: 0;
+  max-width: 100%;
+  margin: .75rem 0;
+  border-radius: var(--radius-lg);
+  background: var(--default);
+  color: var(--foreground);
+  /* Do not clip this shell: the toolbar sticks to the message scrollport. */
+}
+
+.code-block__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 44px;
+  padding: 4px 8px 4px 16px;
+  border-radius: var(--radius-lg) var(--radius-lg) 0 0;
+  background: var(--default);
+  color: var(--muted);
+  font-size: .75rem;
+  line-height: 1.5;
+}
+
+.code-block__language { font-family: var(--font-mono, monospace); }
+.code-block__content { min-width: 0; }
+.code-block__source {
+  margin: 0;
+  padding: 12px 16px 16px;
+  overflow-x: auto;
+  white-space: pre;
+  tab-size: 2;
+  font-family: var(--font-mono, monospace);
+  font-size: .8125rem;
+  line-height: 1.75;
+}
+.code-block__source code { padding: 0; margin: 0; font: inherit; }
+.code-block__preview { padding: 8px 16px 16px; }
+.code-block__preview[hidden], .code-block__source[hidden] { display: none; }
+
+@media (pointer: coarse) {
+  .code-block__header button { min-width: 44px; min-height: 44px; }
+}

@@ -11,8 +11,6 @@ import {
   ToggleButtonGroup,
   Tooltip,
 } from '@heroui/react';
-import { useAppNav } from '../components/appNav';
-import { useRecentChats } from '../components/useRecentChats';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
 import ChatAddMenu from '../components/ChatAddMenu';
@@ -34,7 +32,7 @@ import ChatSyncStatus from '../components/ChatSyncStatus';
 import { db } from '../store/db';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
-import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
+import CodeBlock from '../components/CodeBlock';
 import { ArtifactEditProvider } from '../components/ArtifactEditor';
 import AssistantContent from '../components/AssistantContent';
 import { readChatHistory } from '../store/chatHistory';
@@ -56,7 +54,6 @@ import { useMediaQuery } from '../utils/useMobile';
 import { messageTime } from '../utils/messageTime';
 import { chatGreeting } from '../utils/chatGreeting';
 import { PageShell, Sym, toast, useResolvedDark, useSkeletonGate } from '../ui';
-import { SettingsButton } from '../components/SettingsModal';
 import { useBotPanel } from '../store/botPanel';
 import { useImeEnter } from '../utils/imeEnter';
 import './course-chat.css';
@@ -494,7 +491,6 @@ export default function CourseChat() {
   const [welcomeGreeting] = useState(() => chatGreeting());
   const [importDismissed, setImportDismissed] = useState(false);
   const navigate = useNavigate();
-  const nav = useAppNav('chat');
   const listRef = useRef<HTMLDivElement | null>(null);
   /**
    * 输入框元素。两件事要用它：
@@ -576,13 +572,11 @@ export default function CourseChat() {
   const pendingPlan = useCourseChat((s) => s.pendingPlan);
   const generating = loading && pendingAsk == null && pendingPlan == null;
   const planApplying = useCourseChat((s) => s.planApplying);
-  const bootstrap = useCourseChat((s) => s.bootstrap);
   const refreshCourseCount = useCourseChat((s) => s.refreshCourseCount);
   const loadSession = useCourseChat((s) => s.loadSession);
   const createSession = useCourseChat((s) => s.createSession);
   const removeMessage = useCourseChat((s) => s.deleteMessage);
   const { deleteMessage, deleting } = useMessageDeletion(listRef, activeId, (key) => removeMessage(key, activeId));
-  const recent = useRecentChats(true);
   const botOpen = useBotPanel((state) => state.open);
   const setBotOpen = useBotPanel((state) => state.setOpen);
   const setDraft = useCourseChat((s) => s.setDraft);
@@ -627,10 +621,6 @@ export default function CourseChat() {
       cancelled = true;
     };
   }, [skillIds]);
-
-  useEffect(() => {
-    void bootstrap();
-  }, [bootstrap]);
 
   // 每次挂载都重新数一次课程：`courseCount` 是 bootstrap 时的快照，
   // 而「去课程库导入 → 切回对话页」是这里的常规动线，刷新晚了空状态会一直停在
@@ -817,15 +807,8 @@ export default function CourseChat() {
   /** 顶栏标题跟着当前会话走：标题栏写死「课程助手」的话，用户在 Recent 里切了会话，
       顶栏毫无反应，分不清自己看的是哪一段对话。 */
   const activeSession = sessions.find((session) => session.id === activeId);
-  /**
-   * 顶栏标题。
-   *
-   * 草稿态（`activeId == null`，会话还没落库）**留空**：顶栏标题这一栏回答的是
-   * 「我在看哪条会话」，草稿态还没有会话，写「新会话」等于给一行还没写下的东西起名。
-   * 用户口径（2026-10-16）：新会话默认**不在顶栏显示「新会话」**。
-   * 找不到行（不该发生）时仍然退回页面名，不编一个假标题。
-   */
-  const activeTitle = activeSession?.title ?? (activeId == null ? '' : 'AI 助手');
+  // 草稿态是主页，不给尚未创建的会话编一个标题。
+  const activeTitle = activeSession?.title ?? (activeId == null ? '主页' : 'AI 助手');
   /**
    * 本轮循环是否还活着（或卡片是否**从断点恢复**成了可答）：两张卡的 `active` 由
    * `pendingAsk` / `pendingPlan` 的 `messageKey` 是否对上这条消息决定。刷新后从库里读回的卡
@@ -896,18 +879,12 @@ export default function CourseChat() {
       title={activeTitle}
       fill
       rootClassName="page-course-chat"
-      rail={nav}
-      /* 侧栏顶部**没有身份块**：上一版按 showcase 截图恢复过一块
-         「网课学习助手 / 本机课程库 · N 门课程」，被用户当场否掉（2026-10-14 同日修订）。
-         这块位置现在直接是主导航 —— 见 docs/plans/2026-10-14-对话页改版-design.md §2.3。 */
-      recent={recent}
-      railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}
       actions={<>
         {isNarrow && (
           <Button
             isIconOnly
             variant="tertiary"
-            className="course-chat__new-chat"
+            className="page-shell__toolbar-button course-chat__new-chat"
             aria-label="新会话"
             data-testid="chat-new-session"
             onPress={() => { void createSession(); }}
@@ -950,9 +927,10 @@ export default function CourseChat() {
                 {coursesLoading ? (
                   <CourseCountSkeleton />
                 ) : courseCount == null && !coursesStuck ? null : (
-                  <>
-                    <h2 className="t-stagger-line">{welcomeGreeting}</h2>
-                  </>
+                  <div className="course-chat__welcome t-stagger-line">
+                    <h2>{welcomeGreeting}</h2>
+                    <p>{courseCount ? '围绕你的资料提问，或从一个新想法开始。' : '提问、梳理思路，或添加资料一起学习。'}</p>
+                  </div>
                 )}
               </div>
             )}
@@ -1032,7 +1010,7 @@ export default function CourseChat() {
                         )}
                         </WidgetMessage>
                         {message.widgetPreview && (
-                          <StreamingHtmlPreview html={message.widgetPreview.html} />
+                          <CodeBlock source={message.widgetPreview.html} language="html" />
                         )}
                         </ArtifactEditProvider>
                         {!message.content && (message.ask || message.folderPlan) && <div aria-hidden="true" data-chat-answer-start="" />}
@@ -1162,8 +1140,8 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            {/* 空库导入入口与输入卡叠成一组；只改入口外观，不限制直接聊天。 */}
-            {welcomeReady && !hasCourses && !importDismissed && (
+            {/* 文件夹入口默认与输入卡叠成一组，不随课程数量或会话内容隐藏。 */}
+            {!importDismissed && (
               <div className="course-chat__import" data-testid="chat-import-strip">
                 <Button
                   className="course-chat__import-label"
@@ -1172,13 +1150,13 @@ export default function CourseChat() {
                   data-testid="chat-go-import"
                 >
                   <Sym name="folder" aria-hidden="true" />
-                  <span>导入课程</span>
+                  <span>选择项目</span>
                 </Button>
                 <Button
                   isIconOnly
                   className="course-chat__import-close"
                   variant="ghost"
-                  aria-label="关闭导入课程提示"
+                  aria-label="关闭项目入口"
                   data-testid="chat-import-close"
                   onPress={() => {
                     setImportDismissed(true);

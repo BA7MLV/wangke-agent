@@ -15,6 +15,7 @@ const formats: Record<string, string> = { md: 'md', markdown: 'md', pdf: 'pdf', 
 const video = new Set(['mp4', 'mov', 'm4v', 'webm', 'mkv', 'avi', 'flv', 'ts', 'm2ts', 'mpeg', 'mpg', 'wmv', '3gp', 'rmvb', 'rm']);
 const mime: Record<string, string> = { md: 'text/markdown', pdf: 'application/pdf', docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', html: 'text/html' };
 const videoExtension: Record<string, string> = { 'video/webm': '.webm', 'video/quicktime': '.mov', 'video/x-matroska': '.mkv' };
+const learningTables = ['videos', 'files', 'segments', 'subtitleTracks', 'frames', 'handouts', 'chats', 'chatSessions', 'materialBlocks', 'materialInk', 'covers', 'comments', 'danmakus', 'cards', 'courseFiles'];
 
 /** Files are authoritative; learning records are stable IDs and derived indexes.
  * Existing project directories/grants stay in place. Legacy blobs are copied once,
@@ -285,6 +286,31 @@ export class ResourceFiles {
     this.projects.files.write(mapped.project_id, mapped.path, text, current.revision);
     this.invalidate(owner, id);
     return { revision: this.remember(owner, id, mapped.project_id, mapped.path, mapped.source_file) };
+  }
+  /** Delete a resource and its learning records as one Resource Library action. */
+  remove(owner: string, projectId: string, filename: string, expected: string) {
+    this.migrate(owner);
+    this.projects.writable(owner, projectId); this.projects.assertIdle(projectId);
+    const placement = this.db.prepare('SELECT * FROM resource_files WHERE owner_id=? AND project_id=? AND path=?').get(owner, projectId, filename) as Placement | undefined;
+    const courseId = placement?.course_id;
+    const mutations: Array<{ id: string; table: string; key: string | number; before: Record<string, any>; after: null }> = [];
+    if (courseId) {
+      for (const table of learningTables) {
+        for (const row of this.rows(owner, table)) {
+          const matches = table === 'materialInk'
+            ? row.materialId === courseId
+            : row.id === courseId || row.videoId === courseId || row.materialId === courseId;
+          if (!matches) continue;
+          const key = table === 'covers' ? row.videoId : row.id;
+          if (typeof key !== 'string' && typeof key !== 'number') continue;
+          mutations.push({ id: crypto.randomUUID(), table, key, before: row, after: null });
+        }
+      }
+    }
+    // Validate and remove the authoritative file first. A conflict leaves all learning records intact.
+    this.projects.files.remove(projectId, filename, expected);
+    if (mutations.length) this.records.apply(owner, mutations);
+    if (courseId) this.db.prepare('DELETE FROM resource_files WHERE owner_id=? AND course_id=?').run(owner, courseId);
   }
   move(owner: string, id: string, filename: string, targetId: string, target: string, revision: string) {
     this.projects.writable(owner, id); this.projects.writable(owner, targetId);

@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { openWidgetPreviews } from './helpers/widget-preview.mjs';
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 const shots = new URL('../e2e-shots/', import.meta.url);
 await mkdir(shots, { recursive: true });
@@ -36,6 +37,8 @@ try {
   });
   const frame = () => page.getByTestId('widget-frame').contentFrame();
   const height = () => page.getByTestId('widget-block').getAttribute('data-h').then(Number);
+  await page.getByTestId('code-block').waitFor();
+  await openWidgetPreviews(page);
   await frame().getByRole('button', { name: '展开', exact: true }).waitFor();
   await page.waitForFunction(() => Number(document.querySelector('[data-testid="widget-block"]').dataset.h) > 200);
   const small = await height(); assert.ok(small < 450, 'fixed tooltip is excluded');
@@ -74,6 +77,8 @@ try {
   await page.evaluate(async id => (await window.__readingImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), ids.otherId);
   await page.getByTestId('widget-frame').waitFor({ state: 'detached' });
   await page.evaluate(async id => (await window.__readingImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), ids.sessionId);
+  await page.getByTestId('code-block').waitFor();
+  await openWidgetPreviews(page);
   await frame().getByRole('button', { name: '展开', exact: true }).waitFor();
   const initial = await page.evaluate(() => window.__initialHeights);
   assert.ok(initial.some(value => value >= small - 2), `remount restores height, got ${initial}`);

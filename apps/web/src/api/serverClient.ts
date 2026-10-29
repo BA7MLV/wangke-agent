@@ -73,6 +73,7 @@ export const serverClient = {
   projectDirectory: (id: string, path: string) => request<{ created: true }>(`/projects/${encodeURIComponent(id)}/directories?path=${encodeURIComponent(path)}`, { method: 'POST' }),
   uploadProjectFile: (id: string, path: string, file: File) => request<{ path: string; size: number }>(`/projects/${encodeURIComponent(id)}/uploads?path=${encodeURIComponent(path)}`, { method: 'POST', body: file, headers: { 'Content-Type': 'application/octet-stream' } }),
   deleteProjectFile: (id: string, path: string, revision: string) => request<{ deleted: true }>(`/projects/${encodeURIComponent(id)}/files?path=${encodeURIComponent(path)}&revision=${encodeURIComponent(revision)}`, { method: 'DELETE' }),
+  deleteResourceFile: (id: string, path: string, revision: string) => request<{ deleted: true }>(`/resources/file?projectId=${encodeURIComponent(id)}&path=${encodeURIComponent(path)}&revision=${encodeURIComponent(revision)}`, { method: 'DELETE' }),
   projectDownloadUrl: (id: string, path: string) => `${API_ROOT}/projects/${encodeURIComponent(id)}/download?path=${encodeURIComponent(path)}`,
   fileDownloadUrl: (id: string) => `${API_ROOT}/files/${encodeURIComponent(id)}`,
   thread: (id: string) => request<ThreadDetail>(`/threads/${encodeURIComponent(id)}`),

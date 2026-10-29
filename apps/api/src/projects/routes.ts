@@ -7,6 +7,8 @@ import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { ProjectRole } from '@wangke/contracts/projects';
 import { ProjectError } from './files.js';
 import { ProjectRepository } from './repository.js';
+import { uploadedImageMime } from '../cloud/image.js';
+import { imageFileName, safeFileName } from '../cloud/file-names.js';
 
 export function registerProjectRoutes(app: FastifyInstance, deps: {
   projects: ProjectRepository;
@@ -120,8 +122,12 @@ export function registerProjectRoutes(app: FastifyInstance, deps: {
         callback(size > deps.maxFileBytes ? new ProjectError('file_too_large_or_invalid', 413) : null, chunk);
       } }), fs.createWriteStream(temporary, { flags: 'wx', mode: 0o600 }));
       if (declared !== undefined && Number(declared) !== size) throw new ProjectError('file_too_large_or_invalid', 413);
+      const requested = request.query.path ?? '';
+      if (!requested || requested.endsWith('/')) throw new ProjectError('invalid_project_path');
+      const split = requested.lastIndexOf('/') + 1, leaf = requested.slice(split);
+      const mime = await uploadedImageMime(temporary, leaf, 'application/octet-stream');
+      const filename = requested.slice(0, split) + (mime ? imageFileName(leaf, mime, '图片') : safeFileName(leaf));
       writable(user.id, request.params.id);
-      const filename = request.query.path ?? '';
       projects.files.installUpload(request.params.id, filename, temporary);
       audit(user.id, 'project.file.uploaded', request.params.id);
       return reply.code(201).send({ path: filename, size });

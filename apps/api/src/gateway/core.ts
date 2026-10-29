@@ -3,7 +3,7 @@ import { Readable } from 'node:stream';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import type { BotApplicationService } from '../agent/service.js';
-import { receiveFile } from '../cloud/files.js';
+import { fileOperationId, receiveFile } from '../cloud/files.js';
 import { DeliveryError, type ChannelPlugin, type GatewayEnvelope, type GatewayPayload } from './plugin.js';
 import { cleanupGateway, gatewayLimits } from './retention.js';
 import { publishBotEvent } from '../agent/events.js';
@@ -436,14 +436,22 @@ export class GatewayCore {
             this.bot.append(b.thread_id, 'assistant', 'text', latest ? `最近的任务：${labels[latest.status] ?? latest.status}。` : '当前没有任务。');
           } else {
             const attachments: { fileId: string; originalName: string; mimeType: string; sizeBytes: number }[] = [];
-            for (const attachment of m.attachments ?? []) {
+            for (const [index, attachment] of (m.attachments ?? []).entries()) {
               if (!live.plugin.download) throw new Error('media_not_supported');
               const a = this.account(row.owner_id, row.account_id);
+              const id = fileOperationId(row.owner_id, `${row.account_id}:${row.id}`, `gateway:${index}`);
+              const saved = this.store.db.prepare('SELECT id,original_name AS originalName,mime_type AS mimeType,size_bytes AS sizeBytes FROM files WHERE id=? AND owner_id=?').get(id, row.owner_id) as { id: string; originalName: string; mimeType: string; sizeBytes: number } | undefined;
+              if (saved) { attachments.push({ fileId: saved.id, originalName: saved.originalName, mimeType: saved.mimeType, sizeBytes: saved.sizeBytes }); continue; }
               const media = await live.plugin.download(this.config(a), m, attachment, AbortSignal.any([controller.signal, live.controller.signal, AbortSignal.timeout(30_000)]));
-              controller.signal.throwIfAborted();
-              live.controller.signal.throwIfAborted();
-              if (!this.binding(row.account_id, m) || this.binding(row.account_id, m).revoked) throw new Error('binding_revoked');
-              const f = await receiveFile(this.store, this.filesDir, row.owner_id, Readable.from([media.bytes]), media.name.slice(0, 255), media.mime, 20 * 1024 * 1024);
+              const checkActive = () => {
+                controller.signal.throwIfAborted(); live.controller.signal.throwIfAborted();
+                if (!this.binding(row.account_id, m) || this.binding(row.account_id, m).revoked) throw new Error('binding_revoked');
+                if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(row.id) as any)?.status !== 'pending') throw new Error('inbound_cancelled');
+              };
+              checkActive();
+              const date = new Date(row.received_at).toISOString().slice(0, 10).replace(/-/g, '');
+              const fallback = `${a.channel === 'ilink' ? '微信' : '飞书'}${media.mime.startsWith('image/') ? '图片' : '附件'}_${date}_${id.slice(0, 8)}`;
+              const f = await receiveFile(this.store, this.filesDir, row.owner_id, Readable.from([media.bytes]), media.name || fallback, media.mime, 20 * 1024 * 1024, undefined, checkActive, id);
               attachments.push({ fileId: f.id, originalName: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes });
             }
             this.store.transaction(() => {

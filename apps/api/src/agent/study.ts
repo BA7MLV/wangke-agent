@@ -7,7 +7,7 @@ import { unzipSync, strFromU8 } from 'fflate';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import { CloudRecords } from '../cloud/records.js';
-import { receiveFile } from '../cloud/files.js';
+import { fileOperationId as operationFileId, receiveFile } from '../cloud/files.js';
 import { taskDto } from '../cloud/tasks.js';
 import { mediaMime } from '../cloud/image.js';
 import { validateStudyMutation } from './tools/study-validation.js';
@@ -39,10 +39,6 @@ export interface StudyToolPlugin {
   execute(args: any, context: StudyContext): Promise<unknown>;
 }
 const learningTables = new Set(['videos','folders','segments','materialBlocks','handouts','cards','studyDays','courseFiles','files','subtitleTracks','comments','danmakus']);
-const operationFileId = (owner: string, step: string, purpose: string) => {
-  const key = crypto.createHash('sha256').update(`${owner}:${step}:${purpose}`).digest('hex').slice(0, 32);
-  return `${key.slice(0, 8)}-${key.slice(8, 12)}-${key.slice(12, 16)}-${key.slice(16, 20)}-${key.slice(20)}`;
-};
 const fileMime: Record<string, string> = {
   '.pdf': 'application/pdf', '.zip': 'application/zip', '.txt': 'text/plain', '.md': 'text/markdown', '.csv': 'text/csv', '.json': 'application/json', '.html': 'text/html',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp',

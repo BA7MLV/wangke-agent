@@ -113,8 +113,10 @@ try {
   store.db.prepare("INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,'bot','System files',?,?)").run(thread, owner, at, at);
   const prompt = new BotRunner(store).initialContext({ thread_id: thread, trigger_message_id: null });
   assert.match(prompt[0].content, /never bypass/);
-  assert.match(prompt[1].content, /\/system\/AGENTS\.md/);
-  assert.match(prompt[1].content, /设置页更新的同一份指令/);
+  const preferences = prompt.find(message => message.role === 'system' && message.content.includes("User's lasting response preferences from /system/AGENTS.md"));
+  assert.ok(preferences, 'lasting preferences have their own system message, independent of profile/saving guidance');
+  assert.match(preferences.content, /设置页更新的同一份指令/);
+  assert.ok(prompt.some(message => message.role === 'system' && message.content.includes('wangke-save SOURCE TARGET')));
   assert.deepEqual(memories.context(owner, thread).map(row => row.content), [memory.content]);
   console.log('Bot context: shared AGENTS.md and memory content, unchanged safety contracts and scope boundaries passed');
   const other = 'other-owner';

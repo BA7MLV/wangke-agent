@@ -1,0 +1,15 @@
+.chat-sticky-marker { display: block; height: 0; pointer-events: none; }
+
+.chat-sticky-header { box-sizing: border-box; }
+.chat-sticky-header[data-sticky='true'] {
+  position: sticky;
+  top: var(--chat-sticky-top, var(--reasoning-sticky-top, 0px));
+  z-index: 6;
+}
+
+/* The app toolbar/blur is z=5. Dialogs and portaled menus remain above this. */
+.chat-sticky-header.chat-sticky-overlay {
+  position: fixed;
+  z-index: 6;
+  margin: 0;
+}

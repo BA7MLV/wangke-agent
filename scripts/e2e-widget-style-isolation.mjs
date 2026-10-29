@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { mkdir } from 'node:fs/promises';
 import { chromium } from 'playwright';
+import { openCodeMenu, openWidgetPreviews } from './helpers/widget-preview.mjs';
 
 // Disposable browser storage and a fake edit model: no user chats or API tokens.
 await mkdir(new URL('../e2e-shots/', import.meta.url), { recursive: true });
@@ -52,7 +53,7 @@ try {
   });
   await page.locator('#scoped-prose hr').waitFor({ state: 'attached' });
   const proseStyles = await page.evaluate(() => ['scoped-prose', 'original-prose'].map((id) =>
-    [...document.getElementById(id).querySelectorAll('p, ul, li, pre, code, table, th, td, hr')].map((el) => {
+    [...document.getElementById(id).querySelectorAll('p, ul, li, code, table, th, td, hr')].filter((el) => !el.closest('pre')).map((el) => {
       const style = getComputedStyle(el);
       return { tag: el.tagName, ...Object.fromEntries(['margin', 'padding', 'font-size', 'line-height', 'border-radius', 'display', 'list-style-type'].map((key) => [key, style.getPropertyValue(key)])) };
     })));
@@ -69,7 +70,7 @@ try {
     const { display, margin, ...rest } = style;
     return rest;
   });
-  assert.deepEqual(proseWithoutTableLayout(proseStyles[0]), proseWithoutTableLayout(proseStyles[1]), 'prose spacing, lists, code and table cells retain their existing appearance');
+  assert.deepEqual(proseWithoutTableLayout(proseStyles[0]), proseWithoutTableLayout(proseStyles[1]), 'prose spacing, lists, inline code and table cells retain their existing appearance; fenced code gets its own toolbar');
   await page.evaluate(() => { window.__proseStyleRoot.unmount(); document.getElementById('prose-style-comparison').remove(); });
   const initial = '先观察参数，再对照结果。';
   const { rowId, sessionId } = await page.evaluate(async (content) => {
@@ -114,7 +115,10 @@ try {
     useCourseChat.setState({ loaded: false });
     await useCourseChat.getState().loadSession(sessionId);
   }, { rowId, sessionId, content, widgets });
-  const blocks = page.locator('[data-testid="editable-artifact"] > [data-testid="widget-block"]');
+  const sources = page.locator('[data-testid="editable-artifact"] > [data-testid="code-block"]');
+  await sources.first().waitFor();
+  await openWidgetPreviews(page);
+  const blocks = sources.getByTestId('widget-block');
   const first = () => blocks.nth(0).getByTestId('widget-frame').contentFrame();
   const second = () => blocks.nth(1).getByTestId('widget-frame').contentFrame();
   await first().getByRole('slider').waitFor();
@@ -133,8 +137,8 @@ try {
   assert.equal(await first().locator('body').evaluate((el) => getComputedStyle(el).getPropertyValue('--style-escape').trim()), 'inside-frame', 'widget CSS still runs inside its own document');
   assert.equal(await second().locator('body').evaluate((el) => getComputedStyle(el).getPropertyValue('--style-escape').trim()), '', 'widget styles do not cross to siblings');
   const siblingToken = await second().locator('section').getAttribute('data-run');
-  await blocks.first().getByTestId('widget-more').click();
-  await page.getByTestId('widget-edit').click();
+  await openCodeMenu(page, sources.first());
+  await page.getByRole('menuitem', { name: '修改 HTML', exact: true }).click();
   const panel = page.getByTestId('artifact-edit-panel');
   const description = panel.getByText('先看效果，再决定是否替换。其他正文和图形不变。', { exact: true });
   assert.deepEqual(await description.evaluate((el) => ({ top: getComputedStyle(el).marginTop, bottom: getComputedStyle(el).marginBottom, size: getComputedStyle(el).fontSize })), { top: '4px', bottom: '0px', size: '12px' }, 'editor keeps its own spacing, not Markdown paragraph margins');
@@ -167,6 +171,8 @@ try {
   await page.reload();
   await page.waitForFunction(async () => (await window.__styleTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
   await page.evaluate(async (id) => (await window.__styleTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loadSession(id), sessionId);
+  await sources.first().waitFor();
+  await openWidgetPreviews(page);
   await first().getByRole('slider').waitFor();
   assert.deepEqual(await mainStyles(), beforeReload, 'history remains isolated after refresh');
   const stored = await page.evaluate(async (id) => (await window.__styleTestImport('/src/store/db.ts')).db.chats.get(id), rowId);

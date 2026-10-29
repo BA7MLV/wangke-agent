@@ -47,7 +47,7 @@ export function normalizeIlink(m: any): GatewayEnvelope {
     const part = item.image_item ?? item.file_item;
     if (part !== undefined && (!object(part) || (part.media !== undefined && (!object(part.media) ||
         ![part.media.encrypt_query_param, part.media.full_url, part.media.aes_key, part.aeskey, part.file_name].every(optionalString))))) throw new Error('invalid_platform_message');
-    if (part?.media) attachments.push({ key: part.media.encrypt_query_param ?? '', name: part.file_name ?? 'image.jpg', mime: item.image_item ? 'image/jpeg' : 'application/octet-stream', metadata: { fullUrl: part.media.full_url ?? '', aesKey: part.aeskey ?? '', mediaKey: part.media.aes_key ?? '' } });
+    if (part?.media) attachments.push({ key: part.media.encrypt_query_param ?? '', name: part.file_name ?? '', mime: item.image_item ? 'image/jpeg' : 'application/octet-stream', metadata: { fullUrl: part.media.full_url ?? '', aesKey: part.aeskey ?? '', mediaKey: part.media.aes_key ?? '' } });
   }
   return { messageId: m.message_id === undefined ? '' : String(m.message_id), tenant: '', peer: m.from_user_id ?? '', chat: m.from_user_id ?? '', topic: '', direct: !m.group_id, human: m.message_type === 1, text: texts.join('\n'), context: m.context_token, attachments };
 }

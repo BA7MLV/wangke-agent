@@ -54,6 +54,8 @@ await page.waitForFunction(
 ok('视频已加载');
 if ((await page.locator('[data-testid="bottom-nav"]').count()) !== 1) fail('应存在底部导航（mdui-navigation-bar）');
 else ok('底部导航存在');
+if ((await page.locator('[data-testid="nav-rail-open"]').count()) !== 0) fail('预览页左上角不应显示汉堡菜单');
+else ok('预览页左上角只保留返回按钮');
 if ((await page.locator('[data-testid="panel-tabs"]').count()) !== 0) fail('竖屏不应渲染桌面 mdui-tabs');
 else ok('桌面 Tabs 未渲染');
 

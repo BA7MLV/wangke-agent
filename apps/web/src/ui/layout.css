@@ -98,6 +98,25 @@
   background-color: var(--app-edge-color);
 }
 
+/* 移动端菜单与新会话共用同一套圆形描边按钮。 */
+.page-shell .page-shell__toolbar-button {
+  width: 44px;
+  height: 44px;
+  min-width: 44px;
+  padding: 0;
+  flex: none;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-full);
+  background: var(--background);
+  color: var(--foreground);
+}
+
+.page-shell .page-shell__toolbar-button:hover,
+.page-shell .page-shell__toolbar-button:active {
+  background: var(--surface-secondary);
+  color: var(--foreground);
+}
+
 .page-shell__content {
   padding-top: calc(var(--app-bar-h, 60px) + 8px);
 }

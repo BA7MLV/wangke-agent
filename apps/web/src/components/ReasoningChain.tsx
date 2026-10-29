@@ -3,6 +3,7 @@ import { Disclosure } from '@heroui/react';
 import { Sym } from '../ui/icons';
 import { MatrixDots, TextSwap, useReasoningStream } from './motion';
 import ReasoningMarkdown from './ReasoningMarkdown';
+import StickyHeader from './StickyHeader';
 import './reasoning-chain.css';
 
 /**
@@ -193,7 +194,8 @@ export default function ReasoningChain({
       data-testid="response-process" data-streaming={active || undefined}
       isExpanded={open} onExpandedChange={changeOpen}>
       {active && <span className="sr-only" role="status">{title}</span>}
-      <Disclosure.Heading className="reasoning-chain__heading">
+      <StickyHeader className="reasoning-chain__heading" enabled={expanded}>
+      <Disclosure.Heading className="reasoning-chain__label">
       <Disclosure.Trigger className="reasoning-chain__toggle" data-testid="response-process-toggle"
         aria-label={live ? '展开全部思考过程' : open ? '收起思考过程' : '展开思考过程'}>
         {waiting ? <Sym name="help" className="reasoning-chain__icon" aria-hidden="true" />
@@ -205,6 +207,7 @@ export default function ReasoningChain({
         <Sym name="chevron_right" className="reasoning-chain__indicator" aria-hidden="true" />
       </Disclosure.Trigger>
       </Disclosure.Heading>
+      </StickyHeader>
       <Disclosure.Content className="reasoning-chain__content">
         <Disclosure.Body className="reasoning-chain__panel">
         <div className="reasoning-chain__viewport">
