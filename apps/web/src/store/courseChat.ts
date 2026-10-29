@@ -5,6 +5,7 @@ import type { CloudTask } from '@wangke/contracts/cloud';
 import { useChatNotifications } from './chatNotifications';
 import { readChatPage, readChatHistory } from './chatHistory';
 import { framePatch } from '../utils/framePatch';
+import { CONTINUE_INSTRUCTION, createContinuationFilter } from '@wangke/study-core/continuation';
 import type { ProcessPhase } from '../utils/responseProcess';
 import { catalogOf, decisionConfigOf, getSettings, modelOverridesOf } from './settings';
 import { db, type AskUserState, type ChatRow, type ChatSessionRow, type ChatToolCall, type FolderPlanState, type TurnResume } from './db';
@@ -39,6 +40,7 @@ import { attachmentsForModel, messageForModel } from '../chat/attachmentModel';
 import { removeAttachmentFile } from '../chat/prepareAttachment';
 import { useChatAttachments } from './chatAttachments';
 import { normalizeCourseContextIds } from '../harness/courseContext';
+import type { ChatProject } from '../projects/chatProjects';
 
 /**
  * 课程助手的全局会话状态。
@@ -323,6 +325,7 @@ export interface CourseChatStore {
   skillIds: number[] | undefined;
   mcpServerIds: string[] | undefined;
   contextCourses: CourseContextItem[];
+  project: ChatProject | null;
   pendingAsk: PendingAsk | null;
   pendingPlan: PendingPlan | null;
   /**
@@ -413,6 +416,7 @@ export interface CourseChatStore {
   /** 恢复自动选课程。草稿态同样只写内存，理由见 `setSkillIds` */
   clearCourseContext: () => void;
   setCourseContext: (ids: string[]) => Promise<void>;
+  setProject: (project: ChatProject | null) => Promise<void>;
   /** 提问卡作答（同时把选择落成一条 user 消息） */
   answerAsk: (option: AskUserAnswer | string) => Promise<void>;
   /** 停止生成：中断当前的 LLM 请求与 agent 循环（已流出的内容保留） */
@@ -484,6 +488,7 @@ const DRAFT_STATE: Partial<CourseChatStore> = {
   skillIds: undefined,
   mcpServerIds: undefined,
   contextCourses: [],
+  project: null,
   // 队列属于「正在跑的那一轮」：切到草稿态时，上一条会话没说完的话留在它自己的视图里
   // （park），不会被带进这份全新的空草稿。
   queued: [],
@@ -611,6 +616,7 @@ interface SessionView {
   skillIds: number[] | undefined;
   mcpServerIds: string[] | undefined;
   contextCourses: CourseContextItem[];
+  project: ChatProject | null;
 }
 
 /** 会话视图的 key：真实会话 id，或 `0` = 草稿态 */
@@ -630,6 +636,7 @@ const EMPTY_VIEW: SessionView = {
   skillIds: undefined,
   mcpServerIds: undefined,
   contextCourses: [],
+  project: null,
 };
 
 /** 后台会话的视图（不在 store 顶层、写它不触发渲染）。活动会话永远摊在顶层，不进这里 */
@@ -717,6 +724,7 @@ function topLevelView(s: CourseChatStore): SessionView {
     skillIds: s.skillIds,
     mcpServerIds: s.mcpServerIds,
     contextCourses: s.contextCourses,
+    project: s.project,
   };
 }
 
@@ -821,10 +829,14 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
         widgetPreview: progress.widgetPreview as { html: string } | undefined,
         rowId: typeof progress.rowId === 'number' ? progress.rowId : undefined,
         streaming: true,
+        error: false,
+        interrupted: false,
+        interruptReason: undefined,
         processPhase: phase,
         processStartedAt: Date.parse(task.createdAt) || Date.now(),
       };
-      const answerIndex = messages.findIndex((message) => message.key === answerKey || message.taskId === task.id && message.role === 'ai');
+      const answerIndex = messages.findIndex((message) => message.key === answerKey || message.taskId === task.id && message.role === 'ai'
+        || task.input.action === 'continue' && message.rowId === task.input.rowId);
       if (answerIndex < 0) messages.push(answer);
       else messages[answerIndex] = { ...messages[answerIndex], ...answer, key: messages[answerIndex].key };
       writeView(id, { messages, loaded: true, loading: true });
@@ -835,7 +847,9 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
     const id = Number(task.input.sessionId);
     if (submittingIds.has(id)) continue;
     const current = readView(id);
-    const result = task.result as { content?: string; reasoning?: string; tools?: ChatToolCall[]; widgets?: WidgetPayload[]; widget?: WidgetPayload; rowId?: number; userRowId?: number } | null;
+    // Fast failures may finish between polls. Their durable progress is the
+    // receipt too: do not briefly offer continuation without its original ID.
+    const result = (task.result ?? task.progress) as { content?: string; reasoning?: string; tools?: ChatToolCall[]; widgets?: WidgetPayload[]; widget?: WidgetPayload; rowId?: number; userRowId?: number } | null;
     let changed = false;
     const messages = current.messages.map(message => {
       if (message.taskId !== task.id && message.key !== `cloud-user-${task.id}` && message.key !== `cloud-answer-${task.id}`) return message;
@@ -846,14 +860,19 @@ export async function reflectCloudTasks(tasks: CloudTask[], dataChanged = false)
       changed = true;
       if (message.role === 'user') return { ...message, committedRowId: result?.userRowId ?? message.committedRowId,
         syncPending: task.status === 'completed' ? message.syncPending : false };
+      const content = result?.content ?? message.content;
+      const useful = !!content.trim() || !!result?.widgets?.length || !!message.widgets?.length || !!result?.widget || !!message.widget;
+      const failed = task.status !== 'completed' && task.status !== 'cancelled';
       return { ...message, streaming: false, hint: undefined,
         widgetPreview: undefined,
         syncPending: task.status === 'completed' ? message.syncPending : false,
         committedRowId: result?.rowId ?? message.committedRowId,
-        content: result?.content ?? (message.content || task.error || (task.status === 'completed' ? '' : '生成已停止')),
+        rowId: result?.rowId ?? message.rowId,
+        content: useful ? content : failed ? `回答失败：${task.error || '未获得回答，请重试'}` : content,
+        error: failed && !useful,
         reasoning: result?.reasoning ?? message.reasoning, tools: result?.tools ?? message.tools,
         widgets: result?.widgets ?? message.widgets, widget: result?.widget ?? message.widget,
-        interrupted: task.status !== 'completed', interruptReason: task.error ?? undefined };
+        interrupted: failed && useful, interruptReason: task.status === 'cancelled' ? undefined : task.error ?? undefined };
     });
     if (changed || current.loading && !runningIds.includes(id)) {
       writeView(id, { messages, loading: runningIds.includes(id) });
@@ -929,6 +948,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
   skillIds: undefined,
   mcpServerIds: undefined,
   contextCourses: [],
+  project: null,
   pendingAsk: null,
   pendingPlan: null,
   planApplying: false,
@@ -1011,6 +1031,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       ? await db.videos.where('id').anyOf(contextIds).toArray()
       : [];
     const byId = new Map(contextRows.map((course) => [course.id, course.name]));
+    const projectFolder = session?.projectFolderId == null ? undefined : await db.folders.get(session.projectFolderId);
     // Progress / background revalidation may have populated this session while
     // IndexedDB was pending. Never replace that newer view with this snapshot.
     if (historyLoads.get(id) !== request) return;
@@ -1029,6 +1050,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       planApplying: false,
       skillIds: session?.skillIds,
       mcpServerIds: session?.mcpServerIds,
+      project: session?.projectFolderId == null ? null : { folderId: session.projectFolderId, name: projectFolder?.name ?? '项目', color: projectFolder?.color },
       contextCourses: contextIds
         .filter((cid) => byId.has(cid))
         .map((cid) => ({ id: cid, name: byId.get(cid)! })),
@@ -1261,6 +1283,18 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     writeView(key, { contextCourses: courses });
   },
 
+  setProject: async (project) => {
+    const key = activeKey();
+    if (readView(key).loading) throw new Error('回复完成后可修改项目');
+    const changed = readView(key).project?.folderId !== project?.folderId;
+    if (key !== 0) await patchSession(key, row => {
+      if (project) row.projectFolderId = project.folderId;
+      else delete row.projectFolderId;
+      if (changed) delete row.contextCourseIds;
+    });
+    writeView(key, { project, ...(changed ? { contextCourses: [] } : {}) });
+  },
+
   // ── 发一轮 ────────────────────────────────────────────────────────────────
   send: async (rawText, mode, target, resume, suppliedAttachments) => {
     const state = get();
@@ -1306,7 +1340,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       try {
         if (id == null) {
           writeView(0, { loading: true });
-          const row = await newSessionRow(view.skillIds, view.contextCourses.map(c => c.id), view.mcpServerIds);
+          const row = await newSessionRow(view.skillIds, view.contextCourses.map(c => c.id), view.mcpServerIds, view.project?.folderId);
           id = row.id!;
           if (activeKey() === key) set(s => ({ sessions: [...s.sessions, row], activeId: id, loaded: true }));
           else {
@@ -1440,7 +1474,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     if (sessionId == null) {
       try {
         // 草稿态里用户可能已经选过技能范围（那时只写内存，见 setSkillIds），随行一起落库
-        const row = await newSessionRow(view.skillIds, view.contextCourses.map((course) => course.id), view.mcpServerIds);
+        const row = await newSessionRow(view.skillIds, view.contextCourses.map((course) => course.id), view.mcpServerIds, view.project?.folderId);
         sessionId = row.id!;
         justCreated = true;
         // 草稿那一轮的登记（key 0）挪到真实 id 上：`stop` / `steer` 按 activeId 找它
@@ -1777,7 +1811,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       const baseRows = history.slice(0, cut < 0 ? history.length : cut).map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) }));
       const tail: ChatMessage = resume
         ? { role: 'tool', tool_call_id: resume.toolCallId, name: resume.toolName, content: resume.toolResult }
-        : messageForModel({ role: 'user', content: runtimeContext({ courses: contextCourses, layout: displayEnvironmentPrompt('course').split('\n').slice(1).join('\n') }) + text, attachments });
+        : messageForModel({ role: 'user', content: runtimeContext({ courses: contextCourses, ...(view.project ? { project: view.project } : {}), layout: displayEnvironmentPrompt('course').split('\n').slice(1).join('\n') }) + text, attachments });
       const tailText = resume ? resume.toolResult : attachmentText(text, attachments);
       const imageBudget = attachments.filter((file) => file.dataUrl).length * 1600;
       const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(tailText) - imageBudget - 4096;
@@ -1833,6 +1867,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         },
         library: {
           contextCourseIds: contextCourses.map((course) => course.id),
+          projectFolderId: view.project?.folderId,
           onContextChange: async (courses) => {
             writeView(turnKey, { contextCourses: courses });
             await db.chatSessions.where('id').equals(turnKey).modify((row) => {
@@ -1947,9 +1982,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         resolveMaxRounds(settings.agentRounds),
       );
       const closeOut = stopped[stopped.length - 1];
+      // Some gateways encode failure in finish_reason instead of rejecting the
+      // reader. Use the same persistence path as a network failure; length and
+      // explicit user stops deliberately do not become continuation requests.
+      if (closeOut?.reason === 'error') throw new Error('模型或网关没有正常结束这一轮回答');
       const finalAnswer = answer.trim() && (!closeOut || closeOut.granted) ? answer : nextResponseRound(answer) + noAnswerNotice({
-        // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
-        // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
         reason: closeOut?.reason ?? 'empty',
         rounds: closeOut?.rounds ?? roundsRan,
         ...(closeOut?.detail ? { detail: closeOut.detail } : {}),
@@ -1957,12 +1994,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         narration: answer.trim() ? undefined : lastNarration,
         hint: lastHint,
       });
-      /** 一帧都没来过就别记 0（那会让「已思考用时 0.0 秒」看着像 bug） */
       const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
       patchAi({ content: finalAnswer, streaming: false, hint: undefined, reasoningMs, widgetPreview: undefined });
-      // 落的是**当前这条**（`currentKey` 可能已经因提问/方案而轮换过一次），
-      // 卡片状态也从 store 里这条消息读，而不是读闭包里的副本：用户可能在这期间点了选项
-      // （ask.picked 变了）或确认了方案（applied 变了），那些更新只落在 store 上。
       const finalMessage = readView(turnKey).messages.find((m) => m.key === currentKey);
       const rowId = (await persistAssistantSnapshot({
         videoId: LIBRARY_ASSISTANT_ID,
@@ -2128,7 +2161,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           } else {
             // 一个字都没流出来（多半是请求压根没发出去）：没有可续写的东西，照旧报错。
             // 不落库 —— 一条空的 assistant 在历史里没有意义（发请求时也被丢掉）。
-            patchAi({ streaming: false, hint: undefined, error: true, content: `回答失败：${reason}` });
+            patchAi({ streaming: false, hint: undefined, error: true, content: `回答失败：${reason}`, widgetPreview: undefined });
           }
         } else {
           // 停在思考中途照样计时：那正是用户最想知道的一个数（与停止那条同款）
@@ -2323,6 +2356,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       if (userRow?.id == null) return;
 
       await db.chats.delete(userRow.id);
+      if (message.rowId != null) await db.chats.delete(message.rowId);
       set((s) => ({ messages: s.messages.slice(0, messageIndex - 1) }));
       await get().send(user.content, undefined, sessionId, undefined, userRow.attachments ?? []);
       return;
@@ -2368,7 +2402,22 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
 
     // ① 中断过的回答 → **续写**：不碰历史，只把没写完的部分补完
     if (message.interrupted) {
-      if (remoteTasks()) { await submitCloudTask('chat', `session:${sessionId}`, { sessionId, action: 'continue', messageKey: key, text: '' }); return; }
+      if (remoteTasks()) {
+        const pendingKey = nextKey();
+        pendingCloudSubmissions.set(pendingKey, sessionId);
+        markRunning(sessionId, true);
+        writeView(sessionId, { loading: true });
+        try {
+          const task = await submitCloudTask('chat', `session:${sessionId}`, { sessionId, rowId: message.rowId, action: 'continue', modelRef: getSettings().llmModel });
+          writeView(sessionId, { messages: readView(sessionId).messages.map(item => item.key === key
+            ? { ...item, taskId: task.id, streaming: true, interrupted: false, interruptReason: undefined } : item) });
+        } catch (error) {
+          writeView(sessionId, { loading: false, messages: readView(sessionId).messages.map(item => item.key === key
+            ? { ...item, streaming: false, interrupted: true, interruptReason: error instanceof Error ? error.message : String(error) } : item) });
+          markRunning(sessionId, false);
+        } finally { pendingCloudSubmissions.delete(pendingKey); }
+        return;
+      }
       await continueInterrupted(key, message, sessionId);
       return;
     }
@@ -2431,6 +2480,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         createdAt: Date.now(),
         // 上下文与技能范围一并继承：分支出来的是「同一场对话的另一个走法」
         ...(source.contextCourseIds ? { contextCourseIds: [...source.contextCourseIds] } : {}),
+        ...(source.projectFolderId != null ? { projectFolderId: source.projectFolderId } : {}),
         ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
         ...(source.mcpServerIds !== undefined ? { mcpServerIds: [...source.mcpServerIds] } : {}),
         ...(source.promptCacheKey ? { promptCacheKey: source.promptCacheKey } : {}),
@@ -2642,10 +2692,6 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
  * 被截断的 assistant 正文，天然倾向是「重写一份完整的」。那样用户等一轮，拿回来的是
  * 一份和上面那半截重复的东西 —— 看起来就像续传根本没生效。
  */
-const CONTINUE_INSTRUCTION =
-  '（系统提示：上面那条回答在写到一半时被中断了。请**接着它继续写下去**：从断点处直接续上，' +
-  '不要重复已经写过的内容，也不要重新开头、不要重新总结。如果它其实已经写完了，就只回一句「已写完」。）';
-
 /**
  * 续写一条**中断过**的助手回答（`retryMessage` 的 ① 号分支走它）。
  *
@@ -2701,6 +2747,7 @@ async function continueInterrupted(
    */
   let carried = partial;
   let answer = '';
+  let continuation = createContinuationFilter(carried);
   let reasoning = message.reasoning ?? '';
   // Old messages have one legacy process group; new continuation starts after the exact prefix.
   let responseSegments = message.responseSegments?.length ? [...message.responseSegments]
@@ -2789,14 +2836,16 @@ async function continueInterrupted(
           patch({ reasoning, responseSegments, processPhase: 'thinking', ...(first ? { reasoningStartedAt: now } : {}) });
         },
         onDelta: (delta) => {
-          answer += delta;
+          answer += continuation.push(delta);
           pendingText += delta;
           patch({ content: carried + answer, hint: undefined, processPhase: 'answering' });
         },
         onRoundStart: () => {
           pendingText = '';
-          if (answer.trim()) carried += answer;
+          answer += continuation.flush();
+          carried += answer;
           answer = '';
+          continuation = createContinuationFilter(carried);
           // No new content boundary until actual reasoning arrives: plain continuation
           // must finish the same paragraph/code fence instead of remounting a second one.
           patch({ content: carried, responseSegments, hint: undefined, processPhase: 'preparing' });
@@ -2810,10 +2859,14 @@ async function continueInterrupted(
       2,
     );
 
-    const newText = answer.trim();
-    // 直接拼接、不加空行：断点续传的语义就是「接上了」，插一个空行会看着像新起一段
-    await persist(newText ? carried + newText : carried, {});
+    answer += continuation.flush();
+    const closeOut = stopped.at(-1);
+    if (closeOut && !closeOut.granted) throw new Error('模型未能完成续写，请重试');
+    // Preserve leading spaces/newlines: the breakpoint can be inside a word,
+    // Markdown fence or indented code. trim() corrupts that boundary.
+    await persist(carried + answer, {});
   } catch (error) {
+    answer += continuation.flush();
     const reason = error instanceof Error ? error.message : String(error);
     if (abort.signal.aborted) {
       /**
@@ -2879,7 +2932,7 @@ function drainQueue(sessionId: number): void {
  * 该字段的 `undefined` 与 `[]` 语义不同（不限定 vs 一个都不给），
  * 老数据里「不限定」的形态就是**字段不存在**。
  */
-async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = [], mcpServerIds?: string[]): Promise<ChatSessionRow> {
+async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = [], mcpServerIds?: string[], projectFolderId?: number): Promise<ChatSessionRow> {
   const now = Date.now();
   const row: ChatSessionRow = {
     videoId: LIBRARY_ASSISTANT_ID,
@@ -2888,6 +2941,7 @@ async function newSessionRow(skillIds?: number[], contextCourseIds: string[] = [
     ...(skillIds !== undefined ? { skillIds } : {}),
     ...(mcpServerIds !== undefined ? { mcpServerIds } : {}),
     ...(contextCourseIds.length ? { contextCourseIds } : {}),
+    ...(projectFolderId != null ? { projectFolderId } : {}),
   };
   const id = (await db.chatSessions.add(row)) as number;
   return { ...row, id };
@@ -2968,12 +3022,14 @@ async function historyMessagesWithAttachments(rows: (ChatRow & { originalContent
 }
 
 function toMessage(row: ChatRow): CourseChatMessage {
+  const emptyInterruption = !!row.interrupted && !row.content.trim() && !row.widget && !row.widgets?.length && !row.ask && !row.folderPlan;
   return {
     key: `stored-${row.id}`,
     rowId: row.id!,
     taskId: row.taskId,
     role: row.role === 'assistant' ? 'ai' : 'user',
-    content: row.content,
+    content: emptyInterruption ? '回答失败：未获得回答，请重试' : row.content,
+    ...(emptyInterruption ? { error: true } : {}),
     attachments: row.attachments,
     createdAt: row.createdAt,
     reasoning: row.reasoning,
@@ -2981,7 +3037,7 @@ function toMessage(row: ChatRow): CourseChatMessage {
     reasoningMs: row.reasoningMs,
     tools: row.tools,
     // 中断过的回答在历史回放里也要能「继续」，所以这两个字段必须跟着走
-    interrupted: row.interrupted,
+    interrupted: row.interrupted && !emptyInterruption,
     interruptReason: row.interruptReason,
     ask: row.ask,
     folderPlan: row.folderPlan,

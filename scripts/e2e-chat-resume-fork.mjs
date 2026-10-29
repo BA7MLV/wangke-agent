@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-// E2E：流式失败后的**断点续传**、消息 hover 的重试 / 分支、侧栏 Recent 的分支与标题滚动。
+// E2E：流式失败后的**断点续传**、消息 hover 的重试 / 分支、侧栏 Recent 的分支与标题省略。
 //
 // 为什么模型流是页内假的：这一整轮要验的是「失败之后会发生什么」，而真实的失败
 // （网关中途断流）没法按需触发。`addInitScript` 换掉 `window.fetch`，让假流在吐完
@@ -15,7 +15,7 @@
 //   7. **提问**的操作行在气泡**外面**（下方、右对齐），并且带重试 —— 点它 = 重新回答这句话
 //   8. 对话内「分支」→ Recent 多一条 `… · 分支`，原会话原样不动
 //   9. 侧栏 Recent 菜单 → 分支（整条复制）
-//  10. Recent 标题 hover → 从省略号变成**跑马灯**自己滚开（往复），移开指针后回到开头
+//  10. Recent 长标题始终省略，不在 hover 时改变布局或播放动画
 //
 // 用法：npm run preview &  然后 node scripts/e2e-chat-resume-fork.mjs
 import assert from 'node:assert/strict';
@@ -314,7 +314,9 @@ await check('④ 刷新之后内容还在（这正是旧实现丢掉的那一段
 });
 
 await check('⑤ 点「继续」→ 接着写，新内容追加到**同一条**消息上', async () => {
-  await pushSteps([{ chunks: [{ content: PART3 }] }]);
+  // Some providers restart from the beginning despite the continuation hint.
+  // Split the replay across chunks to test incremental (not only EOF) dedup.
+  await pushSteps([{ chunks: [{ content: PART1 }, { content: PART2 }, { content: PART3 }] }]);
   await page.locator('[data-testid="chat-interrupted"] button').first().click();
 
   const text = await waitFor(async () => {
@@ -333,6 +335,7 @@ await check('⑥ 续写完成：提示条消失，库里这条不再是 interrup
   assert.equal(ai.length, 1, `续写应当更新原行而不是新增，实际 ${ai.length} 条`);
   assert.equal(ai[0].interrupted, undefined, '续写完成后 interrupted 必须被清掉');
   assert.ok(ai[0].content.includes(PART3), `库里应当是拼好的完整回答：${ai[0].content}`);
+  assert.equal(ai[0].content, PART1 + PART2 + PART3, 'provider replay must not duplicate the saved prefix');
 });
 
 // ── 第 2 组：hover 出操作行 ────────────────────────────────────────────────
@@ -456,7 +459,7 @@ await check('⑪ Recent 行尾菜单里有「分支出新会话」，点了就�
 });
 
 // ── 第 5 组：Recent 标题 hover 跑马灯 ──────────────────────────────────────
-await check('⑫ Recent 标题平时省略号；hover 后跑马灯自动滚开；移开指针回到开头', async () => {
+await check('⑫ Recent 长标题始终省略，hover 不播放动画', async () => {
   const longTitle = '这是一个特别特别长的会话标题用来验证悬停之后能不能跑马灯滚开看全内容';
   await dbHelper(
     async (idb, title) => {
@@ -495,56 +498,11 @@ await check('⑫ Recent 标题平时省略号；hover 后跑马灯自动滚开�
   const scrollable = await titleEl.evaluate((el) => el.scrollWidth > el.clientWidth);
   assert.ok(scrollable, '夹具标题应当真的溢出容器');
 
-  // 挂载时就量好了溢出距离（负的像素值），供 `@keyframes` 里的 translateX 用
-  const shift = await waitFor(async () => {
-    const v = await titleEl.evaluate((el) => el.style.getPropertyValue('--recent-shift').trim());
-    return /^-\d/.test(v) ? v : null;
-  });
-  assert.ok(/^-\d/.test(shift), `应当量出负的溢出距离，实际 “${shift}”`);
-
   await titleEl.hover();
-
-  // 悬停后动画挂上，且省略号关掉（免得盖在正在滑过的字上）
-  const anim = await waitFor(async () => {
-    const name = await inner.evaluate((el) => getComputedStyle(el).animationName);
-    return name === 'recent-title-marquee' ? name : null;
-  });
-  assert.equal(anim, 'recent-title-marquee');
-  assert.equal(await titleEl.evaluate((el) => getComputedStyle(el).textOverflow), 'clip');
-
-  /**
-   * 真的在动：`translateX` 应当在若干秒内明显左移。
-   *
-   * 用 `waitForFunction` 轮询而不是睡固定时长 —— 动画有 10% 的起手停顿，
-   * 时长又随距离变，写死等待早晚会在某台机器上抖（CI 上更甚）。
-   */
-  const movedHandle = await page.waitForFunction(
-    (text) => {
-      const title = [...document.querySelectorAll('.recent-title')].find((el) => el.textContent?.includes(text));
-      const span = title?.querySelector('span');
-      if (!span) return false;
-      const m = /matrix\(([^)]+)\)/.exec(getComputedStyle(span).transform);
-      if (!m) return false;
-      const tx = Number.parseFloat(m[1].split(',')[4]);
-      return Number.isFinite(tx) && tx < -20 ? tx : false;
-    },
-    '特别特别长',
-    { timeout: 12000 },
-  );
-  const movedX = await movedHandle.jsonValue();
-  assert.ok(movedX < -20, `标题应当自己向左滑开，实际 translateX=${movedX}`);
-
-  /**
-   * 移开指针：动画撤掉、`transform` 回到起点。
-   *
-   * 不复位的话，留在屏幕上的是「中间一截 + 省略号」，看着像标题被写坏了。
-   */
+  assert.equal(await inner.evaluate(el => getComputedStyle(el).animationName), 'none');
+  assert.equal(await titleEl.evaluate(el => getComputedStyle(el).textOverflow), 'ellipsis');
   await page.mouse.move(0, 0);
-  await waitFor(async () => (await inner.evaluate((el) => getComputedStyle(el).animationName)) === 'none');
-  await waitFor(async () => {
-    const t = await inner.evaluate((el) => getComputedStyle(el).transform);
-    return t === 'none' || /matrix\(1, 0, 0, 1, 0, 0\)/.test(t);
-  });
+  assert.equal(await titleEl.evaluate(el => getComputedStyle(el).textOverflow), 'ellipsis');
 });
 
 await browser.close();

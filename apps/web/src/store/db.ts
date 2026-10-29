@@ -207,6 +207,8 @@ export interface ChatSessionRow {
    * 普通单课程问答会话不使用该字段。
    */
   contextCourseIds?: string[];
+  /** Resource folder associated with library chat; stable across folder renames. */
+  projectFolderId?: number;
   /**
    * 会话级技能白名单（非索引字段，无需升级版本）。
    *

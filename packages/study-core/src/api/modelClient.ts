@@ -239,6 +239,59 @@ export interface ChatMessage {
 
 export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'aborted' | 'error';
 
+/** Keep provider-specific finish values from leaking into the agent protocol. */
+function normalizeFinishReason(value: unknown): FinishReason | undefined {
+  if (value == null || value === '') return undefined;
+  switch (String(value)) {
+    case 'stop':
+    case 'completed':
+    case 'end_turn':
+    case 'stop_sequence':
+      return 'stop';
+    case 'length':
+    case 'max_tokens':
+    case 'max_output_tokens':
+    case 'incomplete':
+      return 'length';
+    case 'tool_calls':
+    case 'function_call':
+    case 'tool_use':
+      return 'tool_calls';
+    case 'content_filter':
+    case 'refusal':
+      return 'content_filter';
+    case 'aborted':
+    case 'cancelled':
+      return 'aborted';
+    case 'error':
+    case 'failed':
+      return 'error';
+    default:
+      return undefined;
+  }
+}
+
+function streamErrorOf(chunk: any): string | undefined {
+  const error = chunk?.error ?? (chunk?.type === 'error' ? chunk : undefined);
+  if (!error) return undefined;
+  if (typeof error === 'string') return error;
+  if (typeof error.message === 'string' && error.message) return error.message;
+  if (typeof error.error?.message === 'string' && error.error.message) return error.error.message;
+  try { return JSON.stringify(error); } catch { return '模型服务返回了未知流式错误'; }
+}
+
+/** Responses status takes precedence over the presence of function calls. */
+function responseFinishReason(data: any, hasCalls: boolean): FinishReason {
+  if (data.status === 'incomplete') {
+    const reason = data.incomplete_details?.reason;
+    return reason === 'content_filter' ? 'content_filter'
+      : reason === 'steered' ? 'aborted'
+      : reason == null || reason === 'max_output_tokens' ? 'length' : 'error';
+  }
+  const reason = normalizeFinishReason(data.status);
+  return reason && reason !== 'stop' ? reason : hasCalls ? 'tool_calls' : reason ?? 'stop';
+}
+
 export interface ToolCall {
   id: string;
   type: 'function';
@@ -403,21 +456,28 @@ function parseArgs(value: string): Record<string, unknown> {
 }
 
 function normalizeResponse(data: any, protocol: ModelTarget['protocol']): ChatMessage {
+  const error = streamErrorOf(data);
+  if (error) throw new Error(`模型服务返回错误：${error}`);
   if (protocol === 'anthropic-messages') {
-    const blocks = data.content ?? [];
+    if (!Array.isArray(data.content)) throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
+    const blocks = data.content;
     const text = blocks.filter((b: any) => b.type === 'text').map((b: any) => b.text).join('');
     const calls = blocks.filter((b: any) => b.type === 'tool_use').map((b: any) => ({ id: b.id, type: 'function' as const, function: { name: b.name, arguments: JSON.stringify(b.input ?? {}) } }));
-    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: data.stop_reason === 'tool_use' ? 'tool_calls' : data.stop_reason === 'max_tokens' ? 'length' : 'stop' };
+    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: normalizeFinishReason(data.stop_reason) ?? (calls.length ? 'tool_calls' : 'stop') };
   }
   if (protocol === 'openai-responses') {
-    const output = data.output ?? [];
+    if (!Array.isArray(data.output)) throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
+    const output = data.output;
     const text = output.flatMap((item: any) => item.content ?? []).filter((b: any) => b.type === 'output_text').map((b: any) => b.text).join('');
     const calls = output.filter((item: any) => item.type === 'function_call').map((item: any) => ({ id: item.call_id ?? item.id, type: 'function' as const, function: { name: item.name, arguments: item.arguments ?? '{}' } }));
-    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason: calls.length ? 'tool_calls' : data.status === 'incomplete' ? 'length' : 'stop' };
+    const finish_reason = responseFinishReason(data, calls.length > 0);
+    return { role: 'assistant', content: text || null, ...(calls.length ? { tool_calls: calls } : {}), finish_reason };
   }
   const choice = data.choices?.[0];
   if (!choice?.message) throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
-  return { ...choice.message, finish_reason: choice.finish_reason ?? choice.message.finish_reason } as ChatMessage;
+  const { finish_reason: messageFinishReason, ...message } = choice.message;
+  const finish_reason = normalizeFinishReason(choice.finish_reason ?? messageFinishReason);
+  return { ...message, ...(finish_reason ? { finish_reason } : {}) } as ChatMessage;
 }
 
 function responseMetadata(msg: ChatMessage, data: any, target: ModelTarget): ChatMessage {
@@ -440,7 +500,8 @@ async function observeRequest(t: ModelTarget, opts: ChatOptions, operation: (cap
   try { message = await operation(value => { if (value) usage = value; }); return message; }
   finally {
     await opts.onRequest?.({ id, providerId: t.providerId, model: t.model, protocol: t.protocol,
-      startedAt, endedAt: Date.now(), status: message ? 'completed' : opts.signal?.aborted ? 'cancelled' : 'failed',
+      startedAt, endedAt: Date.now(), status: opts.signal?.aborted || message?.finish_reason === 'aborted' ? 'cancelled'
+        : !message || message.finish_reason === 'error' ? 'failed' : 'completed',
       ...(message?.usage || usage ? { usage: message?.usage ?? usage } : {}) });
   }
 }
@@ -457,6 +518,7 @@ async function chatOnceInner(t: ModelTarget, opts: ChatOptions, fetcher?: typeof
     headers: gatewayCacheHeaders(t, opts.cacheKey),
   }, messages, fetcher);
   const body = await res.text();
+  opts.signal?.throwIfAborted();
   if (!body.trim()) throw new Error('模型接口返回为空，请重试或检查模型服务');
   let data: unknown;
   try { data = JSON.parse(body); } catch {
@@ -545,6 +607,7 @@ async function chatStreamInner(
   const contentType = res.headers.get('content-type') ?? '';
   if (!contentType.toLowerCase().includes('text/event-stream')) {
     const body = await res.text();
+    opts.signal?.throwIfAborted();
     if (!body.trim()) throw new Error('模型接口返回为空，请重试或检查模型服务');
     let data: unknown;
     try { data = JSON.parse(body); } catch { throw new Error('模型接口返回的数据不完整或不是有效 JSON，请重试或检查模型服务'); }
@@ -560,12 +623,14 @@ async function chatStreamInner(
     return msg;
   }
 
-  const reader = res.body!.getReader();
+  if (!res.body) throw new Error('模型接口没有返回可读取的流，请重试或检查模型服务');
+  const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buffer = '';
   let content = '';
   let reasoning = '';
   let finish: FinishReason | undefined;
+  let ended = false;
   const toolCalls: Record<number, ToolCall> = {};
   const usage = usageCollector();
   const native: Record<number, Record<string, any>> = {};
@@ -618,119 +683,146 @@ async function chatStreamInner(
     }
   };
 
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (!done) buffer += decoder.decode(value, { stream: true });
-    const events = buffer.split('\n\n');
-    // 流结束时缓冲区残留视为最后一个事件（末尾事件可能没有 \n\n 终止符）
-    buffer = done ? '' : (events.pop() ?? '');
-    for (const evt of events) {
-      for (const line of evt.split('\n')) {
-        if (!line.startsWith('data:')) continue;
-        const payload = line.slice(5).trim();
-        if (payload === '[DONE]') continue;
+  try {
+    stream: for (;;) {
+      opts.signal?.throwIfAborted();
+      const { done, value } = await reader.read();
+      opts.signal?.throwIfAborted();
+      // Flush TextDecoder on the terminal read so a split UTF-8 code point is not
+      // silently lost at the end of an otherwise successful stream.
+      buffer += done ? decoder.decode() : decoder.decode(value, { stream: true });
+      const events = buffer.split(/\r?\n\r?\n/);
+      // At EOF the remaining text is itself an event; during streaming retain it
+      // until the next blank line arrives.
+      buffer = done ? '' : (events.pop() ?? '');
+      for (const evt of events) {
+        const payload = evt.split(/\r?\n/)
+          .filter(line => line.startsWith('data:'))
+          .map(line => line.slice(5).replace(/^ /, '')).join('\n').trim();
+        if (!payload) continue;
+        if (payload === '[DONE]') { ended = true; break stream; }
+        let chunk: any;
         try {
-          const chunk = JSON.parse(payload);
-          usage.observe(chunk);
-          capture?.(usage.value);
-          if (t.protocol === 'anthropic-messages') {
-            const delta = chunk.delta;
-            if (chunk.type === 'content_block_start') native[chunk.index] = structuredClone(chunk.content_block);
-            const block = native[chunk.index];
-            if (chunk.type === 'content_block_delta' && block) {
-              if (delta?.type === 'text_delta') block.text = (block.text ?? '') + delta.text;
-              if (delta?.type === 'thinking_delta') block.thinking = (block.thinking ?? '') + delta.thinking;
-              if (delta?.type === 'signature_delta') block.signature = (block.signature ?? '') + delta.signature;
-            }
-            if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
-              const i = chunk.index ?? Object.keys(toolCalls).length;
-              toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
-              emitToolCall(i);
-            }
-            if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && delta.text) {
-              const text = stripLeakedToolPreamble(delta.text);
-              if (text) { content += text; onDelta?.(text); }
-            }
-            if (chunk.type === 'content_block_delta' && delta?.type === 'thinking_delta' && delta.thinking) { reasoning += delta.thinking; onReasoning?.(delta.thinking); }
-            if (chunk.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json) {
-              const i = chunk.index ?? 0;
-              const call = toolCalls[i];
-              if (call) {
-                call.function.arguments += delta.partial_json;
-                emitToolCall(i);
-              }
-            }
-            if (chunk.type === 'content_block_stop' && block?.type === 'tool_use') block.input = parseArgs(toolCalls[chunk.index]?.function.arguments ?? '{}');
-            if (chunk.type === 'message_delta') finish = chunk.delta?.stop_reason === 'tool_use' ? 'tool_calls' : chunk.delta?.stop_reason === 'max_tokens' ? 'length' : 'stop';
-            continue;
-          }
-          if (t.protocol === 'openai-responses') {
-            if (chunk.type === 'response.output_item.done') native[chunk.output_index] = chunk.item;
-            if (chunk.type === 'response.completed') responseItems = chunk.response?.output;
-            if (chunk.type === 'response.output_text.delta' && chunk.delta) {
-              const text = stripLeakedToolPreamble(chunk.delta);
-              if (text) { content += text; onDelta?.(text); }
-            }
-            if (chunk.type === 'response.reasoning_summary_text.delta' && chunk.delta) { reasoning += chunk.delta; onReasoning?.(chunk.delta); }
-            if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
-              const i = chunk.output_index ?? Object.keys(toolCalls).length;
-              toolCalls[i] = { id: chunk.item.call_id ?? chunk.item.id, type: 'function', function: { name: chunk.item.name, arguments: '' } };
-              emitToolCall(i);
-            }
-            if (chunk.type === 'response.function_call_arguments.delta') {
-              const i = chunk.output_index ?? 0;
-              const call = toolCalls[i];
-              if (call) {
-                call.function.arguments += chunk.delta ?? '';
-                emitToolCall(i);
-              }
-            }
-            if (chunk.type === 'response.completed') finish = Object.values(toolCalls).length ? 'tool_calls' : chunk.response?.status === 'incomplete' ? 'length' : 'stop';
-            continue;
-          }
-          const choice = chunk.choices?.[0];
-          // finish_reason 只在最后一个 chunk 上出现一次：判断这一轮是否完整全靠它
-          if (choice?.finish_reason) finish = choice.finish_reason as FinishReason;
-          const delta = choice?.delta;
-          if (!delta) continue;
-          if (delta.content) {
-            // ⚠️ 这里过去是「原样显示」，正是 DSML 泄漏被看见的地方：
-            // 标记进界面、tool_calls 却是空的，于是 agent 以为模型答完了。
-            if (dsml) absorb(dsml.push(delta.content));
-            else {
-              const text = stripLeakedToolPreamble(delta.content);
-              if (text) { content += text; onDelta?.(text); }
-            }
-          }
-          if (delta.reasoning_content) {
-            reasoning += delta.reasoning_content as string;
-            onReasoning?.(delta.reasoning_content as string);
-          }
-          if (delta.tool_calls) {
-            for (const tc of delta.tool_calls) {
-              const i = tc.index ?? 0;
-              if (!toolCalls[i]) {
-                toolCalls[i] = { id: tc.id ?? '', type: 'function', function: { name: '', arguments: '' } };
-                emitToolCall(i);
-              }
-              if (tc.id) toolCalls[i].id = tc.id;
-              if (tc.function?.name) toolCalls[i].function.name += tc.function.name;
-              if (tc.function?.arguments) toolCalls[i].function.arguments += tc.function.arguments;
-              if (tc.id || tc.function?.name || tc.function?.arguments) emitToolCall(i);
-            }
-          }
+          chunk = JSON.parse(payload);
         } catch {
-          // 忽略不完整的 JSON 块
+          // A complete SSE event is not an incomplete JSON fragment. Propagate
+          // this as a stream failure instead of returning a misleading empty or
+          // partial answer after silently discarding the provider error.
+          throw new Error('模型接口返回了无效的流式 JSON，请重试或检查模型服务');
+        }
+        if (!chunk || typeof chunk !== 'object' || Array.isArray(chunk)) throw new Error('模型接口未返回有效的流式消息');
+        const streamError = streamErrorOf(/^event:\s*error\s*$/m.test(evt) ? { ...chunk, type: 'error' } : chunk);
+        if (streamError) throw new Error(`模型服务返回错误：${streamError}`);
+        usage.observe(chunk);
+        capture?.(usage.value);
+        if (t.protocol === 'anthropic-messages') {
+          const delta = chunk.delta;
+          if (chunk.type === 'content_block_start') native[chunk.index] = structuredClone(chunk.content_block);
+          const block = native[chunk.index];
+          if (chunk.type === 'content_block_delta' && block) {
+            if (delta?.type === 'text_delta') block.text = (block.text ?? '') + delta.text;
+            if (delta?.type === 'thinking_delta') block.thinking = (block.thinking ?? '') + delta.thinking;
+            if (delta?.type === 'signature_delta') block.signature = (block.signature ?? '') + delta.signature;
+          }
+          if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
+            const i = chunk.index ?? Object.keys(toolCalls).length;
+            toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
+            emitToolCall(i);
+          }
+          if (chunk.type === 'content_block_delta' && delta?.type === 'text_delta' && typeof delta.text === 'string') {
+            const text = stripLeakedToolPreamble(delta.text);
+            if (text) { content += text; onDelta?.(text); }
+          }
+          if (chunk.type === 'content_block_delta' && delta?.type === 'thinking_delta' && typeof delta.thinking === 'string') { reasoning += delta.thinking; onReasoning?.(delta.thinking); }
+          if (chunk.type === 'content_block_delta' && delta?.type === 'input_json_delta' && delta.partial_json) {
+            const i = chunk.index ?? 0;
+            const call = toolCalls[i];
+            if (call) {
+              call.function.arguments += delta.partial_json;
+              emitToolCall(i);
+            }
+          }
+          if (chunk.type === 'content_block_stop' && block?.type === 'tool_use') block.input = parseArgs(toolCalls[chunk.index]?.function.arguments ?? '{}');
+          if (chunk.type === 'message_delta') finish = normalizeFinishReason(chunk.delta?.stop_reason) ?? finish;
+          if (chunk.type === 'message_stop') { ended = true; break stream; }
+          continue;
+        }
+        if (t.protocol === 'openai-responses') {
+          if (chunk.type === 'response.output_item.done') native[chunk.output_index] = chunk.item;
+          if (chunk.type === 'response.output_text.delta' && typeof chunk.delta === 'string') {
+            const text = stripLeakedToolPreamble(chunk.delta);
+            if (text) { content += text; onDelta?.(text); }
+          }
+          if (chunk.type === 'response.reasoning_summary_text.delta' && typeof chunk.delta === 'string') { reasoning += chunk.delta; onReasoning?.(chunk.delta); }
+          if (chunk.type === 'response.output_item.added' && chunk.item?.type === 'function_call') {
+            const i = chunk.output_index ?? Object.keys(toolCalls).length;
+            toolCalls[i] = { id: chunk.item.call_id ?? chunk.item.id, type: 'function', function: { name: chunk.item.name, arguments: '' } };
+            emitToolCall(i);
+          }
+          if (chunk.type === 'response.function_call_arguments.delta') {
+            const i = chunk.output_index ?? 0;
+            const call = toolCalls[i];
+            if (call) {
+              call.function.arguments += chunk.delta ?? '';
+              emitToolCall(i);
+            }
+          }
+          if (['response.completed', 'response.incomplete', 'response.failed'].includes(chunk.type)) {
+            responseItems = chunk.response?.output;
+            finish = responseFinishReason({ ...chunk.response, status: chunk.response?.status ?? chunk.type.slice('response.'.length) }, Object.values(toolCalls).length > 0);
+            ended = true;
+            break stream;
+          }
+          continue;
+        }
+        const choice = chunk.choices?.[0];
+        // finish_reason 只在最后一个 chunk 上出现一次：判断这一轮是否完整全靠它
+        if (choice?.finish_reason) finish = normalizeFinishReason(choice.finish_reason) ?? finish;
+        const delta = choice?.delta;
+        if (!delta) continue;
+        if (typeof delta.content === 'string' && delta.content) {
+          // ⚠️ 这里过去是「原样显示」，正是 DSML 泄漏被看见的地方：
+          // 标记进界面、tool_calls 却是空的，于是 agent 以为模型答完了。
+          if (dsml) absorb(dsml.push(delta.content));
+          else {
+            const text = stripLeakedToolPreamble(delta.content);
+            if (text) { content += text; onDelta?.(text); }
+          }
+        }
+        if (typeof delta.reasoning_content === 'string' && delta.reasoning_content) {
+          reasoning += delta.reasoning_content;
+          onReasoning?.(delta.reasoning_content);
+        }
+        if (delta.tool_calls) {
+          for (const tc of delta.tool_calls) {
+            const i = tc.index ?? 0;
+            if (!toolCalls[i]) {
+              toolCalls[i] = { id: tc.id ?? '', type: 'function', function: { name: '', arguments: '' } };
+              emitToolCall(i);
+            }
+            if (tc.id) toolCalls[i].id = tc.id;
+            if (tc.function?.name) toolCalls[i].function.name += tc.function.name;
+            if (tc.function?.arguments) toolCalls[i].function.arguments += tc.function.arguments;
+            if (tc.id || tc.function?.name || tc.function?.arguments) emitToolCall(i);
+          }
         }
       }
+      if (done) break;
     }
-    if (done) break;
+  } finally {
+    // Do not retain a live response after [DONE], parser failure or a throwing
+    // UI callback. Never let cancellation mask the original error.
+    void reader.cancel().catch(() => {});
+    reader.releaseLock();
   }
 
+  // A clean HTTP EOF does not prove the model finished. Some proxies simply
+  // close a broken upstream connection; do not execute its partial tool calls.
+  if (!ended && !finish) throw new Error('模型响应流意外结束，未收到完成标记');
   if (dsml) absorb(dsml.flush());
   const msg: ChatMessage = { role: 'assistant', content: content || null };
   if (reasoning) msg.reasoning_content = reasoning;
-  // 缺省按「完整」处理：网关没给 finish_reason 时不该把正常回复误判成残缺轮次
+  // [DONE]/native terminal events are sufficient even without finish_reason.
   if (finish) msg.finish_reason = finish;
   const calls = [...Object.values(toolCalls), ...recovered];
   if (calls.length > 0) msg.tool_calls = calls;

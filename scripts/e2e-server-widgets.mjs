@@ -7,7 +7,6 @@ import path from 'node:path';
 import net from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { chromium, webkit } from 'playwright';
-import { openCodeMenu } from './helpers/widget-preview.mjs';
 
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-server-widget-e2e-'));
 const shots = process.env.SHOTS_DIR || path.join(os.tmpdir(), 'opencode', 'server-widgets', process.env.BROWSER || 'chrome');
@@ -29,9 +28,21 @@ button.onclick = async function () { count++; button.textContent = count;
 };
 </script>`;
 let release, releaseArgs, modelCalls = 0;
+const failedPrefix = '这段服务端已输出的回答发生中断，需要从这里接上。';
+const continuedSuffix = '  现在继续解释后半部分。\n';
 const { buildServer } = await import('../apps/api/src/server.ts');
 const app = buildServer({ dbPath: path.join(directory, 'db.sqlite'), fetch: async (_url, init) => {
   const body = JSON.parse(init.body); modelCalls++;
+  if (body.messages.at(-1)?.content?.includes('从断点处直接续上')) {
+    assert.equal(body.tools, undefined);
+    return Response.json({ choices: [{ message: { role: 'assistant', content: failedPrefix + continuedSuffix }, finish_reason: 'stop' }] });
+  }
+  if (body.messages.at(-1)?.content?.includes('测试断线续写')) {
+    return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: failedPrefix }, finish_reason: 'error' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'content-type': 'text/event-stream' } });
+  }
+  if (body.messages.at(-1)?.content?.includes('测试空输出异常')) {
+    return Response.json({ choices: [{ message: { role: 'assistant', content: '' }, finish_reason: 'error' }] });
+  }
   assert.ok(body.tools.some(tool => tool.function?.name === 'show_widget'));
   const receipt = body.messages.filter(message => message.role === 'tool' && message.name === 'show_widget').at(-1);
   if (!receipt) {
@@ -133,15 +144,15 @@ try {
   await page.getByTestId('course-chat-page').waitFor();
   await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).fill('请使用交互式讲解解释一个计数器');
   await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).press('Enter');
-  const code = page.locator('[data-testid="code-block"][data-language="html"]');
-  await code.waitFor({ timeout: 30000 });
-  const partialMenu = await openCodeMenu(page, code);
-  assert.equal(await partialMenu.getByRole('menuitem', { name: '预览', exact: true }).count(), 0, 'partial arguments are inert source only');
-  await page.keyboard.press('Escape');
+  const works = page.getByTestId('widget-block');
+  const partial = page.getByTestId('widget-stream-preview');
+  await partial.waitFor({ timeout: 30000 });
+  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'partial arguments cannot execute scripts');
+  assert.equal(await partial.locator('script,style,iframe,svg,[onclick]').count(), 0, 'partial preview is sanitized static HTML');
   releaseArgs();
-  await page.waitForFunction(expected => document.querySelector('[data-testid="code-block"] pre code')?.textContent === expected, source);
-  assert.equal(await code.locator('pre code').textContent(), source);
-  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'server-created works also start inert');
+  await works.waitFor({ timeout: 30000 });
+  await partial.waitFor({ state: 'detached' });
+  assert.equal(await page.getByTestId('code-block').count(), 0, 'validated works are independent, not ordinary code blocks');
   let task = (await (await context.request.get(`${origin}/api/v1/cloud/tasks`)).json()).tasks.find(task => task.kind === 'chat');
   assert.equal(task.executor, 'node'); assert.equal(task.status, 'running');
   assert.equal(task.progress.widgets.length, 1);
@@ -149,10 +160,8 @@ try {
   // Reload while the external model is still blocked. The new page has to rebuild
   // its active view from API records/progress, not an in-memory browser tool result.
   await navigate(() => page.reload());
-  await code.waitFor({ timeout: 30000 });
-  assert.equal(await code.count(), 1, 'no duplicate checkpoint + live message');
-  const menu = await openCodeMenu(page, code);
-  await menu.getByRole('menuitem', { name: '预览', exact: true }).click();
+  await works.waitFor({ timeout: 30000 });
+  assert.equal(await works.count(), 1, 'no duplicate checkpoint + live message');
   const frame = page.getByTestId('widget-frame');
   await frame.contentFrame().getByRole('heading', { name: '服务器生成的交互讲解' }).waitFor();
   const openedChatFrame = await frame.elementHandle();
@@ -168,16 +177,41 @@ try {
   await page.getByTestId('chat-stop').waitFor({ state: 'detached' });
   assert.equal(await openedChatFrame.evaluate(element => element.isConnected), true, 'chat completion must not remount an opened preview');
   await frame.contentFrame().getByRole('button', { name: '1', exact: true }).waitFor();
-  assert.equal(await code.count(), 1);
-  await navigate(() => page.reload()); await code.waitFor({ timeout: 30000 });
+  assert.equal(await works.count(), 1);
+  await navigate(() => page.reload()); await works.waitFor({ timeout: 30000 });
   task = await (await context.request.get(`${origin}/api/v1/cloud/tasks/${task.id}`)).json();
   assert.equal(task.status, 'completed'); assert.equal(task.result.widget.ref, ref);
   const row = (await (await context.request.get(`${origin}/api/v1/cloud/record?table=chats&key=${task.result.rowId}`)).json()).value;
   assert.equal(row.widgets[0].html, source);
-  const persisted = await openCodeMenu(page, code); await persisted.getByRole('menuitem', { name: '预览', exact: true }).click();
   await frame.contentFrame().getByRole('button', { name: '1', exact: true }).waitFor({ timeout: 30000 });
   assert.equal(await page.getByTestId('widget-error').count(), 0, (await page.getByTestId('widget-error').allTextContents()).join('\n'));
   await page.screenshot({ path: path.join(shots, 'chat-reloaded-preview.png') });
+
+  await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).fill('测试断线续写');
+  await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).press('Enter');
+  await page.getByTestId('chat-continue').waitFor({ timeout: 30000 });
+  const failedTask = (await (await context.request.get(`${origin}/api/v1/cloud/tasks`)).json()).tasks.find(item => item.input.text === '测试断线续写');
+  await page.getByTestId('chat-continue').click();
+  await page.getByText('现在继续解释后半部分。', { exact: false }).waitFor({ timeout: 30000 });
+  await page.getByTestId('chat-stop').waitFor({ state: 'detached' });
+  // The timeline is virtualized: total mounted nodes changes as it remeasures.
+  // Check this answer's actual identity and visible copies, not unrelated rows.
+  assert.equal(await page.getByText('现在继续解释后半部分。', { exact: false }).count(), 1, 'cloud continuation has one visible answer');
+  const continuationTask = (await (await context.request.get(`${origin}/api/v1/cloud/tasks`)).json()).tasks.find(item => item.input.action === 'continue');
+  assert.equal(continuationTask.status, 'completed');
+  const continuedRow = (await (await context.request.get(`${origin}/api/v1/cloud/record?table=chats&key=${continuationTask.result.rowId}`)).json()).value;
+  assert.equal(continuedRow.content, failedPrefix + continuedSuffix);
+  assert.equal(continuedRow.interrupted, undefined);
+  assert.equal(continuationTask.input.rowId, continuedRow.id);
+  assert.equal(continuedRow.id, failedTask.progress.rowId, 'cloud continuation updates the failed answer, not a new message');
+
+  await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).fill('测试空输出异常');
+  await page.getByRole('textbox', { name: '给 AI 助手发送消息' }).press('Enter');
+  await page.getByTestId('chat-error-continue').waitFor({ timeout: 30000 });
+  assert.equal(await page.getByTestId('chat-continue').count(), 0, 'empty failures have no resumable breakpoint');
+  await navigate(() => page.reload());
+  await page.getByTestId('chat-error-continue').waitFor({ timeout: 30000 });
+  assert.equal(await page.getByTestId('chat-continue').count(), 0, 'refresh must not turn an empty error into continuation');
 
   // QA side panel: real course, real server QA executor and remote runQa sink.
   await mutate('videos', 'widget-course', { id: 'widget-course', name: '作品测试课程', kind: 'material', materialFormat: 'md', status: 'ready', coverState: 'skipped', createdAt: Date.now(), size: 0 });
@@ -187,12 +221,11 @@ try {
   await navigate(() => page.goto(`${origin}/?server-widget-qa=1#/player/widget-course`));
   await page.getByRole('button', { name: '打开学习助手', exact: true }).click();
   const input = page.locator('textarea').first(); await input.fill('请画一个交互式计数器'); await input.press('Enter');
-  await code.waitFor({ timeout: 30000 });
+  await partial.waitFor({ timeout: 30000 });
+  assert.equal(await page.getByTestId('widget-frame').count(), 0);
   releaseArgs();
-  await page.waitForFunction(expected => document.querySelector('[data-testid="code-block"] pre code')?.textContent === expected, source);
-  assert.equal(await code.locator('pre code').textContent(), source);
-  assert.equal(await code.count(), 1);
-  const qaMenu = await openCodeMenu(page, code); await qaMenu.getByRole('menuitem', { name: '预览', exact: true }).click();
+  await works.waitFor({ timeout: 30000 });
+  assert.equal(await works.count(), 1);
   try { await frame.contentFrame().getByRole('heading', { name: '服务器生成的交互讲解' }).waitFor(); }
   catch (error) { console.error('QA PAGE', await page.locator('body').innerText()); await page.screenshot({ path: path.join(shots, 'qa-failed.png') }); throw error; }
   const openedQaFrame = await frame.elementHandle();
@@ -206,7 +239,16 @@ try {
   if (errors.length) console.error('Failed requests:', failedRequests);
   assert.deepEqual(errors, []);
   assert.ok(resizeNotices.length < 10, 'ResizeObserver notifications must remain bounded');
-  console.log(`Real API/Node chat + QA: active delivery/reload, code-first, preview, saved state, no extra model calls and completion passed. Screenshots: ${shots}`);
+  console.log(`Real API/Node chat + QA: static partial preview, independent works, active reload/state, same-row continuation/dedup and completion passed. Screenshots: ${shots}`);
+} catch (error) {
+  const context = browser?.contexts()[0];
+  const page = context?.pages()[0];
+  if (page) {
+    console.error('PAGE', await page.locator('body').innerText());
+    console.error('TASKS', await (await context.request.get(`${origin}/api/v1/cloud/tasks`)).text());
+    await page.screenshot({ path: path.join(shots, 'failure.png') });
+  }
+  throw error;
 } finally {
   releaseArgs?.(); release?.(); await browser?.close(); await vite?.close(); await app.close(); fs.rmSync(directory, { recursive: true, force: true });
 }

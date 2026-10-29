@@ -223,6 +223,7 @@ export async function runAgentLoop(
       cb.onReasoningDelta,
       cb.onToolCallDelta,
     );
+    cb.signal?.throwIfAborted();
     out.push(msg);
 
     // 残缺轮次不进历史（pi：`stopReason === 'error' | 'aborted'` 直接 continue 跳过）。
@@ -230,8 +231,19 @@ export async function runAgentLoop(
     // 也不能走收尾轮 —— 收尾请求基于的正是这个坏状态。撤掉它，上层出兜底文案。
     if (isUnreplayableTurn(msg.finish_reason)) {
       out.pop();
-      await cb.onTranscript?.(out);
       cb.onStop?.({ reason: 'error', rounds: round + 1, requestedTools: [], granted: false });
+      return out;
+    }
+    if (msg.finish_reason === 'content_filter') {
+      // Refused/filtered turns are terminal, not valid tool proposals. Do not
+      // execute or replay their native function-call blocks or auto-retry them.
+      delete msg.tool_calls;
+      delete msg.providerState;
+      if (!textOf(msg).trim()) {
+        msg.content = '模型服务因内容过滤停止了这次回答，请调整提问后重试。';
+        cb.onDelta?.(msg.content);
+      }
+      await cb.onTranscript?.(out);
       return out;
     }
     await cb.onTranscript?.(out);
@@ -354,6 +366,19 @@ export async function runAgentLoop(
       cb.onReasoningDelta,
       cb.onToolCallDelta,
     );
+    cb.signal?.throwIfAborted();
+    if (isUnreplayableTurn(finalMsg.finish_reason)) {
+      cb.onStop?.({ reason: 'error', rounds: stop.rounds, requestedTools: pending, granted: false });
+      return out;
+    }
+    if (finalMsg.finish_reason === 'content_filter') {
+      delete finalMsg.tool_calls;
+      delete finalMsg.providerState;
+      if (!textOf(finalMsg).trim()) {
+        finalMsg.content = '模型服务因内容过滤停止了这次回答，请调整提问后重试。';
+        cb.onDelta?.(finalMsg.content);
+      }
+    }
     if (textOf(finalMsg).trim()) {
       out.push(finalMsg);
       await cb.onTranscript?.(out);

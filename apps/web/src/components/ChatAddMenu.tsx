@@ -6,6 +6,8 @@ import { useCourseChat } from '../store/courseChat';
 import { useChatAttachments } from '../store/chatAttachments';
 import { CHAT_FILE_ACCEPT, CHAT_IMAGE_ACCEPT } from '../chat/attachments';
 import { MAX_COURSE_CONTEXT } from '../harness/courseContext';
+import { folderCourseScope } from '@wangke/study-core/folder-scope';
+import { projectDisplayName } from '../projects/chatProjects';
 import { MODAL_CONTAINER_CLASS, Sym, toast } from '../ui';
 import { handoutDraft, prepareHandoutPrompt } from '../skills/handout';
 import SkillPicker from './SkillPicker';
@@ -13,8 +15,9 @@ import ModelPicker from './ModelPicker';
 import './chat-attachments.css';
 import { useTranslation } from 'react-i18next';
 
-export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
+export default function ChatAddMenu({ disabled, onSelectProject }: { disabled?: boolean; onSelectProject?: () => void }) {
   const { t } = useTranslation('settings');
+  const { t: tp } = useTranslation('projects');
   const navigate = useNavigate();
   const imageInput = useRef<HTMLInputElement>(null);
   const fileInput = useRef<HTMLInputElement>(null);
@@ -33,12 +36,18 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
   const setMcpServerIds = useCourseChat((state) => state.setMcpServerIds);
   const loading = useCourseChat((state) => state.loading);
   const contextCourses = useCourseChat((state) => state.contextCourses);
+  const project = useCourseChat((state) => state.project);
+  const projectLabel = project ? `${tp('selectProject')} · ${projectDisplayName(project.name)}` : tp('selectProject');
   const contextLabel = contextCourses.length ? `课程引用 · ${contextCourses.length} 门` : '课程引用';
   const addFiles = useChatAttachments((state) => state.add);
   const openCourses = async () => {
     setError(''); setBusy(true); setQuery(''); setCoursesOpen(true);
     setSelected(useCourseChat.getState().contextCourses.map((course) => course.id));
-    try { setCourses((await db.videos.orderBy('createdAt').reverse().toArray()).map(({ id, name }) => ({ id, name }))); }
+    try {
+      const [rows, folders] = await Promise.all([db.videos.orderBy('createdAt').reverse().toArray(), db.folders.toArray()]);
+      const scope = folderCourseScope(folders, rows, project?.folderId);
+      setCourses(rows.filter(row => !scope || scope.has(row.id)).map(({ id, name }) => ({ id, name })));
+    }
     catch { setError('课程列表读取失败，请关闭后重试'); }
     finally { setBusy(false); }
   };
@@ -76,13 +85,15 @@ export default function ChatAddMenu({ disabled }: { disabled?: boolean }) {
           <div className="px-2 py-1">
             <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} onClose={() => setAddOpen(false)} />
           </div>
-          <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['handout'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
+          <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['handout', 'project'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
             if (key === 'courses') void openCourses();
             else if (key === 'images') imageInput.current?.click();
             else if (key === 'files') fileInput.current?.click();
             else if (key === 'skills') setSkillsOpen(true);
             else if (key === 'handout') void addHandout();
+            else if (key === 'project') { setAddOpen(false); onSelectProject?.(); }
           }}>
+            {onSelectProject && <Dropdown.Item id="project" textValue={projectLabel} data-testid="chat-select-project"><Sym name="folder" /><Label>{projectLabel}</Label></Dropdown.Item>}
             <Dropdown.Item id="courses" textValue={contextLabel} data-testid="course-chat-context">
               <Sym name="school" />
               <Label>{contextLabel}</Label>

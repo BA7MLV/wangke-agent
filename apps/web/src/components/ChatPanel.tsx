@@ -62,7 +62,7 @@ import SkillPicker from './SkillPicker';
 import QuizCard from './QuizCard';
 import { canUpdateQuizPick, quizHistoryContent, type QuizPick } from '../harness/quiz';
 import WidgetMessage from './WidgetMessage';
-import CodeBlock from './CodeBlock';
+import StreamingHtmlPreview from './StreamingHtmlPreview';
 import { ArtifactEditProvider } from './ArtifactEditor';
 import AssistantContent from './AssistantContent';
 import { useResolvedDark } from '../ui/theme';
@@ -139,6 +139,8 @@ interface ChatMsg {
   taskId?: string;
   streaming?: boolean;
   error?: boolean;
+  interrupted?: boolean;
+  interruptReason?: string;
 }
 
 let keySeq = 0;
@@ -833,6 +835,8 @@ export default function ChatPanel({
           quiz: r.quiz,
           widget: r.widget,
           widgets: r.widgets,
+          interrupted: r.interrupted,
+          interruptReason: r.interruptReason,
           rowId: r.id,
         })));
         setLoadedSessionId(activeId);
@@ -1110,8 +1114,10 @@ export default function ChatPanel({
     const stopped: AgentStopInfo[] = [];
     let widgetPreview: { html: string } | undefined;
     let widgetState: WidgetPayload | undefined;
+    let quizState: QuizState | undefined;
     const widgets: WidgetPayload[] = [];
     let widgetRowId: number | undefined;
+    let serverOwned = false;
     const abort = new AbortController();
     inflightAbort = abort;
     const updates = framePatch<ChatMsg>((patch) =>
@@ -1151,20 +1157,21 @@ export default function ChatPanel({
 
       const { remoteTasks } = await import('../cloud/state');
       if (remoteTasks()) {
+        serverOwned = true;
         const { runQa } = await import('../harness/qaRunner');
         const result = await runQa({ videoId, sessionId, text: (quoteBlock ? `${quoteBlock}\n\n` : '') + q,
           displayText: displayContent, chatImages: userImages, videoName, skillIds,
           materialKind, materialFormat, refsCount: curRefs.length, shotCount: curShots.length,
           images: curShots.flatMap(s => [{ type: 'text' as const, text: shotTag(s) }, { type: 'image_url' as const, image_url: { url: s.dataUrl } }]),
         }, { signal: abort.signal,
-          onPersist: rowId => patchAi({ rowId }),
+          onPersist: rowId => { widgetRowId = rowId; patchAi({ rowId }); },
           onWidgetPreview: preview => patchAi({ widgetPreview: preview }),
           onTools: tools => patchAi({ tools, hint: tools.at(-1)?.status === 'running' ? tools.at(-1)?.name : undefined }),
           onDelta: text => { answer += text; updates.stream({ content: answer, processPhase: 'answering' }); },
           onReasoning: text => { reasoning += text; updates.stream({ reasoning, processPhase: 'thinking' }); },
           onRoundStart: () => { answer = ''; patchAi({ content: '' }); },
           onCard: card => {
-            if (card.kind === 'widget') { widgets.push(card.widget); patchAi({ widgets: [...widgets], widget: card.widget }); }
+            if (card.kind === 'widget') { widgetState = card.widget; widgets.push(card.widget); patchAi({ widgets: [...widgets], widget: card.widget }); }
           },
         });
         patchAi({ ...result, streaming: false, hint: undefined, widgetPreview: undefined });
@@ -1349,7 +1356,6 @@ export default function ChatPanel({
       }
 
       // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
-      let quizState: QuizState | undefined;
       // Keep every validated visual; the returned references place them in the explanation.
       const executeTool = createResourceExecutor({
         signal: abort.signal,
@@ -1461,12 +1467,12 @@ export default function ChatPanel({
         // 检索轮次上限来自设置（默认 6，选「不限」则为 Infinity；另有循环检测与 token 预算兜着）
         resolveMaxRounds(settings.agentRounds),
       );
-
+      if (stopped.at(-1)?.reason === 'error') throw new Error('模型或网关没有正常结束这一轮回答');
       const finalAnswer = answer.trim();
       /** 思考耗时：一帧都没来过就别记 0（那会让「已思考用时 0.0 秒」看着像 bug） */
       const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
       if (finalAnswer || quizState || widgetState) {
-        patchAi({ streaming: false, hint: undefined, reasoningMs });
+        patchAi({ streaming: false, hint: undefined, reasoningMs, widgetPreview: undefined });
         const rowId = (await persistAssistantSnapshot({
           videoId,
           sessionId,
@@ -1489,6 +1495,7 @@ export default function ChatPanel({
           streaming: false,
           hint: undefined,
           reasoningMs,
+          widgetPreview: undefined,
           content: noAnswerNotice({
             // 没有 closeOut 只可能是「循环正常结束却一个字没说」——那正是 `empty` 这条闸管的事，
             // 猜成 `rounds` 会印出「已到轮次上限」这种从未发生过的原因（实测文案：0 次工具调用）
@@ -1506,6 +1513,17 @@ export default function ChatPanel({
         toast.warning('部分截图描述失败，回答仅参考了时间戳与字幕');
       }
     } catch (e) {
+      if (serverOwned) {
+        // Server progress already owns the durable row. Never create a second
+        // local assistant when a remote task fails before the next sync poll.
+        const reason = e instanceof Error ? e.message : String(e);
+        const useful = !!answer.trim() || !!widgetState;
+        patchAi({ streaming: false, hint: undefined, widgetPreview: undefined,
+          content: abort.signal.aborted ? `${answer}\n\n_（已停止生成）_` : useful ? answer : `回答失败：${reason}`,
+          error: !useful && !abort.signal.aborted, interrupted: useful && !abort.signal.aborted,
+          interruptReason: abort.signal.aborted ? undefined : reason });
+        return;
+      }
       // 用户按了停止：不是错误。保留已流出的内容，只补一句「已停止」，并且**落库**
       // （否则刷新就没了，「停止」等于白生成一轮）
       if (abort.signal.aborted) {
@@ -1532,11 +1550,10 @@ export default function ChatPanel({
         patchAi({ rowId });
       } else {
         const errMsg = e instanceof Error ? e.message : String(e);
-        if (widgetState) {
-          // A validated widget is already useful even if the follow-up text
-          // request fails. Persist it instead of leaving the successful tool
-          // result only in the in-memory streaming row.
-          const partial = answer.trim();
+        const partial = answer.trim() ? answer : '';
+        if (partial || widgetState || quizState) {
+          // Persist useful work even without a widget. Keep the failure reason
+          // outside the body, so future requests replay only the model's text.
           const reasoningMs = reasoningFrom ? Date.now() - reasoningFrom : undefined;
           patchAi({
             streaming: false,
@@ -1544,6 +1561,8 @@ export default function ChatPanel({
             widgetPreview: undefined,
             reasoningMs,
             content: partial,
+            interrupted: true,
+            interruptReason: errMsg,
           });
           setLoading(false);
           const rowId = (await persistAssistantSnapshot({
@@ -1555,8 +1574,11 @@ export default function ChatPanel({
             reasoning: reasoning || undefined,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
-            widget: widgetState,
-            widgets,
+            ...(widgetState ? { widget: widgetState } : {}),
+            ...(widgets.length ? { widgets } : {}),
+            ...(quizState ? { quiz: quizState } : {}),
+            interrupted: true,
+            interruptReason: errMsg,
           }, widgetRowId)) as number;
           patchAi({ rowId });
         } else {
@@ -1566,8 +1588,7 @@ export default function ChatPanel({
             error: true,
             widgetPreview: undefined,
             reasoningMs: reasoningFrom ? Date.now() - reasoningFrom : undefined,
-            // 已流出部分内容时保留并追加中断说明，否则整体替换为错误提示
-            content: answer.trim() ? `${answer}\n\n> 回答中断：${errMsg}` : `回答失败：${errMsg}`,
+            content: `回答失败：${errMsg}`,
           });
         }
       }
@@ -1906,17 +1927,23 @@ export default function ChatPanel({
                           />
                         )}
                         {m.widgetPreview && (
-                          <CodeBlock source={m.widgetPreview.html} language="html" />
+                          <StreamingHtmlPreview html={m.widgetPreview.html} />
                         )}
                   </div>
                   </ArtifactEditProvider>
-                  {!m.streaming && m.content && m.rowId != null && (
+                  {!m.streaming && m.interrupted && (
+                    <div className="chat-note" role="status" data-testid="chat-interrupted">
+                      <Sym name="warning" className="chat-note__icon" />
+                      <span>回答中断：{m.interruptReason || '请求未正常完成'}。重试将重新生成这条回答。</span>
+                    </div>
+                  )}
+                  {!m.streaming && (m.content || m.widget || m.quiz) && (m.rowId != null || m.error) && (
                     <MessageActions
                       content={m.content}
                       isUser={false}
                       busy={loading || deleting}
                       canRetry={canRetry}
-                      retryHint={m.error ? '继续回答这句话' : '重新生成这条回答'}
+                      retryHint="重新生成这条回答"
                       onRetry={() => void retryMessage(m.key)}
                       onFork={() => void forkMessage(m)}
                       onExport={downloadSession}

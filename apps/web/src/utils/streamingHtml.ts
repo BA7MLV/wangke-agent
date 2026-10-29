@@ -12,8 +12,8 @@
  * pipeline in `StreamingHtmlPreview` before it is put in the DOM.
  */
 
-import { artifactFences, isSvgCode } from './artifactEdit';
-import { htmlFenceContentType } from './htmlContent';
+import { artifactFences, isSvgCode } from './artifactEdit.ts';
+import { htmlFenceContentType } from './htmlContent.ts';
 
 const VOID_TAGS = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta',

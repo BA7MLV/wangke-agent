@@ -10,6 +10,14 @@
 6. 文件夹授权可为读取、读写、管理或未授权；管理权限额外允许 Bot 从独立会话重命名文件夹。文件夹可归档／恢复，归档不删除文件。文件删除后保留学习记录和会话，缺失文件的学习记录仍可从原目录打开。
 7. `/system` 系统文件入口保持独立。旧 `/projects` 和项目文件链接重定向到资源页面；没有第二套项目导航或活动文件副本。
 
+### 聊天中选择项目
+
+主页「选择项目」可选择现有顶层资源文件夹，或直接新建项目；新建时自动生成名为 `项目：项目名` 的资源文件夹，无需先配置 Bot。本地离线模式创建本地资料文件夹，登录后端模式创建真实服务端目录。项目是组织多份资料的文件夹，课程则是其中单份可播放／阅读、带学习索引的资料。
+
+首次发送后上方项目入口自动收起，项目归属保存在会话的 `projectFolderId`，刷新、切换及分支会话仍保留；可从输入栏「＋ → 选择项目」修改。默认课程列表／正文检索使用此文件夹及子文件夹中的资料，不受五门固定课程引用的限制；显式全库检索或指定课程仍可跨项目。新会话不继承上一会话的项目。
+
+资源文件夹的「更多操作 → 文件夹颜色」支持蓝、绿、黄、橙、红、紫、灰。顶层及子文件夹均持久保存颜色，改名、移动和重启不丢失；系统文件夹保持独立灰色。
+
 ### 普通 Bot 的默认目录
 
 普通 Web／IM Bot 会话共用当前用户的 `Bot` 文件夹：新接收的附件、导出的文本默认归入这里，`workspace` 文件工具与 shell 的 `/workspace` 指向同一个真实目录。Bot 在开始处理附件前完成归档，无需先打开资源页面。已存在同名文件夹时创建 `Bot (2)` 等独立目录，默认身份由 `bot_workspaces` 保存，不按名称猜测或接管用户目录。
@@ -91,12 +99,15 @@ PATCH          /threads/:id                    { title?, archived? }
 DELETE         /threads/:id
 GET            /resources?projectId=&path=&archived=false
 POST           /resources/folders               { name }
+PATCH          /resources/folders/color         { projectId, path, color }
 POST           /resources/move                  { projectId, path, targetProjectId, target, revision }
 GET            /resources/courses/:id            支持 Range
 POST           /resources/courses/:id/text       { text, expected }
 ```
 
 文本写入参数为 `{ text, expectedRevision }`：创建传 `null`，覆盖传上次读取返回的 revision，冲突返回 409。项目 PATCH 允许 `name`、`instructions`、`policy`、`archived`，不接受 ID/路径修改。
+
+资源目录项的文件夹带 `folderId`、可选 `color`；创建文件夹响应也返回 `folderId`，供聊天关联同一个资源实体。
 
 阅读器 Markdown 保存传完整原文快照 `expected` 做比较后写入；并发 Bot／页面修改返回 409，不覆盖新内容，编辑器保留草稿。目录／文件移动沿用 revision 校验、同名保护、路径安全和运行任务互斥。HTML 等课程原文件按附件返回，不能当作应用页面执行。
 
@@ -113,5 +124,7 @@ POST           /resources/courses/:id/text       { text, expected }
 验证命令及 Docker 挂载环境变量见 [运行时部署](agent-runtime.md)。
 
 资源专项验证：`npm run test:resources`、`npm run test:resources:e2e`。后者覆盖桌面／手机、真实 mkdir／上传／课程导入、机器直接创建文件、Markdown 阅读／保存／索引／并发保护、返回原目录、B 站入口及旧链接。截图保存在 `test-results/resource-folders`。
+
+聊天项目验证：`npm run test:chat-projects`、`npm run test:chat-projects:e2e`，覆盖本地／服务端创建、会话归属、发送后收起、子目录检索及桌面／手机文件夹颜色。截图在 `test-results/chat-projects`。
 
 兼容边缘验证：`npx tsx scripts/test-resource-compat.mjs`，覆盖原生解析／封面、固定描述符与符号链接替换、worker 写回、旧删除／并发保护／文件重建、移动索引预检及视频扩展名。

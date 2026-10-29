@@ -13,7 +13,10 @@ import {
 } from '@heroui/react';
 import { MarkdownCode, MarkdownPre } from '../components/mermaid/markdown';
 import { MarkdownTable } from '../components/MdTable';
+import StreamingHtmlPreview from '../components/StreamingHtmlPreview';
 import ChatAddMenu from '../components/ChatAddMenu';
+import ChatProjectPicker from '../components/ChatProjectPicker';
+import { projectDisplayName } from '../projects/chatProjects';
 import ComposerExpand, { useComposerSize } from '../components/ComposerExpand';
 import { ChatComposer, ChatComposerInput, ChatComposerTools } from '../components/ChatComposer';
 import { ChatAttachmentDraft, ChatMessageAttachments } from '../components/ChatAttachments';
@@ -32,7 +35,6 @@ import ChatSyncStatus from '../components/ChatSyncStatus';
 import { db } from '../store/db';
 import AskCard from '../components/AskCard';
 import FolderPlanCard from '../components/FolderPlanCard';
-import CodeBlock from '../components/CodeBlock';
 import { ArtifactEditProvider } from '../components/ArtifactEditor';
 import AssistantContent from '../components/AssistantContent';
 import { readChatHistory } from '../store/chatHistory';
@@ -490,6 +492,7 @@ export default function CourseChat() {
   const isNarrow = useMediaQuery('(max-width: 900px)');
   const [welcomeGreeting] = useState(() => chatGreeting());
   const [importDismissed, setImportDismissed] = useState(false);
+  const [projectPickerOpen, setProjectPickerOpen] = useState(false);
   const navigate = useNavigate();
   const listRef = useRef<HTMLDivElement | null>(null);
   /**
@@ -511,6 +514,7 @@ export default function CourseChat() {
   const ready = useCourseChat((s) => s.ready);
   const sessions = useCourseChat((s) => s.sessions);
   const activeId = useCourseChat((s) => s.activeId);
+  useEffect(() => { setImportDismissed(false); setProjectPickerOpen(false); }, [activeId]);
   const loaded = useCourseChat((s) => s.loaded);
   useLayoutEffect(() => {
     useChatAttachments.getState().bind(activeId);
@@ -546,6 +550,7 @@ export default function CourseChat() {
   const courseCount = useCourseChat((s) => s.courseCount);
   const skillIds = useCourseChat((s) => s.skillIds);
   const contextCourses = useCourseChat((s) => s.contextCourses);
+  const project = useCourseChat((s) => s.project);
   const pendingAsk = useCourseChat((s) => s.pendingAsk);
   const handlePaste = (event: ClipboardEvent<HTMLTextAreaElement>) => {
     if (pendingAsk) return;
@@ -904,6 +909,11 @@ export default function CourseChat() {
         ),
       }}
     >
+      {projectPickerOpen && <ChatProjectPicker key={activeId ?? 'draft'} value={project} onClose={() => setProjectPickerOpen(false)}
+        onSelect={async selected => {
+          if (useCourseChat.getState().activeId !== activeId) throw new Error('会话已切换，请重新选择项目');
+          await useCourseChat.getState().setProject(selected);
+        }} />}
       <div
         className={`course-chat t-stagger${welcomeEntrancePlayed ? ' is-shown' : ''}${loaded && messages.length === 0 ? ' course-chat--empty' : ''}`}
         ref={welcomeRef}
@@ -1010,7 +1020,7 @@ export default function CourseChat() {
                         )}
                         </WidgetMessage>
                         {message.widgetPreview && (
-                          <CodeBlock source={message.widgetPreview.html} language="html" />
+                           <StreamingHtmlPreview html={message.widgetPreview.html} />
                         )}
                         </ArtifactEditProvider>
                         {!message.content && (message.ask || message.folderPlan) && <div aria-hidden="true" data-chat-answer-start="" />}
@@ -1140,17 +1150,17 @@ export default function CourseChat() {
                 </p>
               </div>
             )}
-            {/* 文件夹入口默认与输入卡叠成一组，不随课程数量或会话内容隐藏。 */}
-            {!importDismissed && (
+            {/* 只在尚未发送的会话显示；发送后保留项目归属，入口收进添加菜单。 */}
+            {loaded && activeId == null && messages.length === 0 && !loading && !importDismissed && (
               <div className="course-chat__import" data-testid="chat-import-strip">
                 <Button
                   className="course-chat__import-label"
                   variant="ghost"
-                  onPress={() => navigate('/library')}
+                  onPress={() => setProjectPickerOpen(true)}
                   data-testid="chat-go-import"
                 >
                   <Sym name="folder" aria-hidden="true" />
-                  <span>选择项目</span>
+                  <span>{project ? projectDisplayName(project.name) : '选择项目'}</span>
                 </Button>
                 <Button
                   isIconOnly
@@ -1187,7 +1197,7 @@ export default function CourseChat() {
               <div className="course-chat__composer-context">
               <ChatAttachmentDraft />
               </div>
-              <ChatAddMenu disabled={!sessionReady || !!pendingAsk} />
+              <ChatAddMenu disabled={!sessionReady || !!pendingAsk} onSelectProject={() => setProjectPickerOpen(true)} />
               <ComposerExpand visible={composerOverflow} key={`expand-${activeId ?? 'draft'}`} value={draft} onPaste={handlePaste} onChange={(value) => {
                 setVoiceEditVersion((version) => version + 1);
                 setDraft(value);

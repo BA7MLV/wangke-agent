@@ -6,6 +6,7 @@ import { ProjectError } from './files.js';
 import { importBotAttachments } from './attachments.js';
 import type { ProjectRepository } from './repository.js';
 import type { ResourceDirectory, ResourceEntry } from '@wangke/contracts/resources';
+import { RESOURCE_FOLDER_COLORS, type ResourceFolderColor } from '@wangke/contracts/resources';
 
 type Placement = { owner_id: string; course_id: string; project_id: string; path: string; identity: string; revision: string; source_file: string | null };
 type Folder = { folder_id: number; project_id: string; path: string };
@@ -194,7 +195,7 @@ export class ResourceFiles {
     if (row?.kind === 'material') this.put(owner, 'videos', id, { ...row, status: 'new', unitCount: undefined, lastUnit: undefined });
   }
   private index(owner: string, projectId: string, entry: ResourceEntry): ResourceEntry {
-    if (entry.kind === 'directory') { this.folderId(owner, projectId, entry.path); return entry; }
+    if (entry.kind === 'directory') return { ...entry, ...this.folderMetadata(owner, projectId, entry.path) };
     const ext = path.extname(entry.name).slice(1).toLowerCase(), format = formats[ext];
     if (!format && !video.has(ext)) return entry;
     const identity = this.projects.files.identity(projectId, entry.path);
@@ -227,8 +228,7 @@ export class ResourceFiles {
     }
     if (!projectId) {
       for (const scope of this.projects.list(owner).filter(p => p.id !== rootId && (archived || !p.archived))) {
-        this.folderId(owner, scope.id, '');
-        entries.push({ name: scope.name, path: '', projectId: scope.id, kind: 'directory', size: 0, updatedAt: scope.updatedAt, revision: scope.updatedAt, scope });
+        entries.push({ name: scope.name, path: '', projectId: scope.id, kind: 'directory', size: 0, updatedAt: scope.updatedAt, revision: scope.updatedAt, scope, ...this.folderMetadata(owner, scope.id, '') });
       }
       // Remote/subtitle-only courses remain reachable; no fake empty files are made.
       for (const course of this.rows(owner, 'videos').filter(c => !this.placement(owner, c.id))) {
@@ -236,6 +236,22 @@ export class ResourceFiles {
       }
     }
     return { project: projectId ? project : null, rootId, path: directory, folderId: this.folderId(owner, id, directory), entries };
+  }
+  private folderMetadata(owner: string, projectId: string, directory: string) {
+    const folderId = this.folderId(owner, projectId, directory);
+    const color = folderId == null ? undefined : this.records.get(owner, 'folders', folderId)?.color as ResourceFolderColor | undefined;
+    return { folderId, color };
+  }
+  setFolderColor(owner: string, projectId: string, directory: string, color: ResourceFolderColor) {
+    if (!RESOURCE_FOLDER_COLORS.includes(color)) throw new ProjectError('invalid_folder_color');
+    this.projects.writable(owner, projectId);
+    this.projects.assertIdle(projectId);
+    if (directory && this.entry(projectId, directory).kind !== 'directory') throw new ProjectError('invalid_resource_folder');
+    const { folderId } = this.folderMetadata(owner, projectId, directory);
+    if (folderId == null) throw new ProjectError('invalid_resource_folder');
+    const folder = this.records.get(owner, 'folders', folderId)!;
+    this.put(owner, 'folders', folderId, { ...folder, color });
+    return { folderId, color };
   }
   course(owner: string, id: string) {
     this.migrate(owner);

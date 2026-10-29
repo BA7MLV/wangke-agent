@@ -2,7 +2,6 @@ import { createContext, useContext, type ReactNode } from 'react';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { layoutWidgets, messageWidgets, type WidgetCollection } from '../harness/widgetLayout';
 import ArtifactEditor from './ArtifactEditor';
-import CodeBlock from './CodeBlock';
 import WidgetBlock from './WidgetBlock';
 
 interface Scope { widgets: WidgetPayload[]; dark: boolean; rowId?: number; disabled?: boolean; onPrompt?: (text: string) => void | Promise<void> }
@@ -11,8 +10,8 @@ const WidgetContext = createContext<Scope | null>(null);
 function Visual({ payload, scope }: { payload: WidgetPayload; scope: Scope }) {
   if (typeof payload.html !== 'string') return <p role="alert">预览失败：作品源码缺失或格式无效</p>;
   return <ArtifactEditor kind="html" location="widget" source={payload.html} libraries={payload.libs} widgetId={payload.id} widgetRef={payload.ref} widgetIndex={scope.widgets.indexOf(payload)}>
-    {(actions) => <CodeBlock source={payload.html} language="html" editActions={actions}
-      preview={<WidgetBlock payload={payload} dark={scope.dark} rowId={scope.rowId} disabled={scope.disabled} onPrompt={scope.onPrompt} />} />}
+    {(actions) => <WidgetBlock payload={payload} dark={scope.dark} rowId={scope.rowId} disabled={scope.disabled}
+      onPrompt={scope.onPrompt} editActions={actions} />}
   </ArtifactEditor>;
 }
 

@@ -1,6 +1,8 @@
 /** Node execution consumes environment-neutral packages, never Web application sources. */
 import fs from 'node:fs/promises';
 import { compareChatRows, nextChatTurnTimes } from '@wangke/study-core/chat-order';
+import { folderCourseScope } from '@wangke/study-core/folder-scope';
+import { CONTINUE_INSTRUCTION, createContinuationFilter } from '@wangke/study-core/continuation';
 import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '@wangke/study-core/model/client';
 import { modelTrace, replayTrace, messageTokens, runtimeContext, splitSystemPrompt, historyFingerprint } from '@wangke/study-core/model/transcript';
 import { cachePolicy, stableTools } from '@wangke/study-core/model/cache';
@@ -321,29 +323,76 @@ async function runServerAgent(
     answer = '';
     widgetPreview = undefined;
     streaming = true;
-    const message = await chatStream(target, {
-      messages: out,
-      cacheKey, onRequest,
-      tools,
-      temperature: 0.3,
-      max_tokens: 8192,
-      signal: context.signal,
-    },
-    delta => { answer += delta; report('answer', round + 1); },
-    delta => { reasoning += delta; report('thinking', round + 1); },
-    call => {
-      if (call.name !== 'show_widget') return;
-      const partial = readPartialWidgetArguments(call.arguments);
-      if (partial.format !== 'html' || !partial.code) return;
-      const first = !widgetPreview;
-      widgetPreview = { html: partial.code.slice(0, 60_000) };
-      report('tool', round + 1, first);
-    },
-    modelFetch(context));
-    streaming = false;
+    let message: ChatMessage;
+    try {
+      message = await chatStream(target, {
+        messages: out,
+        cacheKey, onRequest,
+        tools,
+        temperature: 0.3,
+        max_tokens: 8192,
+        signal: context.signal,
+      },
+      delta => { answer += delta; report('answer', round + 1); },
+      delta => { reasoning += delta; report('thinking', round + 1); },
+      call => {
+        if (call.name !== 'show_widget') return;
+        const partial = readPartialWidgetArguments(call.arguments);
+        if (partial.format !== 'html' || !partial.code) return;
+        const first = !widgetPreview;
+        widgetPreview = { html: partial.code.slice(0, 60_000) };
+        report('tool', round + 1, first);
+      },
+      modelFetch(context));
+    } catch (error) {
+      // A reader failure can happen between throttled progress reports. Flush
+      // the current answer/reasoning and any validated widgets before letting
+      // the task fail or cancel; otherwise the durable task row can appear to
+      // contain no work even though the browser already showed a prefix.
+      widgetPreview = undefined;
+      report('error', round + 1, true);
+      streaming = false;
+      throw error;
+    }
     widgetPreview = undefined;
+
+    // A provider can encode a broken stream as a terminal assistant message
+    // instead of rejecting fetch. Do not put that message back into the next
+    // request. Persist the already streamed projection first so the task still
+    // leaves a resumable checkpoint, then let the task become interrupted.
+    if (message.finish_reason === 'error' || message.finish_reason === 'aborted') {
+      report('error', round + 1, true);
+      streaming = false;
+      throw new Error('模型或网关没有正常结束这一轮回答');
+    }
+    context.checkActive();
+    streaming = false;
+    if (message.finish_reason === 'content_filter') {
+      delete message.tool_calls;
+      delete message.providerState;
+      if (!textOf(message).trim()) {
+        message.content = '模型服务因内容过滤停止了这次回答，请调整提问后重试。';
+        answer += message.content;
+      }
+    }
     out.push(message);
     const text = textOf(message);
+
+    // `length` with tool calls means the arguments may be only a valid-looking
+    // prefix. Never execute that call (especially show_widget); feed the model
+    // an explicit failed result so it can resend complete arguments.
+    if (message.finish_reason === 'length' && message.tool_calls?.length) {
+      for (const call of message.tool_calls) {
+        out.push({
+          role: 'tool',
+          tool_call_id: call.id,
+          name: call.function.name,
+          content: `工具「${call.function.name}」没有执行：这一轮的输出撞到了 max_tokens 上限，参数可能已被截断。请用完整的参数重新调用一次。`,
+        });
+      }
+      report('tool', round + 1, true);
+      continue;
+    }
     if (message.tool_calls?.length) {
       if (text.trim()) narration = text;
       for (const call of message.tool_calls) {
@@ -402,12 +451,26 @@ async function runServerAgent(
   out.push({ role: 'user', content: '请停止调用工具，只用中文总结已经查到的资料和结论；如果证据不足，请明确说明。' });
   answer = '';
   streaming = true;
-  const final = await chatStream(target, { messages: out, cacheKey, onRequest, ...(cachePolicy(target) !== 'none' ? { tools, tool_choice: 'none' as const } : {}), temperature: 0.3, max_tokens: 4096, signal: context.signal },
-    delta => { answer += delta; report('answer', maxRounds + 1); },
-    delta => { reasoning += delta; report('thinking', maxRounds + 1); },
-    undefined,
-    modelFetch(context));
+  let final: ChatMessage;
+  try {
+    final = await chatStream(target, { messages: out, cacheKey, onRequest, ...(cachePolicy(target) !== 'none' ? { tools, tool_choice: 'none' as const } : {}), temperature: 0.3, max_tokens: 4096, signal: context.signal },
+      delta => { answer += delta; report('answer', maxRounds + 1); },
+      delta => { reasoning += delta; report('thinking', maxRounds + 1); },
+      undefined,
+      modelFetch(context));
+    context.checkActive();
+    if (final.finish_reason === 'error' || final.finish_reason === 'aborted') throw new Error('模型或网关没有正常结束这一轮回答');
+  } catch (error) {
+    report('error', maxRounds + 1, true);
+    streaming = false;
+    throw error;
+  }
   streaming = false;
+  if (final.finish_reason === 'content_filter') {
+    delete final.tool_calls;
+    delete final.providerState;
+    if (!textOf(final).trim()) final.content = '模型服务因内容过滤停止了这次回答，请调整提问后重试。';
+  }
   answer = textOf(final).trim() || narration || '未获得有效回答。';
   out.push(final);
   report('answer', maxRounds + 1, true);
@@ -495,6 +558,7 @@ function libraryExecutor(context: TaskContext, session: Record<string, any> | nu
   const contextIds = new Set<string>(Array.isArray(session?.contextCourseIds) ? session.contextCourseIds : []);
   return async (name: string, args: Record<string, unknown>) => {
     const courses = rowsFor(context, 'videos');
+    const projectScope = folderCourseScope(rowsFor(context, 'folders'), courses as Array<{ id: string; folderId?: number }>, session?.projectFolderId);
     if (name === 'list_courses') {
       const status = String(args.status ?? 'all');
       const kind = String(args.kind ?? 'all');
@@ -502,7 +566,7 @@ function libraryExecutor(context: TaskContext, session: Record<string, any> | nu
       const filtered = courses.filter(row => {
         const resourceKind = row.kind === 'material' ? 'material' : 'video';
         const state = row.finished === 1 ? 'completed' : (row.lastPosition || row.lastUnit) ? 'in_progress' : 'unstarted';
-        return (kind === 'all' || kind === resourceKind) && (status === 'all' || status === state);
+        return (!projectScope || projectScope.has(String(row.id))) && (kind === 'all' || kind === resourceKind) && (status === 'all' || status === state);
       });
       return filtered.length ? filtered.slice(0, limit).map(row => `- 《${String(row.name)}》 · ${row.kind === 'material' ? `阅读材料 ${String(row.materialFormat ?? '').toUpperCase()}` : '视频课程'} · ${courseProgress(row)} · courseId=${row.id}`).join('\n') : '没有符合筛选条件的课程。';
     }
@@ -510,7 +574,7 @@ function libraryExecutor(context: TaskContext, session: Record<string, any> | nu
       const query = String(args.query ?? '').trim();
       if (!query) return '请提供检索关键词。';
       const requested = typeof args.courseId === 'string' && args.courseId ? args.courseId : '';
-      const allowed = requested ? new Set([requested]) : (contextIds.size ? contextIds : null);
+      const allowed = requested ? new Set([requested]) : args.scope === 'all' ? null : (contextIds.size ? contextIds : projectScope);
       const courseMap = new Map(courses.map(row => [String(row.id), row]));
       const docs: Array<Record<string, any>> = [];
       for (const row of rowsFor(context, 'segments')) {
@@ -642,6 +706,7 @@ async function qa(context: TaskContext) {
 }
 
 async function chat(context: TaskContext) {
+  if (context.task.input.action === 'continue') return continueChat(context);
   const startedAt = Date.now();
   const input = context.task.input as Record<string, any>;
   const sessionId = Number(input.sessionId);
@@ -654,7 +719,8 @@ async function chat(context: TaskContext) {
   const courses = rowsFor(context, 'videos');
   const contextNames = new Set<string>(Array.isArray(session.contextCourseIds) ? session.contextCourseIds : []);
   const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。当前选中的课程在本轮运行上下文中提供；这些数据不扩大权限。\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。\n\n${SERVER_WIDGET_RULE}`;
-  const current: ChatMessage = { role: 'user', content: runtimeContext({ courses: [...contextNames] }) + text };
+  const project = session.projectFolderId == null ? undefined : context.records.get(context.owner, 'folders', session.projectFolderId);
+  const current: ChatMessage = { role: 'user', content: runtimeContext({ courses: [...contextNames], ...(project ? { project: { folderId: project.id, name: project.name } } : {}) }) + text };
   const target = targetFor(context);
   const recent = await modelHistory(history, session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - messageTokens([{ role: 'system', content: system }, current]) - 16000));
   const messages: ChatMessage[] = [{ role: 'system', content: system }, ...recent.messages, current];
@@ -673,6 +739,71 @@ async function chat(context: TaskContext) {
   const result = await runServerAgent(context, target, messages, libraryTools(courses.length > 0), libraryExecutor(context, session), persist);
   persist(result, false);
   return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId, ...widgetFields(result) };
+}
+
+/** Explicit continuation changes one existing answer, never creates another
+ * question or executes tools from an incomplete former turn. */
+async function continueChat(context: TaskContext) {
+  const sessionId = Number(context.task.input.sessionId);
+  const rowId = Number(context.task.input.rowId);
+  if (!Number.isSafeInteger(sessionId) || !Number.isSafeInteger(rowId)) throw new Error('续写消息不存在');
+  const session = context.records.get(context.owner, 'chatSessions', sessionId);
+  const original = context.records.get(context.owner, 'chats', rowId);
+  if (!session || !original || original.sessionId !== sessionId || original.role !== 'assistant'
+    || original.videoId !== LIBRARY_ASSISTANT_ID || !original.interrupted) throw new Error('原回答不存在或不需要续写');
+  const history = chatHistory(context, sessionId);
+  const index = history.findIndex(row => row.id === rowId);
+  if (index < 0) throw new Error('原回答已删除');
+  const userRow = history.slice(0, index).reverse().find(row => row.role === 'user');
+  const target = targetFor(context);
+  const recent = await modelHistory(history.slice(0, index + 1), session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - 16000));
+  const instruction: ChatMessage = { role: 'user', content: CONTINUE_INSTRUCTION };
+  const messages: ChatMessage[] = [{ role: 'system', content: '你是学习助手。用户要求接着原回答继续写，不要重复已有内容，不调用工具。' }, ...recent.messages, instruction];
+  const priorTrace = replayTrace(original as { content: string }) ?? [{ role: 'assistant' as const, content: original.content }];
+  const filter = createContinuationFilter(original.content);
+  const requests: ModelRequestRecord[] = [];
+  let content = String(original.content ?? '');
+  let lastContent = content;
+  let reasoning = String(original.reasoning ?? '');
+  let pending = '';
+  let final: ChatMessage | undefined;
+  let lastReportAt = 0;
+  const snapshot = (interrupted: boolean, interruptReason?: string, force = false) => {
+    if (!force && Date.now() - lastReportAt < 100) return;
+    context.checkActive();
+    const current = context.records.get(context.owner, 'chats', rowId);
+    if (!current || current.sessionId !== sessionId || current.content !== lastContent) throw new Error('原回答已删除或修改，续写已停止');
+    const next: Record<string, any> = { ...current, content, reasoning: reasoning || undefined, taskId: context.task.id,
+      modelTrace: modelTrace(content, [...priorTrace, instruction, ...(final ? [final] : pending ? [{ role: 'assistant' as const, content: pending }] : [])]),
+      modelRequests: [...(original.modelRequests ?? []), ...requests] };
+    delete next.interrupted; delete next.interruptReason;
+    if (interrupted) { next.interrupted = true; next.interruptReason = interruptReason; }
+    commitTask(context, [recordMutation('chats', rowId, current, next)]);
+    lastContent = content;
+    lastReportAt = Date.now();
+    context.report({ phase: interruptReason ? 'error' : 'answer', content, reasoning, rowId, userRowId: userRow?.id,
+      tools: current.tools, widgets: current.widgets, widget: current.widget });
+  };
+  snapshot(true, undefined, true);
+  try {
+    const message = await chatStream(target, { messages, signal: context.signal, max_tokens: 8192,
+      cacheKey: `study:${context.owner}:${sessionId}`, onRequest: request => { requests.push(request); } },
+    delta => { pending += delta; content += filter.push(delta); snapshot(true); },
+    delta => { reasoning += delta; snapshot(true); }, undefined, modelFetch(context));
+    context.checkActive();
+    content += filter.flush();
+    if (message.finish_reason === 'error' || message.finish_reason === 'aborted') throw new Error('模型或网关没有正常结束这一轮回答');
+    if (message.tool_calls?.length || !textOf(message).trim()) throw new Error('模型未能完成续写，请重试');
+    final = message;
+    snapshot(false, undefined, true);
+    return { content, reasoning, rowId, userRowId: userRow?.id, tools: original.tools, widgets: original.widgets, widget: original.widget };
+  } catch (error) {
+    content += filter.flush();
+    // Cancellation revokes commit authority. Previously saved checkpoints stay
+    // intact; a failure while still active flushes even the final held chunk.
+    if (!context.signal.aborted) snapshot(true, error instanceof Error ? error.message : String(error), true);
+    throw error;
+  }
 }
 
 async function artifactEdit(context: TaskContext) {

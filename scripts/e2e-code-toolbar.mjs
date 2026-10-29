@@ -30,22 +30,15 @@ try {
       const load = path => import(performance.getEntriesByType('resource').findLast(entry => new URL(entry.name).pathname === path)?.name || path);
       const { db } = await load('/src/store/db.ts');
       const { useCourseChat } = await load('/src/store/courseChat.ts');
-      const { createToolExecutor } = await load('/src/harness/tools.ts');
-      const { widgetReference } = await load('/src/harness/widgetLayout.ts');
       const source = '<section><h2>HTML 预览示例</h2><button id="counter">0</button></section>\n'
         + Array.from({ length: 65 }, (_, i) => `<!-- 代码第 ${i + 1} 行：滚动时 HTML 和操作栏保持清晰。 -->`).join('\n')
-        + '\n<script>document.querySelector("button").onclick=e=>e.target.textContent=Number(e.target.textContent)+1</script>';
-      let payload;
-      const execute = createToolExecutor('code-toolbar', { onWidget: value => { payload = value; } });
-      await execute('show_widget', { format: 'html', code: source });
-      if (!payload) throw new Error('show_widget did not deliver a payload');
+        + '\n<script>document.querySelector("button").onclick=e=>e.target.textContent=Number(e.target.textContent)+1</script>\n';
       const videoId = '__library_assistant__';
       const sessionId = await db.chatSessions.add({ videoId, title: 'HTML 代码与吸顶验证', createdAt: Date.now() });
       await db.chats.add({ sessionId, videoId, role: 'assistant', createdAt: Date.now(),
         reasoning: Array.from({ length: 75 }, (_, i) => `第 ${i + 1} 步：检查展示内容，代码只作为源码，点击预览后才运行。`).join('\n\n'),
         reasoningMs: 2300,
-        content: `下面是 HTML 代码：\n\n${widgetReference(payload.ref)}\n\n后续说明。\n\n\`\`\`js\n${'const example = 1;\n'.repeat(45)}\`\`\``,
-        widget: payload, widgets: [payload],
+        content: `下面是 HTML 代码：\n\n\`\`\`html\n${source}\`\`\`\n\n后续说明。\n\n\`\`\`js\n${'const example = 1;\n'.repeat(45)}\`\`\``,
       });
       await useCourseChat.getState().loadSession(sessionId);
       return source;
@@ -133,7 +126,7 @@ try {
     assert.ok(await messages.evaluate(el => el.scrollWidth <= el.clientWidth + 1), 'no horizontal page overflow');
     assert.deepEqual(errors, []);
     assert.ok(resizeNotices.length < 10, 'no sustained ResizeObserver loop');
-    console.log(`PASS ${safari ? 'WebKit' : 'Chrome'} ${width}px: actual show_widget code-first delivery, header menu/copy/preview, retained sandbox state, code/reasoning sticky above blur and operable collapse.`);
+    console.log(`PASS ${safari ? 'WebKit' : 'Chrome'} ${width}px: ordinary HTML source-first, explicit validated preview, exact copy, retained sandbox state, code/reasoning sticky above blur and operable collapse.`);
     if (resizeNotices.length) console.log(`  WebKit/HeroUI transient ResizeObserver notices: ${resizeNotices.length}`);
     await context.close();
   }

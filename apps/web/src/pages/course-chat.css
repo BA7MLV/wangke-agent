@@ -23,6 +23,13 @@
   --course-chat-column: 820px;
 }
 
+.chat-project-picker__list { display: grid; gap: 0.375rem; max-height: 16rem; overflow-y: auto; margin-block: 1rem; }
+.chat-project-picker__item { justify-content: flex-start; width: 100%; }
+.chat-project-picker__item .finder-folder-icon { width: 2rem; height: 1.6rem; flex-shrink: 0; }
+.chat-project-picker__item > span:not(.sym) { overflow: hidden; text-overflow: ellipsis; }
+.chat-project-picker__create { display: flex; flex-wrap: wrap; gap: 0.75rem; align-items: flex-end; }
+.chat-project-picker__create > :first-child { flex: 1; min-width: 10rem; }
+
 /* 模糊贴着聊天可视区，不随消息滚走。实色安全区不参与模糊梯度。 */
 .page-course-chat .page-app-bar__blur {
   bottom: 0;

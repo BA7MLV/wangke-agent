@@ -24,6 +24,11 @@ const installFakeModel = async (context) => {
     window.fetch = async (input, init) => {
       const url = typeof input === 'string' ? input : input.url;
       if (!url.includes('/chat/completions')) return nativeFetch(input, init);
+      if (window.__failNextPanelRequest) {
+        const prefix = window.__failNextPanelRequest;
+        delete window.__failNextPanelRequest;
+        return new Response(`data: ${JSON.stringify({ choices: [{ delta: { content: prefix }, finish_reason: 'error' }] })}\n\ndata: [DONE]\n\n`, { headers: { 'Content-Type': 'text/event-stream' } });
+      }
       seq++;
       const text = `第 ${seq} 次回答`;
       const enc = new TextEncoder();
@@ -63,7 +68,7 @@ const seed = async (page) => {
 
 const openPanelChat = async (page) => {
   await page.goto(`${BASE}/#/player/panel-ux-test`);
-  await page.getByTestId('study-assistant-toggle').waitFor();
+  await page.getByTestId('study-assistant-toggle').waitFor({ state: 'attached' });
   const tab = page.locator('[data-testid="panel-tab-chat"]');
   if (!(await tab.isVisible().catch(() => false))) {
     await page.getByTestId('study-assistant-toggle').click();
@@ -172,13 +177,32 @@ try {
   await mp.getByTestId('chat-message-time').waitFor();
   await cdp.send('Input.dispatchTouchEvent', { type: 'touchEnd', touchPoints: [] });
   assert.equal(await mp.getByTestId('chat-message-time').textContent(), '昨天 17:39');
-  assert.deepEqual(await mp.getByRole('menuitem').allTextContents(), ['复制', '重试', '分支出新会话']);
+  assert.deepEqual(await mp.getByRole('menuitem').allTextContents(), ['复制', '重试', '分支出新会话', '删除这条消息']);
   await mp.screenshot({ path: 'e2e-shots/panel-message-long-press-mobile.png' });
   await mp.getByTestId('chat-user-copy').tap();
   assert.equal(await mp.evaluate(() => navigator.clipboard.readText()), '帮我整理复习重点');
 
+  const interruptedPrefix = '问答已输出的这段正文必须保留，刷新后仍然存在。';
+  await page.evaluate(prefix => { window.__failNextPanelRequest = prefix; }, interruptedPrefix);
+  const failureComposer = page.getByRole('textbox', { name: '给学习助手发送消息' });
+  await failureComposer.fill('测试模型异常时保留半截回答');
+  await failureComposer.press('Enter');
+  await page.getByTestId('chat-interrupted').waitFor();
+  const failedRows = await page.evaluate(async () => {
+    const { db } = await import('/src/store/db.ts');
+    return db.chats.toArray();
+  });
+  const failedAnswer = failedRows.find(row => row.role === 'assistant' && row.content === interruptedPrefix);
+  assert.ok(failedAnswer?.interrupted, 'ordinary QA partial text must persist even without a widget');
+  assert.match(failedAnswer.interruptReason, /没有正常结束/);
+  assert.ok(!failedAnswer.content.includes('回答中断'), 'status text must not pollute the model prefix');
+  await page.reload();
+  await openPanelChat(page);
+  await page.getByTestId('chat-interrupted').waitFor();
+  assert.ok((await page.locator('.chat-bubble--ai').last().innerText()).includes(interruptedPrefix));
+
   assert.deepEqual(errors, []);
-  console.log('PASS: 学习助手问答与主页一致的操作行、长按菜单、重试与分支');
+  console.log('PASS: 学习助手问答操作行、长按菜单、重试与分支；异常正文落库、刷新恢复及独立中断提示。');
 } catch (error) {
   console.error(await page.locator('body').innerText().catch(() => ''));
   throw error;

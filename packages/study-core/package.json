@@ -29,6 +29,8 @@
     "./model/tool-messages": { "types": "./src/api/toolMessages.ts", "default": "./dist/api/toolMessages.js" },
     "./cancel": { "types": "./src/utils/cancel.ts", "default": "./dist/utils/cancel.js" },
     "./chat-order": { "types": "./src/utils/chatOrder.ts", "default": "./dist/utils/chatOrder.js" },
+    "./continuation": { "types": "./src/utils/continuation.ts", "default": "./dist/utils/continuation.js" },
+    "./folder-scope": { "types": "./src/utils/folderScope.ts", "default": "./dist/utils/folderScope.js" },
     "./artifact-edit": { "types": "./src/utils/artifactEdit.ts", "default": "./dist/utils/artifactEdit.js" },
     "./widgets": { "types": "./src/harness/widget.ts", "default": "./dist/harness/widget.js" },
     "./widget-tool": { "types": "./src/harness/widgetTool.ts", "default": "./dist/harness/widgetTool.js" },

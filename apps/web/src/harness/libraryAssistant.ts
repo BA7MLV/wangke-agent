@@ -13,6 +13,7 @@ import { RESPONSIVE_CONTENT_RULE } from './displayEnvironment';
 import { withAgentInstructions } from './agentInstructions';
 import { handoutFileOf } from '../materials/handoutFile';
 import { questionBankFileOf } from '../materials/questionBankFile';
+import { folderCourseScope } from '@wangke/study-core/folder-scope';
 
 /**
  * 课程助手沿用 chatSessions / chats 两张表保存历史，但它不从属于某一门课程。
@@ -44,6 +45,8 @@ export interface CourseContextItem {
 export interface LibraryAssistantExecutorOptions {
   /** 会话进入本轮时已经选中的课程；空数组表示让助手从全库自动选择。 */
   contextCourseIds?: string[];
+  /** Default project scope, separate from the five pinned course references. */
+  projectFolderId?: number;
   /** set_course_context 成功后的持久化与 UI 回调。 */
   onContextChange?: (courses: CourseContextItem[]) => void | Promise<void>;
   /**
@@ -403,10 +406,11 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         db.folders.toArray(),
       ]);
       const folderNames = new Map(folders.map((folder) => [folder.id, folder.name]));
+      const projectScope = folderCourseScope(folders, courses, options.projectFolderId);
       const filtered = courses.filter((course) => {
         const courseKind = course.kind === 'material' ? 'material' : 'video';
         const progress = courseProgress(course);
-        return (kind === 'all' || courseKind === kind) && (status === 'all' || progress.state === status);
+        return (!projectScope || projectScope.has(course.id)) && (kind === 'all' || courseKind === kind) && (status === 'all' || progress.state === status);
       });
       if (filtered.length === 0) return '没有符合筛选条件的课程。';
       const lines = filtered.slice(offset, offset + limit).map((course) => formatCourseLine(course, folderNames.get(course.folderId)));
@@ -449,11 +453,12 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
       if (!query) return '请提供要检索的关键词。';
       const requestedCourseId = String(args.courseId ?? '').trim();
       const limit = Math.min(15, Math.max(1, Number(args.limit) || 8));
-      const [courses, segments, materialBlocks] = await Promise.all([
+      const [courses, segments, materialBlocks, folders] = await Promise.all([
         db.videos.toArray(),
         (requestedCourseId ? db.segments.where('videoId').equals(requestedCourseId) : db.segments)
           .filter((row) => row.status === 1 && !!row.text).toArray(),
         requestedCourseId ? db.materialBlocks.where('materialId').equals(requestedCourseId).toArray() : db.materialBlocks.toArray(),
+        options.projectFolderId == null ? [] : db.folders.toArray(),
       ]);
       const courseMap = new Map(courses.map((course) => [course.id, course]));
       if (requestedCourseId && !courseMap.has(requestedCourseId)) {
@@ -463,7 +468,7 @@ export function createLibraryAssistantExecutor(options: LibraryAssistantExecutor
         requestedCourseId,
         String(args.scope ?? 'context') === 'all',
         contextCourseIds,
-      );
+      ) ?? (String(args.scope ?? 'context') === 'all' ? null : folderCourseScope(folders, courses, options.projectFolderId));
 
       const docs: SearchableCourseDoc[] = [];
       for (const segment of segments) {

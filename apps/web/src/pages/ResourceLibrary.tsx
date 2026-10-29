@@ -6,6 +6,7 @@ import type { AgentProfileDto, ProjectDetailDto } from '@wangke/contracts';
 import type { ResourceDirectory, ResourceEntry } from '@wangke/contracts/resources';
 import { request, serverClient } from '../api/serverClient';
 import { FolderIcon } from '../components/FolderIcon';
+import FolderColorMenu from '../components/FolderColorMenu';
 import { ResourceFileIcon } from '../components/ResourceFileIcon';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { db } from '../store/db';
@@ -299,7 +300,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
                 else finishResourceDrag();
               }}>
               <button className="resource-open" disabled={busy} onClick={() => void open(entry)} title={entry.scope?.workspacePath ?? entry.path}>
-                {entry.kind === 'directory' ? <FolderIcon /> : <ResourceFileIcon entry={entry} />}
+                {entry.kind === 'directory' ? <FolderIcon color={entry.color} /> : <ResourceFileIcon entry={entry} />}
                 <span>{entry.name}</span><small>{entry.scope?.archived ? t('archived') : entry.kind === 'directory' ? t('folder') : entry.missing ? t('learningRecord') : formatSize(entry.size)}</small>
               </button>
               <MoreMenu className="resource-more" label={`${t('more')} · ${entry.name}`} actions={[
@@ -309,7 +310,10 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
                   { key: 'settings', label: t('settings'), icon: <Sym name="tune" />, onAction: () => void editSettings(entry.projectId) },
                 ] : entry.kind === 'file' && !entry.missing ? [{ key: 'download', label: t('download'), icon: <Sym name="download" />, onAction: () => download(entry) }] : []),
                 ...(!entry.missing ? [{ key: 'remove', label: entry.scope ? t(entry.scope.archived ? 'restore' : 'archive') : t('delete'), icon: <Sym name={entry.scope ? 'archive' : 'delete'} />, danger: !entry.scope, disabled: busy || readOnly, onAction: () => void remove(entry) }] : []),
-              ]} />
+              ]}>
+                {entry.kind === 'directory' && <FolderColorMenu color={entry.color} disabled={busy || readOnly || !!entry.scope?.archived}
+                  onChange={color => void perform(() => request('/resources/folders/color', { method: 'PATCH', body: JSON.stringify({ projectId: entry.projectId, path: entry.path, color }) }))} />}
+              </MoreMenu>
             </li>)}
           </ul>
           {!loading && !showSkeleton && !entryCount && (projectId || query) && !error && <div className="project-empty">{query ? t('noResults') : t('folderEmpty')}</div>}

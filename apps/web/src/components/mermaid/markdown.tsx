@@ -14,7 +14,7 @@ import CodeBlock from '../CodeBlock';
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
 
 function isHtmlFence(props: CodeLikeProps): boolean {
-  return !!props.block && htmlFenceContentType(String(props.lang ?? '')) === 'interactive';
+  return !!props.block && /^\s*html?(?:\s|$)/i.test(String(props.lang ?? ''));
 }
 
 function isWidgetFence(props: CodeLikeProps): boolean {
@@ -40,7 +40,8 @@ export function MarkdownCode({ block, lang, streamStatus, className, children }:
   }
   const kind = diagramKindOf({ block, lang, children });
   if (!kind && isHtmlFence({ block, lang })) {
-    const source = String(children ?? '').replace(/\s+$/, '');
+    const source = htmlFenceContentType(String(lang ?? '')) === 'interactive'
+      ? String(children ?? '').replace(/\s+$/, '') : String(children ?? '');
     const closed = streamStatus !== 'loading';
     return <ArtifactEditor kind="html" source={source} closed={closed} htmlContentType={htmlFenceContentType(String(lang ?? ''))}>
       {(actions) => <HtmlAnswer source={source} contentType={htmlFenceContentType(String(lang ?? ''))} streaming={!closed} editActions={actions} />}

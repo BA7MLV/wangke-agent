@@ -8,8 +8,8 @@ export interface MenuAction { key: string; label: string; icon: ReactNode; dange
  * 「…」菜单：不常用的操作收进一颗圆形按钮（HIG：More 按钮 + pull-down menu）。
  * 全应用只有这一份实现，聊天页、Bot 栏和项目页共用。
  */
-export function MoreMenu({ label, actions, testId, className }: { label: string; actions: MenuAction[]; testId?: string; className?: string }) {
-  if (!actions.length) return null;
+export function MoreMenu({ label, actions, testId, className, children }: { label: string; actions: MenuAction[]; testId?: string; className?: string; children?: ReactNode }) {
+  if (!actions.length && !children) return null;
   return (
     <Dropdown>
       <Button isIconOnly variant="ghost" className={cn('rounded-full', className)} aria-label={label} data-testid={testId}>
@@ -27,6 +27,7 @@ export function MoreMenu({ label, actions, testId, className }: { label: string;
               {action.label}
             </Dropdown.Item>
           ))}
+          {children}
         </Dropdown.Menu>
       </Dropdown.Popover>
     </Dropdown>

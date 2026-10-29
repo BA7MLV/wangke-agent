@@ -131,7 +131,11 @@ try {
   script = [() => new Response(new ReadableStream({ start(controller) {
     const send = delta => controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify({ choices: [{ delta }] })}\n\n`));
     send({ tool_calls: [{ index: 0, id: 'stream-widget', type: 'function', function: { name: 'show_widget', arguments: streamedArgs.slice(0, -8) } }] });
-    finishArguments = () => { send({ tool_calls: [{ index: 0, function: { arguments: streamedArgs.slice(-8) } }] }); controller.close(); };
+    finishArguments = () => {
+      send({ tool_calls: [{ index: 0, function: { arguments: streamedArgs.slice(-8) } }] });
+      controller.enqueue(new TextEncoder().encode('data: [DONE]\n\n'));
+      controller.close();
+    };
   } }), { headers: { 'content-type': 'text/event-stream' } }), () => ({ text: reference(answer(203).widget) })];
   const streamed = enqueue(203);
   await until(() => get(streamed).progress?.widgetPreview);
@@ -141,6 +145,45 @@ try {
   const streamedResult = await completed(streamed);
   assert.equal(streamedResult.progress.widgetPreview, undefined);
   assert.equal(streamedResult.result.widget.html, '<button>分段参数</button>');
+
+  session(205);
+  script = [() => Response.json({ choices: [{ finish_reason: 'length', message: { role: 'assistant', content: null,
+    tool_calls: [{ id: 'truncated-widget', type: 'function', function: { name: 'show_widget', arguments: JSON.stringify(widgetCall('unused').args) } }] } }] }), body => {
+    assert.ok(!answer(205).widgets, 'length-limited calls cannot execute even when arguments parse');
+    assert.match(body.messages.find(message => message.tool_call_id === 'truncated-widget').content, /没有执行.*max_tokens/);
+    return { text: '工具参数撞上限，本轮未交付作品。' };
+  }];
+  assert.equal((await completed(enqueue(205))).result.widgets, undefined);
+
+  session(206);
+  script = [() => Response.json({ choices: [{ finish_reason: 'error', message: { role: 'assistant', content: '异常前已输出的内容' } }] })];
+  const providerError = enqueue(206);
+  await until(() => get(providerError).status === 'failed');
+  assert.equal(script.length, 0, 'provider failure must not start a wrap-up request');
+  assert.equal(answer(206).content, '异常前已输出的内容');
+  assert.equal(answer(206).interrupted, true);
+  assert.equal(get(providerError).progress.widgetPreview, undefined);
+
+  session(207);
+  let streamReads = 0;
+  script = [() => new Response(new ReadableStream({ pull(controller) {
+    if (streamReads++ === 0) controller.enqueue(new TextEncoder().encode('data: ' + JSON.stringify({ choices: [{ delta: { content: '节流窗口中的最后一段' } }] }) + '\n\n'));
+    else controller.error(new Error('reader connection reset'));
+  } }), { headers: { 'content-type': 'text/event-stream' } })];
+  const readerError = enqueue(207);
+  await until(() => get(readerError).status === 'failed');
+  assert.equal(answer(207).content, '节流窗口中的最后一段', 'failure must force a final durable progress flush');
+  assert.equal(answer(207).interrupted, true);
+  assert.equal(get(readerError).progress.content, '节流窗口中的最后一段');
+
+  session(208);
+  script = [() => Response.json({ choices: [{ finish_reason: 'content_filter', message: { role: 'assistant', content: '',
+    tool_calls: [{ id: 'filtered-widget', type: 'function', function: { name: 'show_widget', arguments: JSON.stringify(widgetCall('filtered-widget').args) } }] } }] })];
+  const filtered = await completed(enqueue(208));
+  assert.equal(script.length, 0, 'content filtering must not trigger a follow-up request');
+  assert.equal(filtered.result.widgets, undefined, 'filtered tool calls must not execute');
+  assert.equal(answer(208).interrupted, undefined);
+  assert.match(answer(208).content, /内容过滤/);
 
   session(204);
   script = [() => ({ calls: [widgetCall('edited-widget')] }), () => {
@@ -174,6 +217,39 @@ try {
   await completed(enqueue(400));
   assert.deepEqual(records.get(owner, 'chats', partial.id).widgets, partial.widgets, 'restart retains the already delivered work');
 
+  const beforeContinue = rows(400);
+  const suffix = '  接着断点继续解释。\n\n';
+  script = [body => {
+    assert.equal(body.tools, undefined, 'explicit continuation has no tool execution');
+    assert.match(body.messages.at(-1).content, /从断点处直接续上/);
+    assert.ok(!JSON.stringify(body.messages).includes('继续解释。'), 'later questions/answers are outside the original breakpoint');
+    return { text: partial.content + suffix };
+  }];
+  const continued = await completed(enqueue(400, 'chat', { action: 'continue', rowId: partial.id }));
+  assert.equal(continued.result.rowId, partial.id);
+  assert.equal(records.get(owner, 'chats', partial.id).content, partial.content + suffix, 'exact replay is stripped without trimming whitespace');
+  assert.equal(records.get(owner, 'chats', partial.id).interrupted, undefined);
+  assert.deepEqual(records.get(owner, 'chats', partial.id).widgets, partial.widgets);
+  assert.equal(rows(400).length, beforeContinue.length, 'continuation updates the same row, without another user question');
+
+  session(410);
+  script = [() => Response.json({ choices: [{ finish_reason: 'error', message: { role: 'assistant', content: '这是原回答足够长的中断前缀，不能丢失。' } }] })];
+  const firstFailure = enqueue(410); await until(() => get(firstFailure).status === 'failed');
+  const interrupted = answer(410);
+  script = [() => Response.json({ choices: [{ finish_reason: 'error', message: { role: 'assistant', content: '又接上了半句' } }] })];
+  const secondFailure = enqueue(410, 'chat', { action: 'continue', rowId: interrupted.id });
+  await until(() => get(secondFailure).status === 'failed');
+  assert.equal(answer(410).id, interrupted.id);
+  assert.equal(answer(410).content, interrupted.content + '又接上了半句');
+  assert.equal(answer(410).interrupted, true, 'failure during continuation keeps the new prefix resumable');
+  script = [() => ({ text: answer(410).content + '最后写完。' })];
+  await completed(enqueue(410, 'chat', { action: 'continue', rowId: interrupted.id }));
+  assert.equal(answer(410).content, interrupted.content + '又接上了半句最后写完。');
+  assert.equal(answer(410).interrupted, undefined);
+  const wrongOwner = enqueue(400, 'chat', { action: 'continue', rowId: interrupted.id });
+  await until(() => get(wrongOwner).status === 'failed');
+  assert.match(get(wrongOwner).error, /原回答不存在/);
+
   session(401);
   let waiting = false;
   script = [() => ({ calls: [widgetCall('cancel-widget')] }), (_body, init) => new Promise((_, reject) => {
@@ -183,7 +259,7 @@ try {
   })];
   const cancelled = enqueue(401); await until(() => waiting);
   store.db.prepare("UPDATE cloud_tasks SET status='cancelled' WHERE id=?").run(cancelled); await runner.cancel(cancelled);
-  assert.equal(answer(401).widgets.length, 1); assert.equal(answer(401).interrupted, true);
+  assert.equal(answer(401).widgets.length, 1); assert.equal(answer(401).interrupted, undefined, 'explicit stop is not an automatic continuation marker');
 
   session(402);
   script = [() => ({ calls: [widgetCall('deleted-owner')] }), () => { const row = answer(402); put('chats', row.id, null); return { text: 'must not recreate deleted row' }; }];

@@ -1,4 +1,4 @@
-import { useEffect, useId, useState } from 'react';
+import { useEffect, useId, useState, type ReactNode } from 'react';
 import { useSettings } from '../store/settings';
 import { useResolvedDark } from '../ui/theme';
 import StreamingHtmlPreview from './StreamingHtmlPreview';
@@ -13,18 +13,20 @@ import type { ArtifactActions } from './ArtifactEditor';
 import { useArtifactRowId } from './ArtifactEditor';
 import CodeBlock from './CodeBlock';
 
-/** Compatibility surface only. New works arrive as structured show_widget payloads. */
+/** Examples stay source-first. Only an explicit preview mounts their runtime;
+ * new independent works arrive as structured show_widget payloads. */
 export default function HtmlAnswer({ source, streaming = false, editActions, allowPopout = true, contentType = 'example', persistLegacy = true }: {
   source: string; streaming?: boolean; editActions?: ArtifactActions | null; allowPopout?: boolean; contentType?: HtmlContentType; persistLegacy?: boolean;
 }) {
-  if (contentType !== 'interactive') return <HtmlSource source={source} />;
+  if (contentType !== 'interactive') return <HtmlSource source={source} editActions={streaming ? undefined : editActions}
+    preview={streaming ? undefined : <LegacyHtmlAnswer key={source} source={source} allowPopout={allowPopout} persistLegacy={persistLegacy} />} />;
   if (streaming) return <StreamingHtmlPreview html={source} statusText="正在生成预览" />;
   return <LegacyHtmlAnswer key={source} source={source} editActions={editActions} allowPopout={allowPopout} persistLegacy={persistLegacy} />;
 }
 
-function HtmlSource({ source }: { source: string }) {
+function HtmlSource({ source, preview, editActions }: { source: string; preview?: ReactNode; editActions?: ArtifactActions | null }) {
   return <div className="md-embedded-ui min-w-0" data-testid="html-code-example">
-    <CodeBlock source={source} language="html" />
+    <CodeBlock source={source} language="html" preview={preview} editActions={editActions} />
   </div>;
 }
 

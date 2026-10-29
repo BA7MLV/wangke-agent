@@ -70,6 +70,10 @@ try {
   db.prepare('UPDATE agent_profiles SET enabled=0').run();
   const fresh = await json('POST', '/resources/folders', { name: '纯文件夹' }, 201);
   assert.deepEqual(fresh.grants, []);
+  assert.equal(typeof fresh.folderId, 'number', 'new folders return their stable learning-folder ID');
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '', color: 'purple' });
+  assert.equal((await json('GET', '/resources')).entries.find(e => e.projectId === fresh.id).color, 'purple');
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '', color: 'invalid' }, 400);
   await json('POST', location(fresh.id, 'directories', '子目录'), undefined, 201);
   await json('PUT', location(fresh.id, 'text', '子目录/bot.md'), { text: 'Shared physical file', expectedRevision: null });
   assert.ok((await listing(fresh.id, '子目录')).entries.some(e => e.name === 'bot.md'));
@@ -83,14 +87,20 @@ try {
   const botNote = (await listing(fresh.id, '子目录')).entries.find(e => e.name === 'bot.md');
   await json('POST', '/cloud/records', { mutations: [{ id: 'bot-material-block', table: 'materialBlocks', key: 2, before: null, after: { id: 2, materialId: botNote.courseId, unit: 1, text: 'Bot 资料块' } }] });
   const childFolderId = (await listing(fresh.id, '子目录')).folderId;
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '子目录', color: 'green' });
+  assert.equal((await listing(fresh.id)).entries.find(e => e.name === '子目录').folderId, childFolderId);
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '子目录/bot.md', color: 'green' }, 400);
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '../outside', color: 'green' }, 400);
   await json('POST', '/resources/move', { projectId: fresh.id, path: child.path, targetProjectId: destination.id, target: '搬来的目录', revision: child.revision });
   assert.equal((await listing(destination.id, '搬来的目录')).folderId, childFolderId, 'moving a directory preserves its folder identity');
+  assert.equal((await listing(destination.id)).entries.find(e => e.name === '搬来的目录').color, 'green', 'moving preserves folder color');
   assert.equal((await listing(destination.id, '搬来的目录')).entries.find(e => e.name === 'bot.md').courseId, botNote.courseId);
   const change = async (table, key, patch) => {
     const before = (await json('GET', `/cloud/record?table=${table}&key=${encodeURIComponent(JSON.stringify(key))}`)).value;
     await json('POST', '/cloud/records', { mutations: [{ id: crypto.randomUUID(), table, key, before, after: { ...before, ...patch } }] });
   };
   await change('folders', childFolderId, { name: '兼容改名' });
+  assert.equal((await listing(destination.id)).entries.find(e => e.name === '兼容改名').color, 'green', 'renaming preserves folder color');
   assert.equal((await listing(destination.id, '兼容改名')).entries[0].courseId, botNote.courseId, 'legacy folder rename reaches the disk');
   await change('videos', botNote.courseId, { name: '兼容文件改名', folderId: undefined });
   const movedCourse = (await json('GET', '/resources')).entries.find(e => e.courseId === botNote.courseId);
@@ -102,11 +112,13 @@ try {
   db.prepare('INSERT INTO api_tokens(id,user_id,token_hash,name,created_at,expires_at) VALUES(?,?,?,?,?,?)').run(crypto.randomUUID(), owner, crypto.createHash('sha256').update(token).digest('hex'), 'test', '2026', '2999');
   const otherHeaders = { cookie: '', authorization: `Bearer ${token}` };
   await json('GET', `/resources?projectId=${fresh.id}`, undefined, 404, otherHeaders);
+  await json('PATCH', '/resources/folders/color', { projectId: fresh.id, path: '', color: 'red' }, 404, otherHeaders);
   await json('GET', '/resources/courses/legacy-course', undefined, 404, otherHeaders);
   const beforeRestart = db.prepare('SELECT count(*) AS n FROM projects').get().n;
   await app.close();
   app = buildServer({ dbPath: path.join(directory, 'db.sqlite') });
   await json('GET', '/resources');
+  assert.equal((await json('GET', '/resources')).entries.find(e => e.projectId === fresh.id).color, 'purple', 'folder color persists after API restart');
   assert.equal(db.prepare('SELECT count(*) AS n FROM projects').get().n, beforeRestart, 'migration is idempotent after restart');
   const current = (await listing(folder.projectId, nested.path)).entries.find(e => e.courseId === note.courseId);
   await json('DELETE', `${location(folder.projectId, 'files', current.path)}&revision=${encodeURIComponent(current.revision)}`);

@@ -269,6 +269,39 @@ await test('正常一轮：user + assistant 两行落库，onDelta 收到正文�
   assert.match(sys, /grep/, '视频课提示词指向资源检索');
 });
 
+await test('模型 error：正文前缀落库，中断原因不混入正文，也不自动收尾', async () => {
+  const sessionId = await newSession();
+  const seen = serve([{ content: '已写出的半截回答', finish: 'error' }]);
+  let saved;
+  await assert.rejects(runQa(ASK({ sessionId }), { onPersist: id => { saved = id; } }), /没有正常结束/);
+  const rows = await rowsOf(sessionId);
+  assert.equal(seen.length, 1);
+  assert.equal(rows.length, 2);
+  assert.equal(rows[1].content, '已写出的半截回答');
+  assert.equal(rows[1].id, saved);
+  assert.equal(rows[1].interrupted, true);
+  assert.match(rows[1].interruptReason, /没有正常结束/);
+});
+
+await test('模型 length：纯正文不是网络中断，不提供误导性的续写标记', async () => {
+  const sessionId = await newSession();
+  serve([{ content: '输出达到额度的正文', finish: 'length' }]);
+  const result = await runQa(ASK({ sessionId }));
+  assert.equal(result.content, '输出达到额度的正文');
+  assert.equal((await rowsOf(sessionId))[1].interrupted, undefined);
+});
+
+await test('无终止信息断流：保留正文，空回答不伪造可续写断点', async () => {
+  for (const prefix of ['断流前已经输出的内容', '']) {
+    const sessionId = await newSession();
+    globalThis.fetch = async () => new Response(prefix ? `data: ${JSON.stringify({ choices: [{ delta: { content: prefix } }] })}\n\n` : '', { headers: { 'content-type': 'text/event-stream' } });
+    await assert.rejects(runQa(ASK({ sessionId })), /未收到完成标记/);
+    const rows = await rowsOf(sessionId);
+    assert.equal(rows.length, prefix ? 2 : 1);
+    if (prefix) { assert.equal(rows[1].content, prefix); assert.equal(rows[1].interrupted, true); }
+  }
+});
+
 // ── 2. 工具往返：工具消息不落库，但必须进下一轮请求 ──────────────────────────
 
 await test('工具往返：落库仍只有两行，工具结果进了下一轮请求，onToolStart/End 被调', async () => {

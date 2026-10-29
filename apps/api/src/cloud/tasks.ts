@@ -4,7 +4,7 @@ import type { CloudTask, CloudTaskKind } from '@wangke/contracts/cloud';
 import { CloudConfiguration } from './config.js';
 import { CloudRecords } from './records.js';
 import { executeMediaTask } from './media.js';
-import { executorFor, type TaskContext, type TaskExecutor } from './execution.js';
+import { executorFor, recordMutation, type TaskContext, type TaskExecutor } from './execution.js';
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 import { accountedFetch } from '../agent/accounted-fetch.js';
 import { settleWithin } from '../lifecycle.js';
@@ -172,6 +172,19 @@ export class CloudTaskRunner {
       this.store.db.prepare("UPDATE cloud_tasks SET status=?,error=?,updated_at=? WHERE id=? AND status IN ('running','waiting_user')")
         .run(this.stopped ? 'interrupted' : signal.aborted ? 'cancelled' : 'failed', message.slice(0, 1000), new Date().toISOString(), row.id);
     } finally {
+      // An explicit stop is not a resumable network interruption. Only clear
+      // the marker on this task's existing owner; never recreate deleted rows
+      // or overwrite a newer task's checkpoint. Shutdown remains interrupted.
+      const ended = this.store.db.prepare('SELECT status,progress FROM cloud_tasks WHERE id=?').get(row.id) as any;
+      if (ended?.status === 'cancelled' && (row.kind === 'chat' || row.kind === 'qa')) {
+        const progress = ended.progress ? JSON.parse(ended.progress) : {};
+        const answer = typeof progress.rowId === 'number' ? this.records.get(row.owner_id, 'chats', progress.rowId) : null;
+        if (answer && answer.taskId === row.id && answer.sessionId === JSON.parse(row.input).sessionId) {
+          const stopped = { ...answer };
+          delete stopped.interrupted; delete stopped.interruptReason;
+          this.records.apply(row.owner_id, [recordMutation('chats', answer.id, answer, stopped)]);
+        }
+      }
       this.store.db.prepare("UPDATE cloud_permissions SET status='expired' WHERE task_id=? AND status IN ('pending','approved','consumed')").run(row.id);
     }
   }

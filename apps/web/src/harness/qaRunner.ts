@@ -389,6 +389,7 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       // 检索轮次上限来自设置（默认 6，选「不限」则为 Infinity；另有循环检测与 token 预算兜着）
       resolveMaxRounds(settings.agentRounds),
     );
+    if (stopped.at(-1)?.reason === 'error') throw new Error('模型或网关没有正常结束这一轮回答');
   } catch (e) {
     // 用户按了停止：不是错误。保留已流出的内容，只补一句「已停止」，并且**落库**
     // （否则刷新就没了，「停止」等于白生成一轮）。
@@ -415,9 +416,20 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
         ...(widgetState ? { widget: widgetState } : {}), ...(widgets.length ? { widgets } : {}),
         ...(stopped[0] ? { stopped: stopped[0] } : {}) };
     }
-    // 真错误原样抛给调用方：让它渲染错误气泡、决定要不要再提示一次。
-    // （链路 host 侧据此发 chat.err —— 设计 §3.1 说失败也要落库成一条 assistant，
-    //   但那是 host 的 UI 责任，不该由这一层替它决定文案。）
+    // Flush useful partial work before reporting the failure. It may arrive
+    // before any onTranscript checkpoint, not only after a widget delivery.
+    if (answer.trim() || widgetState || quizState) {
+      const interruptReason = e instanceof Error ? e.message : String(e);
+      widgetRowId = await persistAssistantSnapshot({
+        videoId, sessionId, role: 'assistant', content: answer,
+        createdAt: Math.max(Date.now(), turnTimes.assistant),
+        modelTrace: modelTrace(answer, [...rawTurn, ...(pendingModelText ? [{ role: 'assistant' as const, content: pendingModelText }] : [])]),
+        reasoning: reasoning || undefined, tools: traces,
+        ...(widgetState ? { widget: widgetState } : {}), ...(widgets.length ? { widgets } : {}),
+        ...(quizState ? { quiz: quizState } : {}), interrupted: true, interruptReason,
+      }, widgetRowId);
+      sink.onPersist?.(widgetRowId);
+    }
     throw e;
   }
 

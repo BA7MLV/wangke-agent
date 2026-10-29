@@ -282,6 +282,18 @@ await test('回归 · 截断（finish_reason: length）：参数可能残缺，�
   assert.equal(seenTools.length, 1, '补了失败结果后模型重发的那次才真的执行');
 });
 
+await test('回归 · content_filter：不执行工具、不重放调用、不自动收尾', async () => {
+  resetTools();
+  const seen = serve([{ toolCalls: [call('blocked', 'search_material', { query: '不能执行' })], finish: 'content_filter' }]);
+  const deltas = [];
+  const out = await runAgentLoop([sys('系统提示'), u('问')], TOOLS, exec, { onDelta: text => deltas.push(text) });
+  assert.equal(seen.length, 1);
+  assert.equal(seenTools.length, 0);
+  assert.equal(out.at(-1).tool_calls, undefined);
+  assert.equal(out.at(-1).providerState, undefined);
+  assert.match(deltas.join(''), /内容过滤/);
+});
+
 await test('回归 · 残缺轮次（finish_reason: error）：不进历史、不重放、也不收尾', async () => {
   const seen = serve([{ reasoning: '想了一半…', finish: 'error' }]);
   const stops = [];
@@ -291,6 +303,47 @@ await test('回归 · 残缺轮次（finish_reason: error）：不进历史、�
   assert.equal(stops[0].reason, 'error');
   assert.equal(stops[0].granted, false);
   assert.deepEqual(out.map((m) => m.role), ['system', 'user'], '残缺轮次不能留在历史里');
+});
+
+await test('回归 · finish_reason: error：已流出的正文交给上层作为中断前缀', async () => {
+  const seen = serve([{ content: '已经说到一半', finish: 'error' }]);
+  const deltas = [];
+  const stops = [];
+  const out = await runAgentLoop([sys('系统提示'), u('问')], TOOLS, exec, {
+    onDelta: (text) => deltas.push(text),
+    onStop: (info) => stops.push(info),
+  });
+  assertAllRequestsLegal(seen, 'error 半截正文');
+  assert.equal(deltas.join(''), '已经说到一半', '错误终止前已经展示的正文不能被吞掉');
+  assert.equal(stops[0].reason, 'error');
+  assert.equal(stops[0].granted, false);
+  assert.deepEqual(out.map((m) => m.role), ['system', 'user'], '错误轮次仍不能重放');
+});
+
+await test('回归 · finish_reason: length：纯正文按完整回答处理，不伪装成可续写中断', async () => {
+  const seen = serve([{ content: '达到输出上限前的正文', finish: 'length' }]);
+  const stops = [];
+  const out = await runAgentLoop([sys('系统提示'), u('问')], TOOLS, exec, { onStop: (info) => stops.push(info) });
+  assertAllRequestsLegal(seen, 'length 正文');
+  assert.equal(stops.length, 0, '纯正文 length 不应进入 agent 的中断续写路径');
+  assert.equal(out.at(-1).content, '达到输出上限前的正文');
+});
+
+await test('回归 · 强制收尾的 error 不得作为成功回答或再次自动重试', async () => {
+  const seen = serve([
+    { reasoning: '想了一会儿' },
+    { content: '收尾也只写出半截', finish: 'error' },
+  ]);
+  const transcripts = [], stops = [];
+  const out = await runAgentLoop([sys('系统提示'), u('问')], TOOLS, exec, {
+    onTranscript: messages => transcripts.push([...messages]),
+    onStop: info => stops.push(info),
+  });
+  assert.equal(seen.length, 2, '失败收尾不能继续发宽限请求');
+  assert.equal(stops.at(-1).reason, 'error');
+  assert.equal(stops.at(-1).granted, false);
+  assert.ok(!out.some(m => m.content === '收尾也只写出半截'));
+  assert.ok(!transcripts.some(messages => messages.some(m => m.finish_reason === 'error')));
 });
 
 await test('轮次闸：轮数用完也能安全收尾（out 末尾是 tool 消息）', async () => {

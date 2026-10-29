@@ -127,8 +127,9 @@ try {
     'import strip, hover and input use continuous corners');
   await page.locator('.course-chat__composer-wrap').screenshot({ path: `${out}/import-strip-hover.png`, animations: 'disabled' });
   await importLink.locator('svg').click();
-  await page.waitForURL('**/#/library');
-  await page.evaluate(() => { location.hash = '#/'; });
+  await page.getByTestId('chat-project-picker').waitFor();
+  assert.equal(page.url(), originalUrl, 'project selection stays in the conversation');
+  await page.getByTestId('chat-project-picker').getByRole('button', { name: '取消', exact: true }).click();
   await heading.waitFor();
   await checkWelcome('return from import library');
 
@@ -222,13 +223,13 @@ try {
     ] });
   });
   await page.waitForFunction(() => !document.querySelector('.course-chat--empty'));
-  await importLink.waitFor();
-  assert(await importLink.isVisible(), 'folder entry remains visible in a conversation');
+  await importLink.waitFor({ state: 'hidden' });
+  assert.equal(await strip.count(), 0, 'project entry automatically collapses after a message is sent');
   await settle();
   const composer = await page.locator('.course-chat__composer').boundingBox();
   assert(Math.abs(844 - composer.y - composer.height - 10) < 2, 'conversation composer remains bottom anchored');
   assert.deepEqual(errors, []);
-  console.log('PASS: default folder entry with empty/populated/loading libraries and conversations, welcome placement, shared icon/text hover and navigation, continuous corners, mouse and keyboard dismissal without navigation or draft loss, mobile close, light/dark themes, keyboard/long draft, bottom-anchored conversation.');
+  console.log('PASS: project entry with empty/populated/loading libraries, picker without navigation, automatic collapse in conversations, welcome placement, shared icon/text hover, continuous corners, mouse and keyboard dismissal, mobile close, themes, keyboard/long draft and bottom-anchored conversation.');
 } finally {
   await browser.close();
 }
