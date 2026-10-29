@@ -148,12 +148,12 @@ export class CloudTaskRunner {
         task, owner: row.owner_id, store: this.store, records: this.records,
         configuration: this.options.configuration ?? new CloudConfiguration(this.store, path.join(directory, 'config')),
         filesDir: this.options.filesDir ?? process.env.FILES_DIR ?? path.join(directory, 'files'),
-        signal, fetch: row.parent_run_id ? async (url, init) => {
+        signal, fetch: async (url, init) => {
           checkActive();
-          const response = await accountedFetch(new UsageLedger(this.store, this.options.configuration), { owner: row.owner_id, run: row.parent_run_id, step: row.parent_step_id, task: row.id, purpose: `study:${row.kind}` }, (this.options.configuration?.get(row.owner_id, true).providers ?? []), this.options.fetch ?? fetch)(url, init);
+          const response = await accountedFetch(new UsageLedger(this.store, context.configuration), { owner: row.owner_id, run: row.parent_run_id ?? undefined, step: row.parent_step_id ?? undefined, task: row.id, purpose: `study:${row.kind}` }, context.configuration.get(row.owner_id, true).providers, this.options.fetch ?? fetch)(url, init);
           checkActive();
           return response;
-        } : this.options.fetch ?? fetch, checkActive,
+        }, checkActive,
         report: progress => {
           checkActive();
           this.store.db.prepare("UPDATE cloud_tasks SET progress=?,updated_at=? WHERE id=? AND status='running'")

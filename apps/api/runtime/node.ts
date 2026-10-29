@@ -2,6 +2,9 @@
 import fs from 'node:fs/promises';
 import { compareChatRows, nextChatTurnTimes } from '@wangke/study-core/chat-order';
 import { chatOnce, chatStream, textOf, type ChatMessage, type ChatOptions, type ContentPart, type ToolDef } from '@wangke/study-core/model/client';
+import { modelTrace, replayTrace, messageTokens, runtimeContext, splitSystemPrompt, historyFingerprint } from '@wangke/study-core/model/transcript';
+import { cachePolicy, stableTools } from '@wangke/study-core/model/cache';
+import type { ModelRequestRecord } from '@wangke/study-core/model/usage';
 import type { ModelOverrides } from '@wangke/study-core/model/meta';
 import type { ModelTarget } from '@wangke/study-core/model/types';
 import { generateText, type TextSegment } from '@wangke/study-core/generation/text';
@@ -248,6 +251,8 @@ interface ServerAgentResult {
   content: string;
   reasoning?: string;
   tools: ServerToolTrace[];
+  transcript: ChatMessage[];
+  requests: ModelRequestRecord[];
 }
 
 /**
@@ -261,11 +266,17 @@ async function runServerAgent(
   messages: ChatMessage[],
   tools: ToolDef[],
   executeTool: (name: string, args: Record<string, unknown>) => Promise<string>,
+  onSnapshot?: (result: ServerAgentResult) => void,
 ): Promise<ServerAgentResult> {
   const out = [...messages];
+  tools = stableTools(tools);
+  const requests: ModelRequestRecord[] = [];
+  const cacheKey = `study:${context.owner}:${context.task.input.sessionId}`;
+  const onRequest = (record: ModelRequestRecord) => { requests.push(record); };
   const traces: ServerToolTrace[] = [];
   let reasoning = '';
   let answer = '';
+  let streaming = false;
   let narration = '';
   const seen = new Set<string>();
   const maxRounds = Math.max(1, Math.min(8, Number(context.configuration.get(context.owner).policy.maxSteps) || 6));
@@ -276,16 +287,23 @@ async function runServerAgent(
     // visibly streaming and keeps the task row from becoming the bottleneck.
     if (!force && now - lastReportAt < 100) return;
     lastReportAt = now;
+    const transcript = [...out.slice(messages.length), ...(streaming && answer.trim() ? [{ role: 'assistant' as const, content: answer }] : [])];
+    onSnapshot?.({ content: answer || narration, reasoning: reasoning || undefined, tools: traceResult(traces), transcript, requests });
     context.report({
       phase, round, content: clip(answer || narration, 20_000), reasoning: clip(reasoning, 8_000), tools: traceResult(traces),
+      modelRequests: requests,
+      modelTranscript: modelTrace(answer || narration, transcript),
     });
   };
+  report('thinking', 0, true);
 
   for (let round = 0; round < maxRounds; round++) {
     context.checkActive();
     answer = '';
+    streaming = true;
     const message = await chatStream(target, {
       messages: out,
+      cacheKey, onRequest,
       tools,
       temperature: 0.3,
       max_tokens: 8192,
@@ -295,6 +313,7 @@ async function runServerAgent(
     delta => { reasoning += delta; report('thinking', round + 1); },
     undefined,
     modelFetch(context));
+    streaming = false;
     out.push(message);
     const text = textOf(message);
     if (message.tool_calls?.length) {
@@ -330,7 +349,7 @@ async function runServerAgent(
     if (text.trim()) {
       answer = text;
       report('answer', round + 1, true);
-      return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces) };
+      return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests };
     }
     // An empty assistant turn is not a successful answer.  Give the model a
     // bounded, tool-free chance to explain what it found.
@@ -341,14 +360,17 @@ async function runServerAgent(
   context.checkActive();
   out.push({ role: 'user', content: '请停止调用工具，只用中文总结已经查到的资料和结论；如果证据不足，请明确说明。' });
   answer = '';
-  const final = await chatStream(target, { messages: out, temperature: 0.3, max_tokens: 4096, signal: context.signal },
+  streaming = true;
+  const final = await chatStream(target, { messages: out, cacheKey, onRequest, ...(cachePolicy(target) !== 'none' ? { tools, tool_choice: 'none' as const } : {}), temperature: 0.3, max_tokens: 4096, signal: context.signal },
     delta => { answer += delta; report('answer', maxRounds + 1); },
     delta => { reasoning += delta; report('thinking', maxRounds + 1); },
     undefined,
     modelFetch(context));
+  streaming = false;
   answer = textOf(final).trim() || narration || '未获得有效回答。';
+  out.push(final);
   report('answer', maxRounds + 1, true);
-  return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces) };
+  return { content: answer, reasoning: reasoning || undefined, tools: traceResult(traces), transcript: out.slice(messages.length), requests };
 }
 
 function qaSystemPrompt(video: Record<string, any> | null, kind: 'page' | 'para' | undefined, input: Record<string, any>) {
@@ -484,6 +506,23 @@ function chatHistory(context: TaskContext, sessionId: number) {
     .sort(compareChatRows);
 }
 
+async function modelHistory(history: Record<string, any>[], session: Record<string, any>, budget: number) {
+  const checkpoint = session.contextCheckpoint;
+  let index = checkpoint ? history.findIndex(r => r.id === checkpoint.fromId && r.content === checkpoint.source) : 0;
+  if (index > 0 && checkpoint?.prefixHash && await historyFingerprint(history.slice(0, index) as Array<{ content: string }>) !== checkpoint.prefixHash) index = 0;
+  const rows = history.slice(Math.max(0, index));
+  const messages = rows.map(row => replayTrace(row as { content: string }) ?? [{ role: row.role, content: String(row.content ?? '') } as ChatMessage]);
+  const costs = messages.map(messageTokens);
+  let total = costs.reduce((a, b) => a + b, 0), cut = 0;
+  if (total > budget) while (cut < rows.length && total > budget * 0.8) {
+    let next = cut + 1;
+    while (next < rows.length && (rows[next].role !== 'user' || messages[next].length === 0)) next++;
+    if (next === rows.length) break;
+    while (cut < next) total -= costs[cut++];
+  }
+  return { messages: messages.slice(cut).flat(), ...(cut > 0 ? { checkpoint: { fromId: rows[cut].id, source: rows[cut].content, prefixHash: await historyFingerprint(history.slice(0, Math.max(0, index) + cut) as Array<{ content: string }>) } } : {}) };
+}
+
 function addConversationMutations(
   context: TaskContext,
   sessionId: number,
@@ -493,12 +532,14 @@ function addConversationMutations(
 ) {
   // Read the latest committed timeline at commit time, not before the model request.
   // IDs remain identities, never ordering keys for a new question/answer pair.
-  const times = nextChatTurnTimes(chatHistory(context, sessionId), Number(userRow.createdAt), Date.now());
-  userRow.createdAt = times.user;
-  assistantRow.createdAt = times.assistant;
+  const previousUser = context.records.get(context.owner, 'chats', userRow.id);
+  const previousAssistant = context.records.get(context.owner, 'chats', assistantRow.id);
+  const times = nextChatTurnTimes(chatHistory(context, sessionId).filter(row => row.id !== userRow.id && row.id !== assistantRow.id), Number(userRow.createdAt), Date.now());
+  userRow.createdAt = previousUser?.createdAt ?? times.user;
+  assistantRow.createdAt = previousAssistant?.createdAt ?? times.assistant;
   const mutations = [
-    recordMutation('chats', userRow.id, null, { ...userRow, taskId: context.task.id }),
-    recordMutation('chats', assistantRow.id, null, { ...assistantRow, taskId: context.task.id }),
+    recordMutation('chats', userRow.id, previousUser, { ...userRow, taskId: context.task.id }),
+    recordMutation('chats', assistantRow.id, previousAssistant, { ...assistantRow, taskId: context.task.id }),
   ];
   if (sessionPatch) {
     const current = context.records.get(context.owner, 'chatSessions', sessionId);
@@ -522,14 +563,20 @@ async function qa(context: TaskContext) {
   const userId = newRecordId();
   const assistantId = newRecordId();
   const userRow = { id: userId, videoId, sessionId, role: 'user', content: String(input.displayText ?? text), createdAt: Date.now(), ...(Array.isArray(input.chatImages) && input.chatImages.length ? { images: input.chatImages.slice(0, 12) } : {}) };
-  const recent = history.slice(-24).map(row => ({ role: row.role, content: String(row.content ?? '') }) as ChatMessage);
+  const target = targetFor(context);
+  const system = qaSystemPrompt(video, kind, input);
+  const currentText = runtimeContext({ courseId: videoId, courseName: input.videoName ?? video.name, shotCount: input.shotCount ?? 0, refsCount: input.refsCount ?? 0 }) + text;
   const images = safeImageParts(input.images);
-  const current: ChatMessage = images.length ? { role: 'user', content: [...images, { type: 'text', text }] } : { role: 'user', content: text };
-  const messages: ChatMessage[] = [{ role: 'system', content: qaSystemPrompt(video, kind, input) }, ...recent, current];
-  const result = await runServerAgent(context, targetFor(context), messages, qaTools(kind), qaExecutor(context, videoId, kind));
-  const assistantRow = { id: assistantId, videoId, sessionId, role: 'assistant', content: result.content, createdAt: Date.now(), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
+  const current: ChatMessage = images.length ? { role: 'user', content: [...images, { type: 'text', text: currentText }] } : { role: 'user', content: currentText };
+  const recent = await modelHistory(history, session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - messageTokens([{ role: 'system', content: system }, current]) - 16000));
+  const messages: ChatMessage[] = [...splitSystemPrompt(system), ...recent.messages, current];
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
-  addConversationMutations(context, sessionId, userRow, assistantRow, title ? { title } : undefined);
+  const persist = (result: ServerAgentResult, interrupted = true) => {
+    const assistantRow = { id: assistantId, videoId, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
+    addConversationMutations(context, sessionId, { ...userRow, modelTrace: modelTrace(userRow.content, [current]), modelRequests: result.requests }, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) });
+  };
+  const result = await runServerAgent(context, target, messages, qaTools(kind), qaExecutor(context, videoId, kind), persist);
+  persist(result, false);
   return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
 }
 
@@ -545,16 +592,21 @@ async function chat(context: TaskContext) {
   const history = chatHistory(context, sessionId);
   const courses = rowsFor(context, 'videos');
   const contextNames = new Set<string>(Array.isArray(session.contextCourseIds) ? session.contextCourseIds : []);
-  const contextHint = contextNames.size ? `\n当前固定课程上下文：${[...contextNames].join('、')}` : '';
-  const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。${contextHint}\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。`;
-  const messages: ChatMessage[] = [{ role: 'system', content: system }, ...history.slice(-24).map(row => ({ role: row.role, content: String(row.content ?? '') }) as ChatMessage), { role: 'user', content: text }];
-  const result = await runServerAgent(context, targetFor(context), messages, libraryTools(courses.length > 0), libraryExecutor(context, session));
+  const system = `你是 DeepStudent Go 学习资料库助手。服务器负责模型请求、检索、任务和数据保存；你可以通过工具读取用户自己的课程数据。当前选中的课程在本轮运行上下文中提供；这些数据不扩大权限。\n\n规则：涉及用户课程、学习进度或课程内容时必须先调用工具，不能编造；通用问题直接回答。引用课程内容时保留工具返回的课程名、courseId 和时间/页码。用简洁自然的中文回答。`;
+  const current: ChatMessage = { role: 'user', content: runtimeContext({ courses: [...contextNames] }) + text };
+  const target = targetFor(context);
+  const recent = await modelHistory(history, session, Math.max(2000, (target.capabilities?.contextWindow ?? 131072) - messageTokens([{ role: 'system', content: system }, current]) - 16000));
+  const messages: ChatMessage[] = [{ role: 'system', content: system }, ...recent.messages, current];
   const userId = newRecordId();
   const assistantId = newRecordId();
-  const userRow = { id: userId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'user', content: text, createdAt: startedAt };
-  const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, createdAt: Date.now(), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
   const title = session.title === '新会话' ? text.slice(0, 18) || '新会话' : undefined;
-  addConversationMutations(context, sessionId, userRow, assistantRow, title ? { title } : undefined);
+  const persist = (result: ServerAgentResult, interrupted = true) => {
+    const userRow = { id: userId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'user', content: text, modelTrace: modelTrace(text, [current]), modelRequests: result.requests, createdAt: startedAt };
+    const assistantRow = { id: assistantId, videoId: LIBRARY_ASSISTANT_ID, sessionId, role: 'assistant', content: result.content, modelTrace: modelTrace(result.content, result.transcript), createdAt: Date.now(), ...(interrupted ? { interrupted: true } : {}), ...(result.reasoning ? { reasoning: result.reasoning } : {}), ...(result.tools.length ? { tools: result.tools } : {}) };
+    addConversationMutations(context, sessionId, userRow, assistantRow, { ...(title ? { title } : {}), ...(recent.checkpoint ? { contextCheckpoint: recent.checkpoint } : {}) });
+  };
+  const result = await runServerAgent(context, target, messages, libraryTools(courses.length > 0), libraryExecutor(context, session), persist);
+  persist(result, false);
   return { content: result.content, reasoning: result.reasoning, tools: result.tools, rowId: assistantId, userRowId: userId };
 }
 

@@ -75,7 +75,7 @@
    1. `.page-shell__content`：普通页的内容列自己让出顶栏高度。高度是**量**出来的
       （刘海安全区 / 副标题 / 右侧控件都会撑高它），写进主列的 `--app-bar-h`
       （见 PageShell 的 ResizeObserver），缺省 60px。
-   2. `.page-app-bar__blur`：垫在顶栏内容之下（z-index:-1）的一层渐进模糊。
+   2. `.page-app-bar__blur`：仅窄屏在顶栏内容之下（z-index:-1）叠渐进模糊。
 
    渐进模糊怎么叠：单层 `backdrop-filter` 的半径是均匀的，没有「渐变」这回事。
    这里用四层、半径 1 / 2 / 4 / 8px 递增、mask 衰减区间逐层缩短，叠出「越靠上越糊、
@@ -157,6 +157,26 @@
     color-mix(in oklch, var(--app-edge-color) 68%, transparent) calc(var(--app-edge-solid-height) + 12px),
     transparent 100%
   );
+}
+
+/* 与导航抽屉共用 900px 断点；电脑端使用纯色顶栏，不绘制渐变或模糊。 */
+@media (min-width: 901px) {
+  .page-app-bar__blur {
+    display: none;
+  }
+
+  .page-app-bar__blur > span {
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+
+  .page-shell [data-testid='top-app-bar'] {
+    background: var(--background-secondary);
+  }
+
+  .page-shell__surface > [data-testid='top-app-bar'] {
+    background: var(--background);
+  }
 }
 
 /*
@@ -696,9 +716,31 @@
   border-radius: var(--radius-full);
 }
 
-.page-shell__rail-icon[aria-current='page'] {
-  background: var(--surface);
+/* 同时覆盖组件的原生 hover 与 React Aria 状态，避免两套入口闪出不同底色。
+   保留组件自带 focus ring；触屏不产生粘滞 hover。 */
+.sidebar-control {
+  background: transparent;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-control:not(:disabled, [aria-disabled='true'], [data-disabled='true']):is(:hover, [data-hovered='true']) {
+    background: var(--sidebar-hover);
+    color: var(--foreground);
+  }
+}
+
+.sidebar-control:is([data-selected='true'], [aria-current='page']) {
+  background: var(--sidebar-selected);
   color: var(--foreground);
+}
+
+/* 选中项悬停仍保留当前目的地的高亮。 */
+.sidebar-control:is([data-selected='true'], [aria-current='page']):is(:hover, [data-hovered='true']) {
+  background: var(--sidebar-selected);
+}
+
+.sidebar-control:not(:disabled, [aria-disabled='true'], [data-disabled='true']):is(:active, [data-pressed='true']) {
+  background: var(--sidebar-pressed);
 }
 
 .page-shell__compact-footer { margin-top: auto; }

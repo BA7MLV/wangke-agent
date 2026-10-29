@@ -21,7 +21,7 @@
 
 - `PageShell` 定义 `--app-edge-color: var(--dyn-edge, var(--background-secondary))`。
 - `.page-shell__top-edge` 提供贴顶、全视口宽、不透明的 `background-color`。高度为 `max(env(safe-area-inset-top), 4px)`，无交互、无滚动监听。
-- 顶栏遮罩从相同实色开始，安全区之后向下衰减至透明；四层渐进模糊继续采样滚到栏后的实际内容。顶部不再从 68% 的透明混色开始。
+- 仅移动端 / 窄屏（≤900px）使用顶栏渐进模糊：遮罩从相同实色开始，安全区之后向下衰减至透明；四层模糊采样滚到栏后的实际内容。桌面（≥901px）使用与画布一致的纯色顶栏，不绘制模糊或渐变。
 - `ui/browserChrome.ts` 读取边缘元素的计算背景色，经 1×1 canvas 转成不透明 sRGB hex，同步 meta 和根背景变量。canvas 只做颜色格式转换，**不截屏、不采样滚动中的内容**。
 - 同步只监听主题和当前页面根元素的配色属性；不对每一帧或每次滚动运行 JS。离页恢复当前画布色，不恢复历史 meta 快照。
 - 封面边缘色以当前画布为主，混入少量封面色，深浅主题都成立。局部 `useDynamicColor` 不再直接改写全局 meta。
@@ -31,16 +31,16 @@
 
 ### Chat 的渐进模糊
 
-- 仅 Chat 调整为 1 / 4 / 12 / 24px 四层交接，强模糊覆盖标题背后，向下在顶栏外再延伸 48px，最终连续回到清晰正文。各层从实色安全区下缘开始，刘海高度不再吃掉强模糊段。
-- 桌面主面板原先的圆角 `overflow: hidden` 在本机 Chromium 中会使后代 backdrop 层的渐变 mask 在实际合成时失效，表现为全高等强度模糊及硬切下缘（计算样式仍然显示正确的 mask）。Chat 改用 `clip-path: inset(0 round var(--radius-2xl))` 保留圆角裁切，消息和输入区自身的 overflow / clip-path 不变。
-- 色罩只轻微辅助可读性；桌面使用主面板的画布色，不再靠一条灰白渐变伪装模糊。减少透明度时仍退回不透明顶栏，且不延伸到阅读区。
-- 资料库保留现有实色工具栏，**不启用渐进模糊**。其他页面及 Sheet 的模糊实现不随此次 Chat 修正改变。
+- 移动端 Chat 使用 1 / 4 / 12 / 24px 四层交接，强模糊覆盖标题背后，向下在顶栏外再延伸 48px，最终连续回到清晰正文。各层从实色安全区下缘开始，刘海高度不再吃掉强模糊段。
+- 桌面 Chat 不再需要 backdrop 合成的 `clip-path` 绕行，主面板恢复普通圆角 `overflow: hidden` 裁切。
+- 移动端色罩只轻微辅助可读性；减少透明度时仍退回不透明顶栏，且不延伸到阅读区。
+- 资料库保留现有实色工具栏，**不启用渐进模糊**。其他普通页同样遵循 900px 断点，仅窄屏启用顶栏模糊；Sheet 的模糊实现不变。
 
 ## 验证
 
 运行：`node scripts/e2e-browser-chrome.mjs`（需要 Vite 开发服务及 Playwright Chromium / WebKit）。可用 `BASE_URL` 和 `SHOTS_DIR` 指定服务与截图目录。
 
-Chat 另运行 `node scripts/e2e-chat-progressive-blur.mjs`：在真实 Chat DOM 下用 Chromium 截图像素验证，移除色罩后比较多个高度的条纹对比度与不同空间频率，避免「有滤镜样式但没真模糊」或「整块均匀模糊后淡出」也通过。覆盖桌面 / 手机、深浅色、47px 模拟安全区、下缘连续性、减少透明度与资料库不变。`node scripts/e2e-chat-clipping.mjs` 验证多行输入前后消息仍在输入卡边界裁切。
+Chat 另运行 `node scripts/e2e-chat-progressive-blur.mjs`：移动端在真实 Chat DOM 下用 Chromium 截图像素验证，移除色罩后比较多个高度的条纹对比度与不同空间频率，避免「有滤镜样式但没真模糊」或「整块均匀模糊后淡出」也通过；桌面验证模糊隐藏、无滤镜、顶栏为纯色且不带渐变。覆盖深浅色、900/901px 断点、47px 模拟安全区、下缘连续性、减少透明度与资料库不变。`node scripts/e2e-chat-clipping.mjs` 验证多行输入前后消息仍在输入卡边界裁切。
 
 已覆盖 Chromium / WebKit 的 390×844、844×390、1280×900：
 

@@ -4,8 +4,16 @@
  * 动效时长 / 缓动全部取自 transitions.css；prefers-reduced-motion 下只保留淡入。
  */
 .ob {
-  --ob-width: 380px;
+  --ob-width: 400px;
   --ob-figure: min(100%, 340px, 38dvh * 1.25);
+  /* Atlassian（Jira / Confluence）字阶：12/16、14/20、16/24、24/28、28/32。
+   * https://atlassian.design/foundations/typography
+   * rem 跟随应用字号设置；同一信息层级只使用一个字号和起始边对齐。 */
+  --ob-text-small: 0.75rem;
+  --ob-text-body: 0.875rem;
+  --ob-text-large: 1rem;
+  --ob-heading: 1.5rem;
+  --ob-heading-line: 1.75rem;
   /* hairline 的六个主题变量 */
   --hairline-plate: var(--surface);
   --hairline-hi: var(--accent);
@@ -16,27 +24,57 @@
 
   display: grid;
   grid-template-columns: minmax(0, 1fr);
-  grid-template-rows: auto 1fr;
   min-height: 100dvh;
   padding: env(safe-area-inset-top) env(safe-area-inset-right) 0 env(safe-area-inset-left);
   background:
     radial-gradient(120% 60% at 50% 0%, color-mix(in oklab, var(--accent) 7%, transparent), transparent 70%),
     var(--background);
   color: var(--foreground);
-  overflow-x: hidden;
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
+  overflow-x: clip;
+}
+
+.ob__panel {
+  display: grid;
+  grid-template-rows: auto auto minmax(0, 1fr) auto;
+  width: min(100% - 32px, var(--ob-width));
+  min-height: calc(100dvh - env(safe-area-inset-top));
+  margin-inline: auto;
+  padding: 8px 0 calc(16px + env(safe-area-inset-bottom));
+}
+
+.ob[data-step='models'] .ob__panel {
+  --ob-width: 760px;
+}
+
+.ob__right {
+  display: contents;
+}
+
+.ob__bar,
+.ob__footer {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
 }
 
 .ob__bar {
-  display: grid;
-  grid-template-columns: 1fr auto 1fr;
-  align-items: center;
-  gap: 8px;
-  height: 52px;
-  padding: 0 12px;
+  grid-row: 1;
+  min-height: 44px;
 }
 
-.ob__bar-end {
+.ob__footer {
+  grid-row: 4;
+  min-height: 32px;
+  margin-top: 16px;
+}
+
+.ob__bar-end,
+.ob__progress {
   display: flex;
+  grid-column: 2;
   justify-content: flex-end;
 }
 
@@ -73,13 +111,26 @@
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: min(100% - 32px, var(--ob-width));
-  margin: 0 auto;
-  padding: clamp(4px, 3dvh, 32px) 0 calc(24px + env(safe-area-inset-bottom));
+  min-width: 0;
+  width: 100%;
+  grid-row: 3;
 }
 
-.ob[data-step='models'] .ob__scene {
-  --ob-width: 760px;
+.ob__visual {
+  display: grid;
+  grid-row: 2;
+  place-items: center;
+  width: 100%;
+  min-width: 0;
+  padding-top: clamp(4px, 3dvh, 32px);
+}
+
+.ob__content {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  min-width: 0;
+  text-align: start;
 }
 
 /* ── 2.5D 舞台 ─────────────────────────────────────────── */
@@ -99,6 +150,7 @@
   aspect-ratio: 5 / 4;
   border-radius: var(--radius-2xl);
   outline-offset: 4px;
+  pointer-events: none;
 }
 
 /* 图形底下一圈柔和的影子 + 主题色的地面反光，让它「站」在页面上。 */
@@ -114,12 +166,13 @@
 }
 
 .ob__title {
-  margin: clamp(8px, 2dvh, 20px) 0 clamp(16px, 3dvh, 28px);
-  font-size: clamp(1.5rem, 1.2rem + 1.2vw, 1.875rem);
-  font-weight: 650;
+  margin: 24px 0;
+  font-size: var(--ob-heading);
+  line-height: var(--ob-heading-line);
+  font-weight: 700;
   letter-spacing: -0.01em;
-  text-align: center;
-  text-wrap: balance;
+  text-align: start;
+  overflow-wrap: anywhere;
   animation: ob-rise var(--duration-slow) var(--ease-smooth-out) var(--duration-stagger) both;
 }
 
@@ -134,6 +187,86 @@
 
 .ob__configure {
   gap: 20px;
+}
+
+.ob__configure .input {
+  width: 100%;
+  min-width: 0;
+  font-size: var(--ob-text-large);
+  line-height: 1.5rem;
+}
+
+/* 配置列比设置页窄，供应商统一为左对齐的图标 + 文案行。 */
+.ob__configure .provider-overview-grid {
+  grid-template-columns: minmax(0, 1fr);
+  gap: 12px;
+}
+
+.ob__configure .provider-overview-grid > button,
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] {
+  display: grid;
+  grid-template-columns: 40px minmax(0, 1fr);
+  align-items: center;
+  gap: 4px 16px;
+  min-height: 88px;
+  padding: 16px;
+  border-radius: var(--radius-control);
+  text-align: start;
+}
+
+.ob__configure .provider-overview-grid > button > :first-child,
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :first-child {
+  grid-column: 1;
+  grid-row: 1 / span 2;
+  width: 40px;
+  height: 40px;
+}
+
+.ob__configure .provider-overview-grid > button > :not(:first-child),
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :not(:first-child) {
+  grid-column: 2;
+  min-width: 0;
+}
+
+.ob__configure .provider-overview-grid > button > :nth-child(2),
+.ob__configure .provider-overview-grid > button > :nth-child(2) > :first-child,
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :nth-child(2) > :first-child {
+  font-size: var(--ob-text-large);
+  line-height: 1.5rem;
+}
+
+.ob__configure .provider-overview-grid > button > :nth-child(3),
+.ob__configure .provider-overview-grid > button > :nth-child(2) > :nth-child(2),
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :nth-child(2) > :nth-child(2),
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :nth-child(3) {
+  font-size: var(--ob-text-small);
+  line-height: 1rem;
+}
+
+.ob__configure .provider-overview-grid [data-testid^='provider-card-'] {
+  min-height: 0;
+  border-radius: var(--radius-control);
+}
+
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] {
+  padding-right: 56px;
+}
+
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :first-child > :first-child {
+  width: 40px;
+  height: 40px;
+}
+
+.ob__configure .provider-overview-grid [data-testid^='provider-summary-'] > :first-child > :not(:first-child) {
+  display: none;
+}
+
+.ob__configure .provider-overview-grid [data-testid^='provider-remove-'] {
+  width: 40px;
+  height: 40px;
+  top: 50%;
+  right: 8px;
+  transform: translateY(-50%);
 }
 
 /* ── 选择模型：iOS 设置式的分组列表 ─────────────────────── */
@@ -199,16 +332,16 @@
 }
 
 .ob-row__title {
-  font-size: 1.0625rem;
+  font-size: var(--ob-text-large);
+  line-height: 1.5rem;
   overflow-wrap: anywhere;
 }
 
 /* 槽位说明：浅色小字，扫一眼就能跳过。 */
 .ob-row__hint {
   color: var(--muted);
-  font-size: 0.8125rem;
-  line-height: 1.35;
-  opacity: 0.8;
+  font-size: var(--ob-text-small);
+  line-height: 1rem;
 }
 
 .ob-row__value {
@@ -216,7 +349,8 @@
   max-width: 38%;
   overflow: hidden;
   color: var(--muted);
-  font-size: 0.9375rem;
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -238,8 +372,9 @@
 
 .ob-picker__bar {
   display: grid;
-  grid-template-columns: 1fr auto 1fr;
+  grid-template-columns: auto minmax(0, 1fr) auto;
   align-items: center;
+  gap: 12px;
   min-height: 40px;
   margin-top: -4px;
 }
@@ -252,8 +387,10 @@
 
 .ob-picker__title {
   margin: 0;
-  font-size: 1.0625rem;
-  font-weight: 600;
+  font-size: var(--ob-text-large);
+  line-height: 1.25rem;
+  font-weight: 700;
+  text-align: start;
 }
 
 .ob-picker__clear {
@@ -273,7 +410,19 @@
   font-weight: 400;
 }
 
-/* ── iOS 分组输入框 ─────────────────────────────────────── */
+/* 标签、输入框边缘、反馈文案沿同一条起始线排列。 */
+.ob__field {
+  gap: 8px;
+  min-width: 0;
+}
+
+.ob__label {
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
+  font-weight: 500;
+}
+
+/* ── 分组输入框 ─────────────────────────────────────────── */
 .ob__group {
   border-radius: var(--radius-control);
   background: var(--field-background, var(--surface));
@@ -301,6 +450,7 @@
 .ob__input[data-focused],
 .ob__input[data-hovered] {
   width: 100%;
+  min-width: 0;
   min-height: 48px;
   padding: 0 16px;
   border: 0;
@@ -308,7 +458,8 @@
   background: transparent;
   box-shadow: none;
   outline: none;
-  font-size: 1.0625rem; /* 17px：iOS 正文字号，也避免 Safari 聚焦时自动放大 */
+  font-size: var(--ob-text-large); /* 默认 16px，避免 Safari 聚焦时自动放大。 */
+  line-height: 1.5rem;
 }
 
 .ob__group:focus-within {
@@ -317,15 +468,16 @@
 }
 
 .ob__error {
-  min-height: 1.25rem;
   margin: 0;
   color: var(--danger);
-  font-size: 0.875rem;
-  text-align: center;
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
+  text-align: start;
+  overflow-wrap: anywhere;
 }
 
 .ob__error:empty {
-  visibility: hidden;
+  display: none;
 }
 
 .ob__actions {
@@ -334,16 +486,28 @@
   gap: 8px;
 }
 
+.ob__form > .ob__actions {
+  padding-top: 12px;
+}
+
+.ob[data-step='welcome'] .ob__actions {
+  padding-top: 0;
+}
+
 .ob__primary {
   width: 100%;
-  min-height: 50px;
+  min-height: 48px;
   border-radius: var(--radius-control);
-  font-size: 1.0625rem;
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
   font-weight: 600;
 }
 
-.ob__secondary {
+.ob__secondary,
+.ob__skip {
   width: 100%;
+  font-size: var(--ob-text-body);
+  line-height: 1.25rem;
 }
 
 .ob-loading {
@@ -354,11 +518,8 @@
 
 /* 手机：主按钮贴底，拇指够得着；键盘弹出时跟着 visualViewport 上移（useMobileGlobals 写入 data-keyboard）。 */
 @media (max-width: 599px) {
-  .ob__scene {
-    min-height: calc(100dvh - 52px - env(safe-area-inset-top));
-  }
-
   .ob__form,
+  .ob__content,
   .ob__configure,
   .ob-models,
   .ob-picker {
@@ -374,8 +535,115 @@
   }
 }
 
+/* 桌面：左侧画面、右侧填写；两列共用一张画布，表单整体垂直居中。 */
+@media (min-width: 960px) {
+  .ob {
+    --ob-heading: 1.75rem;
+    --ob-heading-line: 2rem;
+    --ob-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+    --ob-content-width: 480px;
+    --ob-content-inset: 32px;
+  }
+
+  .ob__panel {
+    align-self: center;
+    grid-template-columns: var(--ob-columns);
+    grid-template-rows: auto;
+    column-gap: 32px;
+    width: min(100% - 64px, 1200px);
+    min-height: min(640px, 100dvh - 64px);
+    margin-block: 32px;
+    padding: 16px;
+    border-radius: var(--radius-dialog);
+    background: var(--surface);
+  }
+
+  /* 所有操作归入右栏；顶栏、表单与页脚共用一组内边距。 */
+  .ob__right {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr) auto;
+    min-width: 0;
+    width: 100%;
+    max-width: var(--ob-content-width);
+    justify-self: center;
+    padding-inline: var(--ob-content-inset);
+    row-gap: 8px;
+  }
+
+  .ob__bar {
+    min-height: 52px;
+  }
+
+  .ob__footer {
+    grid-row: 3;
+    min-height: 40px;
+    margin-top: 0;
+  }
+
+  .ob__scene {
+    grid-row: 2;
+    justify-content: center;
+    padding: 0;
+  }
+
+  .ob__visual {
+    position: relative;
+    grid-row: 1;
+    grid-column: 1;
+    min-height: 400px;
+    padding: 0;
+    border-radius: var(--radius-panel);
+    overflow: clip;
+    background:
+      radial-gradient(ellipse at 50% 35%, color-mix(in oklab, var(--accent) 8%, transparent), transparent 75%),
+      var(--background);
+  }
+
+  .ob__figure,
+  .ob__figure[data-compact] {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    translate: -50% -50%;
+    width: 150%;
+  }
+
+  .ob__visual:is([data-figure='hub'], [data-figure='settle']) .ob__figure {
+    width: 110%;
+  }
+
+  .ob__content {
+    padding-block: 32px;
+  }
+
+  .ob__title {
+    margin: 0 0 32px;
+  }
+
+  /* 模型配置是长表单：插画留在视口内，右列随页面自然滚动。 */
+  .ob[data-step='models'] {
+    --ob-content-width: none;
+    --ob-content-inset: 0 16px;
+  }
+
+  .ob[data-step='models'] .ob__scene {
+    justify-content: flex-start;
+  }
+
+  .ob[data-step='models'] .ob__content {
+    padding-block: 24px;
+  }
+
+  .ob[data-step='models'] .ob__visual {
+    position: sticky;
+    top: 24px;
+    align-self: start;
+    height: min(608px, 100dvh - 112px);
+  }
+}
+
 /* ── 场景切换 ───────────────────────────────────────────── */
-.ob__scene[data-direction='back'] .ob__figure {
+.ob__visual[data-direction='back'] .ob__figure {
   animation-name: ob-figure-back;
 }
 
@@ -412,7 +680,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ob__figure,
-  .ob__scene[data-direction='back'] .ob__figure,
+  .ob__visual[data-direction='back'] .ob__figure,
   .ob__title,
   .ob__form,
   .ob__configure {
@@ -434,14 +702,19 @@
   from { opacity: 0; }
 }
 
-/* 进到某个槽位里选模型时，图形和大标题让位给列表；顶栏已经写了槽位名。 */
-.ob__scene:has(.ob-picker) > .ob__figure,
-.ob__scene:has(.ob-picker) > .ob__title {
+/* 槽位选择器自带标题；窄屏时收起画面，为列表留出空间。 */
+.ob__scene:has(.ob-picker) .ob__title {
   display: none;
 }
 
-.ob__scene:has(.ob-picker) {
-  padding-top: 0;
+@media (max-width: 959px) {
+  .ob__panel:has(.ob-picker) > .ob__visual {
+    display: none;
+  }
+
+  .ob__scene:has(.ob-picker) {
+    padding-top: 0;
+  }
 }
 
 .ob__group.ob-picker__options:focus-within {

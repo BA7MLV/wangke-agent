@@ -27,6 +27,11 @@
   --radius-3xl: var(--corner-3xl);
   --radius-4xl: var(--corner-3xl);
   --radius-field: var(--field-radius);
+
+  /* 侧栏所有入口共用交互色；选中态与瞬时 hover 分开。 */
+  --sidebar-hover: var(--background);
+  --sidebar-selected: var(--surface);
+  --sidebar-pressed: color-mix(in oklab, var(--background-secondary) 92%, var(--foreground));
 }
 
 html,

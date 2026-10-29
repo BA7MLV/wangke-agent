@@ -40,7 +40,7 @@ export class BotSkills {
     return combined.filter(s => allowed.has(s.id)).map(s => ({ skill: s, ...s, missingMcp: (s.mcpRequired ?? []).filter(name => !mcp.some(m => m.name === name && m.enabled && (scope === undefined || scope.includes(m.id)))) }));
   }
   catalog(owner: string, thread: string) {
-    return this.available(owner, thread).map(({ id, name, description, updatedAt, missingMcp }) => ({ id, name, description, revision: updatedAt, missingMcp }));
+    return this.available(owner, thread).map(({ id, name, description, updatedAt, missingMcp }) => ({ id, name, description, revision: updatedAt, missingMcp: [...missingMcp].sort() })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : a.id - b.id);
   }
   load(owner: string, thread: string, id: number, reference?: string) {
     const skill = this.available(owner, thread).find(s => s.id === id);

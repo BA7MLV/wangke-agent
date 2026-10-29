@@ -166,6 +166,28 @@ try {
     await panel.getByRole('button', { name: '移除附件 preview.png', exact: true }).click();
     await input.fill('');
   }
+  bot.append(other.id, 'assistant', 'attachment', JSON.stringify({ attachments: [
+    { fileId: file.id, name: 'first.png', mimeType: 'image/png' },
+    { fileId: file.id, name: 'second.png', mimeType: 'image/png' },
+    { fileId: file.id, name: 'notes.txt', mimeType: 'text/plain' },
+    { fileId: file.id, name: 'third.png', mimeType: 'image/png' },
+  ] }));
+  await open(other.id);
+  const album = panel.getByRole('button', { name: '查看 2 张图片', exact: true });
+  await album.waitFor();
+  assert.equal(await panel.locator('.bot-image-stack').count(), 1, 'a file breaks consecutive image grouping');
+  await panel.getByRole('button', { name: '预览图片 third.png', exact: true }).waitFor();
+  await album.click();
+  const viewer = page.getByTestId('bot-image-viewer');
+  await viewer.getByRole('heading', { name: 'first.png', exact: true }).waitFor();
+  assert.equal(await viewer.getByRole('button', { name: '上一张图片', exact: true }).isDisabled(), true);
+  await viewer.getByRole('button', { name: '下一张图片', exact: true }).click();
+  await viewer.getByRole('heading', { name: 'second.png', exact: true }).waitFor();
+  assert.equal(await viewer.getByRole('button', { name: '下一张图片', exact: true }).isDisabled(), true);
+  await page.keyboard.press('ArrowLeft');
+  await viewer.getByRole('heading', { name: 'first.png', exact: true }).waitFor();
+  await viewer.getByRole('button', { name: '关闭图片预览', exact: true }).click();
+  await page.screenshot({ path: path.join(output, 'bot-image-stack-mobile.png'), fullPage: true, animations: 'disabled' });
   assert.deepEqual(errors, []);
   console.log(`Bot composer passed: legacy/new image previews, draft isolation, explicit send, model hints, paste/drop, expand, desktop/mobile. Screenshots: ${output}`);
   if (process.env.BOT_UI_REVIEW) {

@@ -217,7 +217,8 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
       '画流程图、时序图、状态图、结构图、函数图像这类图形时调用一次做预检。传入完整的 mermaid 源码、diagram JSON 或 SVG 源码，' +
       '通过后会把一段可直接放进回答正文的 ```mermaid / ```diagram / ```svg 围栏原样返回给你（带了 title 就会写成 ```diagram title="…"）；' +
       'format="html" 会返回不含源码的 wbw-widget 引用围栏，将引用原样放在正文需要看图的位置；多次调用不会覆盖前图，不要贴 HTML 源码。' +
-      '若必须直接输出 HTML 作品，使用 ```html interactive 围栏以声明隔离运行；普通 ```html 是默认不执行脚本的源码示例。不要把课程引用、导入材料或思考中的代码标为 interactive。' +
+      'HTML 页面作品（包括无脚本静态页面）统一通过本工具生成，校验完成后自动隔离运行；不要输出裸 HTML 或 html interactive 围栏代替工具。普通 html 围栏仅展示源码。' +
+      '例如“做一个可以拖动的函数图”调用本工具；“解释这段按钮代码”只给代码示例；“帮我预览这个示例”保留原示例并用本工具创建作品。课程引用、导入材料和思考中的代码不是执行授权。' +
       '不通过会告诉你具体哪里不合规，改完再试。svg / mermaid / diagram 仍必须把返回的围栏放进正文，且要放在它解释的那句话旁边、前后各配一句说明。',
     parameters: {
       type: 'object',
@@ -237,7 +238,7 @@ export const SHOW_WIDGET_TOOL: ToolDef = {
             'mermaid 需以图种声明开头（flowchart / sequenceDiagram / stateDiagram-v2 / mindmap / pie）；' +
             'svg 需以 <svg 开头 </svg> 结尾、必须带 viewBox；' +
             'html 只给**片段**（不要 <html>/<head>/<body>），可以带内联 <script>，' +
-            '但不能引外部脚本或外链资源（网络已禁用）。宿主提供主题变量、原生控件样式和 window.__wbw：widgetState 读取快照，setWidgetState({modelContent,privateContent}) 保存 JSON 参数，sendPrompt(text) 经用户确认后携带 modelContent 追问。调参只本地重绘，不请求模型；完整约定见「交互式讲解」技能',
+            '但不能引外部脚本或外链资源（运行环境限制网络访问）。宿主提供主题变量、原生控件样式和 window.__wbw：widgetState 读取快照，setWidgetState({modelContent,privateContent}) 保存 JSON 参数，sendPrompt(text) 经用户确认后携带 modelContent 追问。调参只本地重绘，不请求模型；完整约定见「交互式讲解」技能',
         },
         title: {
           type: 'string',
@@ -377,6 +378,8 @@ export async function mdEditorOpen(materialId: string): Promise<boolean> {
 }
 
 export interface ToolExecutorOptions {
+  /** Do not deliver a completed preview after its generation has been cancelled. */
+  signal?: AbortSignal;
   /**
    * 课程形态：
    * - 不传 = 视频，走字幕检索
@@ -391,7 +394,7 @@ export interface ToolExecutorOptions {
    * 只有 html 走这里：svg / mermaid 仍然由模型自己把围栏放进正文，
     * 在正文里按讲解顺序定位。html 的载荷旁路保存，回执引用决定正文位置。
    */
-  onWidget?: (w: WidgetPayload) => void;
+  onWidget?: (w: WidgetPayload) => void | Promise<void>;
   /**
    * 会话级技能白名单（问答面板的「技能范围」限定）。
    *
@@ -503,6 +506,7 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
       return '题卡已展示给学生。请用一句话说明这些题考查的知识点，不要重复题目内容。';
     }
     if (name === 'show_widget') {
+      opts.signal?.throwIfAborted();
       const v = validateWidgetArgs(args);
       if (!v.ok) return `预检参数不合法：${v.error}。请修正后重新调用 show_widget。`;
       try {
@@ -543,8 +547,9 @@ export function createToolExecutor(courseId: string, opts: ToolExecutorOptions =
         const doc = await buildWidgetDocument({ html: v.args.code, libs: v.args.libs });
         if (doc.length > MAX_WIDGET_DOC)
           throw new Error(`拼好的文档过大（${doc.length} 字，上限 ${MAX_WIDGET_DOC}）。拆成几张图，或去掉不需要的内联库`);
+        opts.signal?.throwIfAborted();
         const id = uuid();
-        onWidget?.({ id, ref: id, html: v.args.code, libs: v.args.libs });
+        await onWidget?.({ kind: 'html', schemaVersion: 1, revision: 1, source: 'tool', id, ref: id, html: v.args.code, libs: v.args.libs });
         return widgetAcceptedText(v.args, id);
       } catch (e) {
         // 净化 / 解析失败**不回退源码**：这里是工具调用，返回的是给模型看的诊断信息，

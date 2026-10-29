@@ -87,6 +87,7 @@ export class BotSettingsTools {
     const { expectedRevision: _revision, ...change } = args;
     return `请求修改应用配置\n当前值：${JSON.stringify(previous, null, 2)}\n本次修改：${JSON.stringify(change, null, 2)}${args.action === 'set_provider' && object(args.provider) && args.provider.baseUrl !== undefined ? '\n更改 API 地址后，该连接保存的密钥和后续请求将发往新地址。' : ''}`;
   }
+  parallelSafe(_name: string, args: Record<string, unknown>) { return args.action === 'get'; }
   execute(_name: string, args: Record<string, unknown>, thread: ProjectThread) {
     const config = this.validate(args, thread);
     if (args.action !== 'get') {

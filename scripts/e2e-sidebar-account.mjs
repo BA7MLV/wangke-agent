@@ -38,6 +38,35 @@ async function checkRow(page) {
   assert.ok(gear.width >= 44 && gear.height >= 44, '设置图标保持触控尺寸');
 }
 
+async function checkHover(page, label) {
+  const read = () => page.getByTestId('sidebar-account').evaluate(el => ({
+    row: getComputedStyle(el).backgroundColor,
+    trigger: getComputedStyle(el.querySelector('.sidebar-account__trigger')).backgroundColor,
+    gear: getComputedStyle(el.querySelector('.sidebar-account__settings')).backgroundColor,
+  }));
+  await page.mouse.move(400, 300);
+  await page.waitForFunction(() => getComputedStyle(document.querySelector('.sidebar-account')).backgroundColor === 'rgba(0, 0, 0, 0)');
+  assert.equal((await read()).row, 'rgba(0, 0, 0, 0)', '账号栏默认没有常驻底色');
+  await page.getByTestId('nav-rail-account').hover();
+  const account = await read();
+  assert.notEqual(account.row, 'rgba(0, 0, 0, 0)', '悬停账号区域点亮整行');
+  assert.equal(account.trigger, 'rgba(0, 0, 0, 0)', '头像区域不再有独立的药丸底色');
+  await page.screenshot({ path: `${out}/${label}-row-hover.png` });
+  await page.getByTestId('nav-rail-settings').hover();
+  await page.waitForFunction(() => {
+    const el = document.querySelector('.sidebar-account__settings');
+    return el.dataset.hovered === 'true';
+  });
+  const settings = await read();
+  assert.equal(settings.row, account.row, '悬停齿轮时整行底色保持');
+  assert.equal(settings.gear, 'rgba(0, 0, 0, 0)', '齿轮共享整行 hover，不叠加第二种底色');
+  await page.screenshot({ path: `${out}/${label}-settings-hover.png` });
+  const gear = await page.getByTestId('nav-rail-settings').boundingBox();
+  await page.mouse.move(gear.x - 2, gear.y + gear.height / 2);
+  assert.equal((await read()).row, account.row, '两个按钮之间的空隙也属于整行 hover');
+  await page.mouse.move(400, 300);
+}
+
 async function openMenu(page) {
   await page.getByTestId('nav-rail-account').click();
   await page.getByRole('menu').waitFor();
@@ -54,6 +83,7 @@ async function closeSettings(page) {
 try {
   const desktop = await newPage();
   await checkRow(desktop);
+  await checkHover(desktop, 'desktop-light');
   await desktop.screenshot({ path: `${out}/desktop-light.png` });
   await openMenu(desktop);
   assert.equal(await desktop.getByTestId('account-menu-logout').getAttribute('aria-disabled'), 'true', '本机模式没有可登出的云端账号');
@@ -92,6 +122,7 @@ try {
   await desktop.evaluate(async () => (await import('/src/store/settings.ts')).useSettings.getState().update({ theme: 'dark' }));
   await desktop.waitForFunction(() => document.documentElement.classList.contains('dark'));
   await checkRow(desktop);
+  await checkHover(desktop, 'desktop-dark');
   await openMenu(desktop);
   await desktop.screenshot({ path: `${out}/desktop-dark-menu.png` });
   await desktop.keyboard.press('Escape');
@@ -135,6 +166,37 @@ try {
   await phone.getByTestId('nav-rail-settings').click();
   await phone.getByTestId('settings-modal').waitFor();
   await closeSettings(phone);
+
+  // 本机资源与云端真实文件资源都必须提供同一个账号 / 设置底栏。
+  for (const cloudResources of [false, true]) {
+    for (const mobile of [false, true]) {
+      const resourcePage = await newPage(mobile ? { viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true } : {});
+      if (cloudResources) {
+        await resourcePage.route('**/api/v1/resources?*', route => route.fulfill({ json: { project: null, rootId: 'account-resource-fixture', path: '', entries: [] } }));
+        await resourcePage.evaluate(async () => { (await import('/src/cloud/state.ts')).cloud.enabled = true; });
+      }
+      if (mobile) await resourcePage.getByTestId('nav-rail-open').click();
+      await resourcePage.getByTestId('nav-rail-home').click();
+      await resourcePage.waitForURL('**/#/library');
+      await resourcePage.locator(cloudResources ? '.resource-window' : '.finder-window').waitFor();
+      if (mobile) await resourcePage.getByTestId('nav-rail-open').click();
+      await checkRow(resourcePage);
+      if (!mobile) await checkHover(resourcePage, `${cloudResources ? 'cloud' : 'local'}-resources`);
+      await resourcePage.getByTestId('nav-rail-settings').click();
+      await resourcePage.getByTestId('settings-modal').waitFor();
+      await closeSettings(resourcePage);
+      if (mobile) await resourcePage.getByTestId('nav-rail-open').click();
+      await openMenu(resourcePage);
+      assert.equal(await resourcePage.getByTestId('account-menu-logout').getAttribute('aria-disabled'), cloudResources ? null : 'true');
+      await resourcePage.keyboard.press('Escape');
+      if (!mobile) {
+        await resourcePage.getByTestId('nav-rail-toggle').click();
+        await resourcePage.getByTestId('nav-rail-compact').waitFor();
+        await openMenu(resourcePage);
+      }
+      await resourcePage.close();
+    }
+  }
 
   // 在隔离的页面里切换账号状态，所有请求均由 fixture 截获，绝不登出真实账号。
   const cloudPage = await newPage();
@@ -182,7 +244,7 @@ try {
   assert.equal(await cloudPage.getByTestId('course-chat-page').isVisible(), true);
 
   assert.deepEqual(errors, []);
-  console.log(`Sidebar account passed (desktop light/dark, keyboard, collapsed, mobile, archives, guarded logout). Screenshots: ${out}`);
+  console.log(`Sidebar account passed (desktop light/dark, whole-row/settings hover, local/cloud resources, keyboard, collapsed, mobile, archives, guarded logout). Screenshots: ${out}`);
 } finally {
   await browser.close();
 }

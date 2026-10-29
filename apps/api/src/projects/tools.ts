@@ -15,6 +15,9 @@ export class ProjectTools {
   constructor(private projects: ProjectRepository) {}
   definitions(thread: ProjectThread) { return thread.project_id ? [workspaceTool] : thread.agent_id ? [workspaceTool, projectsTool] : []; }
   handles(name: string) { return name === 'workspace' || name === 'projects'; }
+  parallelSafe(name: string, args: Record<string, unknown>) {
+    return name === 'workspace' && ['list', 'read'].includes(String(args.action));
+  }
 
   private capability(name: string, args: Record<string, unknown>): 'read' | 'write' | 'remove' {
     const allowed = name === 'workspace' ? ['action', 'path', 'projectId', 'text', 'expectedRevision', 'offset'] : ['action', 'projectId', 'name', 'path'];

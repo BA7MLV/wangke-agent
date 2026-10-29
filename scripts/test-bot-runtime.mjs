@@ -60,7 +60,9 @@ try {
   store.db.prepare("UPDATE runs SET status='running',context_json=? WHERE id=?").run(JSON.stringify(context), recovered);
   store.db.prepare('INSERT INTO run_steps(id,run_id,tool,arguments,status,created_at) VALUES(?,?,?,?,?,?)').run(callId, recovered, 'shell', '{}', 'running', now);
   runner = new BotRunner(store, { sandbox: async () => { throw new Error('Must not replay'); }, fetch: async (_url, init) => {
-    assert.match(JSON.parse(init.body).messages.at(-1).content, /interrupted/i);
+    // Runtime metadata may follow the recovered envelope. Inspect the tool's
+    // actual result rather than assuming it is the final wire message.
+    assert.match(JSON.parse(init.body).messages.findLast(message => message.role === 'tool' && message.tool_call_id === callId).content, /interrupted/i);
     return response('send_message', { kind: 'text', text: 'Recovered' });
   } });
   runner.start(); await until(() => state(recovered).status === 'completed'); await runner.close();

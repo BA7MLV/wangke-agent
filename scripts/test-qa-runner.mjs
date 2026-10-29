@@ -32,7 +32,7 @@
  */
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -80,6 +80,8 @@ writeFileSync(
    export { useSettings } from '${join(ROOT, 'apps/web/src/store/settings.ts')}';
    export { db } from '${join(ROOT, 'apps/web/src/store/db.ts')}';
    export { messageDefects } from '${join(ROOT, 'apps/web/src/api/messageHygiene.ts')}';
+   export { fitModelHistory } from '${join(ROOT, 'apps/web/src/store/modelHistory.ts')}';
+   export { readModelUsageReport } from '${join(ROOT, 'apps/web/src/store/modelUsage.ts')}';
   `,
 );
 await build({
@@ -91,10 +93,16 @@ await build({
   logLevel: 'silent',
   // 内置技能是 `SKILL.md?raw` 导入，Node/esbuild 默认不认这个后缀
   loader: { '.md': 'text' },
+  plugins: [{ name: 'widget-local-runtime', setup(build) {
+    build.onResolve({ filter: /^@widget\/chart-runtime\?raw$/ }, () => ({
+      path: join(ROOT, 'node_modules/chart.js/dist/chart.umd.js'), namespace: 'widget-source',
+    }));
+    build.onLoad({ filter: /.*/, namespace: 'widget-source' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
+  } }],
   // 全部打进 bundle：产物落在临时目录里，外部依赖（zustand / dexie / mermaid）在那儿解析不到
   define: { 'process.env.NODE_ENV': '"test"' },
 });
-const { runQa, qaToolHint, useSettings, db, messageDefects } = await import(
+const { runQa, qaToolHint, useSettings, db, messageDefects, fitModelHistory, readModelUsageReport } = await import(
   pathToFileURL(join(OUT, 'bundle.mjs')).href
 );
 
@@ -122,7 +130,7 @@ await db.open();
 // ── 假网关 ────────────────────────────────────────────────────────────────
 
 /** 一个 assistant SSE 轮次：正文 / 思考 / 工具调用 / finish_reason */
-function sse({ content = '', reasoning = '', toolCalls = [], finish = 'stop' }) {
+function sse({ content = '', reasoning = '', toolCalls = [], finish = 'stop', usage }) {
   const chunks = [];
   const base = { id: 'c', object: 'chat.completion.chunk', model: 'test', choices: [{ index: 0, delta: {} }] };
   if (reasoning) chunks.push({ ...base, choices: [{ index: 0, delta: { reasoning_content: reasoning } }] });
@@ -143,6 +151,7 @@ function sse({ content = '', reasoning = '', toolCalls = [], finish = 'stop' }) 
     });
   });
   chunks.push({ ...base, choices: [{ index: 0, delta: {}, finish_reason: finish }] });
+  if (usage) chunks.push({ choices: [], usage });
   return chunks.map((c) => `data: ${JSON.stringify(c)}\n\n`).join('') + 'data: [DONE]\n\n';
 }
 
@@ -255,7 +264,8 @@ await test('正常一轮：user + assistant 两行落库，onDelta 收到正文�
 
   // 视频课的系统提示词：走字幕检索那一支
   const sys = seen[0].messages[0].content;
-  assert.match(sys, /贝叶斯入门/, '课程名进提示词');
+  assert.ok(!sys.includes('贝叶斯入门'), '课程名不破坏共享系统前缀');
+  assert.match(seen[0].messages.at(-1).content, /贝叶斯入门/, '课程名进入本轮上下文');
   assert.match(sys, /grep/, '视频课提示词指向资源检索');
 });
 
@@ -393,8 +403,8 @@ await test('题库 path：宿主读取原文件，批次与来源随题卡落库
   assert.deepEqual((await db.chats.get(res.rowId)).quiz, res.quiz);
   const nextSeen = serve([{ content: '接着做下一批。' }]);
   await runQa({ videoId, sessionId, text: '继续', materialKind: 'page', materialFormat: 'pdf' });
-  assert.match(nextSeen[0].messages.find(message => message.role === 'assistant').content, /题库练习快照[\s\S]*offset=5/);
-  assert.equal(nextSeen[0].messages.some(message => message.role === 'tool'), false);
+  assert.match(nextSeen[0].messages.at(-1).content, /题库练习快照[\s\S]*offset=5/);
+  assert.ok(nextSeen[0].messages.some(message => message.role === 'tool'), '原始题库工具证据跨轮次保留');
 });
 
 await test('show_widget：多图各有正文引用，回调、结果与落库保留全部载荷', async () => {
@@ -451,7 +461,7 @@ await test('技能范围：提示词只列范围内技能，use_skill 也真的�
   const res = await runQa(ASK({ sessionId, skillIds: [skillAId] }), sink);
   assertRequestsLegal(seen, '技能范围');
 
-  const sys = seen[0].messages[0].content;
+  const sys = seen[0].messages.filter(m => m.role === 'system').map(m => m.content).join('\n');
   assert.match(sys, new RegExp(SKILL_A), '范围内的技能要列进提示词');
   assert.ok(!sys.includes(SKILL_B), '范围外的技能不能出现在清单里');
 
@@ -466,7 +476,7 @@ await test('技能范围：提示词只列范围内技能，use_skill 也真的�
 
 // ── 7. 历史：第二轮带上上一轮的一问一答，且不含工具消息 ─────────────────────
 
-await test('历史：第二轮请求里有上一轮的一问一答，且不含任何 tool 消息', async () => {
+await test('历史：用户原始运行上下文与答案逐字重放，工具仍封装在 UI 行内', async () => {
   const sessionId = await newSession();
   serve([{ content: '第一轮的答案。' }]);
   await runQa(ASK({ sessionId, text: '第一轮问的是什么？' }), recorder().sink);
@@ -477,24 +487,62 @@ await test('历史：第二轮请求里有上一轮的一问一答，且不含�
   await runQa(ASK({ sessionId, text: '第二轮问的是什么？' }), recorder().sink);
   assertRequestsLegal(seen, '历史');
 
-  const second = seen[1].messages;
+  const second = seen[1].messages.filter(m => m.role !== 'system');
   // 历史是「system + 上一轮落库的一问一答」，工具往返消息由本轮循环现攒、不进历史
-  assert.equal(second[0].role, 'system');
+  assert.equal(second[0].role, 'user');
+  assert.match(second[0].content, /第一轮问的是什么？$/);
   assert.match(second[0].content, /贝叶斯入门/);
-  assert.equal(second[1].role, 'user');
-  assert.equal(second[1].content, '第一轮问的是什么？', '上一轮的提问要原样带过来');
-  assert.equal(second[2].role, 'assistant');
-  assert.equal(second[2].content, '第一轮的答案。', '上一轮的回答也要带过来');
-  assert.equal(second[3].role, 'user');
-  assert.equal(second[3].content, '第二轮问的是什么？', '当前问题紧跟在历史之后');
-  assert.equal(second[4].role, 'assistant');
-  assert.equal(second[4].tool_calls[0].function.name, 'grep');
-  assert.equal(second[5].role, 'tool');
+  assert.equal(second[1].role, 'assistant');
+  assert.equal(second[1].content, '第一轮的答案。');
+  assert.equal(second[2].role, 'user');
+  assert.match(second[2].content, /第二轮问的是什么？$/);
+  assert.equal(second[3].tool_calls[0].function.name, 'grep');
+  assert.equal(second[4].role, 'tool');
   assert.equal(
     (await rowsOf(sessionId)).length,
     4,
     '两轮共四行：工具往返与 assistant 的工具调用轮都不额外落库',
   );
+});
+
+await test('跨轮次：图片、工具往返、usage 与完整请求前缀在数据库重开后保持稳定', async () => {
+  const sessionId = await newSession();
+  const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,cGljdHVyZQ==' } };
+  const first = serve([
+    { toolCalls: [call('durable-call', 'grep', { query: '贝叶斯', path: '/courses/current' })], finish: 'tool_calls', usage: { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 0 } } },
+    { content: '已核对原文', usage: { prompt_tokens: 1200, completion_tokens: 30, prompt_tokens_details: { cached_tokens: 900 } } },
+  ]);
+  await runQa(ASK({ sessionId, images: [image], shotCount: 1 }), recorder().sink);
+  const key = (await db.chatSessions.get(sessionId)).promptCacheKey;
+  const rows = await rowsOf(sessionId);
+  assert.deepEqual(rows[1].modelTrace.messages.map(m => m.role), ['assistant', 'tool', 'assistant']);
+  assert.equal(rows[0].modelRequests.length, 2);
+  db.close(); await db.open();
+  const next = serve([{ content: '第二轮完成' }]);
+  await runQa(ASK({ sessionId, text: '继续', videoName: '改名后的课程', shotCount: 0 }), recorder().sink);
+  assert.deepEqual(next[0].messages.slice(0, first[1].messages.length), first[1].messages);
+  assert.deepEqual(next[0].tools, first[1].tools);
+  assert.equal((await db.chatSessions.get(sessionId)).promptCacheKey, key);
+  assert.ok(next[0].messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url')));
+  assertRequestsLegal(next, '跨轮次重放');
+  const baseline = await readModelUsageReport();
+  assert.ok(baseline.total.cacheRead >= 900);
+  assert.equal(baseline.total.lastRequest, undefined, '缺 usage 的最后一次请求不冒充前一轮的测量');
+});
+
+await test('压缩检查点：整轮裁剪，预算恢复和数据库重开均不复活旧前缀', async () => {
+  const sessionId = await newSession();
+  const rows = [];
+  for (let i = 0; i < 8; i++) for (const role of ['user', 'assistant']) {
+    const row = { videoId: 'v1', sessionId, role, content: `${i}:` + '文'.repeat(200), createdAt: rows.length };
+    rows.push({ ...row, id: await db.chats.add(row) });
+  }
+  const kept = await fitModelHistory(sessionId, rows, 1000);
+  assert.ok(kept.length < rows.length); assert.equal(kept[0].role, 'user');
+  db.close(); await db.open();
+  assert.deepEqual(await fitModelHistory(sessionId, rows, 10000), kept);
+  const changed = rows.map(row => row.id === kept[0].id ? { ...row, content: '编辑后的边界' } : row);
+  assert.deepEqual(await fitModelHistory(sessionId, changed, 10000), changed);
 });
 
 // ── 8. 空回答兜底：只返回不落库 ────────────────────────────────────────────

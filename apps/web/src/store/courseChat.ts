@@ -25,10 +25,14 @@ import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage } from '../api/siliconflow';
 import { askUserToolResult, askAnswerText, validateAskAnswer, type AskUserData, type AskUserAnswer } from '../harness/askUser';
 import type { FolderPlan } from '../harness/folderPlan';
-import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
+import { ToolTraceLedger, toolHint } from '../utils/toolTrace';
 import { readPartialWidgetArguments } from '../utils/streamingHtml';
 import { beginResponseSegment, nextResponseRound, type ResponseSegment } from '../utils/responseOrder';
 import { widgetReference } from '../harness/widgetLayout';
+import { persistAssistantSnapshot } from './assistantSnapshot';
+import { modelTrace, replayTrace, runtimeContext, splitSystemPrompt } from '@wangke/study-core/model/transcript';
+import { fitModelHistory, sessionCacheKey } from './modelHistory';
+import { displayEnvironmentPrompt } from '../harness/displayEnvironment';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { attachmentText, type ChatAttachment } from '../chat/attachments';
 import { attachmentsForModel, messageForModel } from '../chat/attachmentModel';
@@ -1389,8 +1393,8 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      * 与 `lastHint` 的分工：hint 是**当前那一步**（下一个 delta 来了就清），
      * 工具链是**流水账**，会落库、能回看。工具在 agent 循环里顺序执行，一个时刻变量够用。
      */
-    const toolCalls: ChatToolCall[] = [];
-    let toolStartedAt = 0;
+    const toolTrace = new ToolTraceLedger();
+    const toolCalls = toolTrace.calls;
     /** show_widget 的 HTML 参数流预览；只放静态净化预览，不落库、不执行脚本。 */
     let widgetPreview: { html: string } | undefined;
     /** 实际跑过的轮数（`onRoundStart` 记的）。兜底文案只能印真实值，不能拿设置里的上限顶 */
@@ -1468,6 +1472,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      */
     if (resume) {
       await db.chats.where('id').equals(resume.rowId).modify((row) => {
+        row.modelTrace ??= modelTrace(row.content, resume.midTurn);
         delete row.resume;
         row.tools = row.tools?.map((call) => call.status === 'running' && call.name === resume.toolName
           ? { ...call, status: 'done', result: '已收到你的回应' }
@@ -1521,6 +1526,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
     let latestOut: ChatMessage[] | null = null;
     /** 初始消息条数（system + history + 末条）；`midTurn = out.slice(baseLen)` */
     let baseLen = 0;
+    let requestOwnerId: number | undefined;
+    const modelRequests: NonNullable<ChatRow['modelRequests']> = [];
+    let pendingModelText = '';
+    const traceFor = (content: string) => modelTrace(content, [...(latestOut?.slice(baseLen) ?? []),
+      ...(pendingModelText.trim() ? [{ role: 'assistant' as const, content: pendingModelText }] : [])]);
     /** 挂起点的落库 promise。作答时先等它 —— 否则可能「库里还没这条行、用户已经点了」 */
     let suspendWrite: Promise<void> = Promise.resolve();
 
@@ -1532,16 +1542,17 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
      */
     const persistSuspension = async (toolName: 'ask_user' | 'propose_folder_plan') => {
       const message = readView(turnKey).messages.find((m) => m.key === currentKey);
-      // 已经落过库就不再写（同一轮不该挂起两次）
-      if (!message || message.rowId != null) return;
+      // A previously delivered widget may already own the row; attach the suspension to it.
+      if (!message) return;
       const midTurn = latestOut ? latestOut.slice(baseLen) : [];
       const last = midTurn[midTurn.length - 1];
       const call = last?.tool_calls?.find((c) => c.function.name === toolName) ?? last?.tool_calls?.[0];
-      const rowId = (await db.chats.add({
+      const rowId = (await persistAssistantSnapshot({
         videoId: LIBRARY_ASSISTANT_ID,
         sessionId: turnKey,
         role: 'assistant',
         content: message.content,
+        modelTrace: traceFor(message.content),
         createdAt: Date.now(),
         reasoning: message.reasoning,
         responseSegments: message.responseSegments,
@@ -1551,7 +1562,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         ...(message.ask ? { ask: message.ask } : {}),
         ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         resume: { toolName, toolCallId: call?.id ?? '', midTurn },
-      })) as number;
+      }, message.rowId)) as number;
       patchAi({ rowId });
     };
 
@@ -1579,6 +1590,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         // 挂起时已落过库：改成 update，并把检查点结掉（这一轮不再可续跑）
         await db.chats.where('id').equals(rowId).modify((row) => {
           row.content = message.content;
+          row.modelTrace = traceFor(message.content);
           row.responseSegments = message.responseSegments;
           if (message.reasoning) row.reasoning = message.reasoning;
           else delete row.reasoning;
@@ -1599,6 +1611,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           sessionId: turnKey,
           role: 'assistant',
           content: message.content,
+          modelTrace: traceFor(message.content),
           createdAt: Date.now(),
           reasoning: message.reasoning,
           responseSegments: message.responseSegments,
@@ -1609,6 +1622,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           ...(message.folderPlan ? { folderPlan: message.folderPlan } : {}),
         })) as number;
       }
+      if (latestOut) baseLen = latestOut.length;
       const fresh = nextKey();
       writeView(turnKey, {
         messages: [
@@ -1624,8 +1638,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       responseSegments = [];
       reasoningFrom = 0;
       reasoningTo = 0;
-      toolCalls.length = 0;
-      toolStartedAt = 0;
+      toolTrace.clear();
       lastNarration = '';
       lastHint = '';
     };
@@ -1693,9 +1706,11 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           sessionId: turnKey,
           role: 'user',
           content: userRowContent,
+          ...(resume ? { modelTrace: modelTrace(userRowContent, []) } : {}),
           ...(attachments.length ? { attachments } : {}),
           createdAt: userCreatedAt,
         });
+        requestOwnerId = userRowId as number;
         consumeAttachments();
         writeView(turnKey, { messages: readView(turnKey).messages.map((message) => message.key === userKey ? { ...message, rowId: userRowId as number } : message) });
         if (attachments.some((file) => file.dataUrl)) {
@@ -1754,21 +1769,21 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       const baseRows = history.slice(0, cut < 0 ? history.length : cut).map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) }));
       const tail: ChatMessage = resume
         ? { role: 'tool', tool_call_id: resume.toolCallId, name: resume.toolName, content: resume.toolResult }
-        : messageForModel({ role: 'user', content: text, attachments });
+        : messageForModel({ role: 'user', content: runtimeContext({ courses: contextCourses, layout: displayEnvironmentPrompt('course').split('\n').slice(1).join('\n') }) + text, attachments });
       const tailText = resume ? resume.toolResult : attachmentText(text, attachments);
       const imageBudget = attachments.filter((file) => file.dataUrl).length * 1600;
       const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(tailText) - imageBudget - 4096;
       if (budget < 0) throw new Error('附件正文超过当前模型的上下文预算，请减少附件、改用更大上下文模型，或将文件导入课程库后检索');
       // 挂起续跑保持原有历史与工具链，不重新做语义筛选。
       const recent = resume
-        ? fitHistoryToBudget(baseRows, Math.max(2000, budget))
+        ? await fitModelHistory(turnKey, baseRows, Math.max(2000, budget))
         : await prepareSessionHistory(turnKey, baseRows, Math.max(2000, budget), text, decisionConfigOf(settings), {
             signal: abort.signal,
             onStart: () => patchAi({ hint: 'Jev 正在筛选历史上下文…' }),
             onCompressed: (turns) => patchAi({ hint: `已省略 ${turns} 个旧轮次，原始记录保留` }),
           });
       const chatMessages: ChatMessage[] = [
-        { role: 'system', content: systemPrompt },
+        ...splitSystemPrompt(systemPrompt),
         ...await historyMessagesWithAttachments(recent, abort.signal),
         // 续跑：把挂起点之前攒下的 assistant tool_calls 与工具结果原样拼回，
         // 于是旧工具一次都不用重跑 —— 结果本来就在里面。
@@ -1777,20 +1792,36 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       ];
       // 记录初始长度，供 onCheckpoint 截出「本回合新增的部分」（midTurn）
       baseLen = chatMessages.length;
+      if (resume) baseLen -= 1; // prior card owns midTurn; the new row owns its result
+      latestOut = chatMessages;
+      if (requestOwnerId == null && resume) {
+        requestOwnerId = resume.rowId;
+        modelRequests.push(...((await db.chats.get(requestOwnerId))?.modelRequests ?? []));
+      }
+      if (!resume && requestOwnerId != null) await db.chats.update(requestOwnerId, { modelTrace: modelTrace(text, [tail]) });
+      const cacheKey = await sessionCacheKey(turnKey);
 
       const executeTool = createResourceExecutor({
+        signal: abort.signal,
         allowedSkillIds: view.skillIds,
-        onWidget: (w) => {
+        onWidget: async (w) => {
           // 校验与文档预检通过后才切换到真正的隔离 iframe。流式中间帧
           // 始终由 StreamingHtmlPreview 以静态白名单方式显示。
           widgetPreview = undefined;
           updates.flush();
           const current = readView(turnKey).messages.find((message) => message.key === currentKey);
           const widgets = current?.widgets ?? (current?.widget ? [current.widget] : []);
+          if (widgets.some(widget => widget.id === w.id)) return;
           // Place the validated visual at delivery time. Later model references are echoes,
           // not instructions to move an already-mounted interactive frame.
-          if (w.ref) answer = `${nextResponseRound(answer)}${widgetReference(w.ref)}\n\n`;
-          patchAi({ content: answer, widget: w, widgets: [...widgets, w], widgetPreview: undefined });
+          const content = w.ref ? `${nextResponseRound(answer)}${widgetReference(w.ref)}\n\n` : answer;
+          const rowId = await persistAssistantSnapshot({
+            videoId: LIBRARY_ASSISTANT_ID, sessionId: turnKey, role: 'assistant', createdAt: Date.now(),
+            content, reasoning: reasoning || undefined, responseSegments, tools: toolCalls,
+            widget: w, widgets: [...widgets, w], interrupted: true, interruptReason: '作品已保存，后续回答尚未完成',
+          }, current?.rowId);
+          answer = content;
+          patchAi({ rowId, content: answer, widget: w, widgets: [...widgets, w], widgetPreview: undefined });
         },
         library: {
           contextCourseIds: contextCourses.map((course) => course.id),
@@ -1812,6 +1843,26 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         executeTool,
         {
           mcpSessionId: turnKey,
+          cacheKey,
+          onRequest: async record => {
+            modelRequests.push(record);
+            if (requestOwnerId != null) await db.chats.update(requestOwnerId, { modelRequests: [...modelRequests] });
+          },
+          onTranscript: async out => {
+            latestOut = out;
+            pendingModelText = '';
+            updates.flush();
+            const message = readView(turnKey).messages.find(m => m.key === currentKey);
+            if (!message || !message.content.trim() && !out.slice(baseLen).some(m => m.tool_calls?.length || m.role === 'tool')) return;
+            const rowId = await persistAssistantSnapshot({ videoId: LIBRARY_ASSISTANT_ID, sessionId: turnKey,
+              role: 'assistant', createdAt: Date.now(), content: message.content, modelTrace: traceFor(message.content),
+              reasoning: message.reasoning, tools: message.tools, responseSegments: message.responseSegments,
+              widget: message.widget, widgets: message.widgets, ask: message.ask, folderPlan: message.folderPlan,
+              interrupted: true,
+            }, message.rowId);
+            patchAi({ rowId });
+            updates.flush();
+          },
           // 档位一律传下去，关着思考就传 'none'：thinkingParams 会按模型声明决定发哪个字段 ——
           // 只有开关的模型（Qwen3.5 系、部分 DeepSeek）拿不到深度参数，但 `enable_thinking` 照发，
           // 所以这里用 supportsThinking 而不是 hasThinkingDepth（后者只管 UI 显示）。
@@ -1834,27 +1885,28 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           },
           onDelta: (delta) => {
             answer += delta;
+            pendingModelText += delta;
             updates.stream({ content: answer, hint: undefined, processPhase: 'answering' });
           },
           onRoundStart: () => {
+            pendingModelText = '';
             if (answer.trim()) lastNarration = answer.trim();
             answer = nextResponseRound(answer);
             roundsRan++;
             widgetPreview = undefined;
             patchAi({ content: answer, responseSegments: beginProcess(), hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
-          onToolStart: (name, argsJson) => {
+          onToolStart: (name, argsJson, callId) => {
             beginProcess();
             lastHint = toolHint(name, argsJson, '正在读取资料…');
-            toolStartedAt = Date.now();
-            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running', reasoningOffset: reasoning.length });
+            toolTrace.start(callId, name, argsJson, reasoning.length);
             const preview = name === 'show_widget' ? readPartialWidgetArguments(argsJson) : undefined;
             widgetPreview = preview?.format === 'html' && preview.code ? { html: preview.code.slice(0, 60_000) } : undefined;
-            patchAi({ hint: lastHint, tools: [...toolCalls], responseSegments, widgetPreview, processPhase: 'tool' });
+            patchAi({ hint: toolTrace.hint, tools: [...toolCalls], responseSegments, widgetPreview, processPhase: 'tool' });
           },
           onToolCallDelta: (call) => {
             updates.stream({ responseSegments: beginProcess(), processPhase: 'preparing' });
-            // Tool calls execute in index order. A later call's preview must not
+            // Visual tools are serial barriers. A later call's preview must not
             // overtake the first one while their argument chunks are interleaved.
             if (call.name !== 'show_widget' || call.index !== 0) return;
             const partial = readPartialWidgetArguments(call.arguments);
@@ -1862,26 +1914,15 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             widgetPreview = { html: partial.code.slice(0, 60_000) };
             updates.stream({ widgetPreview, hint: '正在生成交互图形…' });
           },
-          onToolEnd: (name, result) => {
-            // 顺序执行 ⇒ 正在跑的那条就是末尾那条（同一个工具可能被连调多次，不能按名字反查）
-            const current = toolCalls[toolCalls.length - 1];
-            if (current && current.name === name && current.status === 'running') {
-              const ms = toolStartedAt ? Date.now() - toolStartedAt : undefined;
-              toolCalls[toolCalls.length - 1] = {
-                ...current,
-                status: isToolFailure(result) ? 'error' : 'done',
-                result: summarizeToolResult(result),
-                ...(ms != null ? { ms } : {}),
-              };
-              patchAi({ tools: [...toolCalls], processPhase: 'preparing', hint: undefined });
-            }
+          onToolEnd: (name, result, callId) => {
+            toolTrace.finish(callId, result);
+            patchAi({ tools: [...toolCalls], processPhase: toolTrace.running ? 'tool' : 'preparing', hint: toolTrace.hint });
             // 参数校验 / 安全预检失败，或参数因 token 截断而未执行，
             // 都不能把半成品留在最终回答里。
             if (name === 'show_widget') {
               widgetPreview = undefined;
               patchAi({ widgetPreview: undefined });
             }
-            toolStartedAt = 0;
           },
           /**
            * 挂起点落库用：每次工具执行前把当前 `out` 交出来。`holdAsk` / `holdPlan`
@@ -1915,11 +1956,12 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       // 卡片状态也从 store 里这条消息读，而不是读闭包里的副本：用户可能在这期间点了选项
       // （ask.picked 变了）或确认了方案（applied 变了），那些更新只落在 store 上。
       const finalMessage = readView(turnKey).messages.find((m) => m.key === currentKey);
-      const rowId = (await db.chats.add({
+      const rowId = (await persistAssistantSnapshot({
         videoId: LIBRARY_ASSISTANT_ID,
         sessionId: turnKey,
         role: 'assistant',
         content: finalAnswer,
+        modelTrace: traceFor(finalAnswer),
         createdAt: Date.now(),
         reasoning: reasoning || undefined,
         responseSegments,
@@ -1929,7 +1971,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         ...(finalMessage?.widgets ? { widgets: finalMessage.widgets } : {}),
         ...(finalMessage?.ask ? { ask: finalMessage.ask } : {}),
         ...(finalMessage?.folderPlan ? { folderPlan: finalMessage.folderPlan } : {}),
-      })) as number;
+      }, finalMessage?.rowId)) as number;
       patchAi({ rowId });
     } catch (error) {
       /**
@@ -1982,12 +2024,13 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           });
           // 先解锁输入再落库，理由同下面非 abort 那条
           writeView(turnKey, { loading: false });
-          const rowId = (await db.chats.add({
+          const rowId = (await persistAssistantSnapshot({
             videoId: LIBRARY_ASSISTANT_ID,
             sessionId: turnKey,
             role: 'assistant',
             content: partial,
             createdAt: Date.now(),
+            modelTrace: traceFor(partial),
             reasoning: reasoning || undefined,
             responseSegments,
             reasoningMs,
@@ -1996,7 +2039,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             ...(currentWidgets ? { widgets: currentWidgets } : {}),
             interrupted: true,
             interruptReason: STEER_INTERRUPT_REASON,
-          })) as number;
+          }, readView(turnKey).messages.find(m => m.key === currentKey)?.rowId)) as number;
           patchAi({ rowId });
         } else {
           /**
@@ -2008,19 +2051,20 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           patchAi({ streaming: false, hint: undefined, content, reasoningMs, widgetPreview: undefined });
           // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
           writeView(turnKey, { loading: false });
-          const rowId = (await db.chats.add({
+          const rowId = (await persistAssistantSnapshot({
             videoId: LIBRARY_ASSISTANT_ID,
             sessionId: turnKey,
             role: 'assistant',
             content,
             createdAt: Date.now(),
+            modelTrace: traceFor(content),
             reasoning: reasoning || undefined,
             responseSegments,
             reasoningMs,
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             ...(currentWidget ? { widget: currentWidget } : {}),
             ...(currentWidgets ? { widgets: currentWidgets } : {}),
-          })) as number;
+          }, readView(turnKey).messages.find(m => m.key === currentKey)?.rowId)) as number;
           patchAi({ rowId });
         }
       } else {
@@ -2057,12 +2101,13 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
               widgetPreview: undefined,
             });
             writeView(turnKey, { loading: false });
-            const rowId = (await db.chats.add({
+            const rowId = (await persistAssistantSnapshot({
               videoId: LIBRARY_ASSISTANT_ID,
               sessionId: turnKey,
               role: 'assistant',
               content: '',
               createdAt: Date.now(),
+              modelTrace: traceFor(''),
               reasoning: reasoning || undefined,
               responseSegments,
               ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
@@ -2070,7 +2115,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
               widgets: currentWidgets,
               interrupted: true,
               interruptReason: reason,
-            })) as number;
+            }, readView(turnKey).messages.find(m => m.key === currentKey)?.rowId)) as number;
             patchAi({ rowId });
           } else {
             // 一个字都没流出来（多半是请求压根没发出去）：没有可续写的东西，照旧报错。
@@ -2091,12 +2136,13 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           });
           // 先解锁输入再落库：落库要一次 IndexedDB 往返，等它落完才解锁会让用户干等
           writeView(turnKey, { loading: false });
-          const rowId = (await db.chats.add({
+          const rowId = (await persistAssistantSnapshot({
             videoId: LIBRARY_ASSISTANT_ID,
             sessionId: turnKey,
             role: 'assistant',
             content: partial,
             createdAt: Date.now(),
+            modelTrace: traceFor(partial),
             reasoning: reasoning || undefined,
             responseSegments,
             reasoningMs,
@@ -2105,7 +2151,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
             ...(currentWidgets ? { widgets: currentWidgets } : {}),
             interrupted: true,
             interruptReason: reason,
-          })) as number;
+          }, readView(turnKey).messages.find(m => m.key === currentKey)?.rowId)) as number;
           patchAi({ rowId });
         }
       }
@@ -2379,6 +2425,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
         ...(source.contextCourseIds ? { contextCourseIds: [...source.contextCourseIds] } : {}),
         ...(source.skillIds !== undefined ? { skillIds: [...source.skillIds] } : {}),
         ...(source.mcpServerIds !== undefined ? { mcpServerIds: [...source.mcpServerIds] } : {}),
+        ...(source.promptCacheKey ? { promptCacheKey: source.promptCacheKey } : {}),
       })) as number;
       for (const row of kept) {
         await db.chats.add({
@@ -2386,6 +2433,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
           sessionId: sid,
           role: row.role,
           content: row.content,
+          ...(row.modelTrace ? { modelTrace: row.modelTrace } : {}),
           /**
            * `createdAt` **照抄原值**，不重新计时。
            *
@@ -2463,6 +2511,7 @@ export const useCourseChat = create<CourseChatStore>()((set, get) => ({
       sessionId: activeId,
       role: 'user',
       content: picked,
+      modelTrace: modelTrace(picked, []),
       createdAt,
     })) as number;
     set((s) => ({
@@ -2651,6 +2700,9 @@ async function continueInterrupted(
   let reasoningFrom = 0;
   let reasoningTo = 0;
   const stopped: AgentStopInfo[] = [];
+  let rawContinuation: ChatMessage[] = [];
+  let priorTrace: ChatMessage[] = [];
+  let pendingText = '';
 
   /** 中断/停止时统一把当前进度写回库（`patch` 只管界面，库里也要跟上） */
   const persist = async (content: string, extra: { interrupted?: boolean; interruptReason?: string }) => {
@@ -2658,6 +2710,7 @@ async function continueInterrupted(
     patch({ content, responseSegments, streaming: false, hint: undefined, reasoningMs, ...extra });
     await db.chats.where('id').equals(rowId).modify((row) => {
       row.content = content;
+      row.modelTrace = modelTrace(content, [...priorTrace, ...rawContinuation, ...(pendingText ? [{ role: 'assistant' as const, content: pendingText }] : [])]);
       row.responseSegments = responseSegments;
       if (reasoning) row.reasoning = reasoning;
       else delete row.reasoning;
@@ -2688,12 +2741,15 @@ async function continueInterrupted(
     const skillBlock = skillMetas.length > 0 ? skillMetaBlock(skillMetas) : undefined;
     const systemPrompt = libraryAssistantSystemPrompt(skillBlock, view.contextCourses, hasCourses, settings.agentInstructions);
     const budget = settings.contextWindow - estimateTokens(systemPrompt) - estimateTokens(CONTINUE_INSTRUCTION) - 4096;
-    const recent = fitHistoryToBudget(history.map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) })), Math.max(2000, budget));
+    const recent = await fitModelHistory(sessionId, history.map((row) => ({ ...row, originalContent: row.content, content: attachmentText(row.content, row.attachments) })), Math.max(2000, budget));
+    const original = rows.find(row => row.id === rowId);
+    priorTrace = original && replayTrace(original) || [{ role: 'assistant', content: partial }];
     const chatMessages: ChatMessage[] = [
-      { role: 'system', content: systemPrompt },
+      ...splitSystemPrompt(systemPrompt),
       ...await historyMessagesWithAttachments(recent, abort.signal),
       { role: 'user', content: CONTINUE_INSTRUCTION },
     ];
+    rawContinuation = [chatMessages.at(-1)!];
 
     await runAgentLoop(
       chatMessages,
@@ -2701,6 +2757,13 @@ async function continueInterrupted(
       // 没给工具，这个执行器不会被调用；留一个说得清的返回值而不是抛错
       async () => '（续写中不需要调用工具）',
       {
+        cacheKey: await sessionCacheKey(sessionId),
+        onRequest: async request => { await db.chats.where('id').equals(rowId).modify(row => { row.modelRequests = [...(row.modelRequests ?? []), request]; }); },
+        onTranscript: async out => {
+          pendingText = '';
+          rawContinuation = out.slice(chatMessages.length - 1);
+          await db.chats.update(rowId, { modelTrace: modelTrace(carried + answer, [...priorTrace, ...rawContinuation]), content: carried + answer });
+        },
         // 思考档位与 `send` 同一套口径，理由见那边的注释
         thinkingEffort: supportsThinking(catalogOf(settings, settings.llmModel.providerId), settings.llmModel.model, modelOverridesOf(settings, settings.llmModel))
           ? settings.thinkingEnabled
@@ -2719,9 +2782,11 @@ async function continueInterrupted(
         },
         onDelta: (delta) => {
           answer += delta;
+          pendingText += delta;
           patch({ content: carried + answer, hint: undefined, processPhase: 'answering' });
         },
         onRoundStart: () => {
+          pendingText = '';
           if (answer.trim()) carried += answer;
           answer = '';
           // No new content boundary until actual reasoning arrives: plain continuation
@@ -2883,6 +2948,8 @@ function releasePending(sessionId: number) {
 async function historyMessagesWithAttachments(rows: (ChatRow & { originalContent: string })[], signal: AbortSignal): Promise<ChatMessage[]> {
   const messages: ChatMessage[] = [];
   for (const row of rows) {
+    const raw = replayTrace(row);
+    if (raw) { messages.push(...raw); continue; }
     const attachments = await attachmentsForModel(row.attachments ?? [], row.originalContent, signal);
     if (row.id != null && attachments.some((file, i) => file.description !== row.attachments?.[i]?.description)) {
       await db.chats.update(row.id, { attachments });

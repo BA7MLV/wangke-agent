@@ -41,7 +41,7 @@ try {
   const note = page.getByTestId('provider-note-sf');
   const find = page.getByTestId('btn-check-models');
   await find.waitFor();
-  assert.equal(await find.innerText(), '查找模型');
+  assert.equal(await find.innerText(), '获取模型列表');
   await note.filter({ hasText: '93 个可用模型' }).waitFor();
   assert.equal(calls, 1, 'opening a configured provider automatically fetches /models');
   assert.equal(await page.getByRole('list', { name: '接口模型结果', exact: true }).count(), 0, 'results remain collapsed');

@@ -136,6 +136,27 @@ console.log('fetchPlayStreams');
   ok(msg.includes('未获取到 DASH'), '无 DASH 流报错');
 }
 
+console.log('fetchPlayStreams 浏览器兼容编码优先');
+{
+  const { fetchMock } = makeFetch([
+    ['/x/player/playurl', () => ({ json: { code: 0, data: { dash: {
+      duration: 10,
+      video: [
+        { height: 2160, codecid: 12, codecs: 'hev1.1.6.L153', baseUrl: 'https://cdn.example/hevc.m4s' },
+        { height: 1080, codecid: 7, codecs: 'avc1.640028', baseUrl: 'https://cdn.example/avc.m4s' },
+        { height: 720, codecs: 'avc1.64001f', baseUrl: 'https://cdn.example/avc720.m4s' },
+      ],
+      audio: [
+        { codecs: 'ec-3', baseUrl: 'https://cdn.example/dolby.m4s' },
+        { codecs: 'mp4a.40.2', baseUrl: 'https://cdn.example/aac.m4s' },
+      ],
+    } } } })],
+  ]);
+  const s = await withFetch(fetchMock, () => api.fetchPlayStreams({ proxy }, 'BV1xx411c7mD', 1));
+  eq(s.videoUrl, 'https://cdn.example/avc.m4s', '优先选择最高可用 AVC，避免 HEVC 无法播放');
+  eq(s.audioUrl, 'https://cdn.example/aac.m4s', '优先选择 AAC，避免杜比编码不兼容');
+}
+
 console.log('resolveShortUrl');
 {
   const { fetchMock } = makeFetch([

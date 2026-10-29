@@ -10,6 +10,9 @@ import WidgetStateSummary from './WidgetStateSummary';
 import { readWidgetHeight, rememberWidgetHeight, widgetRevision, WIDGET_SCROLL_INTENT } from '../harness/widgetReading';
 import './widget-block.css';
 import { MAX_WIDGET_DIAGNOSTICS, readWidgetDiagnostic, WIDGET_READY_TIMEOUT_MS, type WidgetDiagnostic } from '../harness/widgetDiagnostics';
+import { copyText } from '../utils/clipboard';
+import { toast } from '../ui';
+import { validateWidgetPayload } from '../harness/widgetProtocol';
 
 /**
  * 沙箱 widget 的宿主壳：一个 `sandbox="allow-scripts"` 的 iframe。
@@ -92,15 +95,36 @@ const MIN_H = 80;
 export default function WidgetBlock(props: Props) {
   const [run, setRun] = useState(0);
   // A new source revision owns a new bridge and pending requests. State/theme updates do not remount it.
-  const libsKey = JSON.stringify(props.payload.libs ?? []);
   const owner = useRef({ rowId: props.rowId, key: props.rowId });
+  let invalid = '';
+  try { validateWidgetPayload(props.payload); }
+  catch (error) { invalid = error instanceof Error ? error.message : String(error); }
+  if (invalid) return <RejectedWidget error={invalid} source={typeof props.payload?.html === 'string' ? props.payload.html : ''}
+    retry={() => setRun(value => value + 1)} />;
+  const libsKey = JSON.stringify(props.payload.libs ?? []);
   if (props.rowId !== owner.current.rowId) {
     // Persisting this streaming message is a promotion, not a new iframe session.
     if (owner.current.rowId != null) owner.current.key = props.rowId;
     owner.current.rowId = props.rowId;
   }
-  const key = JSON.stringify([owner.current.key ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey]);
+  const key = JSON.stringify([owner.current.key ?? props.readingKey ?? null, props.payload.id ?? null, props.payload.html, libsKey,
+    props.payload.kind, props.payload.schemaVersion, props.payload.revision, props.payload.source]);
   return <WidgetSessionBlock key={`${key}:${run}`} {...props} onRerun={() => setRun((value) => value + 1)} />;
+}
+
+/** Corrupt/imported records fail before layout keys, hooks or library loading touch their fields. */
+function RejectedWidget({ error, source, retry }: { error: string; source: string; retry(): void }) {
+  const [open, setOpen] = useState(false);
+  const id = useId();
+  return <div className="md-embedded-ui widget-block" data-testid="widget-block">
+    <div className="widget-block--error" data-testid="widget-error" role="alert">
+      <p>预览失败：{error}</p>
+      <Button size="sm" variant="tertiary" onPress={retry}>重试预览</Button>
+      <Button size="sm" variant="tertiary" aria-controls={id} aria-expanded={open} onPress={() => setOpen(value => !value)}>{open ? '收起 HTML 源码' : '查看 HTML 源码'}</Button>
+      <Button size="sm" variant="tertiary" onPress={() => void copyText(source).then(ok => ok ? toast.success('HTML 源码已复制') : toast.error('复制失败'))}>复制 HTML</Button>
+    </div>
+    {open && <pre id={id} aria-label="HTML 源码" className="my-2 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default p-3 text-xs" data-testid="widget-source"><code>{source}</code></pre>}
+  </div>;
 }
 
 function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabled = false, allowPopout = true, editActions, htmlActions, appearance, answerInput, onRerun }: Props & { onRerun(): void }) {
@@ -109,6 +133,12 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   const diagnosticKeys = useRef(new Set<string>());
   const readyRef = useRef(false);
   const htmlSurface = !!htmlActions;
+  const [sourceOpen, setSourceOpen] = useState(false);
+  const sourceId = useId();
+  const sourceActions = htmlActions ?? {
+    sourceOpen, sourceId, toggleSource: () => setSourceOpen(value => !value),
+    copySource: () => void copyText(payload.html).then(ok => ok ? toast.success('HTML 源码已复制') : toast.error('复制失败')),
+  };
   const hostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<HTMLIFrameElement>(null);
   const themeRef = useRef<WidgetTheme | undefined>(appearance);
@@ -502,11 +532,12 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
   return (
     <div ref={hostRef} className="md-embedded-ui widget-block" data-testid="widget-block" data-h={Math.round(height)}>
       {(failed || diagnostics.length > 0) && <div className="widget-block--error" role="alert" data-testid="widget-error">
-        <p className="m-0">{failed || (diagnostics.some((item) => item.kind === 'script' || item.kind === 'promise')
+        <p className="m-0">{failed ? `预览失败：${failed}` : (diagnostics.some((item) => item.kind === 'script' || item.kind === 'promise')
           ? '交互脚本运行出错，部分功能可能不可用。' : '部分资源被限制或未能加载，内容可能不完整。')}</p>
         <details><summary>运行详情</summary><ul>{diagnostics.map((item, index) => <li key={index}>{item.message}</li>)}</ul></details>
         <p className="m-0 text-xs">外部脚本、网络请求和动态求值不受支持。重新运行不会调用 AI，也不会修复源码错误。</p>
-        <Button size="sm" variant="tertiary" onPress={onRerun}>重新运行</Button>
+        <Button size="sm" variant="tertiary" onPress={onRerun}>重试预览</Button>
+        <Button size="sm" variant="tertiary" onPress={sourceActions.toggleSource}>{sourceActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Button>
       </div>}
       {doc && <iframe
         ref={frameRef}
@@ -532,25 +563,26 @@ function WidgetSessionBlock({ payload, dark, onPrompt, rowId, readingKey, disabl
         <Button size="sm" variant="tertiary" onPress={() => setSelection(null)}>收起</Button>
       </div>}
       {stateMessage && <p className="sr-only" role="status">{stateMessage}</p>}
-      {(canPopout || editActions || htmlActions) && <div className="widget-block__tools">
+      <div className="widget-block__tools">
         <Dropdown>
           <Button isIconOnly size="sm" variant="tertiary" aria-label={htmlSurface ? '更多 HTML 操作' : '更多交互图形操作'} data-testid="widget-more"><Sym name="more_horiz" size={18} /></Button>
           <Dropdown.Popover placement="bottom end">
             <Dropdown.Menu aria-label={htmlSurface ? 'HTML 操作' : '交互图形操作'} disabledKeys={editActions?.busy ? ['edit', 'undo'] : []} onAction={(key) => {
               if (key === 'edit') editActions?.edit();
               if (key === 'undo') editActions?.undo?.();
-              if (key === 'copy-html') htmlActions?.copySource();
-              if (key === 'source-html') htmlActions?.toggleSource();
+              if (key === 'copy-html') sourceActions.copySource();
+              if (key === 'source-html') sourceActions.toggleSource();
             }}>
               {canPopout ? <Dropdown.Item id="expand" href={previewHref} target="_blank" rel="noopener noreferrer" textValue={htmlSurface ? '在新页面打开' : '在新窗口展开'} data-testid="widget-open"><Sym name={htmlSurface ? 'open_in_new' : 'open_in_full'} /><Label>{htmlSurface ? '在新页面打开' : '在新窗口展开'}</Label></Dropdown.Item> : null}
               {editActions ? <Dropdown.Item id="edit" textValue={htmlSurface ? '修改 HTML' : '修改这幅图'} data-testid="widget-edit"><Sym name="edit" /><Label>{htmlSurface ? '修改 HTML' : '修改这幅图'}</Label></Dropdown.Item> : null}
-              {htmlActions ? <Dropdown.Item id="copy-html" textValue="复制 HTML"><Sym name="content_copy" /><Label>复制 HTML</Label></Dropdown.Item> : null}
-              {htmlActions ? <Dropdown.Item id="source-html" textValue={htmlActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'} aria-expanded={htmlActions.sourceOpen} aria-controls={htmlActions.sourceId}><Sym name="code" /><Label>{htmlActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Label></Dropdown.Item> : null}
+              <Dropdown.Item id="copy-html" textValue="复制 HTML"><Sym name="content_copy" /><Label>复制 HTML</Label></Dropdown.Item>
+              <Dropdown.Item id="source-html" textValue={sourceActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'} aria-expanded={sourceActions.sourceOpen} aria-controls={sourceActions.sourceId}><Sym name="code" /><Label>{sourceActions.sourceOpen ? '收起 HTML 源码' : '查看 HTML 源码'}</Label></Dropdown.Item>
               {editActions?.undo ? <Dropdown.Item id="undo" textValue="撤销上次修改"><Sym name="undo" /><Label>撤销上次修改</Label></Dropdown.Item> : null}
             </Dropdown.Menu>
           </Dropdown.Popover>
         </Dropdown>
-      </div>}
+      </div>
+      {!htmlActions && sourceOpen && <pre id={sourceId} aria-label="HTML 源码" className="my-2 max-h-96 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-default p-3 text-xs" data-testid="widget-source"><code>{payload.html}</code></pre>}
       {actionError && <p className="m-0 text-sm text-danger" role="alert">{actionError}</p>}
       {followUp && <Modal.Root isOpen onOpenChange={(open) => {
         if (!open) cancelFollowUp();

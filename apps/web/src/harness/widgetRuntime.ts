@@ -40,6 +40,8 @@ import { WIDGET_STYLES } from './widgetStyles.ts';
 import { normalizeWidgetState, type WidgetState } from './widgetState.ts';
 import type { WidgetTheme } from './widgetTheme.ts';
 import { MAX_WIDGET_DIAGNOSTICS } from './widgetDiagnostics.ts';
+import { validateWidgetPayload } from './widgetProtocol.ts';
+import { MAX_WIDGET_DOC } from './widget.ts';
 
 /** widget 可以声明需要的宿主库；只有被声明的才会内联进去，避免每张图都背上 200KB */
 export type WidgetLib = 'chart.js';
@@ -55,6 +57,11 @@ const LIBS: Record<WidgetLib, () => Promise<string>> = {
 };
 
 export interface WidgetPayload {
+  kind?: 'html';
+  schemaVersion?: 1;
+  /** Monotonic source revision. The per-run bridge token is separate. */
+  revision?: number;
+  source?: 'tool' | 'legacy-widget' | 'legacy-html';
   /** 宿主生成的实例 ID，旧消息第一次打开时补齐；模型不能指定。 */
   id?: string;
   /** Stable inline reference; source revisions rotate id but retain this placement. */
@@ -344,7 +351,8 @@ export async function buildWidgetDocument(payload: WidgetPayload, options: {
   /** Only a draft, not a grading/persistence capability. Never include answer keys. */
   answerInput?: { answer: unknown; submitted: boolean; question?: unknown };
 } = {}): Promise<string> {
-  const libs = payload.libs ?? [];
+  validateWidgetPayload(payload);
+  const libs = [...new Set(payload.libs ?? [])];
   const sources = await Promise.all(
     libs.map(async (name) => {
       const load = LIBS[name];
@@ -358,7 +366,7 @@ export async function buildWidgetDocument(payload: WidgetPayload, options: {
     answerInput: options.answerInput,
     state: options.state == null ? null : normalizeWidgetState(options.state) })
     .replace(/</g, '\\u003c').replace(/\u2028/g, '\\u2028').replace(/\u2029/g, '\\u2029');
-  return `<!doctype html>
+  const document = `<!doctype html>
 <html lang="zh-CN">
 <head>
 <meta charset="utf-8">
@@ -374,4 +382,6 @@ ${sources.join('\n')}
 ${payload.html}
 </body>
 </html>`;
+  if (document.length > MAX_WIDGET_DOC) throw new Error(`作品文档过大（上限 ${MAX_WIDGET_DOC} 字）`);
+  return document;
 }

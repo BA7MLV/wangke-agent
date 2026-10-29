@@ -35,7 +35,7 @@ function fmtMs(ms: number): string {
  *
  * ## 时序（这一块在动效上刻意做成「有先后」的）
  *
- * 工具是**一个跑完才轮到下一个**的，界面应当说同一句话：
+ * 读取工具可以并行；每一行按调用身份独立更新状态与耗时：
  *
  * - **标题**在真的有工具在跑（`status === 'running'`）时用 shimmer 高光扫过 ——
  *   与思考链的状态行同一套语言（`.t-shimmer`），一眼看出「现在这一步在做什么」。
@@ -64,14 +64,15 @@ export default function ToolTrace({
   // 有内容才占位置：没调过工具的回答不该凭空多出一行「已调用 0 个工具」
   if (calls.length === 0) return null;
 
-  const acting = calls.find((c) => c.status === 'running');
+  const activeCalls = calls.filter((c) => c.status === 'running');
+  const acting = activeCalls[0];
   const waitingForUser = acting?.name === 'ask_user';
   const failed = calls.filter((c) => c.status === 'error').length;
   const displays = calls.map((call) => toolDisplay(call.name, call.detail));
   const loadedSkills = [...new Set(displays.flatMap((display, i) =>
     calls[i].status === 'done' && display.label === '加载技能' && display.detail ? [display.detail] : []))];
   const activeDisplay = acting ? toolDisplay(acting.name, acting.detail) : undefined;
-  const title = waitingForUser ? '等待你的回答' : activeDisplay
+  const title = waitingForUser ? '等待你的回答' : activeCalls.length > 1 ? `正在并行调用 ${activeCalls.length} 个工具…` : activeDisplay
     ? `${activeDisplay.label}${activeDisplay.detail ? `：${activeDisplay.detail}` : '…'}`
     : `已调用 ${calls.length} 个工具${failed > 0 ? ` · ${failed} 次失败` : ''}${loadedSkills.length ? ` · 已加载技能：${loadedSkills.slice(0, 2).join('、')}${loadedSkills.length > 2 ? ` 等 ${loadedSkills.length} 个` : ''}` : ''}`;
 
@@ -102,7 +103,7 @@ export default function ToolTrace({
             {calls.map((call, i) => (
               // 同一次工具在一轮里可能被调多次（换个关键词重查），所以键不能只用 name
               <li
-                key={`${call.name}-${i}`}
+                key={call.id ?? `${call.name}-${i}`}
                 className="tool-trace__item"
                 data-status={call.status}
                 data-testid="tool-trace-item"

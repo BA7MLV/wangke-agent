@@ -1,7 +1,9 @@
 import { create } from 'zustand';
 import { prepareHistoryWithJev, type HistoryRow } from '../harness/jevContext';
-import { estimateTokens, fitHistoryToBudget } from '../harness/context';
+import { estimateTokens } from '../harness/context';
 import type { JevSettings } from './settings';
+import { db } from './db';
+import { fitModelHistory, historyRowTokens } from './modelHistory';
 
 interface ContextRow {
   id?: number;
@@ -23,7 +25,7 @@ export const EMPTY_COMPRESSION: CompressionState = {
   phase: 'idle', message: '', omitted: new Map(), attempt: '', revision: 0,
 };
 
-/** 仅缓存当前页面生命周期的发送计划；不持久化、不修改/同步聊天记录。 */
+/** UI state mirrors the durable session omission plan; original rows stay intact. */
 export const useContextCompressionStore = create<{ sessions: Record<number, CompressionState> }>(() => ({ sessions: {} }));
 const pending = new Map<number, Promise<void>>();
 
@@ -68,27 +70,30 @@ export async function prepareSessionHistory<T extends HistoryRow & ContextRow>(
   options: { signal?: AbortSignal; force?: boolean; onStart?: () => void; onCompressed?: (turns: number) => void } = {},
 ): Promise<T[]> {
   options.signal?.throwIfAborted();
-  if (!config.contextCompression || !config.apiKey.trim()) return fitHistoryToBudget(rows, budget);
   while (pending.has(sessionId)) await waitFor(pending.get(sessionId)!, options.signal);
   options.signal?.throwIfAborted();
-  const previous = useContextCompressionStore.getState().sessions[sessionId] ?? EMPTY_COMPRESSION;
-  const effective = retainedContext(rows, previous);
-  const tokens = effective.reduce((sum, row) => sum + estimateTokens(row.content), 0);
-  // 同一份满载历史只自动尝试一次，避免失败/没有可省略项时 React effect 无限重试。
-  const attempt = `${budget}:${effective.map((row) => `${row.id ?? row.rowId}:${row.content.length}`).join(',')}`;
-  if (!options.force && (tokens < budget || previous.attempt === attempt)) return fitHistoryToBudget(effective, budget);
-
   let settle!: () => void;
   const job = new Promise<void>((resolve) => { settle = resolve; });
   pending.set(sessionId, job);
-  const revision = previous.revision + 1;
-  patch(sessionId, { phase: 'compressing', message: '正在压缩上下文…', revision, attempt });
+  const inMemory = useContextCompressionStore.getState().sessions[sessionId];
+  if (options.force) patch(sessionId, { phase: 'compressing', message: '正在压缩上下文…' });
   try {
+    const saved = await db.chatSessions.get(sessionId);
+    options.signal?.throwIfAborted();
+    const previous = inMemory ?? { ...EMPTY_COMPRESSION, omitted: new Map(saved?.contextOmissions ?? []) };
+    if (!config.contextCompression || !config.apiKey.trim()) return await fitModelHistory(sessionId, rows, budget);
+    const effective = retainedContext(rows, previous);
+    const tokens = effective.reduce((sum, row) => sum + historyRowTokens(row), 0);
+    const attempt = `${budget}:${effective.map((row) => `${row.id ?? row.rowId}:${row.content.length}`).join(',')}`;
+    if (!options.force && (tokens < budget || previous.attempt === attempt)) return await fitModelHistory(sessionId, effective, budget);
+    const revision = previous.revision + 1;
+    patch(sessionId, { phase: 'compressing', message: '正在压缩上下文…', revision, attempt });
     let failed = false;
     let started = false;
     let removed: T[] = [];
     const result = await prepareHistoryWithJev(effective, budget, query, config, {
       ...options,
+      deferFit: true,
       onStart: () => { started = true; options.onStart?.(); },
       onOmitted: (omitted) => { removed = omitted; },
       onError: (error) => {
@@ -113,8 +118,9 @@ export async function prepareSessionHistory<T extends HistoryRow & ContextRow>(
           ? `上下文已压缩，减少约 ${saved.toLocaleString()} tokens；聊天记录完整保留`
           : started ? '没有可安全省略的旧轮次，已保留上下文' : '暂无可压缩的旧轮次（最近两轮保留，过大内容跳过）',
       });
+      await db.chatSessions.update(sessionId, { contextOmissions: [...omitted] });
     }
-    return result;
+    return await fitModelHistory(sessionId, result, budget);
   } catch (error) {
     patch(sessionId, { phase: 'idle', message: '已取消压缩', attempt: '' });
     throw error;

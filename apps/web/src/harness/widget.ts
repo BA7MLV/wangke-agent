@@ -60,7 +60,7 @@ export const MAX_WIDGET_DOC = 320_000;
 const MAX_HTML = 60_000;
 
 /** 校验 show_widget 的入参。任何字段非法都返回**可直接照着改**的错误描述 */
-export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
+export function validateWidgetArgs(raw: unknown, legacyDocument = false): WidgetArgsValidation {
   const a = (raw as { format?: unknown; code?: unknown; libs?: unknown; title?: unknown } | null) ?? {};
 
   const format = a.format;
@@ -80,9 +80,11 @@ export function validateWidgetArgs(raw: unknown): WidgetArgsValidation {
       };
     if (code.length > MAX_HTML)
       return { ok: false, error: `code 过长（${code.length} 字，上限 ${MAX_HTML}）。只画图，不要把正文塞进来` };
+    if (/<\s*(?:meta|base|iframe|object|embed)\b/i.test(code))
+      return { ok: false, error: '作品不能设置文档重定向、基础地址或嵌套页面（meta/base/iframe/object/embed）' };
     // 文档外壳由宿主的 runtime 统一提供。模型自己套一层会让 CSP 与桥接脚本的注入位置失控，
     // 所以这里直接拒掉并说清正确写法，而不是默默剥掉。
-    if (/<\s*\/?\s*(?:!doctype|html|head|body)\b/i.test(code))
+    if (!legacyDocument && /<\s*\/?\s*(?:!doctype|html|head|body)\b/i.test(code))
       return {
         ok: false,
         error: 'html 形态只给**片段**：不要写 <html>/<head>/<body>/DOCTYPE，外壳由宿主提供',
@@ -168,12 +170,13 @@ const KNOWN_LIBS: readonly WidgetLib[] = ['chart.js'];
 function normalizeLibs(raw: unknown): { ok: true; libs?: WidgetLib[] } | { ok: false; error: string } {
   if (raw == null) return { ok: true };
   if (!Array.isArray(raw)) return { ok: false, error: 'libs 必须是数组，可选值：["chart.js"]' };
+  if (raw.length > 16) return { ok: false, error: '声明的依赖过多，请只列出需要的本地库' };
   const out: WidgetLib[] = [];
   for (const n of raw) {
     if (typeof n !== 'string' || !KNOWN_LIBS.includes(n as WidgetLib))
       return {
         ok: false,
-        error: `libs 只能取 ${KNOWN_LIBS.map((k) => `"${k}"`).join(' / ')}（或省略），收到：${JSON.stringify(n)}`,
+        error: `libs 只能取 ${KNOWN_LIBS.map((k) => `"${k}"`).join(' / ')}（或省略），收到不支持的依赖`,
       };
     if (!out.includes(n as WidgetLib)) out.push(n as WidgetLib);
   }

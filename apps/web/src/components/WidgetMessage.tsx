@@ -8,6 +8,7 @@ interface Scope { widgets: WidgetPayload[]; dark: boolean; rowId?: number; disab
 const WidgetContext = createContext<Scope | null>(null);
 
 function Visual({ payload, scope }: { payload: WidgetPayload; scope: Scope }) {
+  if (typeof payload.html !== 'string') return <p role="alert">预览失败：作品源码缺失或格式无效</p>;
   return <ArtifactEditor kind="html" location="widget" source={payload.html} libraries={payload.libs} widgetId={payload.id} widgetRef={payload.ref} widgetIndex={scope.widgets.indexOf(payload)}>
     {(actions) => <WidgetBlock payload={payload} dark={scope.dark} rowId={scope.rowId} disabled={scope.disabled} onPrompt={scope.onPrompt} editActions={actions} />}
   </ArtifactEditor>;

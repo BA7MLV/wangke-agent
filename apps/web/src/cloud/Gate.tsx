@@ -129,66 +129,78 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
 
   return <main className="ob" data-step={step}>
     <FeedbackHost />
-    <header className="ob__bar">
-      <div className="ob__bar-start">
-        {back && <Button isIconOnly variant="ghost" aria-label={t('onboarding.back')} isDisabled={busy} onPress={() => go(back, 'back')}><Sym name="chevron_left" /></Button>}
+    <div className="ob__panel">
+      <div className="ob__visual" key={step} data-direction={direction} data-figure={figure}>
+        <div className="ob__figure" data-compact={configure || undefined}>
+          <div className="ob__floor" aria-hidden="true" />
+          <OnboardingFigure name={figure} label={t(`onboarding.figure.${figure}`)} intensity={busy ? 0.9 : 0.5} play={step === 'welcome' || busy} />
+        </div>
       </div>
-      {index > 0 && <div className="ob__dots" role="img" aria-label={t('onboarding.progress', { current: index, total: SETUP_STEPS.length })}>
-        {SETUP_STEPS.map((s, i) => <span key={s} className="ob__dot" data-active={i + 1 === index || undefined} data-done={i + 1 < index || undefined} />)}
-      </div>}
-      <div className="ob__bar-end"><LanguageSelect /></div>
-    </header>
-
-    <div className="ob__scene" key={step} data-direction={direction}>
-      <div className="ob__figure" data-compact={configure || undefined}>
-        <div className="ob__floor" aria-hidden="true" />
-        <OnboardingFigure name={figure} label={t(`onboarding.figure.${figure}`)} intensity={busy ? 0.9 : 0.5} />
-      </div>
-      <h1 className="ob__title">{title}</h1>
-
-      {configure ? <section className="ob__configure">
-        <Suspense fallback={<div className="ob-models__loading" role="status"><Spinner aria-label={t('onboarding.loading')} /></div>}>
-          <ModelSetup onDone={enter} />
-        </Suspense>
-      </section> :
-        <form className="ob__form" onSubmit={submit} noValidate={step === 'welcome'}>
-          {step === 'key' && <div className="ob__group" data-shake={attempt || undefined} key={`key-${attempt}`}>
-            <TextField fullWidth isRequired>
-              <Label className="sr-only">{t('onboarding.keyLabel')}</Label>
-              <div className="ob__field-row">
-                <Input className="ob__input" type="password" placeholder="bootstrap-secret" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" autoFocus spellCheck={false} />
-                <Button type="button" isIconOnly size="sm" variant="ghost" aria-label={t('onboarding.keyFromFile')} onPress={() => secretFile.current?.click()}>
-                  <Sym name={secret ? 'check' : 'upload'} />
-                </Button>
-              </div>
-            </TextField>
-            <input ref={secretFile} hidden type="file" accept=".txt,.env,text/plain" tabIndex={-1} aria-hidden="true" onChange={readSecret} />
-          </div>}
-
-          {(step === 'account' || step === 'login') && <div className="ob__group" data-shake={attempt || undefined} key={`${step}-${attempt}`}>
-            <TextField fullWidth isRequired>
-              <Label className="sr-only">{t('onboarding.password')}</Label>
-              <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus />
-            </TextField>
-          </div>}
-
-          {step === 'name' && <div className="ob__group">
-            <TextField fullWidth>
-              <Label className="sr-only">{t('onboarding.nameLabel')}</Label>
-              <Input className="ob__input" placeholder={t('onboarding.namePlaceholder')} value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={40} autoComplete="nickname" autoFocus enterKeyHint="next" />
-            </TextField>
-          </div>}
-
-          <p className="ob__error" role="alert">{error}</p>
-
-          <div className="ob__actions">
-            <Button className="ob__primary" type="submit" size="lg" isDisabled={busy || (step === 'key' && !secret.trim()) || (step === 'account' && password.length < 12) || (step === 'login' && !password)}>
-              {busy ? <><Spinner size="sm" color="current" />{t(step === 'account' ? 'onboarding.creating' : 'onboarding.signingIn')}</>
-                : t(ACTION[step as keyof typeof ACTION])}
-            </Button>
-            {step === 'login' && <Button className="ob__secondary" variant="ghost" size="lg" isDisabled={busy} onPress={() => void signIn(true)}>{t('onboarding.passkey')}</Button>}
+      <div className="ob__right">
+        <header className="ob__bar">
+          <div className="ob__bar-start">
+            {back && <Button isIconOnly variant="ghost" aria-label={t('onboarding.back')} isDisabled={busy} onPress={() => go(back, 'back')}><Sym name="chevron_left" /></Button>}
           </div>
-        </form>}
+          <div className="ob__bar-end"><LanguageSelect /></div>
+        </header>
+
+        <div className="ob__scene" key={step} data-direction={direction}>
+          <div className="ob__content">
+            <h1 className="ob__title">{title}</h1>
+
+            {configure ? <section className="ob__configure">
+              <Suspense fallback={<div className="ob-models__loading" role="status"><Spinner aria-label={t('onboarding.loading')} /></div>}>
+                <ModelSetup onDone={enter} />
+              </Suspense>
+            </section> :
+              <form className="ob__form" onSubmit={submit} noValidate={step === 'welcome'}>
+                {step === 'key' && <TextField className="ob__field" fullWidth isRequired key={`key-${attempt}`}>
+                  <Label className="ob__label">{t('onboarding.keyLabel')}</Label>
+                  <div className="ob__group" data-shake={attempt || undefined}>
+                    <div className="ob__field-row">
+                      <Input className="ob__input" type="password" placeholder="bootstrap-secret" value={secret} onChange={(e) => setSecret(e.target.value)} autoComplete="off" autoFocus spellCheck={false} />
+                      <Button type="button" isIconOnly size="sm" variant="ghost" aria-label={t('onboarding.keyFromFile')} onPress={() => secretFile.current?.click()}>
+                        <Sym name={secret ? 'check' : 'upload'} />
+                      </Button>
+                    </div>
+                  </div>
+                  <input ref={secretFile} hidden type="file" accept=".txt,.env,text/plain" tabIndex={-1} aria-hidden="true" onChange={readSecret} />
+                </TextField>}
+
+                {(step === 'account' || step === 'login') && <TextField className="ob__field" fullWidth isRequired key={`${step}-${attempt}`}>
+                  <Label className="ob__label">{t('onboarding.password')}</Label>
+                  <div className="ob__group" data-shake={attempt || undefined}>
+                    <Input className="ob__input" type="password" placeholder={step === 'account' ? t('onboarding.newPasswordPlaceholder') : t('onboarding.password')} value={password} onChange={(e) => setPassword(e.target.value)} minLength={step === 'account' ? 12 : 1} autoComplete={step === 'account' ? 'new-password' : 'current-password'} autoFocus />
+                  </div>
+                </TextField>}
+
+                {step === 'name' && <TextField className="ob__field" fullWidth>
+                  <Label className="ob__label">{t('onboarding.nameLabel')}</Label>
+                  <div className="ob__group">
+                    <Input className="ob__input" placeholder={t('onboarding.namePlaceholder')} value={nickname} onChange={(e) => setNickname(e.target.value)} maxLength={40} autoComplete="nickname" autoFocus enterKeyHint="next" />
+                  </div>
+                </TextField>}
+
+                <p className="ob__error" role="alert">{error}</p>
+
+                <div className="ob__actions">
+                  <Button className="ob__primary" type="submit" size="lg" isDisabled={busy || (step === 'key' && !secret.trim()) || (step === 'account' && password.length < 12) || (step === 'login' && !password)}>
+                    {busy ? <><Spinner size="sm" color="current" />{t(step === 'account' ? 'onboarding.creating' : 'onboarding.signingIn')}</>
+                      : t(ACTION[step as keyof typeof ACTION])}
+                  </Button>
+                  {step === 'login' && <Button className="ob__secondary" variant="ghost" size="lg" isDisabled={busy} onPress={() => void signIn(true)}>{t('onboarding.passkey')}</Button>}
+                </div>
+              </form>}
+          </div>
+        </div>
+        {index > 0 && <footer className="ob__footer">
+          <div className="ob__progress">
+            <div className="ob__dots" role="img" aria-label={t('onboarding.progress', { current: index, total: SETUP_STEPS.length })}>
+              {SETUP_STEPS.map((s, i) => <span key={s} className="ob__dot" data-active={i + 1 === index || undefined} data-done={i + 1 < index || undefined} />)}
+            </div>
+          </div>
+        </footer>}
+      </div>
     </div>
   </main>;
 }

@@ -8,6 +8,7 @@ import { request, serverClient } from '../api/serverClient';
 import { useAppNav } from '../components/appNav';
 import { FolderIcon } from '../components/FolderIcon';
 import { ResourceFileIcon } from '../components/ResourceFileIcon';
+import { SettingsButton } from '../components/SettingsModal';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { db } from '../store/db';
 import { flushCloud } from '../cloud/sync';
@@ -244,7 +245,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
   const visibleEntries = loading || showSkeleton ? [] : entries;
   const retainedKey = draggedEntry && !visibleEntries.some(entry => keyOf(entry) === keyOf(draggedEntry)) ? keyOf(draggedEntry) : null;
   const renderedEntries = retainedKey && draggedEntry ? [...visibleEntries, draggedEntry] : visibleEntries;
-  return <PageShell title={t('resources')} rail={nav} fill rootClassName="page-library">
+  return <PageShell title={t('resources')} rail={nav} railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />} fill rootClassName="page-library">
     <ImagePreview isOpen={Boolean(image)} onOpenChange={open => { if (!open) setImage(null); }} title={image?.name ?? ''} content={image ? { kind: 'image', src: serverClient.projectDownloadUrl(image.projectId, image.path) } : undefined} onDownload={image ? () => download(image) : undefined} downloadLabel={t('download')} />
     <section className="finder-window resource-window" data-mobile={mobile || undefined} aria-label={t('resources')}
       onDragOver={e => { springLoader.cancel(); setDropTarget(null); if (!busy && !loading && !readOnly) e.preventDefault(); }}

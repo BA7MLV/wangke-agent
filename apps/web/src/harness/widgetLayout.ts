@@ -8,7 +8,9 @@ export interface WidgetCollection {
 }
 
 export function messageWidgets(message: WidgetCollection): WidgetPayload[] {
-  return message.widgets?.length ? message.widgets : message.widget ? [message.widget] : [];
+  const items = Array.isArray(message.widgets) && message.widgets.length ? message.widgets : message.widget ? [message.widget] : [];
+  // Preserve a failed placeholder instead of crashing or silently hiding corrupt imported entries.
+  return items.map(item => item && typeof item === 'object' && !Array.isArray(item) ? item : { html: '' });
 }
 
 export function widgetReference(ref: string): string {

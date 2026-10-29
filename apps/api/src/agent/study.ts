@@ -34,6 +34,8 @@ export interface StudyToolPlugin {
   name: string; description: string; properties: Record<string, unknown>; required: string[];
   capability(args: any): 'read' | 'write' | 'remove';
   permissions?(args: any): Array<'read' | 'write' | 'remove'>;
+  /** Explicit side-effect-free opt-in, separate from permission requirements. */
+  parallelSafe?(args: any): boolean;
   execute(args: any, context: StudyContext): Promise<unknown>;
 }
 const learningTables = new Set(['videos','folders','segments','materialBlocks','handouts','cards','studyDays','courseFiles','files','subtitleTracks','comments','danmakus']);
@@ -182,6 +184,13 @@ export class StudyTools {
       const id = c.step; store.db.prepare('INSERT OR IGNORE INTO bot_reminders(id,owner_id,thread_id,text,timezone,next_at,interval_seconds,created_at) VALUES(?,?,?,?,?,?,?,?)').run(id, c.owner, c.thread, a.text, a.timezone, Date.parse(a.at), a.intervalSeconds ?? null, new Date().toISOString());
       return { id, nextAt: new Date(Date.parse(a.at)).toISOString(), timezone: a.timezone, intervalSeconds: a.intervalSeconds ?? null };
     } });
+    // Read permission alone is insufficient: sending a file or cancelling a
+    // child task changes state. Only these operations explicitly opt in.
+    for (const name of ['read', 'grep', 'checkpoint_read', 'skill_load', 'artifact_read', 'study_record', 'study_read', 'study_file']) {
+      this.plugins.get(name)!.parallelSafe = () => true;
+    }
+    for (const name of ['study_memory', 'study_reminder']) this.plugins.get(name)!.parallelSafe = args => args.action === 'list';
+    this.plugins.get('study_task')!.parallelSafe = args => args.action === 'status';
   }
   register(plugin: StudyToolPlugin) { if (this.plugins.has(plugin.name)) throw new Error('duplicate_study_tool'); this.plugins.set(plugin.name, plugin); }
   definitions() { return [...this.plugins.values()].map(p => ({ type: 'function', function: { name: p.name, description: p.description, parameters: { type: 'object', additionalProperties: false, properties: p.properties, required: p.required } } })); }

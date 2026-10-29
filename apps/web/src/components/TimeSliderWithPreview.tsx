@@ -4,9 +4,8 @@ import { useDefaultLayoutContext, useDefaultLayoutWord } from '@vidstack/react/p
 
 interface Props {
   /**
-   * 预览帧的视频源。这里传**与主视频相同的 blob URL**：blob 已经整份在内存里，
-   * 把隐藏的预览 `<video>` 停到指针所在时间点取帧是零成本的，
-   * 不需要像 vidstack 官方 `thumbnails` 那样先全片解码生成雪碧图再喂一份 VTT。
+   * 与主视频相同的本地 Blob URL 或受保护的远程 URL。
+   * 只有悬停/拖动时挂载预览，避免远程视频额外争抢首屏带宽。
    */
   previewSrc: string;
 }
@@ -29,6 +28,12 @@ const MIN_FRAME_DELTA = 0.5;
  * 它是 `<TimeSlider.Root>` 的后代，所以 `useSliderState` 拿得到指针位置。
  */
 function PreviewFrame({ src }: { src: string }) {
+  const pointing = useSliderState('pointing');
+  const dragging = useSliderState('dragging');
+  return pointing || dragging ? <ActivePreviewFrame key={src} src={src} /> : null;
+}
+
+function ActivePreviewFrame({ src }: { src: string }) {
   /**
    * 指针位置用 `pointerRate`（0~1 的比例）而不是 `pointerValue`：
    * `pointerValue` 在这个滑块上给的是百分比量纲（实测鼠标在 25%/50%/75% 处分别得到 25/50/75），
@@ -41,10 +46,11 @@ function PreviewFrame({ src }: { src: string }) {
   // 素材宽高比要等元数据到；先按 16:9 占位，避免卡片在首帧之前高度为 0
   const [ratio, setRatio] = useState(16 / 9);
   const [ready, setReady] = useState(false);
+  const [metadataReady, setMetadataReady] = useState(false);
 
   useEffect(() => {
     const el = videoRef.current;
-    if (!el || !Number.isFinite(pointerRate) || !Number.isFinite(duration) || duration <= 0) return;
+    if (!el || !metadataReady || !Number.isFinite(pointerRate) || !Number.isFinite(duration) || duration <= 0) return;
     // 别正好停在时长上：那一帧在多数编码里是空的（只有音频尾帧）
     const target = Math.min(pointerRate * duration, duration - 0.05);
     if (Number.isFinite(lastSeekRef.current) && Math.abs(target - lastSeekRef.current) < MIN_FRAME_DELTA) {
@@ -52,7 +58,16 @@ function PreviewFrame({ src }: { src: string }) {
     }
     lastSeekRef.current = target;
     el.currentTime = Math.max(0, target);
-  }, [pointerRate, duration]);
+  }, [pointerRate, duration, metadataReady]);
+
+  useEffect(() => {
+    const video = videoRef.current;
+    // StrictMode replays setup after cleanup without recreating the DOM node.
+    if (video && video.getAttribute('src') !== src) video.src = src;
+    return () => {
+      if (video) { video.removeAttribute('src'); video.load(); }
+    };
+  }, [src]);
 
   // 横向封顶宽度、纵向封顶高度，竖屏素材（手机录的课）才不会被拉成一根长条
   const size = ratio >= 1 ? { width: PREVIEW_MAX, height: PREVIEW_MAX / ratio } : { width: PREVIEW_MAX * ratio, height: PREVIEW_MAX };
@@ -63,6 +78,7 @@ function PreviewFrame({ src }: { src: string }) {
         ref={videoRef}
         className="player-preview-video"
         src={src}
+        crossOrigin={src.startsWith('blob:') ? undefined : 'use-credentials'}
         // 只拉元数据：预览是按需 seek 的，提前缓冲整段大文件没有意义
         preload="metadata"
         muted
@@ -71,6 +87,7 @@ function PreviewFrame({ src }: { src: string }) {
         onLoadedMetadata={(e) => {
           const video = e.currentTarget;
           if (video.videoWidth && video.videoHeight) setRatio(video.videoWidth / video.videoHeight);
+          setMetadataReady(true);
         }}
         // 第一帧解出来再淡入，否则会先闪一下纯黑
         onLoadedData={() => setReady(true)}

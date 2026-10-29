@@ -17,6 +17,11 @@ interface Scope {
 }
 const ArtifactContext = createContext<Scope | null>(null);
 
+export function useArtifactRowId(): number | undefined {
+  const scope = useContext(ArtifactContext);
+  return scope && scope.rowId >= 0 ? scope.rowId : undefined;
+}
+
 /** Only applying touches the message. Network requests never lock other figures or the conversation. */
 export function ArtifactEditProvider({ rowId, disabled, onSaved, children }: {
   rowId?: number; content: string; disabled: boolean; onSaved: (row: ChatRow) => void; children: ReactNode;

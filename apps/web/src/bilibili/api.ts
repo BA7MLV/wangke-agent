@@ -67,6 +67,8 @@ interface ViewData {
   };
 }
 interface DashStream {
+  codecs?: string;
+  codecid?: number;
   baseUrl?: string;
   base_url?: string;
   backupUrl?: string[];
@@ -184,10 +186,12 @@ export async function fetchPlayStreams(
   if (!dash || !Array.isArray(dash.video) || dash.video.length === 0) {
     throw new BiliHttpError('未获取到 DASH 流（该视频可能为付费/地区限制/需登录）');
   }
-  // 选最高分辨率的一路视频流（接口一般已按清晰度排序，稳妥起见再按高度挑）
-  const video = [...dash.video].sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0];
+  // Remux preserves the codec. Prefer browser-compatible AVC even when an
+  // HEVC/AV1 rendition has a higher resolution; no unnecessary transcoding.
+  const avc = dash.video.filter(stream => stream.codecid === 7 || /^avc[13]/i.test(stream.codecs ?? ''));
+  const video = [...(avc.length ? avc : dash.video)].sort((a, b) => (b.height ?? 0) - (a.height ?? 0))[0];
   const videoUrl = pickUrl(video);
-  const audio = dash.audio && dash.audio.length > 0 ? dash.audio[0] : null;
+  const audio = dash.audio?.find(stream => /^mp4a/i.test(stream.codecs ?? '')) ?? dash.audio?.[0] ?? null;
   const audioUrl = audio ? pickUrl(audio) : null;
   const qualityLabel = video.height ? `${video.height}P` : '标清';
   return {

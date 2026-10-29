@@ -60,6 +60,11 @@ try {
   // semantic table inside a scrolling wrapper (also asserted below). Compare
   // cell typography/spacing, but not that intentional container layout change.
   const proseWithoutTableLayout = styles => styles.map(style => {
+    // App inline code deliberately uses --radius-xs rather than XMarkdown's 2px.
+    if (style.tag === 'CODE' && style.margin !== '0px') {
+      const { 'border-radius': radius, ...rest } = style;
+      return rest;
+    }
     if (style.tag !== 'TABLE') return style;
     const { display, margin, ...rest } = style;
     return rest;
@@ -96,7 +101,7 @@ try {
   const widgets = [{ id: 'style-first', ref: 'style-first-ref', html: widget('第一幅交互图', true) }, { id: 'style-second', ref: 'style-second-ref', html: widget('第二幅交互图', false) }];
   const fence = (lang, source) => '```' + lang + '\n' + source + '\n```';
   const content = [raw,
-    `<div><svg><style>${css}</style><text>SVG 旁路</text></svg><math><mtext><style>${css}</style>MathML 旁路</mtext></math><strong>语义强调仍保留</strong></div>`,
+    `<div><svg><style>${css}</style><text>SVG 旁路</text></svg><math><mtext><style>${css}</style>MathML 旁路</mtext></math></div>\n\n<strong>语义强调仍保留</strong>`,
     '公式仍正常：$x^2 + 1$。', fence('wbw-widget', 'style-first-ref'),
     '调整下面的系数，对照两个结果。', fence('wbw-widget', 'style-second-ref'),
     fence('html', `<div><style>${css}</style><p class="fixed inset-0" style="position:fixed">静态预览不执行样式</p></div>`),
@@ -116,12 +121,12 @@ try {
   await second().getByRole('slider').waitFor();
   assert.equal(await blocks.count(), 2);
   assert.deepEqual(await mainStyles(), baseline, 'mixed raw HTML, SVG, MathML, previews and widgets cannot style the chat');
-  const rawElement = page.locator('aside').filter({ hasText: /^类名不能覆盖聊天$/ });
-  for (const attr of ['class', 'style', 'id', 'data-theme']) assert.equal(await rawElement.getAttribute(attr), null, `${attr} is not a host styling hook`);
+  assert.equal(await page.locator('aside').filter({ hasText: /^类名不能覆盖聊天$/ }).count(), 0, 'raw work markup is source, not host DOM');
+  await page.locator('pre code').filter({ hasText: '类名不能覆盖聊天' }).waitFor();
   assert.equal(await page.locator('.x-markdown style, .x-markdown link').count(), 0);
   assert.equal(await page.locator('strong').getByText('语义强调仍保留', { exact: true }).count(), 1);
   await page.locator('.katex').waitFor();
-  await page.getByTestId('widget-stream-preview').getByText('静态预览不执行样式', { exact: true }).waitFor();
+  await page.locator('pre code').filter({ hasText: '静态预览不执行样式' }).waitFor();
   const table = page.getByTestId('md-table').locator('table');
   assert.equal(await table.evaluate((el) => getComputedStyle(el).display), 'table', 'scoped Markdown retains full-width table layout');
   assert.equal(await table.evaluate((el) => getComputedStyle(el).borderTopWidth), '2px');

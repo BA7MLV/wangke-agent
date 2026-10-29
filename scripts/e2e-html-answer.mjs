@@ -7,6 +7,8 @@ try {
   const page = await browser.newPage({ viewport: { width: 1100, height: 1000 }, reducedMotion: 'reduce' });
   await page.context().grantPermissions(['clipboard-read', 'clipboard-write']);
   const errors = [];
+  const external = [];
+  await page.route('https://blocked.test/**', route => { external.push(route.request().url()); return route.abort(); });
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(base);
   await page.evaluate(async () => {
@@ -22,26 +24,36 @@ try {
     const { default: ResponseProcess } = await load('/src/components/ResponseProcess.tsx');
     const { Markdown } = await load('/src/components/markdown/Markdown.tsx');
     const { MarkdownCode, MarkdownPre } = await load('/src/components/mermaid/markdown.tsx');
+    const { db } = await load('/src/store/db.ts');
+    const { openLegacyHtmlWork } = await load('/src/store/legacyHtmlWorks.ts');
+    window.legacyCache = async source => {
+      const [first, second] = await Promise.all([openLegacyHtmlWork(source, 991), openLegacyHtmlWork(source, 991)]);
+      return { first, second, row: await db.chats.get(991) };
+    };
+    await db.chats.put({ id: 991, sessionId: 991, videoId: 'html-test', role: 'assistant', content: '', createdAt: Date.now() });
     const host = document.createElement('div');
     host.id = 'html-answer-test';
     document.getElementById('root').style.display = 'none';
     host.style.cssText = 'position:relative;background:var(--background);padding:24px;overflow:auto';
     document.body.append(host);
-    const root = ReactDOM.createRoot(host);
-    window.renderHtmlAnswer = (source, streaming = false, directMarkdown = false) => root.render(React.createElement(ArtifactEditProvider, { rowId: 991, content: source, disabled: streaming, onSaved: () => {} },
+    const root = ReactDOM.createRoot(host, { identifierPrefix: 'html-answer-test-' });
+    window.renderHtmlAnswer = async (source, streaming = false, directMarkdown = false) => {
+      await db.chats.update(991, { content: source });
+      root.render(React.createElement(ArtifactEditProvider, { rowId: 991, content: source, disabled: streaming, onSaved: () => {} },
       React.createElement(ResponseProcess, { reasoning: '1. **分析请求**：展示 HTML 示例。\n2. **注意**：不编造课程数据。\n\n```html\n<button>仅为思考源码</button>\n```', streaming }),
       directMarkdown ? React.createElement(Markdown, { content: source, components: { code: MarkdownCode, pre: MarkdownPre } })
-        : React.createElement(AssistantContent, { content: source, streaming }, text => React.createElement(Markdown, { content: text }))));
+        : React.createElement(AssistantContent, { content: source, streaming }, text => React.createElement(Markdown, { content: text, components: { code: MarkdownCode, pre: MarkdownPre } }))));
+    };
   });
   const source = '<!doctype html><html><head><style>body { color: rgb(12, 34, 56); } .example { display: grid; gap: 12px; background: rgb(225, 240, 250); padding: 24px; } h1 { font-size: 28px; }</style></head><body><main class="example"><h1>HTML 样式正常</h1><p>这是演示，不是真实课程数据。</p><button onclick="document.body.dataset.executed=2">交互按钮</button><a href="https://blocked.test/">禁止外部导航</a></main><script>document.body.dataset.executed=1</script><meta http-equiv="refresh" content="0;url=https://blocked.test/"></body></html>';
   const answer = `这里是 HTML 作品：\n\n\`\`\`html interactive\n${source}\n\`\`\`\n\n后续说明不丢失。`;
-  await page.evaluate(source => window.renderHtmlAnswer(source, true), '```html\n<style>body{color:red}</style><main><h1>生成中的示例</h1>');
+  await page.evaluate(source => window.renderHtmlAnswer(source, true), '```html interactive\n<style>body{color:red}</style><main><h1>生成中的示例</h1>');
   await page.getByTestId('widget-stream-preview').getByText('生成中的示例').waitFor();
   assert.equal(await page.getByTestId('widget-frame').count(), 0, 'partial code is inert');
   await page.evaluate(source => window.renderHtmlAnswer(source), `\`\`\`html\n${source}\n\`\`\``);
-  await page.getByTestId('widget-frame').contentFrame().getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
-  assert.equal(await page.getByTestId('widget-frame').contentFrame().locator('body').getAttribute('data-executed'), null, 'ordinary source examples do not auto-execute');
-  await page.getByRole('button', { name: '运行交互', exact: true }).waitFor();
+  await page.locator('#html-answer-test pre code').filter({ hasText: '<!doctype html>' }).waitFor();
+  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'ordinary source examples never create an iframe');
+  assert.equal(await page.getByRole('button', { name: '运行交互', exact: true }).count(), 0);
   await page.evaluate(source => window.renderHtmlAnswer(source), answer);
   await page.getByText('后续说明不丢失。', { exact: true }).waitFor();
   const frame = page.getByTestId('html-answer').getByTestId('widget-frame');
@@ -53,6 +65,11 @@ try {
     return [style.display, style.backgroundColor, style.padding, style.color];
   }), ['grid', 'rgb(225, 240, 250)', '24px', 'rgb(12, 34, 56)']);
   assert.equal(await content.locator('body').getAttribute('data-executed'), '1');
+  const cache = await page.evaluate(source => window.legacyCache(source), source);
+  assert.equal(cache.first.id, cache.second.id, 'concurrent legacy adaptation is idempotent');
+  assert.equal(cache.row.legacyHtmlWorks.length, 1);
+  assert.equal(cache.first.source, 'legacy-html');
+  assert.equal(cache.row.content, answer, 'normalization preserves original message source');
   await content.getByRole('button').click();
   assert.equal(await content.locator('body').getAttribute('data-executed'), '2');
   assert.equal(await content.locator('a').getAttribute('href'), null);
@@ -107,7 +124,24 @@ try {
   await page.evaluate(source => window.renderHtmlAnswer(source, false, true), `\`\`\`html interactive\n${source}\n\`\`\``);
   await content.getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
   await page.evaluate(source => window.renderHtmlAnswer(source), source);
-  await content.getByRole('heading', { name: 'HTML 样式正常' }).waitFor();
+  await page.getByTestId('html-code-example').waitFor();
+  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'bare HTML is escaped source, not an execution declaration');
+  for (const direct of [false, true]) {
+    const malicious = '<svg onload="parent.__escaped = true"><script>parent.__escaped = true</script></svg><img src="https://blocked.test/x" onerror="parent.__escaped = true">';
+    await page.evaluate(({ source, direct }) => window.renderHtmlAnswer(source, false, direct), { source: `\`\`\`html\n${malicious}\n\`\`\``, direct });
+    await page.locator('#html-answer-test pre code').filter({ hasText: '<svg onload=' }).waitFor();
+    assert.equal(await page.getByTestId('widget-frame').count(), 0);
+    assert.equal(await page.evaluate(() => window.__escaped), undefined);
+  }
   assert.deepEqual(errors, []);
+  assert.deepEqual(external, [], 'examples, normalization and ordinary code never load external resources');
   console.log('PASS: explicit interactive works, inert examples/streaming/reasoning, untouched source, isolated CSS, raw/fenced/popout renderers, mobile/desktop layout.');
+} catch (error) {
+  const page = browser.contexts()[0]?.pages()[0];
+  if (page) {
+    await page.screenshot({ path: 'test-results/html-answer-failure.png' });
+    console.error((await page.locator('body').innerText()).slice(-5000));
+    console.error(await page.locator('body').ariaSnapshot());
+  }
+  throw error;
 } finally { await browser.close(); }

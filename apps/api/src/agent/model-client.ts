@@ -1,26 +1,10 @@
 import { BudgetBlocked, type RequestAttribution, type UsageLedger } from './budget.js';
 import { boundedRequest, checkRequestCapacity } from './request-budget.js';
+import { modelUsage } from '@wangke/study-core/model/usage';
+export { modelUsage } from '@wangke/study-core/model/usage';
 
 type JsonObject = Record<string, unknown>;
 const object = (v: unknown): JsonObject | undefined => v && typeof v === 'object' && !Array.isArray(v) ? v as JsonObject : undefined;
-export function modelUsage(body: unknown) {
-  const usage = object(object(body)?.usage);
-  if (!usage) return undefined;
-  let input = usage.prompt_tokens ?? usage.input_tokens;
-  const output = usage.completion_tokens ?? usage.output_tokens;
-  const cache = object(usage.prompt_tokens_details)?.cached_tokens ?? usage.cache_read_input_tokens;
-  // Anthropic input_tokens excludes cache reads/writes. Account both at the
-  // configured input price; the ledger estimates writes at 2x input price.
-  if (usage.prompt_tokens === undefined && typeof input === 'number') {
-    for (const key of ['cache_read_input_tokens', 'cache_creation_input_tokens']) {
-      const count = usage[key];
-      if (count !== undefined && (typeof count !== 'number' || !Number.isSafeInteger(count) || count < 0)) return undefined;
-      input += typeof count === 'number' ? count : 0;
-    }
-  }
-  if (![input, output].every(v => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0)) return undefined;
-  return { input: input as number, output: output as number, ...(typeof cache === 'number' && Number.isSafeInteger(cache) && cache >= 0 ? { cache } : {}), ...(typeof usage.cache_creation_input_tokens === 'number' ? { cacheCreation: usage.cache_creation_input_tokens } : {}) };
-}
 export function retryAfter(value: string | null, time = Date.now()) {
   if (!value) return undefined;
   const seconds = Number(value);

@@ -13,7 +13,7 @@ import { useMarkdownStreaming } from '../markdown/streaming';
 type CodeLikeProps = { block?: unknown; lang?: unknown; children?: unknown };
 
 function isHtmlFence(props: CodeLikeProps): boolean {
-  return !!props.block && /^\s*html?\b/i.test(String(props.lang ?? ''));
+  return !!props.block && htmlFenceContentType(String(props.lang ?? '')) === 'interactive';
 }
 
 function isWidgetFence(props: CodeLikeProps): boolean {

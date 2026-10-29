@@ -71,20 +71,6 @@
   }
 }
 
-@media (min-width: 901px) {
-  .page-course-chat {
-    --chat-chrome-color: var(--background);
-  }
-
-  /* Chromium 在圆角 overflow:hidden 祖先下会把子级 backdrop 的渐变 mask
-     画成全不透明，产生等强度毛玻璃 + 硬切边。独立 clip-path 保留同样的圆角
-     裁切，但不走这条合成路径；main 自己仍负责限制消息与输入区的溢出。 */
-  .page-course-chat .page-shell__surface {
-    overflow: visible;
-    clip-path: inset(0 round var(--radius-2xl));
-  }
-}
-
 @media (prefers-reduced-transparency: reduce) {
   .page-course-chat .page-app-bar__blur {
     bottom: 0;

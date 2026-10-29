@@ -114,7 +114,7 @@ try {
       const store = new DatabaseStore(filename);
       let manager, runner, gateway;
       try {
-        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 21);
+        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 22);
         assert.deepEqual(store.db.pragma('foreign_key_check'), []);
         preserved(store.db, expected);
         const config = new CloudConfiguration(store, configDir);
@@ -151,7 +151,9 @@ try {
           assert.equal(String(url), 'https://migration.invalid/v1/chat/completions', 'fake model only');
           assert.equal(new Headers(init.headers).get('authorization'), `Bearer model-secret-${name}`);
           modelRequests++;
-          const payload = JSON.parse(init.body), result = payload.messages.findLast(message => message.role === 'tool');
+          const payload = JSON.parse(init.body);
+          const current = payload.messages.findLastIndex(message => message.role === 'user' && message.content === chainText);
+          const result = payload.messages.slice(current + 1).findLast(message => message.role === 'tool');
           if (!result) {
             assert.ok(payload.tools.some(tool => tool.function.name === echo.name));
             return toolResponse(echo.name, { text: chainText });

@@ -23,7 +23,7 @@
  */
 import assert from 'node:assert/strict';
 import { build } from 'esbuild';
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -65,6 +65,11 @@ await build({
   format: 'esm',
   platform: 'node',
   logLevel: 'silent',
+  loader: { '.md': 'text' },
+  plugins: [{ name: 'widget-runtime', setup(build) {
+    build.onResolve({ filter: /^@widget\/chart-runtime\?raw$/ }, () => ({ path: join(ROOT, 'node_modules/chart.js/dist/chart.umd.js'), namespace: 'widget-source' }));
+    build.onLoad({ filter: /.*/, namespace: 'widget-source' }, args => ({ contents: readFileSync(args.path, 'utf8'), loader: 'text' }));
+  } }],
   // 全部打进 bundle：产物落在临时目录里，外部依赖（zustand）在那儿解析不到
   define: { 'process.env.NODE_ENV': '"test"' },
 });
@@ -341,6 +346,72 @@ await test('中途 abort：AbortError 照旧抛给调用方（不被误判成「
     () => runAgentLoop([sys('系统提示'), u('问')], TOOLS, exec, { signal: ac.signal }),
     (e) => e.name === 'AbortError',
   );
+});
+
+const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+const until = async fn => { for (let i = 0; i < 200; i++) { if (fn()) return; await new Promise(r => setTimeout(r, 5)); } throw new Error('parallel test timeout'); };
+
+await test('并行读取：最多四路，乱序完成按调用 ID 回填，落库回调串行', async () => {
+  const calls = Array.from({ length: 6 }, (_, i) => call(`parallel-${i}`, 'search_material', { query: String(i) }));
+  const seen = serve([{ toolCalls: calls, finish: 'tool_calls' }, { content: '读取完成' }]);
+  const gates = calls.map(deferred), started = [], ended = [];
+  let persisting = 0, peakPersistence = 0;
+  const run = runAgentLoop([sys('系统提示'), u('读取六项')], TOOLS, async (_name, args) => {
+    const index = Number(args.query); started.push(index); await gates[index].promise;
+    if (index === 1) throw new Error('failed-read');
+    return `result-${index}`;
+  }, {
+    onToolEnd: (_name, _result, id) => ended.push(id),
+    onTranscript: async () => { peakPersistence = Math.max(peakPersistence, ++persisting); await new Promise(r => setTimeout(r, 1)); persisting--; },
+  });
+  await until(() => started.length === 4);
+  gates[3].resolve(); await until(() => ended.length === 1);
+  assert.deepEqual(started, [0, 1, 2, 3]);
+  assert.equal(ended[0], '0:parallel-3');
+  for (let i = 0; i < 3; i++) gates[i].resolve();
+  await until(() => started.length === 6);
+  gates[5].resolve(); gates[4].resolve();
+  const out = await run;
+  assert.deepEqual(out.filter(m => m.role === 'tool').map(m => m.tool_call_id), calls.map(c => c.id));
+  assert.match(out.find(m => m.tool_call_id === 'parallel-1').content, /failed-read/);
+  assert.equal(peakPersistence, 1);
+  assertAllRequestsLegal(seen, '并行读取');
+});
+
+await test('写入、用户确认和未知工具是屏障；checkpoint 包含此前全部结果', async () => {
+  const calls = [call('r1', 'read', { path: 'a' }), call('r2', 'read', { path: 'b' }),
+    call('edit', 'edit', {}), call('ask', 'ask_user', {}), call('unknown', 'custom', {}), call('r3', 'read', { path: 'c' })];
+  serve([{ toolCalls: calls, finish: 'tool_calls' }, { content: '完成' }]);
+  const gate = deferred(), started = [], ended = [];
+  let checkpoint;
+  const run = runAgentLoop([sys('系统提示'), u('读取修改确认')], TOOLS, async (name, args) => {
+    const key = args.path ?? name; started.push(key);
+    if (key === 'a' || key === 'b') await gate.promise;
+    else assert.equal(started.length - ended.length, 1, '屏障不能与其他工具重叠');
+    if (name === 'ask_user') assert.deepEqual(checkpoint.filter(m => m.role === 'tool').map(m => m.tool_call_id), ['r1', 'r2', 'edit']);
+    ended.push(key); return name === 'edit' ? '已修改' : 'ok';
+  }, { onCheckpoint: out => { checkpoint = [...out]; } });
+  await until(() => started.length === 2); assert.deepEqual(started, ['a', 'b']);
+  gate.resolve(); await run;
+  assert.deepEqual(started, ['a', 'b', 'edit', 'ask_user', 'custom', 'c']);
+});
+
+await test('并行读取中停止：排空在途任务，不再回调结果或启动下一批', async () => {
+  serve([{ toolCalls: Array.from({ length: 5 }, (_, i) => call(`cancel-${i}`, 'read', { path: String(i) })), finish: 'tool_calls' }]);
+  const ac = new AbortController(), gate = deferred(), started = [], ended = [];
+  const run = runAgentLoop([sys('系统提示'), u('读取')], TOOLS, async (_name, args) => { started.push(args.path); await gate.promise; return 'late'; },
+    { signal: ac.signal, onToolEnd: (...args) => ended.push(args) });
+  const rejection = assert.rejects(run, error => error.name === 'AbortError');
+  await until(() => started.length === 4); ac.abort(); gate.resolve(); await rejection;
+  assert.equal(started.length, 4); assert.deepEqual(ended, []);
+});
+
+await test('并行批次中的重复调用仍会停下，后续写入不执行', async () => {
+  const seen = serve([{ toolCalls: [call('a', 'read', { path: 'same' }), call('b', 'read', { path: 'same' }), call('c', 'edit', {})], finish: 'tool_calls' }, { content: '已收尾' }]);
+  const executed = [], stops = [];
+  await runAgentLoop([sys('系统提示'), u('读取')], TOOLS, async name => { executed.push(name); return 'ok'; }, { onStop: stop => stops.push(stop) });
+  assert.deepEqual(executed, ['read']); assert.equal(stops[0].reason, 'loop');
+  assertAllRequestsLegal(seen, '并行重复调用');
 });
 
 rmSync(OUT, { recursive: true, force: true });

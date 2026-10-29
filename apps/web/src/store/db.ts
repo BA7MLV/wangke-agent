@@ -235,6 +235,11 @@ export interface ChatSessionRow {
    * docs/plans/2026-10-15-recent-会话操作菜单-design.md §4。
    */
   archived?: boolean;
+  /** Stable routing affinity; not a cache identifier for individual requests. */
+  promptCacheKey?: string;
+  /** Durable whole-turn cut. Advances only on overflow, with headroom. */
+  contextCheckpoint?: { fromId: number; source: string; prefixHash?: string };
+  contextOmissions?: Array<[number, string]>;
 }
 
 /** 聊天消息附带的截图（仅存缩略图，大图随发随弃） */
@@ -268,6 +273,8 @@ export interface QuizState {
  * 正常完成是 done / error；挂起或中止时可能保留 running，非流式回放显示为「未完成」。
  */
 export interface ChatToolCall {
+  /** Invocation identity; optional for historical transcripts. */
+  id?: string;
   /** 工具开始时累计的 reasoning 字符数，用于重建「分析 → 工具 → 继续分析」。旧记录没有此字段。 */
   reasoningOffset?: number;
   /** 工具协议名（如 `search_transcript`）。展示文案一律现算 */
@@ -289,6 +296,8 @@ export interface ChatRow {
   sessionId: number;
   role: 'user' | 'assistant';
   content: string;
+  modelTrace?: import('@wangke/study-core/model/transcript').ModelTrace;
+  modelRequests?: import('@wangke/study-core/model/usage').ModelRequestRecord[];
   createdAt: number;
   /** 用户消息附带的截图（非索引字段，无需升级版本） */
   images?: ChatImage[];
@@ -354,6 +363,8 @@ export interface ChatRow {
   widget?: WidgetPayload;
   /** Ordered inline visuals. widget remains a last-item alias for older clients. */
   widgets?: WidgetPayload[];
+  /** Exact-source cache for explicit legacy html interactive fences; never inferred from bare HTML. */
+  legacyHtmlWorks?: { source: string; payload: WidgetPayload }[];
   /** 本机交互快照，绑定此消息及此版 widget；privateContent 不进入模型上下文。 */
   widgetState?: { widgetId: string; value: WidgetState };
   widgetStates?: Record<string, WidgetState>;

@@ -4,6 +4,7 @@ import { replaceArtifactFence, type ArtifactKind, type ArtifactLocation } from '
 import { uuid } from '../utils/uuid';
 import { messageWidgets } from '../harness/widgetLayout';
 import { rebaseResponseSegments } from '../utils/responseOrder';
+import { versionWidget } from '../harness/widgetProtocol';
 
 export interface ArtifactTarget {
   rowId: number; kind: ArtifactKind; location: ArtifactLocation; source: string; widgetId?: string;
@@ -48,7 +49,7 @@ export async function persistArtifactEdit(input: ArtifactTarget & { next: string
       if (matches.length !== 1) throw new Error('此 HTML 已变化或位置不唯一，请重新打开修改');
       const widget = matches[0];
       // Source changes invalidate old frames and snapshots; do not replay incompatible UI state.
-      const next = { ...widget, ...(widget.id ? { id: uuid() } : {}), html: input.next };
+      const next = versionWidget({ ...widget, html: input.next, revision: (widget.revision ?? 1) + 1 }, uuid());
       const states = { ...row.widgetStates };
       if (widget.id) delete states[widget.id];
       patch = {

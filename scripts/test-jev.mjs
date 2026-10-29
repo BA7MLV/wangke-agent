@@ -252,13 +252,16 @@ try {
   await test('同会话的压缩与发送串行，等待期间能停止，其他会话不受影响', async () => {
     const rows = history();
     const controller = new AbortController();
-    globalThis.fetch = async (_, init) => new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true }));
+    let started;
+    const fetching = new Promise(resolve => { started = resolve; });
+    globalThis.fetch = async (_, init) => { started(); return new Promise((_, reject) => init.signal.addEventListener('abort', () => reject(init.signal.reason), { once: true })); };
     const manual = api.prepareSessionHistory(106, rows, 50_000, '问题', config, { force: true, signal: controller.signal });
     assert.equal(api.useContextCompressionStore.getState().sessions[106].phase, 'compressing');
     const waiting = new AbortController();
     const send = api.prepareSessionHistory(106, rows, 50_000, '问题', config, { signal: waiting.signal });
     waiting.abort();
     await assert.rejects(send, (error) => error.name === 'AbortError');
+    await fetching; // durable plan hydration happens before the network request
     serve(() => 0.99);
     await api.prepareSessionHistory(107, rows, 50_000, '问题', config, { force: true });
     assert.equal(api.useContextCompressionStore.getState().sessions[107].phase, 'success');

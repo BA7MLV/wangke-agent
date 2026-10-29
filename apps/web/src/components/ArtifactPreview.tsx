@@ -15,5 +15,5 @@ export default function ArtifactPreview({ kind, source, location, libraries, dar
   if (kind === 'mermaid') return <MermaidBlock code={source} closed />;
   if (kind === 'svg') return <SvgBlock code={source} closed />;
   if (location === 'widget') return <WidgetBlock payload={{ html: source, libs: libraries ? [...libraries] : undefined }} dark={dark} disabled allowPopout={false} />;
-  return <HtmlAnswer source={source} contentType={htmlContentType ?? (location === 'html' ? 'interactive' : 'example')} allowPopout={false} />;
+  return <HtmlAnswer source={source} contentType={htmlContentType ?? 'example'} allowPopout={false} persistLegacy={false} />;
 }

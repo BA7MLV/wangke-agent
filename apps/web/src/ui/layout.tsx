@@ -256,7 +256,7 @@ function Sidebar({
       <div className="flex shrink-0 flex-col gap-1">
         {rail.items.filter((it) => it.isAction).map((it) => (
           <Button key={it.value} variant="ghost" data-testid={it.testId}
-            className="page-shell__nav-item h-11 min-h-11 w-full justify-start gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background"
+            className="sidebar-control page-shell__nav-item h-11 min-h-11 w-full justify-start gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted"
             onPress={() => { it.onClick(); onNavigate?.(); }}>
             <span className="page-shell__nav-icon" aria-hidden="true">{it.icon}</span>
             <span>{it.label}</span>
@@ -304,7 +304,7 @@ function Sidebar({
                  试过再挂一个 `aria-current="page"`（语义上更贴导航），但 React Aria 的
                  ListBoxItem 会把非它管理的 aria 属性滤掉 —— 实测 DOM 上根本不出现，
                  留着只会让后来的人以为它在生效。 */
-              className="page-shell__nav-item h-11 min-h-11 gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+              className="sidebar-control page-shell__nav-item h-11 min-h-11 gap-3 rounded-full border border-transparent px-3 text-sm font-medium text-muted"
             >
               <span className="page-shell__nav-icon" aria-hidden="true">
                 {it.icon}
@@ -411,7 +411,7 @@ function Sidebar({
                             }
                           : undefined
                       }
-                      className="recent-item group min-h-9 gap-3 rounded-full px-3 text-[0.8125rem] font-normal text-muted data-[hovered=true]:bg-background data-[selected=true]:bg-surface data-[selected=true]:font-medium data-[selected=true]:text-foreground"
+                      className="sidebar-control recent-item group min-h-9 gap-3 rounded-full px-3 text-[0.8125rem] font-normal text-muted"
                     >
                       {item.pendingReply ? (
                         <span className="grid size-6 shrink-0 place-items-center text-sm"
@@ -423,8 +423,8 @@ function Sidebar({
                           onPointerDown={(event) => event.stopPropagation()}
                           onMouseDown={(event) => event.stopPropagation()}
                           onClick={(event) => event.stopPropagation()}>
-                          <Button isIconOnly size="sm" variant="tertiary"
-                            className="size-6 min-w-0 rounded-md text-muted"
+                          <Button isIconOnly size="sm" variant="ghost"
+                            className="sidebar-control size-6 min-w-0 rounded-md text-muted"
                             aria-label={`取消置顶 ${item.label}`}
                             data-testid={`${item.testId ?? item.id}-unpin`}
                             onPress={item.onUnpin}>
@@ -480,8 +480,7 @@ function Sidebar({
                                  菜单开着的那一行例外常驻：菜单锚在这颗按钮上，
                                  锚点跟着鼠标移开而隐身，会变成「菜单浮在空气里」。 */
                               className={[
-                                'grid size-6 place-items-center rounded-md text-muted transition-opacity',
-                                'data-[hovered=true]:bg-background data-[hovered=true]:text-foreground',
+                                'sidebar-control grid size-6 place-items-center rounded-md text-muted transition-opacity',
                                 menuId === item.id
                                   ? 'opacity-100'
                                   : 'opacity-0 group-hover:opacity-100 max-[900px]:opacity-100',
@@ -638,7 +637,7 @@ export function PageShell({
     <Button
       isIconOnly
       variant="ghost"
-      className={`relative shrink-0 rounded-full${railCollapsed ? ' page-shell__nav-logo' : ''}`}
+      className={`sidebar-control relative shrink-0 rounded-full${railCollapsed ? ' page-shell__nav-logo' : ''}`}
       data-testid="nav-rail-toggle"
       aria-label={railCollapsed ? '展开侧边栏' : '收起侧边栏'}
       aria-expanded={!railCollapsed}
@@ -680,7 +679,7 @@ export function PageShell({
             </div>
             {railCollapsed ? <>{rail.items.map(item => (
               <span key={item.value} title={item.label}>
-                <Button isIconOnly variant="ghost" className="page-shell__rail-icon"
+                <Button isIconOnly variant="ghost" className="sidebar-control page-shell__rail-icon"
                   aria-label={item.label} aria-current={!item.isAction && item.value === rail.value ? 'page' : undefined}
                   data-testid={item.testId} onPress={item.onClick}>{item.icon}</Button>
               </span>

@@ -11,10 +11,16 @@ import {
   truncatedToolResult,
 } from './loopGuard';
 import { estimateTokens } from './context';
+import { messageTokens } from '@wangke/study-core/model/transcript';
+import { stableTools, cachePolicy } from '@wangke/study-core/model/cache';
+import { executeToolBatch, recordToolResult, TOOL_BATCH_GUIDANCE } from '@wangke/study-core/tool-batch';
+
+// Explicit side-effect-free operations; unknown and MCP tools are serial barriers.
+const parallelReads = new Set(['read', 'grep', 'search_transcript', 'get_transcript_range', 'search_material', 'get_material_range', 'use_skill', 'read_skill_reference', 'list_frames', 'get_learning_overview', 'list_courses', 'search_course_library', 'get_course_details', 'list_folders']);
 
 /**
  * 最小 agent 循环（参考 pi-mono）：消息列表 + 工具注册表 + tool-calling 循环 + 流式事件。
- * 每一轮都流式调 LLM：若模型返回 tool_calls 则依次执行工具、把结果追加为 tool 消息后继续；
+ * 每一轮都流式调 LLM：若模型返回 tool_calls 则有界并行读取、顺序执行副作用工具，回填结果后继续；
  * 否则该轮的正文增量即最终回答（通过 onDelta 流式透出）。
  *
  * ## 循环什么时候停
@@ -60,6 +66,9 @@ export interface AgentStopInfo {
 }
 
 export interface AgentCallbacks {
+  onRequest?: import('../api/siliconflow').ChatOptions['onRequest'];
+  cacheKey?: string;
+  onTranscript?: (out: ChatMessage[]) => void | Promise<void>;
   /** Explicit opt-in: background generation pipelines do not receive MCP tools. */
   mcpSessionId?: number;
   /** 正文流式增量 */
@@ -77,7 +86,7 @@ export interface AgentCallbacks {
   /** 新一轮 LLM 调用开始（round 从 0 起）；此前轮次流出的正文只是检索旁白，调用方可据此清空 */
   onRoundStart?: (round: number) => void;
   /** 工具调用开始/结束（用于 UI 状态提示） */
-  onToolStart?: (name: string, argsJson: string) => void;
+  onToolStart?: (name: string, argsJson: string, callId: string) => void;
   /**
    * 工具参数的流式增量（当前值是截至此刻的完整参数字符串）。
    *
@@ -85,7 +94,7 @@ export interface AgentCallbacks {
    * 已经可以执行」。它只给需要提前预览大参数的 UI（例如 HTML widget）用。
    */
   onToolCallDelta?: (call: ToolCallDelta) => void;
-  onToolEnd?: (name: string, result: string) => void;
+  onToolEnd?: (name: string, result: string, callId: string) => void;
   /**
    * 每次 `executeTool` **之前**通报当前累积的消息（`out`）。
    *
@@ -138,24 +147,26 @@ export async function runAgentLoop(
       executeTool = (name, args) => name.startsWith('mcp_') ? mcp.execute(name, args) : builtin(name, args);
       const original = cb;
       cb = { ...cb,
-        onToolStart: (name, args) => original.onToolStart?.(mcp.label(name), args),
-        onToolEnd: (name, result) => original.onToolEnd?.(mcp.label(name), result),
+        onToolStart: (name, args, id) => original.onToolStart?.(mcp.label(name), args, id),
+        onToolEnd: (name, result, id) => original.onToolEnd?.(mcp.label(name), result, id),
       };
       if (mcp.warnings.length) {
         const warning = `MCP: ${mcp.warnings.join('; ')}`;
         messages = [...messages, { role: 'system', content: warning }];
-        cb.onToolStart?.('MCP · connection', '{}'); cb.onToolEnd?.('MCP · connection', `Error: ${warning}`);
+        cb.onToolStart?.('MCP · connection', '{}', 'mcp:connection'); cb.onToolEnd?.('MCP · connection', `Error: ${warning}`, 'mcp:connection');
       }
     } catch (error) {
       if (cb.signal?.aborted) throw error;
-      cb.onToolStart?.('MCP · connection', '{}'); cb.onToolEnd?.('MCP · connection', 'Error: mcp_connection_failed');
+      cb.onToolStart?.('MCP · connection', '{}', 'mcp:connection'); cb.onToolEnd?.('MCP · connection', 'Error: mcp_connection_failed', 'mcp:connection');
     }
   }
   if (cloud.worker) maxRounds = Math.min(maxRounds, cloud.maxSteps);
   const settings = getSettings();
   const target = cb.target ?? targetOfSlot(settings, 'chat');
+  tools = stableTools(tools);
   const { catalogId, model } = target;
-  const out = [...messages];
+  const out = messages.map((message, index) => index === 0 && message.role === 'system' && typeof message.content === 'string' && !message.content.includes(TOOL_BATCH_GUIDANCE)
+    ? { ...message, content: `${message.content}\n${TOOL_BATCH_GUIDANCE}` } : message);
   const thinking = target.capabilities?.reasoningEffort === '' ? {} : cb.thinkingEffort ? thinkingParams(catalogId, model, cb.thinkingEffort, target.capabilities) : {};
   /** 护栏 1：循环检测的账本（同一工具 + 同一参数，资源变化后允许回读） */
   const ledger = new CallLedger();
@@ -169,7 +180,7 @@ export async function runAgentLoop(
   const tokenBudget = Math.max(
     2000,
     settings.contextWindow -
-      messages.reduce((n, m) => n + estimateTokens(textOf(m)), 0) -
+      messageTokens(out) - estimateTokens(JSON.stringify(tools)) -
       answerReserve(settings.contextWindow),
   );
   let toolTokens = 0;
@@ -190,7 +201,7 @@ export async function runAgentLoop(
     roundMaxTokens(
       outputLimitOf(catalogId, model, target.capabilities),
       effectiveContextWindow(catalogId, model, settings.contextWindow, target.capabilities),
-      out.reduce((n, m) => n + estimateTokens(textOf(m)), 0),
+      messageTokens(out) + estimateTokens(JSON.stringify(tools)),
     );
 
   for (let round = 0; round < maxRounds; round++) {
@@ -200,6 +211,8 @@ export async function runAgentLoop(
       {
         messages: out,
         tools,
+        cacheKey: cb.cacheKey,
+        onRequest: cb.onRequest,
         temperature: 0.3,
         max_tokens: budgetFor(),
         signal: cb.signal,
@@ -217,9 +230,11 @@ export async function runAgentLoop(
     // 也不能走收尾轮 —— 收尾请求基于的正是这个坏状态。撤掉它，上层出兜底文案。
     if (isUnreplayableTurn(msg.finish_reason)) {
       out.pop();
+      await cb.onTranscript?.(out);
       cb.onStop?.({ reason: 'error', rounds: round + 1, requestedTools: [], granted: false });
       return out;
     }
+    await cb.onTranscript?.(out);
 
     if (!msg.tool_calls || msg.tool_calls.length === 0) {
       // 有正文 = 模型真的答完了，正常收工
@@ -242,22 +257,32 @@ export async function runAgentLoop(
     if (truncatedByTokenLimit(msg.finish_reason)) {
       for (const call of msg.tool_calls) {
         const note = truncatedToolResult(call.function.name);
-        cb.onToolStart?.(call.function.name, call.function.arguments);
-        cb.onToolEnd?.(call.function.name, note);
+        cb.onToolStart?.(call.function.name, call.function.arguments, `${round}:${call.id}`);
+        cb.onToolEnd?.(call.function.name, note, `${round}:${call.id}`);
         out.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: note });
       }
+      await cb.onTranscript?.(out);
       continue;
     }
 
-    for (const call of msg.tool_calls) {
+    const calls = msg.tool_calls;
+    const resultStart = out.length;
+    let persistence = Promise.resolve();
+    await executeToolBatch(calls, {
+      signal: cb.signal,
+      shouldStop: () => stopped !== null,
+      // Background workers hold a single scoped permissionId; don't overlap permits.
+      canParallel: call => !cloud.worker && !mcpNames.has(call.function.name) && parallelReads.has(call.function.name),
+      execute: async call => {
       cb.signal?.throwIfAborted();
       // 原地打转：同样的工具 + 同样的参数，且期间没有成功写入改变读取结果。
       // 与其等它自己撞上限，不如停下来说清楚它在重复什么
       if (ledger.record(call.function.name, call.function.arguments)) {
         stopped = { reason: 'loop', rounds: round + 1, detail: call.function.name };
-        break;
+        return;
       }
-      cb.onToolStart?.(call.function.name, call.function.arguments);
+      const callId = `${round}:${call.id}`;
+      cb.onToolStart?.(call.function.name, call.function.arguments, callId);
       let result: string;
       try {
         // 挂起点落库：在 `executeTool` 之前把当前 `out` 交出去（见 onCheckpoint 注释）
@@ -268,8 +293,7 @@ export async function runAgentLoop(
         if (mcpNames.has(name) || ['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
           result = await executeTool(name, args);
         } else {
-          const reads = ['read', 'grep', 'search_transcript', 'get_transcript_range', 'search_material', 'get_material_range', 'use_skill', 'read_skill_reference', 'list_frames', 'get_learning_overview', 'list_courses', 'search_course_library', 'get_course_details', 'list_folders'];
-          if (cloud.worker && !reads.includes(name) && !['edit', 'edit_markdown'].includes(name)) throw new Error(`未注册权限的工具：${name}`);
+          if (cloud.worker && !parallelReads.has(name) && !['edit', 'edit_markdown'].includes(name)) throw new Error(`未注册权限的工具：${name}`);
           const capability = ['edit', 'edit_markdown'].includes(name) ? 'write' : 'read';
           result = await withToolPermission(capability, { tool: name, arguments: args }, () => executeTool(name, args));
         }
@@ -277,22 +301,26 @@ export async function runAgentLoop(
         if (cb.signal?.aborted) throw e;
         result = `工具执行失败：${e instanceof Error ? e.message : String(e)}`;
       }
+      cb.signal?.throwIfAborted();
       ledger.recordResult(call.function.name, result);
-      cb.onToolEnd?.(call.function.name, result);
+      cb.onToolEnd?.(call.function.name, result, callId);
       toolTokens += estimateTokens(result);
-      out.push({
+      recordToolResult(out, resultStart, calls, {
         role: 'tool',
         tool_call_id: call.id,
         name: call.function.name,
         content: result,
       });
+      const snapshot = [...out];
+      persistence = persistence.then(() => cb.onTranscript?.(snapshot));
       // 累积 token 超预算：停下来让模型用已经查到的材料收尾，
       // 再往下堆就会撞上下文窗口，而报出来的 400 对用户毫无意义
       if (toolTokens >= tokenBudget) {
-        stopped = { reason: 'tokens', rounds: round + 1, detail: String(Math.round(toolTokens)) };
-        break;
+        stopped ??= { reason: 'tokens', rounds: round + 1, detail: String(Math.round(toolTokens)) };
       }
-    }
+      await persistence;
+      },
+    });
     if (stopped) break;
   }
   // 轮次用完但没人触发别的护栏 → 这是「轮次」这条闸（maxRounds = Infinity 时永远进不来）
@@ -315,6 +343,9 @@ export async function runAgentLoop(
       {
         messages: out,
         temperature: 0.3,
+        cacheKey: cb.cacheKey,
+        onRequest: cb.onRequest,
+        ...(cachePolicy(target) !== 'none' ? { tools, tool_choice: 'none' as const } : {}),
         max_tokens: budgetFor(),
         signal: cb.signal,
         ...thinking,
@@ -325,6 +356,7 @@ export async function runAgentLoop(
     );
     if (textOf(finalMsg).trim()) {
       out.push(finalMsg);
+      await cb.onTranscript?.(out);
       cb.onStop?.({
         reason: stop.reason,
         rounds: stop.rounds,
@@ -350,6 +382,7 @@ export async function runAgentLoop(
     requestedTools: pending,
     granted: false,
   });
+  await cb.onTranscript?.(out);
   return out;
 }
 

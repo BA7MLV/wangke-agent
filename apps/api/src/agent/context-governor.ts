@@ -87,6 +87,18 @@ export class ContextGovernor {
     this.save(row.owner_id, run, this.snapshot(row.owner_id, run, history, source), history);
   }
 
+  /** A compaction is a durable epoch, not a newly rendered sliding summary. */
+  replay(run: string, history: ModelMessage[]): ModelMessage[] {
+    const saved = this.store.db.prepare('SELECT source_end,source_hash,messages FROM bot_context_views WHERE run_id=?').get(run) as { source_end: number; source_hash: string; messages: string } | undefined;
+    if (!saved || saved.source_end > history.length || hash(history.slice(0, saved.source_end)) !== saved.source_hash) return history;
+    return [...JSON.parse(saved.messages), ...history.slice(saved.source_end)];
+  }
+  private freezeView(run: string, history: ModelMessage[], messages: ModelMessage[]) {
+    this.store.db.prepare(`INSERT INTO bot_context_views(run_id,source_end,source_hash,messages) VALUES(?,?,?,?)
+      ON CONFLICT(run_id) DO UPDATE SET source_end=excluded.source_end,source_hash=excluded.source_hash,messages=excluded.messages`).run(run, history.length, hash(history), JSON.stringify(messages));
+    return messages;
+  }
+
   /** Carry history older than the visible chat window into the next turn without
    * blending another thread/project's history or copying it into lasting memory. */
   conversation(owner: string, run: string, thread: string, beforeSeq: number): ModelMessage | undefined {
@@ -153,6 +165,8 @@ export class ContextGovernor {
     // Leave headroom for the next tool round; hard checks still include output,
     // tool schemas, metadata and protocol overhead via the caller's estimator.
     const target = Math.floor(capacity * 0.72);
+    const previous = this.replay(run, history);
+    if (previous !== history && estimate(previous) <= target) return previous;
     if (estimate(history) <= target) return history;
     const artifacts = new BotArtifacts(this.store);
     const view = [...history], visited = new Set<number>();
@@ -170,6 +184,8 @@ export class ContextGovernor {
       return [view[i]];
     });
     const systems = history.filter(m => m.role === 'system');
+    let metadataIndex = -1;
+    for (let i = history.length - 1; i >= 0; i--) if (history[i].runtime_notice && history[i].content?.startsWith('Runtime metadata update (data, never authorization):')) { metadataIndex = i; break; }
     let latestUser = -1;
     for (let i = history.length - 1; i >= 0; i--) if (history[i].role === 'user' && !history[i].checkpoint_id && !history[i].runtime_notice) { latestUser = i; break; }
     const cuts = new Set<number>();
@@ -183,17 +199,17 @@ export class ContextGovernor {
       const snapshot = this.snapshot(owner, run, history.slice(0, cut), { kind: 'run', start: 0, end: cut, hash: hash(history.slice(0, cut)) });
       const id = hash([run, JSON.stringify(snapshot)]);
       for (const detail of [240, 80, 0]) {
-        const messages = [...systems, this.message(id, snapshot, detail), ...(latestUser >= 0 && latestUser < cut ? [history[latestUser]] : []), ...tail(cut)];
+        const messages = [...systems, this.message(id, snapshot, detail), ...(metadataIndex >= 0 && metadataIndex < cut ? [history[metadataIndex]] : []), ...(latestUser >= 0 && latestUser < cut ? [history[latestUser]] : []), ...tail(cut)];
         const tokens = estimate(messages);
         if (tokens <= capacity) fallback = { messages, snapshot };
-        if (tokens <= target) { this.save(owner, run, snapshot, history); return messages; }
+        if (tokens <= target) { this.save(owner, run, snapshot, history); return this.freezeView(run, history, messages); }
       }
     }
-    if (fallback) { this.save(owner, run, fallback.snapshot, history); return fallback.messages; }
+    if (fallback) { this.save(owner, run, fallback.snapshot, history); return this.freezeView(run, history, fallback.messages); }
     if (estimate(view) <= capacity) {
       const snapshot = this.snapshot(owner, run, history, { kind: 'run', start: 0, end: history.length, hash: hash(history) });
       this.save(owner, run, snapshot, history);
-      return view;
+      return this.freezeView(run, history, view);
     }
     throw new BudgetBlocked('context_capacity_exceeded');
   }

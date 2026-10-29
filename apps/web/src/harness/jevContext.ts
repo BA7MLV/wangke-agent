@@ -1,6 +1,7 @@
 import { evaluateNouls, fitsJevRequest, type JevRequest, type NoulQuestion } from '../api/typesafe';
 import type { JevSettings } from '../store/settings';
 import { estimateTokens, fitHistoryToBudget } from './context';
+import { replayTrace, messageTokens } from '@wangke/study-core/model/transcript';
 
 export interface HistoryRow {
   role: string;
@@ -13,13 +14,15 @@ export interface HistoryRow {
 function groupTurns<T extends HistoryRow>(rows: T[]): T[][] {
   const turns: T[][] = [];
   for (const row of rows) {
-    if (row.role === 'user' || turns.length === 0) turns.push([]);
+    if (row.role === 'user' && replayTrace(row)?.length !== 0 || turns.length === 0) turns.push([]);
     turns[turns.length - 1].push(row);
   }
   return turns;
 }
 
-const cost = (rows: HistoryRow[]) => rows.reduce((sum, row) => sum + estimateTokens(row.content), 0);
+const cost = (rows: HistoryRow[]) => rows.reduce((sum, row) => sum + (replayTrace(row) ? messageTokens(replayTrace(row)!) : estimateTokens(row.content)), 0);
+const evidence = (row: HistoryRow) => ({ role: row.role, content: row.content,
+  ...(replayTrace(row) ? { modelHistory: replayTrace(row)!.map(({ role, content, tool_calls, tool_call_id }) => ({ role, content, tool_calls, tool_call_id })) } : {}) });
 
 function fitWholeTurns<T extends HistoryRow>(turns: T[][], budget: number): T[] {
   const out: T[][] = [];
@@ -49,10 +52,12 @@ export async function prepareHistoryWithJev<T extends HistoryRow>(
     onCompressed?: (turns: number) => void;
     onOmitted?: (rows: T[]) => void;
     onError?: (error: unknown) => void;
+    /** The session owner applies a durable whole-turn checkpoint afterwards. */
+    deferFit?: boolean;
   } = {},
 ): Promise<T[]> {
   options.signal?.throwIfAborted();
-  const fallback = () => fitHistoryToBudget(rows, budget);
+  const fallback = () => options.deferFit ? rows : fitHistoryToBudget(rows, budget);
   if (!config.contextCompression || !config.apiKey.trim()) return fallback();
   // 短对话不增加一次远程调用。异常角色（尤其 tool/system）不参与语义删除。
   if ((!options.force && cost(rows) < budget) ||
@@ -61,7 +66,7 @@ export async function prepareHistoryWithJev<T extends HistoryRow>(
   if (turns.length <= 2) return fallback();
   const latest = turns.slice(-2).flat();
   if (cost(latest) > budget) return fallback();
-  const latestText = latest.map(({ role, content }) => ({ role, content }));
+  const latestText = latest.map(evidence);
   const buildRequest = (indices: number[]): JevRequest => {
     const questions: Record<string, NoulQuestion> = {};
     for (const i of indices) {
@@ -78,7 +83,7 @@ export async function prepareHistoryWithJev<T extends HistoryRow>(
       state: {
         current_request: query,
         latest_turns: latestText,
-        older_turns: indices.map((i) => ({ id: `turn_${i}`, messages: turns[i].map(({ role, content }) => ({ role, content })) })),
+        older_turns: indices.map((i) => ({ id: `turn_${i}`, messages: turns[i].map(evidence) })),
       },
       questions,
     };
@@ -112,7 +117,7 @@ export async function prepareHistoryWithJev<T extends HistoryRow>(
     });
     if (omitted.size === 0) return fallback();
     const kept = turns.filter((_, i) => !omitted.has(i));
-    const result = fitWholeTurns(kept, budget);
+    const result = options.deferFit ? kept.flat() : fitWholeTurns(kept, budget);
     options.onOmitted?.(turns.filter((_, i) => omitted.has(i)).flat());
     options.onCompressed?.(omitted.size);
     return result;

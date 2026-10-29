@@ -44,7 +44,7 @@ try {
   const composer = page.getByRole('textbox', { name: '给 AI 助手发送消息' });
   await composer.waitFor();
   await page.waitForFunction(async () => (await window.__artifactTestImport('/src/store/courseChat.ts')).useCourseChat.getState().ready);
-  const initial = '保留正文 SECRET_OTHER_CONTENT\n\n```diagram title="函数"\n{"type":"plot","curves":[{"fn":"x^2"}]}\n```\n\n保留另一张图\n```diagram\n{"type":"chart","kind":"bar","data":[{"label":"不改","value":4}]}\n```\n\n```html\n<p>old static</p>\n```';
+  const initial = '保留正文 SECRET_OTHER_CONTENT\n\n```diagram title="函数"\n{"type":"plot","curves":[{"fn":"x^2"}]}\n```\n\n保留另一张图\n```diagram\n{"type":"chart","kind":"bar","data":[{"label":"不改","value":4}]}\n```\n\n```html interactive\n<p>old static</p>\n```';
   const widgetSource = '<section><h3>原来的交互图</h3><label>系数<input type="range" min="1" max="5" value="2"></label><script>document.querySelector("section").dataset.run = String(Math.random());</script></section>';
   const { rowId, sessionId, otherSessionId } = await page.evaluate(async ({ content, widgetSource }) => {
     const { db } = await window.__artifactTestImport('/src/store/db.ts');
@@ -65,7 +65,8 @@ try {
   const first = diagrams.nth(0), second = diagrams.nth(1);
   const panel = (block) => block.getByTestId('artifact-edit-panel');
   const begin = async (block, instruction) => {
-    await block.getByRole('button', { name: '修改此图', exact: true }).click();
+    await block.getByRole('button', { name: '修改此图', exact: true }).focus();
+    await block.getByRole('button', { name: '修改此图', exact: true }).press('Enter');
     await panel(block).getByRole('textbox', { name: '修改要求', exact: true }).fill(instruction);
     await panel(block).getByRole('button', { name: '生成局部修改', exact: true }).click();
   };
@@ -82,7 +83,9 @@ try {
   await composer.press('Enter');
   await page.getByText('独立修改不阻塞正常对话', { exact: true }).waitFor();
   await page.waitForFunction(async () => !(await window.__artifactTestImport('/src/store/courseChat.ts')).useCourseChat.getState().loading);
-  await panel(first).getByRole('button', { name: '收起', exact: true }).click();
+  // The conversation has just autoscrolled; keyboard activation avoids a moving pointer target.
+  await panel(first).getByRole('button', { name: '收起', exact: true }).focus();
+  await panel(first).getByRole('button', { name: '收起', exact: true }).press('Enter');
   await first.getByTestId('artifact-edit-status').getByRole('button', { name: '查看进度' }).waitFor();
   plan({ edits: [{ search: '"value":4', replace: '"value":7' }] });
   await begin(second, '把条形值改为 7');
@@ -160,7 +163,11 @@ try {
   assert.equal(await originalFrame().getByRole('slider').inputValue(), '2', 'preview interaction never changes the original');
   assert.equal(await originalFrame().locator('section').getAttribute('data-run'), runToken, 'generating/previewing never remounts the original');
   assert.equal((await readRow()).widget.html, widgetSource);
-  assert.equal(await preview.getByTestId('widget-more').count(), 0, 'preview has no paid follow-up, editing or popout controls');
+  await preview.getByTestId('widget-more').click();
+  await page.getByRole('menuitem', { name: '查看 HTML 源码', exact: true }).waitFor();
+  assert.equal(await page.getByTestId('widget-open').count(), 0, 'preview has no popout');
+  assert.equal(await page.getByTestId('widget-edit').count(), 0, 'preview has no editing control');
+  await page.keyboard.press('Escape');
   const countBeforePreview = requests.length;
   const hostDenied = await previewFrame().locator('body').evaluate(() => { try { return !parent.document.body; } catch { return true; } });
   assert.ok(hostDenied);
@@ -207,4 +214,8 @@ try {
   assert.deepEqual(errors, []);
   assert.equal(plans.length, 0);
   console.log('PASS: non-modal editing, parallel independent figures, collapse/session-switch survival, visual previews, explicit apply/undo, cancellation, invalid schema, isolated requests/sandbox, 320/390/768px layout and refresh persistence');
+} catch (error) {
+  const page = browser.contexts()[0]?.pages()[0];
+  if (page) console.error((await page.locator('body').innerText()).slice(-5000));
+  throw error;
 } finally { await browser.close(); }

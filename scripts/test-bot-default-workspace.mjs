@@ -59,8 +59,8 @@ try {
       return output;
     },
     fetch: async (_url, init) => {
-      const body = JSON.parse(init.body), last = body.messages.at(-1);
-      assert.match(body.messages[0].content, /Default Bot workspace:/);
+      const body = JSON.parse(init.body), last = body.messages.findLast(message => message.role === 'tool');
+      assert.ok(body.messages.some(message => /Default Bot workspace:/.test(message.content ?? '')), 'workspace metadata reaches the model');
       assert.ok(body.tools.some(t => t.function.name === 'workspace'));
       assert.ok(body.tools.some(t => t.function.name === 'settings'), 'ordinary Bot keeps its general tools');
       switch (++calls) {
@@ -156,7 +156,12 @@ try {
       try { await new Promise(resolve => setTimeout(resolve, 30)); return { stdout: 'ok', stderr: '', exitCode: 0 }; }
       finally { active--; }
     },
-    fetch: async (_url, init) => JSON.parse(init.body).messages.some(m => m.role === 'tool') ? done() : tool('shell', { command: 'pwd' }),
+    fetch: async (_url, init) => {
+      const messages = JSON.parse(init.body).messages;
+      // Persisted history may contain earlier tool calls; inspect this request's turn.
+      const current = messages.findLastIndex(m => m.role === 'user' && m.content === 'run shell');
+      return messages.slice(current + 1).some(m => m.role === 'tool') ? done() : tool('shell', { command: 'pwd' });
+    },
   });
   runner.start(); await until(() => runs.every(id => ['completed', 'failed', 'paused'].includes(status(id)))); await runner.close();
   assert.ok(runs.every(id => status(id) === 'completed')); assert.equal(executions, 3);

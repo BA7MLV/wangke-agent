@@ -248,6 +248,35 @@ export class ResourceFiles {
     this.index(owner, mapped.project_id, { ...file, projectId: mapped.project_id });
     return mapped;
   }
+  /** Playback is read-only: no migration, indexing or directory scans per seek. */
+  openCourse(owner: string, id: string) {
+    const course = this.records.get(owner, 'videos', id);
+    const reference = this.records.get(owner, 'courseFiles', id);
+    if (!course || course.fileDeleted || !reference) throw new ProjectError('project_file_not_found', 404);
+    const mapped = this.placement(owner, id);
+    if (mapped) {
+      this.projects.get(owner, mapped.project_id);
+      if (process.platform !== 'linux') this.projects.assertIdle(mapped.project_id);
+      return { ...this.projects.files.open(mapped.project_id, mapped.path), mimeType: course.mimeType ?? reference.mimeType ?? 'application/octet-stream' };
+    }
+    // Old uploads can play before the resource library has migrated them. Never
+    // fall back to the backup after a mapped resource is removed from disk.
+    const edited = this.records.get(owner, 'files', id);
+    const sourceId = edited?.blob?.$file ?? reference.fileId;
+    const source = this.db.prepare('SELECT storage_name,mime_type FROM files WHERE id=? AND owner_id=?').get(sourceId ?? '', owner) as { storage_name: string; mime_type: string } | undefined;
+    if (!source) throw new ProjectError('project_file_not_found', 404);
+    const filename = path.resolve(this.filesDir, source.storage_name);
+    if (path.dirname(filename) !== path.resolve(this.filesDir)) throw new ProjectError('project_file_not_found', 404);
+    let fd: number;
+    try { fd = fs.openSync(filename, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK); }
+    catch (error) {
+      if (['ENOENT', 'ELOOP'].includes((error as NodeJS.ErrnoException).code ?? '')) throw new ProjectError('project_file_not_found', 404);
+      throw error;
+    }
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.nlink !== 1) { fs.closeSync(fd); throw new ProjectError('project_path_denied', 403); }
+    return { fd, size: stat.size, revision: `${stat.ino}:${stat.size}:${stat.mtimeMs}:${stat.ctimeMs}`, mimeType: source.mime_type };
+  }
   saveText(owner: string, id: string, text: string, expected: string) {
     const mapped = this.course(owner, id);
     this.projects.writable(owner, mapped.project_id); this.projects.assertIdle(mapped.project_id);

@@ -21,7 +21,7 @@ export function processSteps(reasoning: string, calls: ChatToolCall[]): ProcessS
   if (!ordered) appendReasoning(reasoning.length);
   calls.forEach((call, index) => {
     if (ordered) appendReasoning(Math.max(cursor, Math.min(reasoning.length, call.reasoningOffset!)));
-    steps.push({ kind: 'tool', key: `tool-${index}`, call });
+    steps.push({ kind: 'tool', key: call.id ? `tool-${call.id}` : `tool-${index}`, call });
   });
   appendReasoning(reasoning.length);
   return steps;
@@ -37,9 +37,11 @@ export function processTitle({ streaming, phase, calls, hint, waiting }: {
   if (waiting) return calls.some((call) => call.name === 'ask_user' && call.status === 'running')
     ? '等待你的回答' : '等待你的确认';
   if (!streaming) return '思考过程';
-  const acting = calls.find((call) => call.status === 'running');
+  const activeCalls = calls.filter((call) => call.status === 'running');
+  const acting = activeCalls[0];
   if (acting && (!phase || phase === 'tool')) {
     if (acting.name === 'ask_user') return '等待你的回答';
+    if (activeCalls.length > 1) return `正在并行调用 ${activeCalls.length} 个工具…`;
     const { label, detail } = toolDisplay(acting.name, acting.detail);
     return `正在${label}${detail ? `：${detail}` : '…'}`;
   }

@@ -1,8 +1,7 @@
-import fs from 'node:fs';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import { ResourceFiles } from './resources.js';
 import { ProjectError } from './files.js';
-import { byteRange } from '../cloud/files.js';
+import { sendPrivateFile } from '../cloud/file-response.js';
 
 export function registerResourceRoutes(app: FastifyInstance, resources: ResourceFiles,
   requireAuth: (request: FastifyRequest, reply: FastifyReply) => { id: string } | null,
@@ -28,19 +27,15 @@ export function registerResourceRoutes(app: FastifyInstance, resources: Resource
     resources.move(user.id, b.projectId, b.path, b.targetProjectId, b.target, b.revision);
     return { moved: true };
   });
-  app.get<{ Params: { id: string } }>('/api/v1/resources/courses/:id', async (request, reply) => {
+  const readCourse = async (request: FastifyRequest<{ Params: { id: string } }>, reply: FastifyReply) => {
     const user = requireAuth(request, reply); if (!user) return;
-    const mapped = resources.course(user.id, request.params.id);
-    const file = resources.projects.files.open(mapped.project_id, mapped.path);
-    const course = resources.records.get(user.id, 'videos', request.params.id);
-    reply.type(course?.mimeType ?? 'application/octet-stream').header('accept-ranges', 'bytes')
-      .header('content-disposition', 'attachment').header('x-content-type-options', 'nosniff');
-    const range = byteRange(request.headers.range, file.size);
-    if (range === false) { fs.closeSync(file.fd); return reply.code(416).header('content-range', `bytes */${file.size}`).send(); }
-    if (range) reply.code(206).header('content-range', `bytes ${range.start}-${range.end}/${file.size}`).header('content-length', range.end - range.start + 1);
-    else reply.header('content-length', file.size);
-    return reply.send(fs.createReadStream('', { fd: file.fd, autoClose: true, ...(range || {}) }));
-  });
+    const file = resources.openCourse(user.id, request.params.id);
+    return sendPrivateFile(request, reply, file, file.mimeType);
+  };
+  // Fastify's automatically generated HEAD route recalculates Content-Length
+  // from its empty payload. An explicit route preserves the actual file size.
+  app.head('/api/v1/resources/courses/:id', readCourse);
+  app.get('/api/v1/resources/courses/:id', { exposeHeadRoute: false }, readCourse);
   app.post<{ Params: { id: string }; Body: { text: string; expected: string } }>('/api/v1/resources/courses/:id/text', async (request, reply) => {
     if (!checkOrigin(request, reply)) return;
     const user = requireAuth(request, reply); if (!user) return;

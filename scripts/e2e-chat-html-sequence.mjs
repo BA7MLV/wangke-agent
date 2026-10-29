@@ -22,7 +22,7 @@ try {
   const errors = [];
   page.on('pageerror', (error) => errors.push(error.message));
   let mode = 'mixed', requests = 0;
-  const mixed = '```html\n<div><h3>HTML 第一题</h3><p>1 + 1 = ?</p></div>\n```\n\n第一题的讲解。\n\n~~~html\n<div><h3>HTML 第二题</h3><p>2 + 2 = ?</p></div>\n~~~\n\n第二题的讲解。\n\n<section><h3>HTML 第三题</h3><p>3 + 3 = ?</p></section>\n\n三道题全部输出完成。';
+  const mixed = '```html interactive\n<div><h3>HTML 第一题</h3><p>1 + 1 = ?</p></div>\n```\n\n第一题的讲解。\n\n~~~html interactive\n<div><h3>HTML 第二题</h3><p>2 + 2 = ?</p></div>\n~~~\n\n第二题的讲解。\n\n```html interactive\n<section><h3>HTML 第三题</h3><p>3 + 3 = ?</p></section>\n```\n\n三道题全部输出完成。';
   await context.route('https://html-sequence.test/**', async (route) => {
     const body = route.request().postDataJSON();
     if (!body.stream) return route.fulfill({ json: { choices: [{ message: { role: 'assistant', content: '连续 HTML 练习' } }] } });
@@ -87,6 +87,9 @@ try {
     return (await window.__htmlTestImport('/src/store/db.ts')).db.chats.get(useCourseChat.getState().messages.at(-1).rowId);
   });
   assert.equal(row.widgets.length, 3);
+  assert.ok(row.widgets.every(widget => widget.kind === 'html' && widget.schemaVersion === 1 && widget.revision === 1 && widget.source === 'tool'));
+  assert.equal(row.interrupted, undefined, 'completion clears the tool-delivery checkpoint');
+  assert.equal(await page.evaluate(async sid => (await window.__htmlTestImport('/src/store/db.ts')).db.chats.where('sessionId').equals(sid).filter(row => row.role === 'assistant').count(), row.sessionId), 1, 'tool deliveries and final text share a single persisted row');
   for (let number = 1; number <= 3; number++) assert.ok(row.content.includes(`第 ${number} 题讲解。`));
 
   mode = 'raw-rounds';
@@ -96,8 +99,8 @@ try {
   await composer.press('Enter');
   await page.getByText('分轮出题完成。', { exact: true }).waitFor();
   await waitDone();
-  for (let number = 1; number <= 3; number++) await htmlAnswers.nth(number - 1).getByTestId('widget-frame').contentFrame().getByText(`连续 HTML 第 ${number} 题`, { exact: true }).waitFor();
-  assert.equal(await htmlAnswers.count(), 3, 'raw/fenced HTML remains visible across retrieval rounds');
+  for (let number = 1; number <= 3; number++) await page.locator('pre code').filter({ hasText: `连续 HTML 第 ${number} 题` }).waitFor();
+  assert.equal(await page.getByTestId('widget-frame').count(), 0, 'raw/fenced HTML remains code across retrieval rounds');
   assert.equal(requests, 3);
 
   const qa = await page.evaluate(async () => {
@@ -116,6 +119,19 @@ try {
   for (let number = 1; number <= 3; number++) assert.ok(qa.result.content.includes(`连续 HTML 第 ${number} 题`), 'course runner also persists all earlier HTML');
   assert.equal(qa.streamed.trim(), qa.result.content, 'course progress and final content agree across rounds');
   assert.equal(qa.appended.trim(), qa.appendResult.content, 'append-only sinks do not receive duplicated prefixes');
+  mode = 'widgets';
+  const qaWidgets = await page.evaluate(async () => {
+    const { runQa } = await window.__htmlTestImport('/src/harness/qaRunner.ts');
+    const { db } = await window.__htmlTestImport('/src/store/db.ts');
+    let streamed = '';
+    const result = await runQa({ videoId: 'html-sequence-course', sessionId: 7002, text: '工具生成三幅作品' }, {
+      onDelta: delta => { streamed += delta; },
+    });
+    return { result, streamed, count: await db.chats.where('sessionId').equals(7002).filter(row => row.role === 'assistant').count() };
+  });
+  assert.equal(qaWidgets.streamed.trim(), qaWidgets.result.content, 'host-inserted widget references reach append-only course sinks');
+  assert.equal(qaWidgets.result.widgets.length, 3);
+  assert.equal(qaWidgets.count, 1, 'course tool deliveries update the final row');
   assert.deepEqual(errors, []);
   console.log('PASS: three mixed HTML questions, ordered prose, refresh, three widget rounds, raw HTML across retrieval rounds, and course runner persistence/progress.');
 } finally {

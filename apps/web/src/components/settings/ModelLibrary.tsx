@@ -14,7 +14,7 @@ const slots: ModelSlot[] = ['chat', 'vision', 'asr', 'decision'];
 const capabilities = ['text', 'image', 'audio', 'video', 'pdf'];
 type Draft = SavedModel & { contextWindowText: string; maxOutputTokensText: string };
 
-export default function ModelLibrary({ providerId, discovered = [], checking, onRefresh, note, allowDecision = true, refreshLabel = '查找模型' }: {
+export default function ModelLibrary({ providerId, discovered = [], checking, onRefresh, note, allowDecision = true, refreshLabel = '获取模型列表' }: {
   providerId: string;
   discovered?: DiscoveredModel[];
   checking: boolean;
@@ -142,7 +142,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
         </div>)}
         {!filtered.length && <p role="status" className="py-5 text-sm text-muted">{saved.length ? '没有匹配的已保存模型。' : '还没有添加模型，请从下方接口列表选择添加；接口不支持列出模型时，可点击“新模型”手动添加。'}</p>}
       </div>
-      {!checking && !available.length && <p className="text-xs text-muted" data-testid="discovery-empty">{discovered.length ? '接口返回的模型均已添加。' : '暂无接口模型列表，可点击“查找模型”重试，或点击“新模型”手动添加。models.dev 仅补充模型参数，不提供此连接的可用模型列表。'}</p>}
+      {!checking && !available.length && <p className="text-xs text-muted" data-testid="discovery-empty">{discovered.length ? '接口返回的模型均已添加。' : '暂无接口模型列表，可点击“获取模型列表”重试，或点击“新模型”手动添加。models.dev 仅补充模型参数，不提供此连接的可用模型列表。'}</p>}
       {available.length > 0 && <div className="t-acc rounded-xl border border-border" data-testid="discovered-models" data-open={discoveryOpen}>
         <button type="button" className="t-acc-head flex w-full cursor-pointer items-center justify-between gap-2 rounded-xl px-3 py-3 text-left text-sm font-medium tabular-nums focus-visible:outline-2 focus-visible:outline-focus"
           data-testid="discovered-model-select" aria-expanded={discoveryOpen} aria-controls={discoveryId} onClick={() => {

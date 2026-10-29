@@ -8,11 +8,12 @@ import { SectionCard, confirmDialog, promptDialog, toast } from '../ui';
 import { SettingRow } from '../components/settings/controls';
 import ArchivedSessionsCard from '../components/settings/ArchivedSessionsCard';
 import { logoutCloud } from './logout';
+import ServerStorageCard from './ServerStorageCard';
 
 /**
  * 设置 → 数据（云端）。
  *
- * 只放「已积累的东西」：同步状态、旧数据导入、已归档会话、登录凭据，最后是退出与重置。
+ * 只放「已积累的东西」：服务器存储、同步状态、旧数据导入、已归档会话、登录凭据，最后是退出与重置。
  * Bot 权限、消息渠道、任务各回各的模块，不再全部堆在这一屏。
  *
  * 处理逻辑：
@@ -87,6 +88,7 @@ export default function DataSettings() {
 
   return (
     <>
+      {!cloud.worker && <ServerStorageCard />}
       <SectionCard title="同步" testId="cloud-sync-card">
         <SettingRow label="状态">
           <span className={`text-sm ${sync.error ? 'text-danger' : 'text-muted'}`} role="status">{syncLabel}</span>

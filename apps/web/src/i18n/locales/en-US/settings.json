@@ -1,4 +1,14 @@
 {
+  "cacheUsage": {
+    "title": "Cache usage · Last 24 hours",
+    "description": "Weighted by provider-reported input tokens. Missing cache fields mean unknown, not a cache miss. Local statistics follow retained chat history.",
+    "refresh": "Load statistics",
+    "unknown": "Unknown",
+    "error": "Could not load statistics. Please retry.",
+    "summary": "Cache hit rate {{rate}} · {{measured}} / {{requests}} requests report cache usage",
+    "detail": "{{rate}} · read {{read}} / write {{write}} tokens · coverage {{measured}} / {{requests}}",
+    "export": "Export baseline JSON"
+  },
   "modules": {
     "models": "Models",
     "agent": "Agent",
@@ -12,6 +22,31 @@
     "study": "Study",
     "skills": "Skills & MCP",
     "data": "Data"
+  },
+  "serverStorage": {
+    "title": "Server storage",
+    "refresh": "Refresh",
+    "loading": "Measuring server storage…",
+    "error": "Could not load server storage. Refresh to try again.",
+    "refreshError": "Refresh failed. Showing the previous measurement; please try again.",
+    "total": "App data size",
+    "partialTotal": "Data measured so far",
+    "partial": "Some directories could not be read or the scan limit was reached. These results are incomplete; try refreshing later.",
+    "categories": {
+      "database": "Database and journals",
+      "files": "Uploads and attachments",
+      "workspaces": "Resources and project files",
+      "system": "System and memory files",
+      "other": "Other persistent data"
+    },
+    "sizeNote": "File sizes in the server's persistent directories, counting hard links once. Other data includes configuration and backups stored in these directories.",
+    "disk": "Data disk",
+    "diskNumber": "Data disk {{index}}",
+    "available": "{{size}} available",
+    "unavailable": "Disk capacity unavailable",
+    "diskUsage": "{{used}} used / {{total}} total",
+    "diskNote": "Disk usage includes other applications on the same disk. App file sizes may differ from allocated disk space.",
+    "updated": "Measured: {{time}}"
   },
   "mcp": {
     "transport": "Transport", "stdioHint": "Commands run on the backend server. Install dependencies first; use docker for an isolated container. The connection manager starts the process and closes it when disabled.", "command": "Executable", "args": "Arguments (JSON array)", "cwd": "Working directory (absolute server path, optional)", "env": "Environment (JSON, blank to keep)", "logs": "Process logs", "noLogs": "No process logs yet.", "import": "Import JSON", "importHint": "Supports mcpServers and VS Code mcp.servers / servers. Preview before importing; existing names are never overwritten. Replace variable placeholders with values first.", "preview": "Preview", "importConfirm": "Import configuration", "authorize": "Start OAuth authorization", "authorized": "OAuth authorized", "notAuthorized": "OAuth not authorized", "openAuthorization": "Open authorization (return and refresh when done)", "disconnect": "Disconnect authorization", "revoked": "Remote token revoked and local credentials cleared.", "disconnectedLocal": "Local credentials cleared. Remote revocation was not confirmed; use the provider account settings to revoke access if needed.",

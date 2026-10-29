@@ -4,6 +4,22 @@
   width: 100%;
   min-width: 0;
   gap: 4px;
+  border-radius: var(--radius-full);
+}
+
+/* 账号和设置是同一行，hover 的底色包含齿轮与中间空隙。 */
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-account:hover {
+    background: var(--sidebar-hover);
+  }
+}
+
+.sidebar-account:has([data-hovered='true'], [data-pressed='true'], [data-focus-visible='true'], [aria-expanded='true']) {
+  background: var(--sidebar-hover);
+}
+
+.sidebar-account:has([data-pressed='true']) {
+  background: var(--sidebar-pressed);
 }
 
 .sidebar-account__trigger {
@@ -21,12 +37,6 @@
   color: var(--foreground);
   box-shadow: none;
   text-align: left;
-}
-
-.sidebar-account__trigger[data-hovered='true'],
-.sidebar-account__trigger[data-pressed='true'],
-.sidebar-account__trigger[aria-expanded='true'] {
-  background: var(--background);
 }
 
 .sidebar-account__trigger[data-focus-visible='true'] {
@@ -65,7 +75,14 @@
   flex-shrink: 0;
   padding: 0;
   border-radius: var(--radius-full);
+  background: transparent;
   color: var(--muted);
+}
+
+.sidebar-account__settings[data-testid][data-hovered='true'],
+.sidebar-account__settings[data-testid][data-pressed='true'] {
+  background: transparent;
+  color: var(--foreground);
 }
 
 .sidebar-account__settings[data-testid] > svg {

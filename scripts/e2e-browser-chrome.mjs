@@ -49,6 +49,7 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
           width: edge.getBoundingClientRect().width, top: edge.getBoundingClientRect().top,
           height: edge.getBoundingClientRect().height,
           blur: [...document.querySelectorAll('.page-app-bar__blur > span')].map((span) => getComputedStyle(span).backdropFilter),
+          blurDisplay: getComputedStyle(document.querySelector('.page-app-bar__blur')).display,
           overlay: getComputedStyle(document.querySelector('.page-app-bar__blur'), '::after').backgroundImage,
         };
       });
@@ -82,8 +83,14 @@ for (const [name, engine] of [['chromium', chromium], ['webkit', webkit]]) {
       const light = await consistent();
       assert.ok(light.brightness > 200);
       assert.equal(light.height, 4);
-      assert.deepEqual(light.blur, ['blur(1px)', 'blur(4px)', 'blur(12px)', 'blur(24px)']);
-      assert.match(light.overlay, /gradient/);
+      if (viewport.width <= 900) {
+        assert.deepEqual(light.blur, ['blur(1px)', 'blur(4px)', 'blur(12px)', 'blur(24px)']);
+        assert.notEqual(light.blurDisplay, 'none');
+        assert.match(light.overlay, /gradient/);
+      } else {
+        assert.deepEqual(light.blur, ['none', 'none', 'none', 'none']);
+        assert.equal(light.blurDisplay, 'none');
+      }
       await settings({ theme: 'dark' });
       await page.waitForFunction(() => document.documentElement.classList.contains('dark'));
       const dark = await consistent();

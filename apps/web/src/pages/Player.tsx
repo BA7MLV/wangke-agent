@@ -7,7 +7,8 @@ import '@vidstack/react/player/styles/default/theme.css';
 import '@vidstack/react/player/styles/default/layouts/video.css';
 import '../player-enhance.css';
 import { db, type VideoRow } from '../store/db';
-import { getVideoFile } from '../store/fileStore';
+import { describeVideoPlaybackError, getVideoPlaybackSource, VideoPlaybackError } from '../store/videoPlayback';
+import { Button } from '@heroui/react';
 import { useSettings } from '../store/settings';
 import { useLibraryNavigation } from '../store/libraryNavigation';
 import { getSystemMaterial, systemMaterialPath } from '../materials/systemFiles';
@@ -97,6 +98,12 @@ function PlayerResource({ id }: { id: string | undefined }) {
   const nav = useAppNav('home');
   const [video, setVideo] = useState<VideoRow | null>(null);
   const [videoUrl, setVideoUrl] = useState<string>('');
+  const [videoCrossOrigin, setVideoCrossOrigin] = useState<'use-credentials' | undefined>();
+  const [sourcePending, setSourcePending] = useState(true);
+  const [playbackError, setPlaybackError] = useState('');
+  const [playbackAttempt, setPlaybackAttempt] = useState(0);
+  const playbackAbort = useRef<AbortController | null>(null);
+  const playbackFailureDetected = useRef(false);
   // 记录存在但视频文件本体已删：进入无文件模式，字幕/讲义/问答仍可用
   const [fileMissing, setFileMissing] = useState(false);
   const [loading, setLoading] = useState(true);
@@ -241,29 +248,73 @@ function PlayerResource({ id }: { id: string | undefined }) {
   );
 
   useEffect(() => {
-    let url = '';
+    const controller = new AbortController();
+    playbackAbort.current = controller;
+    playbackFailureDetected.current = false;
+    let release: (() => void) | undefined;
+    let cancelled = false;
+    setSourcePending(true);
+    setPlaybackError('');
+    setFileMissing(false);
+    setVideoUrl('');
+    const timeout = setTimeout(() => controller.abort(new DOMException('视频加载超时，请检查网络后重试', 'TimeoutError')), 20_000);
     (async () => {
       if (!id) return;
       const row = getSystemMaterial(id) ?? await db.videos.get(id);
+      if (cancelled) return;
       if (!row) {
         toast.error('视频不存在');
         navigate('/library');
         return;
       }
-      const blob = row.kind === 'material' ? null : await getVideoFile(id);
-      if (blob) {
-        url = URL.createObjectURL(blob);
-        setVideoUrl(url);
+      setVideo(row);
+      setLoading(false);
+      if (row.kind === 'material') return;
+      const source = await getVideoPlaybackSource(id, controller.signal);
+      if (cancelled) { source?.release(); return; }
+      if (source) {
+        release = source.release;
+        setVideoCrossOrigin(source.crossOrigin);
+        setVideoUrl(source.src);
       } else {
         setFileMissing(true);
       }
-      setVideo(row);
-      setLoading(false);
-    })();
+    })().catch((error: unknown) => {
+      if (cancelled) return;
+      setPlaybackError(error instanceof VideoPlaybackError || (error instanceof DOMException && error.name === 'TimeoutError')
+        ? error.message : '视频加载失败，请检查网络后重试');
+    }).finally(() => {
+      clearTimeout(timeout);
+      if (!cancelled) { setLoading(false); setSourcePending(false); }
+    });
     return () => {
-      if (url) URL.revokeObjectURL(url);
+      cancelled = true;
+      clearTimeout(timeout);
+      controller.abort();
+      release?.();
     };
-  }, [id]);
+  }, [id, navigate, playbackAttempt]);
+
+  const onPlaybackError = useCallback((error: { code?: number }) => {
+    setStudyMediaPlaying(false);
+    const signal = playbackAbort.current?.signal;
+    if (!signal || signal.aborted || playbackFailureDetected.current) return;
+    playbackFailureDetected.current = true;
+    setPlaybackError('视频加载失败，正在检查原因…');
+    void describeVideoPlaybackError(error.code ?? 2, videoUrl, signal).then(message => {
+      if (!signal.aborted) setPlaybackError(message);
+    }).catch(() => { /* Leaving/retrying cancels the diagnostic probe. */ });
+  }, [videoUrl]);
+
+  useEffect(() => {
+    if (!videoUrl || sourcePending || playbackError) return;
+    const timeout = setTimeout(() => {
+      if (playerRef.current && !playerRef.current.state.canPlay) {
+        setPlaybackError('视频连接超时，请检查网络后重新加载');
+      }
+    }, 30_000);
+    return () => clearTimeout(timeout);
+  }, [videoUrl, sourcePending, playbackError]);
 
   // 订阅播放进度
   useEffect(() => {
@@ -311,6 +362,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
 
   // 我们灌进去的 cue（id → cue 对象），用于把已被替换掉的旧 cue 推出时间轴
   const cueStoreRef = useRef(new Map<string, VTTCue>());
+  useEffect(() => { cueStoreRef.current.clear(); }, [videoUrl]);
 
   // cue 的 id 由内容算出（见 SubtitlePanel），所以：内容没变 → 同 id → addCue 幂等；重新转写后
   // 内容变了 → 新 id → 作为新 cue 加入，旧的被推失效。整条轨全程不重建。
@@ -361,7 +413,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
   useEffect(() => {
     if (!trackReady) return;
     syncTrack(segments);
-  }, [trackReady, segments, syncTrack]);
+  }, [trackReady, segments, syncTrack, videoUrl]);
 
   // 轨挂载/被重建时补同步（与上面的直接调用互为兜底，不依赖 React effect 的先后顺序）
   useEffect(() => {
@@ -371,7 +423,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
     const onAdd = () => syncTrack(segmentsRef.current);
     list.addEventListener('add', onAdd);
     return () => list.removeEventListener('add', onAdd);
-  }, [trackReady, syncTrack]);
+  }, [trackReady, syncTrack, videoUrl]);
 
   // 弹幕/卡片要等本轮转写结束再解锁，避免拿半份字幕去生成
   const hasSubtitles = subsLoaded ? segments.length > 0 && !subsRunning : null;
@@ -464,7 +516,9 @@ function PlayerResource({ id }: { id: string | undefined }) {
   if (!video || !id) {
     return (
       <div className="page player-fallback">
-        <EmptyState testId="player-empty" title="视频不存在" description="这条记录可能已被删除" />
+        <EmptyState testId="player-empty" title={playbackError ? '资料加载失败' : '视频不存在'}
+          description={playbackError || '这条记录可能已被删除'}
+          action={playbackError ? <Button onPress={() => setPlaybackAttempt(attempt => attempt + 1)}>重新加载</Button> : undefined} />
       </div>
     );
   }
@@ -566,6 +620,14 @@ function PlayerResource({ id }: { id: string | undefined }) {
                 description="字幕 / 讲义 / 问答仍可使用"
               />
             </div>
+          ) : playbackError ? (
+            <div className="video-pane__missing" role="alert">
+              <EmptyState testId="player-playback-error" icon={<Sym name="error" />} title="无法播放视频"
+                description={playbackError}
+                action={<Button onPress={() => setPlaybackAttempt(attempt => attempt + 1)}>重新加载</Button>} />
+            </div>
+          ) : sourcePending ? (
+            <div className="video-pane__missing" role="status" aria-busy="true">正在连接视频…</div>
           ) : (
             <MediaPlayer
               ref={playerRef}
@@ -574,7 +636,10 @@ function PlayerResource({ id }: { id: string | undefined }) {
               src={{ src: videoUrl, type: toPlayerMime(video.mimeType) }}
               storage={resumeStorage}
               playsInline
-              crossOrigin
+              crossOrigin={videoCrossOrigin}
+              load="eager"
+              preload="metadata"
+              onError={onPlaybackError}
               // 移动鼠标唤醒，静止 2.5 秒收起；键盘操作和打开菜单时保留控制栏。
               hideControlsOnMouseLeave={!keyboardControls}
               onFocus={() => setKeyboardControls(true)}
@@ -610,7 +675,14 @@ function PlayerResource({ id }: { id: string | undefined }) {
               // 此前这行是 style={{ borderRadius: 12, overflow: 'hidden' }}（2026-09-23 按用户
               // 要求去掉直角）；overflow 当初只为让圆角能裁住视频，没有别的用途，因此一并删掉。
             >
-              <MediaProvider>
+              <MediaProvider onErrorCapture={(event) => {
+                // A failed native <source> emits a non-bubbling error that the
+                // provider's <video> error listener cannot always observe.
+                const target = event.target;
+                if (!(target instanceof HTMLVideoElement) && !(target instanceof HTMLSourceElement)) return;
+                const media = target instanceof HTMLVideoElement ? target : target instanceof Element ? target.closest('video') : null;
+                onPlaybackError({ code: media?.error?.code ?? 2 });
+              }}>
                 {/* 常驻单轨、不设 src：挂载即 ready，之后由 syncTrack 增量 addCue */}
                 {trackReady && <Track id={SUBS_TRACK_ID} kind="subtitles" label="中文字幕" default />}
               </MediaProvider>

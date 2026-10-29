@@ -27,7 +27,7 @@ import { isVisionModel, supportsThinking } from '../api/modelCaps';
 import { chatOnce, textOf, type ChatMessage, type ContentPart, type ThinkingLevel } from '../api/siliconflow';
 import { fmtTime } from '../utils/vtt';
 import { linkifyFrames, linkifyTimestamps, linkifyUnits } from '../utils/linkify';
-import { isToolFailure, summarizeToolResult, toolDetail, toolHint } from '../utils/toolTrace';
+import { ToolTraceLedger, toolHint } from '../utils/toolTrace';
 import { fmtUnitRef, type UnitKind } from '../materials/units.ts';
 import type { MaterialReaderHandle } from '../materials/types';
 import { useSelectionAsk, formatCitation, EXPLAIN_PROMPT, MAX_REFS, type Citation } from '../store/selectionAsk';
@@ -67,6 +67,8 @@ import { ArtifactEditProvider } from './ArtifactEditor';
 import AssistantContent from './AssistantContent';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
+import { persistAssistantSnapshot } from '../store/assistantSnapshot';
+import { widgetReference } from '../harness/widgetLayout';
 import { nextVisualRound, readPartialWidgetArguments } from '../utils/streamingHtml';
 import './chat-panel.css';
 
@@ -1083,13 +1085,8 @@ export default function ChatPanel({
      * 这一轮的工具链。与 `lastHint` 的分工：hint 是**当前那一步**（会被下一个 delta 清掉），
      * 工具链是**流水账**（谁调了、拿到了什么、花了多久），落库后还能回看。
      */
-    const toolCalls: ChatToolCall[] = [];
-    /**
-     * 正在跑的那个工具的开始时刻。工具在 agent 循环里是**顺序**执行的
-     * （`harness/agent.ts` 里 `for (const call of msg.tool_calls)` + `await`），
-     * 所以一个变量够用，不需要按调用 id 建表。
-     */
-    let toolStartedAt = 0;
+    const toolTrace = new ToolTraceLedger();
+    const toolCalls = toolTrace.calls;
     /** 实际跑过的轮数（`onRoundStart` 记的）：兜底文案只能印真实值，不能拿设置里的上限顶 */
     let roundsRan = 0;
     /**
@@ -1100,6 +1097,7 @@ export default function ChatPanel({
     let widgetPreview: { html: string } | undefined;
     let widgetState: WidgetPayload | undefined;
     const widgets: WidgetPayload[] = [];
+    let widgetRowId: number | undefined;
     const abort = new AbortController();
     inflightAbort = abort;
     const updates = framePatch<ChatMsg>((patch) =>
@@ -1335,6 +1333,7 @@ export default function ChatPanel({
       let quizState: QuizState | undefined;
       // Keep every validated visual; the returned references place them in the explanation.
       const executeTool = createResourceExecutor({
+        signal: abort.signal,
         courseId: videoId,
         editable: canEditMd,
         hasFrames,
@@ -1345,13 +1344,21 @@ export default function ChatPanel({
           quizState = { data, picks: data.questions.map(() => -1) };
           patchAi({ quiz: quizState });
         },
-        onWidget: (w) => {
+        onWidget: async (w) => {
+          if (widgets.some(widget => widget.id === w.id)) return;
+          const content = w.ref ? `${answer}${answer && !answer.endsWith('\n\n') ? '\n\n' : ''}${widgetReference(w.ref)}\n\n` : answer;
+          widgetRowId = await persistAssistantSnapshot({
+            videoId, sessionId, role: 'assistant', createdAt: Date.now(), content,
+            reasoning: reasoning || undefined, widget: w, widgets: [...widgets, w],
+            interrupted: true, interruptReason: '作品已保存，后续回答尚未完成',
+          }, widgetRowId);
+          answer = content;
           widgetState = w;
           widgets.push(w);
           // 工具校验完成后切换到最终的隔离 iframe。清掉预览，避免同一张
           // 图短暂出现两份；中间帧从未执行过模型提供的脚本。
           widgetPreview = undefined;
-          patchAi({ widget: w, widgets: [...widgets], widgetPreview: undefined, hint: undefined });
+          patchAi({ rowId: widgetRowId, content, widget: w, widgets: [...widgets], widgetPreview: undefined, hint: undefined });
         },
       });
       /**
@@ -1404,7 +1411,7 @@ export default function ChatPanel({
             widgetPreview = undefined;
             patchAi({ content: answer, hint: undefined, widgetPreview: undefined, processPhase: 'preparing' });
           },
-          onToolStart: (name, argsJson) => {
+          onToolStart: (name, argsJson, callId) => {
             /**
              * 状态行与工具链**同时**更新，但两者不是一回事：
              * 状态行（hint）是那个一闪而过的「正在检索：傅里叶」，工具链是留得住的流水账。
@@ -1414,30 +1421,18 @@ export default function ChatPanel({
              */
             const hint = toolHint(name, argsJson);
             lastHint = hint;
-            toolStartedAt = Date.now();
-            toolCalls.push({ name, detail: toolDetail(name, argsJson), status: 'running', reasoningOffset: reasoning.length });
-            patchAi({ hint, tools: [...toolCalls], processPhase: 'tool' });
+            toolTrace.start(callId, name, argsJson, reasoning.length);
+            patchAi({ hint: toolTrace.hint, tools: [...toolCalls], processPhase: 'tool' });
           },
-          onToolEnd: (name, result) => {
-            // 顺序执行 ⇒ 正在跑的那条就是末尾那条。不按名字反查：同一个工具可能被连调多次
-            const current = toolCalls[toolCalls.length - 1];
-            if (current && current.name === name && current.status === 'running') {
-              const ms = toolStartedAt ? Date.now() - toolStartedAt : undefined;
-              toolCalls[toolCalls.length - 1] = {
-                ...current,
-                status: isToolFailure(result) ? 'error' : 'done',
-                result: summarizeToolResult(result),
-                ...(ms != null ? { ms } : {}),
-              };
-              patchAi({ tools: [...toolCalls], processPhase: 'preparing', hint: undefined });
-            }
+          onToolEnd: (name, result, callId) => {
+            toolTrace.finish(callId, result);
+            patchAi({ tools: [...toolCalls], processPhase: toolTrace.running ? 'tool' : 'preparing', hint: toolTrace.hint });
             // 参数校验 / 安全预检的软失败也不能把半成品留在最终回答里；
             // 模型下一轮会根据工具回执重试。
             if (name === 'show_widget') {
               widgetPreview = undefined;
               patchAi({ widgetPreview: undefined });
             }
-            toolStartedAt = 0;
           },
           onStop: (info) => {
             stopped.push(info);
@@ -1453,7 +1448,7 @@ export default function ChatPanel({
       const reasoningMs = reasoningFrom ? reasoningTo - reasoningFrom : undefined;
       if (finalAnswer || quizState || widgetState) {
         patchAi({ streaming: false, hint: undefined, reasoningMs });
-        const rowId = (await db.chats.add({
+        const rowId = (await persistAssistantSnapshot({
           videoId,
           sessionId,
           role: 'assistant',
@@ -1465,7 +1460,7 @@ export default function ChatPanel({
           ...(quizState ? { quiz: quizState } : {}),
           ...(widgetState ? { widget: widgetState } : {}),
           ...(widgets.length ? { widgets } : {}),
-        })) as number;
+        }, widgetRowId)) as number;
         patchAi({ rowId });
       } else {
         // 空回答兜底，避免留下永久空气泡。**要说清是哪道闸停下的**：只写「（未获得回答）」的话，
@@ -1503,7 +1498,7 @@ export default function ChatPanel({
         patchAi({ streaming: false, hint: undefined, content, reasoningMs, widgetPreview: undefined });
         // 立刻恢复可输入：下面还要落一次库，等它落完才解锁的话，用户按完停止还得干等
         setLoading(false);
-        const rowId = (await db.chats.add({
+        const rowId = (await persistAssistantSnapshot({
           videoId,
           sessionId,
           role: 'assistant',
@@ -1514,7 +1509,7 @@ export default function ChatPanel({
           ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
           ...(widgetState ? { widget: widgetState } : {}),
           ...(widgets.length ? { widgets } : {}),
-        })) as number;
+        }, widgetRowId)) as number;
         patchAi({ rowId });
       } else {
         const errMsg = e instanceof Error ? e.message : String(e);
@@ -1532,7 +1527,7 @@ export default function ChatPanel({
             content: partial,
           });
           setLoading(false);
-          const rowId = (await db.chats.add({
+          const rowId = (await persistAssistantSnapshot({
             videoId,
             sessionId,
             role: 'assistant',
@@ -1543,7 +1538,7 @@ export default function ChatPanel({
             ...(toolCalls.length > 0 ? { tools: toolCalls } : {}),
             widget: widgetState,
             widgets,
-          })) as number;
+          }, widgetRowId)) as number;
           patchAi({ rowId });
         } else {
           patchAi({

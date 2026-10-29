@@ -14,6 +14,30 @@
  * 这里**只做翻译，不做业务**：不认识的工具名原样返回，不抛错、不猜。
  */
 
+import type { ChatToolCall } from '../store/db';
+
+/** Track invocations rather than tool names: identical tools may finish out of order. */
+export class ToolTraceLedger {
+  readonly calls: ChatToolCall[] = [];
+  private readonly active = new Map<string, { index: number; started: number; hint: string }>();
+
+  start(id: string, name: string, args: string, reasoningOffset?: number): void {
+    this.active.set(id, { index: this.calls.length, started: Date.now(), hint: toolHint(name, args) });
+    this.calls.push({ id, name, detail: toolDetail(name, args), status: 'running', ...(reasoningOffset !== undefined ? { reasoningOffset } : {}) });
+  }
+  finish(id: string, result: string): void {
+    const entry = this.active.get(id);
+    if (!entry) return;
+    this.calls[entry.index] = { ...this.calls[entry.index], status: isToolFailure(result) ? 'error' : 'done', result: summarizeToolResult(result), ms: Date.now() - entry.started };
+    this.active.delete(id);
+  }
+  get running(): number { return this.active.size; }
+  get hint(): string | undefined {
+    return this.active.size > 1 ? `正在并行调用 ${this.active.size} 个工具…` : this.active.values().next().value?.hint;
+  }
+  clear(): void { this.calls.length = 0; this.active.clear(); }
+}
+
 /** 工具名 → 动作短语。全部来自 `harness/tools.ts` 与 `harness/libraryAssistant.ts` 的工具注册表 */
 const TOOL_LABELS: Record<string, string> = {
   grep: '检索正文',

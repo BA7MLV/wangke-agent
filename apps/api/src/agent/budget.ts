@@ -74,12 +74,13 @@ export class UsageLedger {
       return id;
     });
   }
-  settle(id: string, status: string, usage?: { input: number; output: number; cache?: number; cacheCreation?: number }) {
+  settle(id: string, status: string, usage?: import('@wangke/study-core/model/usage').ModelUsage) {
     return this.store.transaction(() => {
       const row = this.store.db.prepare("SELECT * FROM bot_requests WHERE id=? AND ended_at IS NULL").get(id) as (RequestAttribution & { owner_id: string; run_id: string | null; price_json: string | null; reserved_tokens: number }) | undefined;
       if (!row) return false;
       const price = row.price_json ? JSON.parse(row.price_json) as BotBudget['prices'][number] : undefined;
       this.store.db.prepare('UPDATE bot_requests SET ended_at=?,status=?,input_tokens=?,output_tokens=?,cache_tokens=?,cost=?,usage_source=? WHERE id=? AND ended_at IS NULL').run(new Date().toISOString(), status, usage?.input ?? null, usage?.output ?? null, usage?.cache ?? null, usage && price ? ((usage.input + (usage.cacheCreation ?? 0)) * price.inputPerMillion + usage.output * price.outputPerMillion) / 1000000 : null, usage ? usage.cacheCreation ? 'provider_tokens:cache_write_2x_estimate' : 'provider' : 'unknown_reserved', id);
+      this.store.db.prepare('UPDATE bot_requests SET cache_creation_tokens=?,reasoning_tokens=? WHERE id=?').run(usage?.cacheCreation ?? null, usage?.reasoning ?? null, id);
       publishBotEvent(this.store, { owner: row.owner_id, run: row.run_id ?? undefined, requestId: id, type: 'model.finished', status });
       // Provider usage is authoritative, even when it violates the estimate.
       // Preserve the full overage and stop future tools/requests (not a refund

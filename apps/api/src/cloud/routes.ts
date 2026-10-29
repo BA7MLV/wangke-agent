@@ -10,6 +10,8 @@ import type { CloudConfig, CloudMutation } from '@wangke/contracts/cloud';
 import type { ModelSettingsUpdate, ProviderSettingsUpdate } from '@wangke/contracts/model-settings';
 import { accountedFetch } from '../agent/accounted-fetch.js';
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
+import { applyPromptCache } from '@wangke/study-core/model/cache';
+import { modelUsageReport } from '../agent/model-observations.js';
 
 interface Dependencies {
   store: DatabaseStore; records: CloudRecords; configuration: CloudConfiguration;
@@ -45,6 +47,12 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
   app.get('/api/v1/cloud/config', async (request, reply) => {
     const user = authorize(request, reply); if (!user) return;
     return configuration.get(user.id);
+  });
+  app.get<{ Querystring: { days?: string } }>('/api/v1/cloud/model-usage', async (request, reply) => {
+    const user = authorize(request, reply); if (!user) return;
+    const days = Number(request.query.days ?? 1);
+    if (!Number.isInteger(days) || days < 1 || days > 90) return fail(reply, 400, 'invalid_usage_window');
+    return modelUsageReport(store, user.id, new Date(Date.now() - days * 86400000).toISOString());
   });
   app.put<{ Body: CloudConfig }>('/api/v1/cloud/config', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
@@ -140,7 +148,15 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
       const init: RequestInit & { duplex?: 'half' } = { method: request.method, headers, redirect: 'error', signal: AbortSignal.any([AbortSignal.timeout(endpoint === 'models' ? 20000 : 300000), disconnected.signal]) };
       if (request.method === 'POST') {
         if (request.body instanceof Readable) { init.body = request.body as any; init.duplex = 'half'; }
-        else init.body = JSON.stringify(request.body);
+        else {
+          let body = request.body as Record<string, unknown>;
+          if (['chat/completions', 'responses', 'messages'].includes(endpoint) && body && typeof body.model === 'string') {
+            const key = request.headers['x-wangke-cache-key'];
+            const scopedKey = typeof key === 'string' && key.length <= 200 ? crypto.createHash('sha256').update(`${user.id}:${key}`).digest('hex') : undefined;
+            body = applyPromptCache(body, { ...provider, model: body.model }, scopedKey);
+          }
+          init.body = JSON.stringify(body);
+        }
       }
       try {
         const pagination = new URLSearchParams();
@@ -153,7 +169,7 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
         }
         const worker = workerIdentity(request);
         const task = worker ? ownedTask(user.id, worker.taskId) : undefined;
-        const fetcher = task?.parent_run_id ? accountedFetch(new UsageLedger(store, configuration), { owner: user.id, run: task.parent_run_id, step: task.parent_step_id, task: task.id, purpose: `study:${task.kind}` }, [provider], deps.fetch ?? fetch) : deps.fetch ?? fetch;
+        const fetcher = accountedFetch(new UsageLedger(store, configuration), { owner: user.id, run: task?.parent_run_id ?? undefined, step: task?.parent_step_id ?? undefined, task: task?.id, purpose: task ? `study:${task.kind}` : 'chat' }, [provider], deps.fetch ?? fetch);
         const response = await fetcher(`${provider.baseUrl}/${endpoint}${pagination.size ? `?${pagination}` : ''}`, init);
         if (!response.ok) {
           const retryAfter = response.headers.get('retry-after');

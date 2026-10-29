@@ -4,6 +4,10 @@ import { assertRequestSafe, describeMessage, messageDefects, sanitizeMessages } 
 import { getModelMeta } from './modelMeta.ts';
 import { parseDiscoveredModel, type DiscoveredModel } from './modelDiscoveryData.ts';
 import type { ModelListConnection } from './modelTypes.ts';
+import { modelUsage, usageCollector, type ModelUsage, type ModelRequestRecord } from './usage.ts';
+import { applyPromptCache, stableTools } from './promptCache.ts';
+import { groupToolResults } from './toolMessages.ts';
+export type { ModelUsage } from './usage.ts';
 
 /**
  * OpenAI 兼容 API 客户端（浏览器直调）。
@@ -227,6 +231,10 @@ export interface ChatMessage {
    * **不回传**：它是这一轮的元数据，不是对话内容（与 `reasoning_content` 同理）。
    */
   finish_reason?: FinishReason;
+  usage?: ModelUsage;
+  /** Exact provider blocks, including signed/encrypted reasoning. Only replay
+   * to the same connection/model/protocol; UI text is a separate projection. */
+  providerState?: { providerId: string; baseUrl: string; model: string; protocol: ModelTarget['protocol']; items: Record<string, any>[] };
 }
 
 export type FinishReason = 'stop' | 'length' | 'tool_calls' | 'content_filter' | 'aborted' | 'error';
@@ -283,7 +291,7 @@ function wire(messages: readonly ChatMessage[]): ChatMessage[] {
   // 所以它触发只可能是「收口点有漏」—— 那时**宁可自己抛一条说清哪条消息不对的错**，
   // 也不要让网关回一句和界面现象毫无关系的 400，让用户只能对着 request_id 发呆。
   assertRequestSafe(clean);
-  return clean.map(({ reasoning_content: _r, finish_reason: _f, ...m }) => m);
+  return clean.map(({ finish_reason: _f, usage: _u, ...m }) => m);
 }
 
 export interface ChatOptions {
@@ -298,10 +306,17 @@ export interface ChatOptions {
   reasoning_effort?: ReasoningEffort;
   /** 思考预算 tokens（多数推理模型生效），128~32768 */
   thinking_budget?: number;
+  cacheKey?: string;
+  tool_choice?: 'auto' | 'none';
+  onRequest?: (record: ModelRequestRecord) => void | Promise<void>;
 }
 
 function chatPath(t: ModelTarget): string {
   return t.protocol === 'anthropic-messages' ? '/messages' : t.protocol === 'openai-responses' ? '/responses' : '/chat/completions';
+}
+
+function gatewayCacheHeaders(t: ModelTarget, key?: string): Record<string, string> | undefined {
+  return key && /\/api\/v1\/cloud\/models\/[^/]+$/.test(t.baseUrl) ? { 'x-wangke-cache-key': key } : undefined;
 }
 
 function anthropicContent(content: ChatMessage['content']): unknown {
@@ -323,7 +338,16 @@ function responsesContent(content: ChatMessage['content']): unknown {
     : { type: 'input_image', image_url: part.image_url.url });
 }
 
-function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[], stream: boolean): Record<string, unknown> {
+export function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[], stream: boolean): Record<string, unknown> {
+  return applyPromptCache(serializeBody(t, { ...opts, tools: opts.tools ? stableTools(opts.tools) : undefined }, messages, stream), t, opts.cacheKey);
+}
+
+function nativeItems(t: ModelTarget, message: ChatMessage) {
+  const state = message.providerState;
+  return state?.protocol === t.protocol && state.model === t.model && state.providerId === t.providerId && state.baseUrl === t.baseUrl ? state.items : undefined;
+}
+
+function serializeBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[], stream: boolean): Record<string, unknown> {
   const meta = getModelMeta(t.catalogId, t.model, t.capabilities);
   if (opts.tools?.length && meta?.declaredToolCall === false) {
     throw new Error('此模型已声明不支持工具调用；请切换支持工具的模型，或在模型编辑器中确认工具调用能力');
@@ -332,9 +356,11 @@ function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[],
     opts = { ...opts, max_tokens: Math.min(opts.max_tokens ?? 4096, meta.declaredOutput) };
   }
   if (t.protocol === 'anthropic-messages') {
-    const system = messages.filter((m) => m.role === 'system').map((m) => typeof m.content === 'string' ? m.content : '').join('\n\n');
+    const system = messages.filter((m) => m.role === 'system').map((m) => ({ type: 'text', text: typeof m.content === 'string' ? m.content : '' }));
     const turns = messages.filter((m) => m.role !== 'system').map((m) => {
       if (m.role === 'tool') return { role: 'user', content: [{ type: 'tool_result', tool_use_id: m.tool_call_id, content: typeof m.content === 'string' ? m.content : '' }] };
+      const native = nativeItems(t, m);
+      if (m.role === 'assistant' && native?.length) return { role: 'assistant', content: native };
       if (m.role === 'assistant' && m.tool_calls?.length) return { role: 'assistant', content: [
         ...(typeof m.content === 'string' && m.content ? [{ type: 'text', text: m.content }] : []),
         ...m.tool_calls.map((tc) => ({ type: 'tool_use', id: tc.id, name: tc.function.name, input: parseArgs(tc.function.arguments) })),
@@ -342,26 +368,33 @@ function requestBody(t: ModelTarget, opts: ChatOptions, messages: ChatMessage[],
       return { role: m.role, content: anthropicContent(m.content) };
     });
     return {
-      model: t.model, messages: turns, ...(system ? { system } : {}), max_tokens: opts.max_tokens ?? 4096,
+      model: t.model, messages: groupToolResults(turns), ...(system.length ? { system } : {}), max_tokens: opts.max_tokens ?? 4096,
       ...(opts.temperature == null ? {} : { temperature: opts.temperature }),
       ...(opts.tools?.length ? { tools: opts.tools.map((tool) => ({ name: tool.function.name, description: tool.function.description, input_schema: tool.function.parameters })) } : {}),
+      ...(opts.tool_choice ? { tool_choice: { type: opts.tool_choice } } : {}),
       ...(stream ? { stream: true } : {}),
     };
   }
   if (t.protocol === 'openai-responses') {
     const input = messages.map((m) => {
       if (m.role === 'tool') return { type: 'function_call_output', call_id: m.tool_call_id, output: typeof m.content === 'string' ? m.content : '' };
-      if (m.role === 'assistant' && m.tool_calls?.length) return m.tool_calls.map((tc) => ({ type: 'function_call', call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments }));
+      const native = nativeItems(t, m);
+      if (m.role === 'assistant' && native?.length) return native;
+      if (m.role === 'assistant' && m.tool_calls?.length) return [
+        ...(m.content ? [{ role: 'assistant', content: m.content }] : []),
+        ...m.tool_calls.map((tc) => ({ type: 'function_call', call_id: tc.id, name: tc.function.name, arguments: tc.function.arguments })),
+      ];
       return { role: m.role, content: responsesContent(m.content) };
     }).flat();
     return {
-      model: t.model, input, ...(opts.max_tokens == null ? {} : { max_output_tokens: opts.max_tokens }),
+      model: t.model, input, store: false, include: ['reasoning.encrypted_content'], ...(opts.max_tokens == null ? {} : { max_output_tokens: opts.max_tokens }),
       ...(opts.temperature == null ? {} : { temperature: opts.temperature }),
       ...(opts.tools?.length ? { tools: opts.tools.map((tool) => ({ type: 'function', name: tool.function.name, description: tool.function.description, parameters: tool.function.parameters, strict: false })) } : {}),
+      ...(opts.tool_choice ? { tool_choice: opts.tool_choice } : {}),
       ...(stream ? { stream: true } : {}),
     };
   }
-  return { model: t.model, messages, tools: opts.tools, temperature: opts.temperature, max_tokens: opts.max_tokens,
+  return { model: t.model, messages: messages.map(({ providerState: _p, usage: _u, finish_reason: _f, reasoning_content: _r, ...m }) => m), tools: opts.tools, tool_choice: opts.tool_choice, temperature: opts.temperature, max_tokens: opts.max_tokens,
     enable_thinking: opts.enable_thinking, reasoning_effort: opts.reasoning_effort, thinking_budget: opts.thinking_budget, stream };
 }
 
@@ -387,17 +420,41 @@ function normalizeResponse(data: any, protocol: ModelTarget['protocol']): ChatMe
   return { ...choice.message, finish_reason: choice.finish_reason ?? choice.message.finish_reason } as ChatMessage;
 }
 
+function responseMetadata(msg: ChatMessage, data: any, target: ModelTarget): ChatMessage {
+  const items = target.protocol === 'anthropic-messages' ? data.content : target.protocol === 'openai-responses' ? data.output : undefined;
+  const usage = modelUsage(data);
+  return { ...msg, ...(usage ? { usage } : {}), ...(Array.isArray(items) && items.length ? {
+    providerState: { providerId: target.providerId, baseUrl: target.baseUrl, model: target.model, protocol: target.protocol, items },
+  } : {}) };
+}
+
 /**
  * 非流式对话（用于工具调用循环中的决策）。
  *
  * `target` 同时给出端点与模型 id —— 两者不再分开传，调用方无法把它们配错。
  */
-export async function chatOnce(t: ModelTarget, opts: ChatOptions, fetcher?: typeof fetch): Promise<ChatMessage> {
+async function observeRequest(t: ModelTarget, opts: ChatOptions, operation: (capture: (usage?: ModelUsage) => void) => Promise<ChatMessage>): Promise<ChatMessage> {
+  const startedAt = Date.now(), id = crypto.randomUUID();
+  let message: ChatMessage | undefined;
+  let usage: ModelUsage | undefined;
+  try { message = await operation(value => { if (value) usage = value; }); return message; }
+  finally {
+    await opts.onRequest?.({ id, providerId: t.providerId, model: t.model, protocol: t.protocol,
+      startedAt, endedAt: Date.now(), status: message ? 'completed' : opts.signal?.aborted ? 'cancelled' : 'failed',
+      ...(message?.usage || usage ? { usage: message?.usage ?? usage } : {}) });
+  }
+}
+
+export function chatOnce(t: ModelTarget, opts: ChatOptions, fetcher?: typeof fetch): Promise<ChatMessage> {
+  return observeRequest(t, opts, () => chatOnceInner(t, opts, fetcher));
+}
+async function chatOnceInner(t: ModelTarget, opts: ChatOptions, fetcher?: typeof fetch): Promise<ChatMessage> {
   const messages = wire(opts.messages);
   const res = await request(t, chatPath(t), {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify(requestBody(t, opts, messages, false)),
+    headers: gatewayCacheHeaders(t, opts.cacheKey),
   }, messages, fetcher);
   const body = await res.text();
   if (!body.trim()) throw new Error('模型接口返回为空，请重试或检查模型服务');
@@ -406,7 +463,7 @@ export async function chatOnce(t: ModelTarget, opts: ChatOptions, fetcher?: type
     throw new Error('模型接口返回的数据不完整或不是有效 JSON，请重试或检查模型服务');
   }
   if (!data || typeof data !== 'object') throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
-  const msg = normalizeResponse(data, t.protocol);
+  const msg = responseMetadata(normalizeResponse(data, t.protocol), data, t);
   // 只有声明了工具才需要 DSML 兜底：没给工具时模型没有理由吐 DSML 标记，
   // 那时的尖括号更可能是正文（讲义片段、HTML），吞掉就是毁内容。
   if (!opts.tools?.length || typeof msg.content !== 'string') return msg;
@@ -430,8 +487,8 @@ function applyRecoveredDsml(msg: ChatMessage, raw: string): ChatMessage {
       ? {
           tool_calls: [
             ...(msg.tool_calls ?? []),
-            ...calls.map((c, i) => ({
-              id: `dsml_${i}`,
+            ...calls.map((c) => ({
+              id: `dsml_${crypto.randomUUID()}`,
               type: 'function' as const,
               function: { name: c.name, arguments: c.arguments },
             })),
@@ -457,19 +514,27 @@ function stripLeakedToolPreamble(text: string): string {
 }
 
 /** 流式对话：onDelta 回调正文增量，onReasoning 回调思考增量，返回完整 assistant 消息（含 tool_calls） */
-export async function chatStream(
+export function chatStream(
+  t: ModelTarget, opts: ChatOptions, onDelta?: (content: string) => void,
+  onReasoning?: (text: string) => void, onToolCallDelta?: (call: ToolCallDelta) => void, fetcher: typeof fetch = fetch,
+): Promise<ChatMessage> {
+  return observeRequest(t, opts, capture => chatStreamInner(t, opts, onDelta, onReasoning, onToolCallDelta, fetcher, capture));
+}
+async function chatStreamInner(
   t: ModelTarget,
   opts: ChatOptions,
   onDelta?: (content: string) => void,
   onReasoning?: (text: string) => void,
   onToolCallDelta?: (call: ToolCallDelta) => void,
   fetcher: typeof fetch = fetch,
+  capture?: (usage?: ModelUsage) => void,
 ): Promise<ChatMessage> {
   const messages = wire(opts.messages);
   const res = await request(t, chatPath(t), {
     method: 'POST',
     signal: opts.signal,
     body: JSON.stringify(requestBody(t, opts, messages, true)),
+    headers: gatewayCacheHeaders(t, opts.cacheKey),
   }, messages, fetcher);
 
   /**
@@ -484,7 +549,7 @@ export async function chatStream(
     let data: unknown;
     try { data = JSON.parse(body); } catch { throw new Error('模型接口返回的数据不完整或不是有效 JSON，请重试或检查模型服务'); }
     if (!data || typeof data !== 'object') throw new Error('模型接口未返回有效消息，请重试或检查模型配置');
-    const raw = normalizeResponse(data, t.protocol);
+    const raw = responseMetadata(normalizeResponse(data, t.protocol), data, t);
     const msg = !opts.tools?.length || typeof raw.content !== 'string' ? raw : applyRecoveredDsml(raw, raw.content);
     const content = textOf(msg);
     if (content) onDelta?.(content);
@@ -502,6 +567,9 @@ export async function chatStream(
   let reasoning = '';
   let finish: FinishReason | undefined;
   const toolCalls: Record<number, ToolCall> = {};
+  const usage = usageCollector();
+  const native: Record<number, Record<string, any>> = {};
+  let responseItems: Record<string, any>[] | undefined;
   /**
    * DSML 兜底还原器，**只在真的声明了工具时装**。
    *
@@ -530,14 +598,15 @@ export async function chatStream(
     for (const p of parts) {
       if (p.kind === 'text') text += p.text;
       else {
+        const id = `dsml_${crypto.randomUUID()}`;
         recovered.push({
-          id: `dsml_${recovered.length}`,
+          id,
           type: 'function',
           function: { name: p.name, arguments: p.arguments },
         });
         onToolCallDelta?.({
           index: Object.keys(toolCalls).length + recovered.length - 1,
-          id: `dsml_${recovered.length - 1}`,
+          id,
           name: p.name,
           arguments: p.arguments,
         });
@@ -562,8 +631,17 @@ export async function chatStream(
         if (payload === '[DONE]') continue;
         try {
           const chunk = JSON.parse(payload);
+          usage.observe(chunk);
+          capture?.(usage.value);
           if (t.protocol === 'anthropic-messages') {
             const delta = chunk.delta;
+            if (chunk.type === 'content_block_start') native[chunk.index] = structuredClone(chunk.content_block);
+            const block = native[chunk.index];
+            if (chunk.type === 'content_block_delta' && block) {
+              if (delta?.type === 'text_delta') block.text = (block.text ?? '') + delta.text;
+              if (delta?.type === 'thinking_delta') block.thinking = (block.thinking ?? '') + delta.thinking;
+              if (delta?.type === 'signature_delta') block.signature = (block.signature ?? '') + delta.signature;
+            }
             if (chunk.type === 'content_block_start' && chunk.content_block?.type === 'tool_use') {
               const i = chunk.index ?? Object.keys(toolCalls).length;
               toolCalls[i] = { id: chunk.content_block.id, type: 'function', function: { name: chunk.content_block.name, arguments: '' } };
@@ -582,10 +660,13 @@ export async function chatStream(
                 emitToolCall(i);
               }
             }
+            if (chunk.type === 'content_block_stop' && block?.type === 'tool_use') block.input = parseArgs(toolCalls[chunk.index]?.function.arguments ?? '{}');
             if (chunk.type === 'message_delta') finish = chunk.delta?.stop_reason === 'tool_use' ? 'tool_calls' : chunk.delta?.stop_reason === 'max_tokens' ? 'length' : 'stop';
             continue;
           }
           if (t.protocol === 'openai-responses') {
+            if (chunk.type === 'response.output_item.done') native[chunk.output_index] = chunk.item;
+            if (chunk.type === 'response.completed') responseItems = chunk.response?.output;
             if (chunk.type === 'response.output_text.delta' && chunk.delta) {
               const text = stripLeakedToolPreamble(chunk.delta);
               if (text) { content += text; onDelta?.(text); }
@@ -653,5 +734,8 @@ export async function chatStream(
   if (finish) msg.finish_reason = finish;
   const calls = [...Object.values(toolCalls), ...recovered];
   if (calls.length > 0) msg.tool_calls = calls;
+  if (usage.value) msg.usage = usage.value;
+  const items = responseItems ?? Object.values(native);
+  if (items.length) msg.providerState = { providerId: t.providerId, baseUrl: t.baseUrl, model: t.model, protocol: t.protocol, items };
   return msg;
 }

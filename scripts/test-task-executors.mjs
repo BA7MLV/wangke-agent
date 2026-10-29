@@ -24,7 +24,7 @@ const providers = ['openai-chat', 'openai-responses', 'anthropic-messages'].map(
   id: `p${i}`, name: protocol, protocol, apiKey: 'private-model-key', baseUrl: `https://p${i}.example/v1`, catalogId: '', serves: ['chat'],
 }));
 configuration.save(owner, { ...configuration.get(owner), providers, llmModel: { providerId: 'p0', model: 'native-model' } });
-let reply = 'Node result', block = false, requests = [], aborted = 0, httpStatus = 200;
+let reply = 'Node result', block = false, requests = [], aborted = 0, httpStatus = 200, scripted = [];
 const mockFetch = async (url, init) => {
   requests.push({ url, init });
   assert.equal(init.redirect, 'error');
@@ -34,6 +34,7 @@ const mockFetch = async (url, init) => {
     init.signal.addEventListener('abort', abort, { once: true });
     if (init.signal.aborted) abort();
   });
+  if (scripted.length) { const next = scripted.shift(); if (next instanceof Error) throw next; return Response.json(next); }
   const body = url.endsWith('/responses') ? { output: [{ type: 'message', content: [{ type: 'output_text', text: reply }] }] }
     : url.endsWith('/messages') ? { content: [{ type: 'text', text: reply }] }
       : { choices: [{ message: { role: 'assistant', content: reply } }] };
@@ -123,6 +124,50 @@ try {
     .map(row => JSON.parse(row.value)).sort((a, b) => a.createdAt - b.createdAt);
   assert.deepEqual(conversation.map(row => row.role), ['user', 'assistant', 'user', 'assistant']);
   assert.ok(conversation.every((row, index) => !index || row.createdAt > conversation[index - 1].createdAt), 'server commits a strictly ordered timeline for both chat and qa');
+  const originalConfig = configuration.get(owner, true);
+  configuration.save(owner, { ...originalConfig, providers: [{ ...providers[0], baseUrl: 'https://api.openai.com/v1' }, ...providers.slice(1)], llmModel: { providerId: 'p0', model: 'gpt-4.1' } });
+  put('chatSessions', 11, { id: 11, videoId, title: '缓存回归', createdAt: Date.now() });
+  const usage = { prompt_tokens: 1000, completion_tokens: 20, prompt_tokens_details: { cached_tokens: 800 } };
+  scripted = [
+    { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'server-read', type: 'function', function: { name: 'grep', arguments: '{"query":"字幕"}' } }] }, finish_reason: 'tool_calls' }], usage },
+    { choices: [{ message: { role: 'assistant', content: '已读取字幕' }, finish_reason: 'stop' }], usage },
+  ];
+  const measured = await completed(enqueue('qa', { videoId, sessionId: 11, text: '读取字幕' }, 'session:11'));
+  const prefix = JSON.parse(requests.at(-1).init.body);
+  assert.equal(prefix.prompt_cache_key, `study:${owner}:11`);
+  assert.equal(records.get(owner, 'chats', measured.result.userRowId).modelRequests.length, 2);
+  assert.deepEqual(records.get(owner, 'chats', measured.result.rowId).modelTrace.messages.map(m => m.role), ['assistant', 'tool', 'assistant']);
+  assert.equal(measured.progress.modelTranscript.messages[1].tool_call_id, 'server-read');
+  await runner.close();
+  runner = new CloudTaskRunner(store, { records, configuration, filesDir, fetch: mockFetch }); runner.start('http://127.0.0.1:1');
+  await completed(enqueue('qa', { videoId, sessionId: 11, text: '继续', videoName: '新课程名' }, 'session:11'));
+  const next = JSON.parse(requests.at(-1).init.body);
+  assert.deepEqual(next.messages.slice(0, prefix.messages.length), prefix.messages, 'server restart replays the exact prior prompt, tools and source result');
+  assert.equal(next.prompt_cache_key, prefix.prompt_cache_key);
+  assert.deepEqual(next.tools, prefix.tools);
+  assert.equal(store.db.prepare("SELECT COUNT(*) n FROM model_observations WHERE owner_id=? AND cache_tokens=800").get(owner).n, 2);
+  assert.equal(store.db.prepare('SELECT COUNT(*) n FROM bot_requests WHERE owner_id=?').get(owner).n, 0, 'ordinary tasks are observed once without Bot billing');
+  scripted = [{ choices: [{ message: { role: 'assistant', content: 'remote once' } }], usage }];
+  const once = await completed(enqueue('modelOnce', { providerId: 'p0', model: 'gpt-4.1', options: { messages: [{ role: 'user', content: 'hello' }], cacheKey: 'remote-key' } }));
+  assert.equal(once.result.usage.cache, 800);
+  assert.equal(JSON.parse(requests.at(-1).init.body).prompt_cache_key, 'remote-key');
+  put('chatSessions', 12, { id: 12, videoId, title: '中断历史', createdAt: Date.now() });
+  scripted = [
+    { choices: [{ message: { role: 'assistant', content: null, tool_calls: [{ id: 'interrupted-read', type: 'function', function: { name: 'read', arguments: '{"start":0,"end":10}' } }] }, finish_reason: 'tool_calls' }], usage },
+    new Error('simulated disconnect'),
+  ];
+  const failedQa = enqueue('qa', { videoId, sessionId: 12, text: '读取这段字幕' }, 'session:12');
+  await until(() => get(failedQa).status === 'failed');
+  const interruptedPrefix = JSON.parse(requests.at(-1).init.body).messages;
+  const snapshots = store.db.prepare("SELECT value FROM cloud_records WHERE owner_id=? AND table_name='chats' AND value IS NOT NULL").all(owner).map(r => JSON.parse(r.value)).filter(r => r.sessionId === 12);
+  assert.equal(snapshots.length, 2);
+  const partial = snapshots.find(r => r.role === 'assistant');
+  assert.equal(partial.interrupted, true);
+  assert.deepEqual(partial.modelTrace.messages.map(m => m.role), ['assistant', 'tool']);
+  await completed(enqueue('qa', { videoId, sessionId: 12, text: '根据已读内容继续' }, 'session:12'));
+  assert.deepEqual(JSON.parse(requests.at(-1).init.body).messages.slice(0, interruptedPrefix.length), interruptedPrefix, 'a failed server task retains completed tool evidence for the next turn');
+  configuration.save(owner, { ...originalConfig, modelRevision: configuration.get(owner).modelRevision });
+  console.log('Server cache: ordinary usage, raw tool history after restart/interruption, stable prefix/key and modelOnce forwarding passed');
   put('cards', 100, { id: 100, videoId, q: 'old', a: 'old' });
   put('cards', 100, { id: 100, videoId, q: 'other account', a: 'untouched' }, other);
   reply = '[{"time":"00:10","q":"什么是测试课程？","a":"用于测试的课程。"}]';

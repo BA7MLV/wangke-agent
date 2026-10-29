@@ -14,7 +14,7 @@ export default function AssistantContent({ content, streaming = false, children 
   const blocks = useMemo(() => splitAssistantContent(content), [content]);
   return blocks.map((block, index) => block.kind === 'html' ? (
     <ArtifactEditor key={`html-${block.start}`} kind="html" location={block.location} source={block.source} closed={block.closed} htmlContentType={block.htmlContentType}>
-      {(actions) => <HtmlAnswer source={block.source} contentType={block.htmlContentType} streaming={streaming && !block.closed} editActions={actions} />}
+      {(actions) => <HtmlAnswer source={block.source} contentType={block.htmlContentType} streaming={!block.closed} editActions={actions} />}
     </ArtifactEditor>
   ) : block.kind === 'svg' ? (
     <ArtifactEditor key={`svg-${block.start}`} kind="svg" location={block.location} source={block.source} closed={!streaming || block.closed}>

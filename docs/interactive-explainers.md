@@ -2,6 +2,27 @@
 
 普通聊天与课程问答复用 `show_widget(format="html")`，新增内置「交互式讲解」技能。静态结构、函数和普通数据图继续使用 diagram / Mermaid；只有参数探索、算法单步等确实有助于理解时才生成交互件。
 
+## HTML 作品与代码示例（2026-10-29）
+
+新 HTML 作品统一经 `show_widget(format="html")` 创建，包含没有脚本的页面作品。模型根据用户意图选输出：做可拖动函数图→工具；解释按钮代码→普通 HTML 围栏；要求预览示例→保留示例，通过工具创建独立作品。工具不可用或校验失败不能改用裸 HTML 绕过。是否有 script、按钮、事件处理器不参与意图判断。
+
+- 普通 html/htm 围栏（含 SVG、完整文档、恶意脚本教学示例）回归代码展示，不创建运行 iframe。裸 HTML 作品形态显示转义源码；普通语义 HTML 仍遵循正文净化规则。
+- 新载荷在原 `WidgetPayload` 上增加 `kind: html`、`schemaVersion: 1`、`revision`、`source`。宿主分配 `ref` 稳定引用和 `id` 修订身份；编辑/撤销递增 revision、更换 id、清除旧状态，单次重试还有独立桥接令牌。模型不能指定宿主身份。布局短 hash 不用于授权。
+- 类型和已保存标记均不代表可信。每次构造运行文档仍校验结构、协议版本、源码与依赖白名单及文档大小；未知版本显示失败且允许看源码。源码只进入隔离 iframe。
+- 完整工具调用校验通过后，先提交本机消息载荷，再交付预览与工具成功引用，不等待整段回答结束。后续文字、停止或收尾更新同一行，避免重复消息；临时检查点标明后续回答未完成。本机提交不代表云端已送达。未完成参数、取消或校验失败不执行脚本；独立编辑预览仍是临时内容。
+- 旧 `widget`/`widgets` 缺失元数据时，在原消息事务内幂等补齐。旧 `html interactive` 继续作为显式兼容声明，按精确原源码在 `legacyHtmlWorks` 缓存惰性解析结果；源码保留不改写，当前运行策略仍生效。只读/未落库展示在内存适配。编辑预览不写兼容缓存。
+- 成功作品不再常驻“静态预览／运行交互”提示。更多菜单统一提供源码、复制、独立预览和适用的编辑操作；失败直接给原因、查看源码及“重试预览”。重试不请求模型、不修复源码、不放宽权限。ready 只说明运行环境已启动，不证明作品业务正确。
+
+### 安全声明与实测限制
+
+iframe 的不透明源、禁同源权限、CSP、受限消息桥继续构成运行边界。增加了从持久化载荷到运行文档的预检，并拒绝 meta/base/iframe/object/embed 等文档级重定向/嵌套入口。但源码正则不是 JavaScript 沙箱，不能禁止所有间接导航。
+
+本次 Chromium 与 WebKit 探针验证了宿主 DOM/存储访问拒绝、fetch/资源连接限制、受限桥、内联脚本与 Chart.js 正常工作。间接 `globalThis['loc'+'ation']` 自导航在 WebKit 到达了测试请求拦截器（测试主动 abort，未真实外发），Chromium 本次未到达。**不承诺绝对零外发**；运行时拿得到的数据也可能被生成脚本读取。普通 iframe 不提供硬 CPU/内存配额，超时提示不能强制终止任意死循环。
+
+新增 `scripts/e2e-widget-protocol.mjs` 直接走真实 show_widget 执行器，覆盖静态/交互作品、先保存再交付、同版本不重挂、脚本错误、源码、本地重试、未知版本、宿主提交失败与窄屏。支持 `BROWSER=webkit`。测试使用固定源码/假模型，不代表真实模型已稳定选对工具入口。
+
+验收：协议、流式拆块、DOM 惰性解析、状态与持久化、局部编辑、课程执行器测试通过；HTML 示例/旧作品、连续多作品、状态恢复、布局、样式隔离、阅读与编辑浏览器回归通过；新协议及恢复流程在 Chromium/WebKit 均通过。Web 构建与类型检查通过。构建仍输出现有 UI 依赖 CSS 压缩及混合动态/静态导入警告。课程执行器额外采用已有 nextChatTurnTimes 保证相邻快速回合的历史顺序，避免同毫秒排序误删上一轮回答。
+
 ## 交互与费用边界
 
 - 调参和步骤切换只在 iframe 内重绘，不调用模型。
@@ -50,6 +71,7 @@ iframe 内未被可滚动控件消费的 wheel/touch/阅读键意图会暂停聊
 - 正式交互件及局部修改预览都在各自的隔离 iframe 中执行，宿主只向内同步主题令牌，不接受修改宿主 CSS 的消息。
 - 正文不是另一种组件宿主。普通聊天、课程问答与 LiveLink 共用 Markdown 净化策略：移除 style/link 等标签、内联样式、class/id 和任意 data 属性；只保留公式、围栏与流式占位所需的内部字段。安全的语义 HTML 仍可阅读，已有消息源码不改写。需要样式和脚本的内容应走 show_widget，而不是混进正文。
 - 流式 HTML 继续使用去样式、去脚本的静态预览。宿主编辑面板、图块与预览通过 `md-embedded-ui` 标明正文样式的终点，Markdown 的段落、列表、表格和代码块规则不再深入这些界面。
+- 上述流式预览仅用于 show_widget 参数及显式兼容作品；普通 HTML 代码围栏在生成中也保持代码展示。
 
 ## 验证
 
@@ -66,6 +88,9 @@ node scripts/e2e-widget-reading.mjs
 node scripts/e2e-widget-layout.mjs
 node scripts/e2e-widget-style-isolation.mjs
 node scripts/probe-widget-sandbox.mjs
+BROWSER=webkit node scripts/probe-widget-sandbox.mjs
+node scripts/e2e-widget-protocol.mjs
+BROWSER=webkit node scripts/e2e-widget-protocol.mjs
 # 或只跑本轮新增验证（编排器会使用正确 TS loader）
 node scripts/e2e-all.mjs --only=test-widget-state,e2e-widget-state,e2e-widget-layout,e2e-widget-style-isolation
 ```

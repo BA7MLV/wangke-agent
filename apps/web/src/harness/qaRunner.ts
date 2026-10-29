@@ -6,17 +6,23 @@ import { resolveMaxRounds } from './loopGuard';
 import { mdEditorOpen } from './tools';
 import { courseResourceTools, createResourceExecutor } from './resources';
 import { PROMPTS } from './prompts';
-import { estimateTokens, fitHistoryToBudget } from './context';
+import { estimateTokens } from './context';
 import { loadSessionSkillMeta, skillMetaBlock } from '../skills/store';
 import { db, type ChatImage, type QuizState, type ChatToolCall } from '../store/db';
-import { toolDetail, summarizeToolResult, isToolFailure } from '../utils/toolTrace';
+import { ToolTraceLedger } from '../utils/toolTrace';
 import { catalogOf, getSettings, modelOverridesOf, type ModelTarget } from '../store/settings';
 import { supportsThinking } from '../api/modelCaps';
 import type { ChatMessage, ContentPart } from '../api/siliconflow';
 import type { WidgetPayload } from './widgetRuntime';
+import { persistAssistantSnapshot } from '../store/assistantSnapshot';
+import { widgetReference } from './widgetLayout';
+import { nextChatTurnTimes } from '@wangke/study-core/chat-order';
 import type { UnitKind } from '../materials/units.ts';
 import { nextVisualRound } from '../utils/streamingHtml';
 import { quizHistoryContent } from './quiz';
+import { modelTrace, replayTrace, runtimeContext, splitSystemPrompt } from '@wangke/study-core/model/transcript';
+import { fitModelHistory, sessionCacheKey } from '../store/modelHistory';
+import { displayEnvironmentPrompt } from './displayEnvironment';
 
 /**
  * 单课程问答的**唯一执行体**：从「用户文本」到「助手行落库」，中间那整段（提示词拼装、
@@ -38,8 +44,7 @@ import { quizHistoryContent } from './quiz';
  * 下面每条都注明是从 ChatPanel 的 `send()` 哪一段搬的：
  *
  * 1. **用户消息先落库**，再进循环 —— 搬自「用户消息立即落库：tier 2 描述可能耗时数秒…」。
- * 2. **历史末条即刚落库的当前问题**，所以历史要 `slice(0, -1)`；工具往返消息**不落库**
- *    （既有设计，这次不动它）。
+ * 2. UI 仍是一问一答；原始模型消息随行保存，跨轮次重放工具与图片。
  * 3. **`onRoundStart` 只清检索旁白**：已交付的 HTML / 图卡及后续讲解保留，
  *    同时留一份 `lastNarration` 给兜底文案。
  * 4. **abort 不走 `onStop`**：`runAgentLoop` 让 `AbortError` 抛给调用方，这里 catch 住 ——
@@ -54,7 +59,7 @@ export interface QaRunInput {
   sessionId: number;
   /** 已拼好引用前缀的用户文本 = 真正发给模型的那条 */
   text: string;
-  /** 多模态（tier 1：模型直接看图）；无则纯文本。历史重放仍是纯文本，截图不重复发送 */
+  /** 多模态（tier 1：模型直接看图）；原始内容随用户行保存并重放。 */
   images?: ContentPart[];
   /** 会话技能范围：同时作用于提示词清单与工具白名单（见下方 `allowedSkillIds`） */
   skillIds?: number[];
@@ -63,7 +68,7 @@ export interface QaRunInput {
 
   // ── 以下几项对应 ChatPanel 的 props / 本轮输入，是「拼提示词」必需的原料 ──────────
 
-  /** 课程名（进系统提示词）。不传时按 videoId 现查库，再退化成 id */
+  /** 课程名（进本轮上下文）。不传时按 videoId 现查库，再退化成 id */
   videoName?: string;
   /** 阅读材料的定位单元（`'page'` PDF / `'para'` Word）；**不传 = 视频课程** */
   materialKind?: UnitKind;
@@ -97,8 +102,8 @@ export interface QaSink {
   onDelta?: (text: string) => void;
   /** 新一轮开始（round 从 0 起，见 `AgentCallbacks`）；此前轮次流出的正文只是检索旁白 */
   onRoundStart?: (round: number) => void;
-  onToolStart?: (name: string, argsJson: string) => void;
-  onToolEnd?: (name: string, result: string) => void;
+  onToolStart?: (name: string, argsJson: string, callId: string) => void;
+  onToolEnd?: (name: string, result: string, callId: string) => void;
   onStop?: (info: AgentStopInfo) => void;
   /** 题卡 / 图卡：走闭包旁路，不在流里 */
   onCard?: (card: QaCard) => void;
@@ -145,12 +150,15 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   // ── 用户消息先落库（照搬 ChatPanel）────────────────────────────────────────
   // tier 2 的视觉描述可能耗时数秒，先落库避免期间关页丢失已上屏的消息。
   // 链路 host 侧同样只调这一处：来宾那边的提问最终要落到**主机**的库里。
-  await db.chats.add({
+  // Tool checkpoints can be committed before the rest of the answer. Reserve
+  // ordered turn times so a fast next question cannot sort before that answer.
+  const turnTimes = nextChatTurnTimes(await readChatHistory(sessionId), Date.now(), Date.now());
+  const userRowId = await db.chats.add({
     videoId,
     sessionId,
     role: 'user',
     content: input.displayText ?? text,
-    createdAt: Date.now(),
+    createdAt: turnTimes.user,
     ...(input.chatImages?.length ? { images: input.chatImages } : {}),
   });
   const history = await readChatHistory(sessionId);
@@ -187,35 +195,46 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
     ? PROMPTS.qaSystemMaterial(videoName, materialKind!, skillBlock, shotCount, refsCount, canEditMd, settings.agentInstructions)
     : PROMPTS.qaSystem(videoName, skillBlock, hasFrames, shotCount, refsCount, settings.agentInstructions);
 
-  // ── 历史按 token 预算截取（工具往返消息不进库，所以库里只有一问一答）────────
+  // ── 历史按原始模型消息计量，按完整轮次持久化裁剪边界 ────────────────
   const budget =
     settings.contextWindow -
     estimateTokens(systemPrompt) -
     estimateTokens(text) -
     (input.images ? shotCount * 1200 : 0) - // 多模态图片每张约 1.2k tokens
     4096; // 输出预留
-  // 末条即刚落库的当前问题（历史保持纯文本，截图不重复发送）
-  const recent = fitHistoryToBudget(history.slice(0, -1).map((row) => ({ ...row, content: quizHistoryContent(row) })), Math.max(2000, budget));
+  // 末条即刚落库的当前问题；图片与工具结果从原始历史重放。
+  const recent = await fitModelHistory(sessionId, history.slice(0, -1).map((row) => ({ ...row, originalContent: row.content, content: quizHistoryContent(row) })), Math.max(2000, budget));
   const messages: ChatMessage[] = [
-    { role: 'system', content: systemPrompt },
-    ...recent.map((r) => ({ role: r.role, content: r.content }) as ChatMessage),
+    ...splitSystemPrompt(systemPrompt),
+    ...recent.flatMap(r => replayTrace(r) ?? [{ role: r.role, content: r.content }]),
   ];
+  const quizUpdates = recent.filter(row => row.quiz).map(row => ({ id: row.id, snapshot: quizHistoryContent({ ...row, content: '' }) }));
+  const currentText = runtimeContext({ courseId: videoId, courseName: videoName, shotCount, refsCount,
+    ...(quizUpdates.length ? { quizUpdates } : {}), layout: displayEnvironmentPrompt('panel').split('\n').slice(1).join('\n') }) + text;
   if (input.images) {
     messages.push({
       role: 'user',
-      content: [...input.images, { type: 'text', text }],
+      content: [...input.images, { type: 'text', text: currentText }],
     });
   } else {
-    messages.push({ role: 'user', content: text });
+    messages.push({ role: 'user', content: currentText });
   }
+  await db.chats.update(userRowId, { modelTrace: modelTrace(input.displayText ?? text, [messages.at(-1)!]) });
+  const baseLength = messages.length;
+  let rawTurn: ChatMessage[] = [];
+  let pendingModelText = '';
+  const cacheKey = await sessionCacheKey(sessionId);
+  const modelRequests: NonNullable<import('../store/db').ChatRow['modelRequests']> = [];
 
   // ── 卡片旁路 + 工具执行器（照搬 ChatPanel）─────────────────────────────────
   // present_quiz 校验通过后回调：题卡数据上屏（初始全部未作答）
   let quizState: QuizState | undefined;
   // Every validated visual is retained; Markdown references determine its inline position.
   const widgets: WidgetPayload[] = [];
+  let widgetRowId: number | undefined;
   let widgetState: WidgetPayload | undefined;
   const executeTool = createResourceExecutor({
+    signal: sink.signal,
     courseId: videoId,
     editable: canEditMd,
     hasFrames,
@@ -234,10 +253,20 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       quizState = { data, picks: data.questions.map(() => -1) };
       sink.onCard?.({ kind: 'quiz', quiz: quizState });
     },
-    onWidget: (w) => {
+    onWidget: async (w) => {
+      if (widgets.some(widget => widget.id === w.id)) return;
+      const reference = w.ref ? `${answer && !answer.endsWith('\n\n') ? '\n\n' : ''}${widgetReference(w.ref)}\n\n` : '';
+      const content = answer + reference;
+      widgetRowId = await persistAssistantSnapshot({
+        videoId, sessionId, role: 'assistant', createdAt: Math.max(Date.now(), turnTimes.assistant), content,
+        reasoning: reasoning || undefined, widget: w, widgets: [...widgets, w],
+        interrupted: true, interruptReason: '作品已保存，后续回答尚未完成',
+      }, widgetRowId);
+      answer = content;
       widgetState = w;
       widgets.push(w);
       sink.onCard?.({ kind: 'widget', widget: w });
+      if (reference) sink.onDelta?.(reference);
     },
   });
   /**
@@ -245,8 +274,8 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
    * 材料没有字幕、没有画面（工具集本身就少两样），md 且编辑面开着才多一个 edit_markdown。
    */
   const tools = courseResourceTools(canEditMd);
-  const traces: ChatToolCall[] = [];
-  let toolStarted = 0;
+  const toolTrace = new ToolTraceLedger();
+  const traces = toolTrace.calls;
 
   // ── 跑循环（照搬 ChatPanel 的四个局部计数器）────────────────────────────────
   let answer = '';
@@ -280,6 +309,19 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       tools,
       executeTool,
       {
+        cacheKey,
+        onRequest: async record => { modelRequests.push(record); await db.chats.update(userRowId, { modelRequests: [...modelRequests] }); },
+        onTranscript: async out => {
+          rawTurn = out.slice(baseLength);
+          pendingModelText = '';
+          if (!answer.trim() && !rawTurn.some(m => m.tool_calls?.length)) return;
+          widgetRowId = await persistAssistantSnapshot({ videoId, sessionId, role: 'assistant',
+            createdAt: Math.max(Date.now(), turnTimes.assistant), content: answer,
+            modelTrace: modelTrace(answer, rawTurn), reasoning: reasoning || undefined, tools: traces,
+            ...(quizState ? { quiz: quizState } : {}), ...(widgetState ? { widget: widgetState } : {}),
+            ...(widgets.length ? { widgets } : {}), interrupted: true,
+          }, widgetRowId);
+        },
         // 覆盖模型槽位：不传就是老行为（settings 的 chat 槽位，面板与课程助手都走这条）
         target: input.modelTarget,
         mcpSessionId: sessionId,
@@ -301,10 +343,12 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
         },
         onDelta: (text) => {
           answer += text;
+          pendingModelText += text;
           markAnswerStart();
           sink.onDelta?.(text);
         },
         onRoundStart: (round) => {
+          pendingModelText = '';
           // 已输出的可视内容不能因后续工具调用而消失。
           if (answer.trim()) lastNarration = answer.trim();
           const previous = answer;
@@ -314,18 +358,16 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
           // Round-aware sinks reset their buffer; append-only sinks need only the separator.
           if (answer) sink.onDelta?.(sink.onRoundStart ? answer : answer.slice(previous.length));
         },
-        onToolStart: (name, argsJson) => {
-          toolStarted = Date.now();
-          traces.push({ name, detail: toolDetail(name, argsJson), status: 'running' });
+        onToolStart: (name, argsJson, callId) => {
+          toolTrace.start(callId, name, argsJson);
           sink.onTools?.([...traces]);
           lastHint = qaToolHint(name, argsJson, isMaterial);
-          sink.onToolStart?.(name, argsJson);
+          sink.onToolStart?.(name, argsJson, callId);
         },
-        onToolEnd: (name, result) => {
-          const trace = traces.at(-1);
-          if (trace) { trace.status = isToolFailure(result) ? 'error' : 'done'; trace.result = summarizeToolResult(result); trace.ms = Date.now() - toolStarted; }
+        onToolEnd: (name, result, callId) => {
+          toolTrace.finish(callId, result);
           sink.onTools?.([...traces]);
-          sink.onToolEnd?.(name, result);
+          sink.onToolEnd?.(name, result, callId);
         },
         onStop: (info) => {
           stopped.push(info);
@@ -346,17 +388,18 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
       const partial = answer.trim() || lastNarration.trim();
       const content = partial ? `${partial}\n\n_（已停止生成）_` : '_（已停止生成）_';
       for (const trace of traces) if (trace.status === 'running') trace.status = 'error';
-      const rowId = (await db.chats.add({
+      const rowId = (await persistAssistantSnapshot({
         tools: traces,
         videoId,
         sessionId,
         role: 'assistant',
         content,
-        createdAt: Date.now(),
+        createdAt: Math.max(Date.now(), turnTimes.assistant),
+        modelTrace: modelTrace(content, [...rawTurn, ...(pendingModelText.trim() ? [{ role: 'assistant' as const, content: pendingModelText }] : [])]),
         reasoning: reasoning || undefined,
         ...(widgetState ? { widget: widgetState } : {}),
         ...(widgets.length ? { widgets } : {}),
-      })) as number;
+      }, widgetRowId)) as number;
       return { rowId, content, tools: traces, reasoning: reasoning || undefined, reasoningMs,
         ...(widgetState ? { widget: widgetState } : {}), ...(widgets.length ? { widgets } : {}),
         ...(stopped[0] ? { stopped: stopped[0] } : {}) };
@@ -372,18 +415,19 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   const closeOut = stopped[stopped.length - 1];
   const finalAnswer = answer.trim();
   if (finalAnswer || quizState || widgetState) {
-    const rowId = (await db.chats.add({
+    const rowId = (await persistAssistantSnapshot({
       tools: traces,
       videoId,
       sessionId,
       role: 'assistant',
       content: finalAnswer,
-      createdAt: Date.now(),
+      createdAt: Math.max(Date.now(), turnTimes.assistant),
+      modelTrace: modelTrace(finalAnswer, rawTurn),
       reasoning: reasoning || undefined,
       ...(quizState ? { quiz: quizState } : {}),
       ...(widgetState ? { widget: widgetState } : {}),
       ...(widgets.length ? { widgets } : {}),
-    })) as number;
+    }, widgetRowId)) as number;
     return {
       tools: traces,
       rowId,
@@ -399,6 +443,13 @@ export async function runQa(input: QaRunInput, sink: QaSink = {}): Promise<QaRun
   // 空回答兜底，避免留下永久空气泡。**要说清是哪道闸停下的**：只写「（未获得回答）」的话，
   // 用户看到的就是「点了没反应」，既不知道它查了多少轮，也不知道自己该做什么。
   // ⚠️ 只返回、不落库：这一段是「模型没答上来」，存成正式回答会污染历史。
+  if (widgetRowId != null) {
+    // Keep completed protocol evidence with the existing user row, without an
+    // empty assistant bubble. It remains replayable after refresh.
+    const user = await db.chats.get(userRowId);
+    if (user) await db.chats.update(userRowId, { modelTrace: modelTrace(user.content, [...(user.modelTrace?.messages ?? []), ...rawTurn]) });
+    await db.chats.delete(widgetRowId);
+  }
   return {
     tools: traces,
     content: noAnswerNotice({

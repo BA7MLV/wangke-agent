@@ -212,7 +212,11 @@ try {
 
   // Real Bot dispatch can recover a checkpoint after a process/database restart.
   store.db.prepare("UPDATE runs SET status='paused' WHERE id=?").run(nextRun.id);
-  store.db.prepare("UPDATE runs SET status='queued',context_json=? WHERE id=?").run(JSON.stringify(history), run.id);
+  store.db.prepare("UPDATE runs SET status='running',context_json=? WHERE id=?").run(JSON.stringify(history), run.id);
+  // This run already crossed a compaction boundary. A larger model window on
+  // resume must not resurrect the pre-compaction prefix.
+  governor.view(owner, run.id, history, [], capacity, estimate);
+  store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(run.id);
   tools = new StudyTools(store, currentConfig, path.join(root, 'files'));
   let turn = 0;
   const response = (name, args) => Response.json({ choices: [{ message: { tool_calls: [{ function: { name, arguments: JSON.stringify(args) } }] } }], usage: { prompt_tokens: 20, completion_tokens: 20 } });
@@ -231,7 +235,7 @@ try {
   for (let i = 0; i < 500 && store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id).status !== 'completed'; i++) await new Promise(resolve => setTimeout(resolve, 10));
   const finalState = store.db.prepare('SELECT status,error_code FROM runs WHERE id=?').get(run.id);
   assert.equal(finalState.status, 'completed', JSON.stringify({ ...finalState, turn }));
-  assert.equal(store.db.prepare("SELECT COUNT(*) n FROM run_steps WHERE run_id=? AND tool='checkpoint_read' AND status='completed'").get(run.id).n, 1);
+  assert.equal(store.db.prepare("SELECT COUNT(*) n FROM run_steps WHERE run_id=? AND tool='checkpoint_read' AND status='completed'").get(run.id).n, 1, JSON.stringify({ turn, steps: store.db.prepare('SELECT tool,status,result FROM run_steps WHERE run_id=?').all(run.id) }));
   assert.equal(store.db.prepare("SELECT COUNT(*) n FROM run_steps WHERE run_id=? AND tool='shell'").get(run.id).n, 0);
   console.log('Recovery: stale/deleted notebook references, older-than-40-message continuity, deleted-source rejection and real post-restart Bot checkpoint_read passed');
 

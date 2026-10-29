@@ -372,6 +372,22 @@ const MIGRATIONS: Array<[number, string]> = [
       project_id TEXT NOT NULL UNIQUE REFERENCES projects(id) ON DELETE CASCADE
     );
   `],
+  [22, `
+    ALTER TABLE bot_requests ADD COLUMN cache_creation_tokens INTEGER;
+    ALTER TABLE bot_requests ADD COLUMN reasoning_tokens INTEGER;
+    ALTER TABLE runs ADD COLUMN context_end_seq INTEGER;
+    ALTER TABLE runs ADD COLUMN context_model TEXT;
+    CREATE TABLE bot_context_views (
+      run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,
+      source_end INTEGER NOT NULL, source_hash TEXT NOT NULL, messages TEXT NOT NULL
+    );
+    CREATE TABLE model_observations (
+      id TEXT PRIMARY KEY, owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      provider TEXT NOT NULL, model TEXT NOT NULL, started_at TEXT NOT NULL, ended_at TEXT, status TEXT NOT NULL,
+      input_tokens INTEGER, output_tokens INTEGER, cache_tokens INTEGER, cache_creation_tokens INTEGER, reasoning_tokens INTEGER
+    );
+    CREATE INDEX model_observations_owner_time ON model_observations(owner_id,started_at);
+  `],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -467,14 +483,16 @@ export class DatabaseStore {
           { version: 21, tables: ['resource_roots', 'resource_folders', 'resource_files'], extra: [], sql: MIGRATIONS.find(([v]) => v === 19)![1] },
           { version: 22, tables: ['resource_attachments'], extra: [], sql: MIGRATIONS.find(([v]) => v === 20)![1] },
           { version: 23, tables: ['bot_workspaces'], extra: [], sql: MIGRATIONS.find(([v]) => v === 21)![1] },
+          { version: 24, tables: ['bot_context_views', 'model_observations'], extra: [['bot_requests', 'cache_creation_tokens'], ['bot_requests', 'reasoning_tokens'], ['runs', 'context_end_seq'], ['runs', 'context_model']], sql: MIGRATIONS.find(([v]) => v === 22)![1] },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
           if (markers.some(Boolean) && !markers.every(Boolean)) throw new Error(`schema_layout_partial_v${group.version}: restore a consistent backup before upgrading`);
           if (markers.every(Boolean)) {
             for (const table of group.tables) {
-              const actual = columns(this.db, table).filter(c => !(table === 'gateway_inbox' && c.name === 'received_at'));
-              const trusted = columns(expected, table).filter(c => !(table === 'gateway_inbox' && c.name === 'received_at'));
+              const evolved = (name: string) => table === 'gateway_inbox' && name === 'received_at' || table === 'bot_requests' && ['cache_creation_tokens', 'reasoning_tokens'].includes(name);
+              const actual = columns(this.db, table).filter(c => !evolved(c.name));
+              const trusted = columns(expected, table).filter(c => !evolved(c.name));
               if (JSON.stringify(actual) !== JSON.stringify(trusted)) throw new Error(`schema_layout_untrusted_${table}`);
               if (JSON.stringify(this.db.prepare(`PRAGMA foreign_key_list(${table})`).all()) !== JSON.stringify(expected.prepare(`PRAGMA foreign_key_list(${table})`).all())) throw new Error(`schema_foreign_keys_untrusted_${table}`);
             }
@@ -508,6 +526,7 @@ export class DatabaseStore {
         apply(19, groups[7], 7);
         apply(20, groups[8], 8);
         apply(21, groups[9], 9);
+        apply(22, groups[10], 10);
       } finally { expected.close(); }
     })();
   }

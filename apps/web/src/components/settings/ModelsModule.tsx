@@ -38,6 +38,7 @@ import { confirmDialog, Field, LoadingButton, SectionCard, Sym, toast } from '..
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
 import JevCard from './JevCard';
 import ModelLibrary from './ModelLibrary';
+import PromptCacheUsage from './PromptCacheUsage';
 import { modelLabel, modelsForSlot, savedModelsOf } from '../../store/modelLibrary';
 import { ModelCapabilities } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
@@ -1157,7 +1158,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
                 allowDecision={!serverManaged}
                 discovered={discoveredModels[selectedProvider.id]}
                 checking={checking || providerSaving}
-                refreshLabel={serverManaged && providerNeedsSave?.(selectedProvider) ? '保存连接并获取模型' : '查找模型'}
+                refreshLabel={serverManaged && providerNeedsSave?.(selectedProvider) ? '保存连接并获取模型' : '获取模型列表'}
                 onRefresh={() => void handleCheck(selectedProvider.id)}
                 note={providerNotes[selectedProvider.id]}
               />
@@ -1288,6 +1289,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         </Field>
       </SectionCard>
 
+       {!standalone && <PromptCacheUsage serverManaged={serverManaged} />}
        {!serverManaged && <JevCard />}
        </>}
     </>

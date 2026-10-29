@@ -4,6 +4,7 @@ import type { WidgetPayload } from '../harness/widgetRuntime.ts';
 import { normalizeWidgetState, type WidgetState } from '../harness/widgetState.ts';
 import { uuid } from '../utils/uuid.ts';
 import { messageWidgets } from '../harness/widgetLayout.ts';
+import { versionWidget } from '../harness/widgetProtocol';
 
 export interface WidgetSession {
   rowId: number;
@@ -35,8 +36,8 @@ export async function openWidgetSession(rowId: number, payload: WidgetPayload): 
     const source = findSource(row, payload);
     if (!row || !source) throw new Error('此交互讲解已修改或删除，请重新打开');
     const widgetId = source.id || uuid();
-    if (!source.id) {
-      const updated = { ...source, id: widgetId };
+    const updated = versionWidget(source, widgetId);
+    if (JSON.stringify(updated) !== JSON.stringify(source)) {
       await db.chats.update(rowId, row.widgets?.length
         ? { widgets: row.widgets.map((widget) => widget === source ? updated : widget),
           ...(row.widgets.at(-1) === source ? { widget: updated } : {}) }

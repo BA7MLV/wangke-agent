@@ -1,4 +1,14 @@
 {
+  "cacheUsage": {
+    "title": "缓存用量 · 最近 24 小时",
+    "description": "按供应商实际返回的输入 token 加权统计。缺少缓存字段表示未知，不记作零命中；历史记录保留期间可查询。",
+    "refresh": "读取统计",
+    "unknown": "未知",
+    "error": "统计读取失败，请重试。",
+    "summary": "缓存命中率 {{rate}} · {{measured}} / {{requests}} 次请求有缓存统计",
+    "detail": "{{rate}} · 读 {{read}} / 写 {{write}} token · 覆盖 {{measured}} / {{requests}}",
+    "export": "导出基线 JSON"
+  },
   "modules": {
     "models": "模型",
     "agent": "Agent",
@@ -12,6 +22,31 @@
     "study": "学习",
     "skills": "技能与 MCP",
     "data": "数据"
+  },
+  "serverStorage": {
+    "title": "服务器存储占用",
+    "refresh": "刷新",
+    "loading": "正在统计服务器存储…",
+    "error": "无法读取服务器存储，请点击刷新重试。",
+    "refreshError": "刷新失败，当前显示上次统计结果，请重试。",
+    "total": "应用数据大小",
+    "partialTotal": "已统计的数据大小",
+    "partial": "部分目录无法读取或统计达到上限，当前结果不完整，可稍后刷新。",
+    "categories": {
+      "database": "数据库与日志",
+      "files": "上传文件与附件",
+      "workspaces": "资源与项目文件",
+      "system": "系统与记忆文件",
+      "other": "其他持久化数据"
+    },
+    "sizeNote": "按服务器持久化目录内的文件大小统计，硬链接只计一次；其他数据包括配置及目录内的备份。",
+    "disk": "数据磁盘",
+    "diskNumber": "数据磁盘 {{index}}",
+    "available": "可用 {{size}}",
+    "unavailable": "磁盘容量暂不可用",
+    "diskUsage": "已用 {{used}} / 总容量 {{total}}",
+    "diskNote": "磁盘用量包含同盘的其他程序；应用数据大小与实际分配的磁盘空间可能不同。",
+    "updated": "统计时间：{{time}}"
   },
   "mcp": {
     "transport": "连接类型", "stdioHint": "命令在后端服务器运行。请先安装依赖，使用独立容器时可填写 docker 命令；进程由连接管理器启动，禁用后关闭。", "command": "可执行程序", "args": "参数（JSON 数组）", "cwd": "工作目录（服务器绝对路径，可留空）", "env": "环境变量（JSON，留空保留）", "logs": "进程日志", "noLogs": "暂无进程日志。", "import": "导入 JSON", "importHint": "支持 mcpServers 和 VS Code mcp.servers / servers。先预览再导入；同名项不会被覆盖。变量占位符需替换为实际值。", "preview": "预览", "importConfirm": "确认导入", "authorize": "开始 OAuth 授权", "authorized": "OAuth 已授权", "notAuthorized": "OAuth 未授权", "openAuthorization": "前往授权（完成后返回刷新）", "disconnect": "断开授权", "revoked": "已撤销远程令牌并清除本地凭据。", "disconnectedLocal": "本地凭据已清除。远程未确认撤销，如需撤销请到服务方账号设置操作。",

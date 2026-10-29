@@ -124,7 +124,6 @@ function CloudModelEditor({ initial, standalone, onDone }: { initial: CloudConfi
     finally { operation.current = false; setBusy(false); }
   }
   return <div className="flex min-w-0 flex-col gap-5">
-    <p className="text-sm text-muted">保存供应商连接后默认从 /models 接口获取模型，选择添加后设置默认用途；models.dev 仅补充缺失的模型参数。连接单独保存，默认模型与模型库编辑完成后保存，密钥加密保存在服务器。</p>
     {issues.length > 0 && <div className="rounded-xl bg-danger/10 p-3" role="status">
       <p className="text-sm text-danger">有 {issues.length} 项默认模型配置需要修复。你仍可独立保存连接并获取模型列表。</p>
       <Button variant="tertiary" size="sm" onPress={() => setFocusIssue((value) => value + 1)}>定位并修复</Button>

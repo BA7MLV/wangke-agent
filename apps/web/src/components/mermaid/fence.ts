@@ -46,6 +46,8 @@ const LANG_RULES: readonly (readonly [DiagramKind, RegExp])[] = [
 export function diagramKindOf(props: { block?: unknown; lang?: unknown; children?: unknown }): DiagramKind | null {
   if (!props.block) return null;
   const lang = String(props.lang ?? '');
+  // HTML examples remain code even when their contents happen to be SVG.
+  if (/^\s*html?\b/i.test(lang)) return null;
   for (const [kind, re] of LANG_RULES) {
     if (re.test(lang)) return kind;
   }

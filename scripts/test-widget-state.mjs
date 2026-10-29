@@ -6,6 +6,7 @@ import { buildWidgetDocument } from '../apps/web/src/harness/widgetRuntime.ts';
 import { openWidgetSession, readWidgetState, saveWidgetState } from '../apps/web/src/store/widgetState.ts';
 import { persistArtifactEdit } from '../apps/web/src/store/artifactEdit.ts';
 import { layoutWidgets, messageWidgets, widgetReference } from '../apps/web/src/harness/widgetLayout.ts';
+import { persistAssistantSnapshot } from '../apps/web/src/store/assistantSnapshot.ts';
 
 const state = { modelContent: { a: -2, step: 1 }, privateContent: { panel: 'PRIVATE_UI_ONLY' } };
 assert.deepEqual(normalizeWidgetState({ modelContent: 0 }), { modelContent: 0, privateContent: null });
@@ -41,6 +42,7 @@ const makeRow = (sessionId) => db.chats.add({ sessionId, videoId: 'widget-test',
 const rowId = await makeRow(1), otherId = await makeRow(2);
 const session = await openWidgetSession(rowId, payload);
 assert.ok(session.widgetId);
+assert.equal((await db.chats.get(rowId)).widget.schemaVersion, 1);
 assert.equal((await openWidgetSession(rowId, payload)).widgetId, session.widgetId, 'legacy IDs are stable');
 const competing = await Promise.all([openWidgetSession(otherId, payload), openWidgetSession(otherId, payload)]);
 assert.equal(competing[0].widgetId, competing[1].widgetId, 'concurrent opens share one host ID');
@@ -56,6 +58,7 @@ await assert.rejects(saveWidgetState({ ...session, sessionId: 999 }, state), /�
 
 row = await persistArtifactEdit({ rowId, kind: 'html', location: 'widget', source: payload.html, next: '<p>changed</p>', expectedContent: 'KEEP_TEXT' });
 assert.notEqual(row.widget.id, session.widgetId);
+assert.equal(row.widget.revision, 2);
 assert.equal(row.widgetState, undefined);
 await assert.rejects(saveWidgetState(session, state), /修改或删除/);
 const updated = await openWidgetSession(rowId, row.widget);
@@ -89,5 +92,19 @@ assert.equal(row.widget.id, second.id, 'last-item alias remains the last item');
 await assert.rejects(saveWidgetState(firstSession, state), /修改或删除/);
 assert.equal((await readWidgetState(secondSession)).modelContent.a, 2, 'editing a sibling preserves its snapshot');
 assert.equal(await readWidgetState(await openWidgetSession(multiId, row.widgets[0])), null);
+const delivery = { sessionId: 77, videoId: 'snapshot', role: 'assistant', createdAt: 1,
+  content: widgetReference('saved'), widgets: [{ id: 'saved', ref: 'saved', html: '<p>static work</p>', kind: 'html', schemaVersion: 1, revision: 1, source: 'tool' }],
+  interrupted: true, interruptReason: '后续回答尚未完成' };
+const deliveryId = await persistAssistantSnapshot(delivery);
+assert.equal((await db.chats.get(deliveryId)).widgets.length, 1, 'complete work survives before final text');
+await db.chats.update(deliveryId, { widgetStates: { saved: state } });
+await persistAssistantSnapshot({ ...delivery, interrupted: undefined, interruptReason: undefined, content: `${delivery.content}\n完成` }, deliveryId);
+assert.equal(await db.chats.where('sessionId').equals(77).count(), 1, 'finalization updates rather than duplicates');
+assert.equal((await db.chats.get(deliveryId)).interrupted, undefined);
+assert.deepEqual((await db.chats.get(deliveryId)).widgetStates.saved, state, 'finalization preserves concurrently saved runtime state');
+await assert.rejects(persistAssistantSnapshot({ ...delivery, widgets: [{ html: '<p>bad version</p>', schemaVersion: 2 }] }), /协议版本/);
+await db.chats.delete(deliveryId);
+await assert.rejects(persistAssistantSnapshot(delivery, deliveryId), /已删除/);
+assert.equal(await db.chats.get(deliveryId), undefined, 'late completion never resurrects deleted messages');
 await db.delete();
 console.log('Widget state/layout: JSON/byte limits, private isolation, safe bootstrap, scoped inline references, concurrent sibling saves, targeted edits and deletion passed.');

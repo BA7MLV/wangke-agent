@@ -190,7 +190,7 @@ export class BotMemory {
     if (!this.store.db.prepare('SELECT 1 FROM threads WHERE id=? AND owner_id=?').get(thread, owner)) throw new Error('thread_not_found');
     const rows = this.store.db.prepare(`SELECT * FROM bot_memories m WHERE owner_id=? AND status='active' AND kind='preference'
       AND (scope='owner' OR scope='bot' AND EXISTS(SELECT 1 FROM thread_participants p WHERE p.thread_id=? AND p.agent_id=m.scope_id))
-      ORDER BY updated_at DESC LIMIT 20`).all(owner, thread) as MemoryRow[];
+      ORDER BY updated_at DESC,id LIMIT 20`).all(owner, thread) as MemoryRow[];
     // Course facts are retrieved explicitly with course scope, never guessed
     // from an attachment or injected into unrelated conversations.
     let characters = 0;
@@ -198,6 +198,6 @@ export class BotMemory {
       const size = JSON.stringify(row).length;
       if (characters + size > 8000) return false;
       characters += size; return true;
-    });
+    }).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
   }
 }

@@ -36,33 +36,20 @@ const HTML_ROOT_TAGS = new Set([
   'textarea', 'tfoot', 'th', 'thead', 'tr', 'ul',
 ]);
 
-/**
- * Decide whether an assistant message should use the HTML preview path.
- *
- * The normal answer renderer is Markdown.  Raw HTML needs a separate path so
- * incomplete tags do not get displayed as source text while a response is
- * streaming.  We only switch when the first meaningful token is a recognised
- * HTML root (or a doctype/html shell); Markdown prose and fenced code remain
- * untouched.
- */
+/** Only explicitly declared legacy works use the HTML preview path. */
 export function looksLikeStreamingHtml(source: string): boolean {
-  const text = source.trimStart();
-  if (!text) return false;
-  if (readFencedHtml(text) !== undefined) return true;
-  return looksLikeRawHtml(text);
+  return splitAssistantContent(source).some(block => block.kind === 'html' && block.htmlContentType === 'interactive');
 }
 
 /**
  * Return the payload only when the answer contains a single HTML block.
  *
- * Fenced HTML is common when a model was not instructed to use the widget
- * tool.  It is still an HTML answer, not something the user should have to
- * copy-paste into a browser. Mixed answers return `undefined`; render those
- * with splitAssistantContent rather than treating the entire answer as HTML.
+ * Ordinary examples and bare HTML are source, never execution declarations.
+ * Mixed answers return undefined and use splitAssistantContent.
  */
 export function htmlPreviewSource(source: string): string | undefined {
   const blocks = splitAssistantContent(source).filter((block) => block.source.trim());
-  return blocks.length === 1 && blocks[0].kind === 'html' ? blocks[0].source : undefined;
+  return blocks.length === 1 && blocks[0].kind === 'html' && blocks[0].htmlContentType === 'interactive' ? blocks[0].source : undefined;
 }
 
 export interface AssistantContentBlock {
@@ -94,12 +81,13 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
       closing.lastIndex = lineEnd;
       const match = closing.exec(source);
       const end = match ? match.index + match[0].length : source.length;
-      if (/^html?$/i.test(fence[2]) || fence[2] === 'wbw-widget') {
+      const contentType = htmlFenceContentType(line.slice(line.indexOf(fence[1]) + fence[1].length));
+      if ((/^html?$/i.test(fence[2]) && contentType === 'interactive') || fence[2] === 'wbw-widget') {
         markdown(cursor);
         const body = source.slice(lineEnd, match?.index ?? end).replace(/\s+$/, '');
-        blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : isSvgCode(fence[2], body) ? 'svg' : 'html', source: body,
+        blocks.push({ kind: fence[2] === 'wbw-widget' ? 'widget' : 'html', source: body,
           start: cursor, end, location: 'fence', closed: !!match,
-          htmlContentType: htmlFenceContentType(line.slice(line.indexOf(fence[1]) + fence[1].length)) });
+          htmlContentType: contentType });
         markdownStart = end;
       }
       // Never interpret HTML examples inside another language's code fence.
@@ -111,11 +99,11 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
         end: end ?? source.length, location: 'html', closed: end !== undefined });
       cursor = end ?? source.length;
       markdownStart = cursor;
-    } else if (/^ {0,3}</.test(line) && looksLikeRawHtml(line.trimStart())) {
+    } else if (/^ {0,3}<(?:!doctype|html|head|body|style|script|main|section|article|div|button|form|input|select|textarea)(?:\s|>|$)/i.test(line)) {
       markdown(cursor);
       const end = rawHtmlWorkEnd(source, cursor);
       blocks.push({ kind: 'html', source: source.slice(cursor, end ?? source.length), start: cursor,
-        end: end ?? source.length, location: 'html', closed: end !== undefined, htmlContentType: 'interactive' });
+        end: end ?? source.length, location: 'html', closed: end !== undefined, htmlContentType: 'example' });
       cursor = end ?? source.length;
       markdownStart = cursor;
     } else {
@@ -129,7 +117,7 @@ export function splitAssistantContent(source: string): AssistantContentBlock[] {
 /** Retrieval narration can reset; delivered visuals and their surrounding explanation cannot. */
 export function nextVisualRound(source: string, hasWidgets = false): string {
   const visual = hasWidgets || splitAssistantContent(source).some((block) => block.kind === 'html' || block.kind === 'svg')
-    || artifactFences(source).some((fence) => fence.kind === 'svg' || isSvgCode(fence.kind, fence.source))
+    || artifactFences(source).some((fence) => fence.kind === 'html' || fence.kind === 'svg' || isSvgCode(fence.kind, fence.source))
     || /^ {0,3}(?:`{3,}|~{3,})wbw-widget[ \t]*$/m.test(source);
   return visual && source.trim() ? `${source.trimEnd()}\n\n` : '';
 }
@@ -204,14 +192,6 @@ function looksLikeRawHtml(text: string): boolean {
   if (/^<!--(?:.|\n)*?(?:-->|$)/.test(text)) return true;
   const opening = /^<([A-Za-z][\w:-]*)(?:\s[^<>]*|\s*\/?>|$)/.exec(text);
   return !!opening && HTML_ROOT_TAGS.has(opening[1].toLowerCase());
-}
-
-function readFencedHtml(text: string): string | undefined {
-  const match = /^(`{3,}|~{3,})[ \t]*(?:html|htm)[ \t]*(?:\r?\n|$)([\s\S]*)$/i.exec(text);
-  if (!match) return undefined;
-  const marker = match[1];
-  const escaped = marker.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-  return match[2].replace(new RegExp(`\\r?\\n${escaped}[ \\t]*$`), '');
 }
 
 export interface StreamingHtmlSplit {

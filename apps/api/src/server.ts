@@ -38,6 +38,7 @@ import { registerResourceRoutes } from './projects/resource-routes.js';
 import type { SandboxCleanup, SandboxExecutor } from './agent/sandbox.js';
 import { settleWithin } from './lifecycle.js';
 import { inspectDatabase } from './storage/release.js';
+import { storageUsageReader } from './storage/usage.js';
 
 const defaultDataDir = process.env.DATA_DIR ?? path.resolve(process.cwd(), 'data');
 const messageKinds = new Set(['text', 'progress', 'attachment', 'widget', 'question', 'approval']);
@@ -104,6 +105,7 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
   const bootstrapTtlMs = Number(process.env.BOOTSTRAP_TTL_MS ?? 24 * 60 * 60 * 1000);
   const sessionTtlMs = Number(process.env.SESSION_TTL_MS ?? 30 * 24 * 60 * 60 * 1000);
   const filesDir = process.env.FILES_DIR ?? path.join(defaultDataDir, 'files');
+  const readStorageUsage = storageUsageReader({ dataDir: defaultDataDir, dbPath, filesDir, configDir: path.dirname(secretFile) });
   const configuredMaxFileBytes = Number(process.env.MAX_FILE_BYTES ?? 512 * 1024 * 1024);
   const maxFileBytes = Number.isFinite(configuredMaxFileBytes) ? Math.max(1, Math.min(512 * 1024 * 1024, Math.floor(configuredMaxFileBytes))) : 512 * 1024 * 1024;
   fs.mkdirSync(filesDir, { recursive: true });
@@ -196,13 +198,13 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     reply.header('access-control-allow-credentials', 'true');
     reply.header('vary', 'Origin');
     if (request.method === 'OPTIONS') {
-      reply.header('access-control-allow-methods', 'GET,POST,PUT,PATCH,DELETE,OPTIONS');
-      reply.header('access-control-allow-headers', 'Authorization,Content-Type,Accept,Last-Event-ID,X-File-Name,X-File-Mime,X-Bootstrap-Secret,Range');
-      reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length');
+      reply.header('access-control-allow-methods', 'GET,HEAD,POST,PUT,PATCH,DELETE,OPTIONS');
+      reply.header('access-control-allow-headers', 'Authorization,Content-Type,Accept,Last-Event-ID,X-File-Name,X-File-Mime,X-Bootstrap-Secret,Range,If-Range,If-None-Match');
+      reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length,Accept-Ranges,ETag');
       reply.header('access-control-max-age', '600');
       return reply.code(204).send();
     }
-    reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length');
+    reply.header('access-control-expose-headers', 'Content-Disposition,Content-Range,Content-Length,Accept-Ranges,ETag');
   });
 
   function session(request: FastifyRequest) {
@@ -258,6 +260,11 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
      for (const run of runs) { store.db.prepare("UPDATE runs SET status='cancelled',completed_at=?,wake_at=NULL WHERE id=?").run(now(), run.id); runner.cancel(run.id); }
    } });
   app.get('/api/v1/health', async () => ({ status: 'ok', version: process.env.APP_VERSION ?? '0.1.0', cloud: true, auth: ['password', 'token', 'passkey'] }));
+  app.get('/api/v1/cloud/storage', async (request, reply) => {
+    if (!requireAuth(request, reply)) return;
+    if (workerIdentity(request)) return reply.code(403).send({ error: 'worker_scope_denied' });
+    return readStorageUsage();
+  });
   app.get('/api/v1/ready', async (_request, reply) => {
     if (draining) return reply.code(503).send({ status: 'draining' });
     if (held) return reply.code(503).send({ status: 'staged' });

@@ -297,7 +297,8 @@ await test('chatStream：网关给的调用与还原出的调用不撞号', asyn
     { messages: [{ role: 'user', content: 'x' }], tools: TOOLS },
   );
   assert.deepEqual(msg.tool_calls?.map((c) => c.function.name), ['real', 'leaked']);
-  assert.deepEqual(msg.tool_calls?.map((c) => c.id), ['real_1', 'dsml_0']);
+  assert.equal(msg.tool_calls?.[0].id, 'real_1');
+  assert.match(msg.tool_calls?.[1].id, /^dsml_[\w-]+$/);
 });
 
 await test('chatStream：没声明 tools 时不装还原器（正文里的 HTML 不能被吞）', async () => {

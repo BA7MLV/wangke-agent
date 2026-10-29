@@ -21,11 +21,10 @@ const urlOf = (file: BotAttachment, projectId?: string) => projectId
   : file.fileId ? serverClient.fileDownloadUrl(file.fileId) : undefined;
 
 /** Authenticated blob URLs also work for project downloads (application/octet-stream). */
-function AttachmentImage({ name, url, local, draft = false }: { name: string; url?: string; local?: File; draft?: boolean }) {
+function useAttachmentImage(url?: string, local?: File) {
   const [source, setSource] = useState('');
   const [failed, setFailed] = useState(false);
   const [attempt, setAttempt] = useState(0);
-  const [open, setOpen] = useState(false);
   useEffect(() => {
     const controller = new AbortController();
     let objectUrl = '';
@@ -46,23 +45,58 @@ function AttachmentImage({ name, url, local, draft = false }: { name: string; ur
     void load().catch(() => { if (!controller.signal.aborted) setFailed(true); });
     return () => { controller.abort(); if (objectUrl) URL.revokeObjectURL(objectUrl); };
   }, [url, local, attempt]);
+  return { source, failed, attempt, setFailed, retry: () => setAttempt(value => value + 1) };
+}
+
+type ImageItem = { name: string; url?: string; local?: File };
+
+function AttachmentImage({ name, url, local, draft = false, images }: ImageItem & { draft?: boolean; images?: ImageItem[] }) {
+  const { source, failed, setFailed, retry } = useAttachmentImage(url, local);
+  const [open, setOpen] = useState(false);
+  const stacked = !!images && images.length > 1;
   return <>
-    <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={`预览图片 ${name}`}
-      onPress={() => { if (failed) setAttempt(value => value + 1); else setOpen(true); }}>
+    <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={stacked ? `查看 ${images.length} 张图片` : `预览图片 ${name}`}
+      onPress={() => { if (failed && !stacked) retry(); else setOpen(true); }}>
       {failed ? <span role="status">图片加载失败，点击重试</span> : source ? <img src={source} alt={name} decoding="async" onError={() => setFailed(true)} /> : <Spinner size="sm" aria-label="图片加载中" />}
+      {stacked && <span className="bot-image-stack__count" aria-hidden="true"><Sym name="photo_library" />{images.length}</span>}
     </Button>
-    <ImagePreview isOpen={open} onOpenChange={setOpen} title={name} contentKey={`${source}:${attempt}`} testId="bot-image-viewer"
-      content={source && !failed ? { kind: 'image', src: source, onError: () => setFailed(true) } : undefined}
-      status={failed ? <Button variant="tertiary" onPress={() => setAttempt(value => value + 1)}>图片加载失败，重试</Button> : <Spinner aria-label="图片加载中" />}
-      onDownload={source ? () => { const link = document.createElement('a'); link.href = source; link.download = name; link.click(); } : undefined} />
+    {open && <AttachmentImageViewer images={images ?? [{ name, url, local }]} onClose={() => setOpen(false)} />}
   </>;
 }
 
+function AttachmentImageViewer({ images, onClose }: { images: ImageItem[]; onClose: () => void }) {
+  const [index, setIndex] = useState(0);
+  const selected = Math.min(index, images.length - 1);
+  return <AttachmentImagePreview key={selected} image={images[selected]} onClose={onClose}
+    navigation={{ index: selected, total: images.length, onChange: setIndex }} />;
+}
+
+function AttachmentImagePreview({ image: { name, url, local }, onClose, navigation }: {
+  image: ImageItem; onClose: () => void; navigation: { index: number; total: number; onChange: (index: number) => void };
+}) {
+  const { source, failed, attempt, setFailed, retry } = useAttachmentImage(url, local);
+  return <ImagePreview isOpen onOpenChange={open => { if (!open) onClose(); }} title={name} contentKey={`${url}:${attempt}`} testId="bot-image-viewer"
+      navigation={navigation}
+      content={source && !failed ? { kind: 'image', src: source, onError: () => setFailed(true) } : undefined}
+      status={failed ? <Button variant="tertiary" onPress={retry}>图片加载失败，重试</Button> : <Spinner aria-label="图片加载中" />}
+      onDownload={source ? () => { const link = document.createElement('a'); link.href = source; link.download = name; link.click(); } : undefined} />
+}
+
 export function BotMessageAttachments({ files, projectId }: { files: BotAttachment[]; projectId?: string }) {
+  // Only consecutive images belong to an album; keep other attachments in order.
+  const groups: BotAttachment[][] = [];
+  for (const file of files) {
+    const previous = groups.at(-1);
+    if (isImage(file) && previous && isImage(previous[0])) previous.push(file);
+    else groups.push([file]);
+  }
   return <div className="chat-attachments bot-message-attachments" data-testid="bot-message-attachments">
-    {files.map((file, index) => {
+    {groups.map((group, index) => {
+      const file = group[0];
       const name = nameOf(file), url = urlOf(file, projectId);
-      return isImage(file) ? <div className="chat-image-gallery" data-count="1" key={index}><AttachmentImage name={name} url={url} /></div>
+      return isImage(file) ? <div className={`chat-image-gallery${group.length > 1 ? ' bot-image-stack' : ''}`} data-count="1" key={`${file.fileId ?? file.projectPath ?? 'image'}:${index}`}>
+        <AttachmentImage name={name} url={url} images={group.map(item => ({ name: nameOf(item), url: urlOf(item, projectId) }))} />
+      </div>
         : <div className="imsg-bubble imsg-bubble--file" key={index}>
           <span className="imsg-file__icon" aria-hidden="true"><Sym name="description" /></span>
           {url ? <a className="imsg-file__name" href={url} download>{name}</a> : <span className="imsg-file__name">{name}</span>}

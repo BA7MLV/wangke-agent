@@ -60,7 +60,7 @@ test('formatFrameList 输出按时间排序的 [mm:ss] 描述清单', () => {
 });
 
 test('formatFrameList 空清单给出兜底文案', () => {
-  assert.match(formatFrameList([]), /暂无可用画面/);
+  assert.match(formatFrameList([]), /暂无已保存画面/);
 });
 
 test('formatFrameList 缺 caption 时有占位描述', () => {
@@ -81,9 +81,12 @@ test('qaSystem hasFrames=true 时注入 read frames 与 [图@mm:ss] 规则', () 
 
 test('qaSystem 技能与画面规则可共存且编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true);
-  assert.match(p, /7\. .*present_quiz/);
-  assert.match(p, /8\. 可用的技能/);
-  assert.match(p, /9\. .*read \/courses\/current\/frames/);
+  const rules = [...p.matchAll(/^(\d+)\. (.*)$/gm)];
+  assert.deepEqual(rules.map(match => Number(match[1])), rules.map((_, index) => index + 1));
+  const quiz = rules.findIndex(match => match[2].includes('present_quiz'));
+  assert.ok(quiz >= 0);
+  assert.match(rules[quiz + 1][2], /可用的技能/);
+  assert.match(rules[quiz + 2][2], /read \/courses\/current\/frames/);
 });
 
 // —— 2026-09-10 新增：代码块内的标记不得被改写（否则 mermaid / 普通代码源码被破坏） ——
@@ -131,8 +134,10 @@ test('qaSystem 无截图时不注入该规则', () => {
 
 test('qaSystem 截图规则与画面引用规则编号连续', () => {
   const p = PROMPTS.qaSystem('测试课程', '技能A：用途A', true, 1);
-  assert.match(p, /4\. 本轮用户附带了 1 张截图/);
-  assert.match(p, /10\. .*read \/courses\/current\/frames/);
+  assert.match(p, /^\d+\. 本轮用户附带了 1 张截图/m);
+  assert.match(p, /^\d+\. .*read \/courses\/current\/frames/m);
+  const numbers = [...p.matchAll(/^(\d+)\. /gm)].map(match => Number(match[1]));
+  assert.deepEqual(numbers, numbers.map((_, index) => index + 1));
 });
 
 // —— 2026-09-17 新增：讲不清就画图（问答正文与题卡解析共用同一句话术） ——
@@ -158,13 +163,13 @@ test('qaSystemMaterial 同样注入出图规则，且不引入时间戳口径', 
 // —— 2026-10-13 起：JSON 中间层上位，原生 svg 围栏退场（只剩渲染层兼容旧数据） ——
 // 两条链路共用同一句话术，所以两处都要点到 diagram，否则问答能画、题卡不能。
 
-test('出图规则点明 diagram 围栏，并写死「mermaid 优先、diagram 兜底」的分工', () => {
+test('出图规则点明 diagram 优先，专用图种用 mermaid，坐标交给渲染器', () => {
   for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
     assert.match(p, /```diagram 围栏/, '必须点明 diagram 围栏名（前端只认这一个 JSON 标记）');
-    // 分工不能省：不写「mermaid 画不出的才用 diagram」，模型会放着现成图种不用去手搓 JSON
-    assert.match(p, /mermaid 画不出的[^。]*```diagram/);
+    assert.match(p, /优先用 ```diagram/);
+    assert.match(p, /时序、ER 等未覆盖的专用图种用 ```mermaid/);
     // JSON 中间层的全部意义：模型只描述结构，坐标/布局/采样由渲染器算
-    assert.match(p, /你不要手算坐标/);
+    assert.match(p, /不要手算 SVG 像素坐标/);
   }
 });
 
@@ -177,10 +182,19 @@ test('出图规则点明标题写在围栏参数里（不是 JSON 字段）', ()
   }
 });
 
-test('出图规则不再教 svg 围栏（历史数据兼容只留在渲染层，不进提示词）', () => {
+test('普通图不手写 SVG，用户明确要求 SVG 时通过工具预检', () => {
   for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
-    assert.ok(!p.includes('```svg'), '提示词不该再教模型直出 SVG（围栏仍渲染，见 fence.ts）');
+    assert.match(p, /不要手算 SVG 像素坐标或输出 SVG/);
+    assert.match(p, /用户说“生成\/画 SVG”[^\n]*调用 show_widget，传 format="svg"/);
     assert.ok(!/不写 script/.test(p), 'svg 安全约束不该再占提示词篇幅');
+  }
+});
+
+test('HTML 作品与代码意图分离：静态作品走工具，普通示例只展示代码', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
+    assert.match(p, /新 HTML 作品（包括无脚本静态页面）统一通过 show_widget 创建/);
+    assert.match(p, /解释代码时用普通 html 围栏/);
+    assert.match(p, /不要用裸 HTML 或 html interactive 围栏代替工具/);
   }
 });
 
@@ -235,15 +249,15 @@ test('diagramKindOf 不认行内 code 与缺 lang 的围栏', () => {
   assert.equal(diagramKindOf({ block: true, lang: undefined }), null);
 });
 
-test('SVG 内容识别兼容 XML、HTML、无语言与转义源码，但不误判普通代码', () => {
+test('SVG 内容识别兼容 XML、无语言与转义源码，HTML 示例保持代码', () => {
   const source = '<svg width="200" height="200"><circle r="80"/></svg>';
-  for (const lang of ['', 'xml', 'XML', 'html', 'htm', 'image/svg+xml', 'application/svg+xml']) {
+  for (const lang of ['', 'xml', 'XML', 'image/svg+xml', 'application/svg+xml']) {
     assert.equal(diagramKindOf({ block: true, lang, children: source }), 'svg', lang);
     assert.equal(diagramKindOf({ block: true, lang, children: '<?xml version="1.0"?>\n<!-- example -->\n' + source }), 'svg');
   }
   assert.equal(diagramKindOf({ block: true, children: '&lt;svg width=&quot;200&quot;&gt;&lt;/svg&gt;' }), 'svg');
   assert.equal(diagramKindOf({ block: true, lang: 'xml', children: '<svg width="200"' }), 'svg', 'partial roots can draw while streaming');
-  for (const lang of ['js', 'jsx', 'tsx', 'python', 'text']) assert.equal(diagramKindOf({ block: true, lang, children: source }), null);
+  for (const lang of ['js', 'jsx', 'tsx', 'python', 'text', 'html', 'htm', 'HTML', 'html interactive']) assert.equal(diagramKindOf({ block: true, lang, children: source }), null);
   assert.equal(diagramKindOf({ block: false, children: source }), null);
   assert.equal(diagramKindOf({ block: true, lang: 'xml', children: '<catalog><svg/></catalog>' }), null);
   assert.equal(diagramKindOf({ block: true, children: 'const source = "<svg></svg>";' }), null);

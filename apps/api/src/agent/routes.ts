@@ -21,9 +21,19 @@ export function registerBotManagement(app: FastifyInstance, store: DatabaseStore
       memoryJob: store.db.prepare('SELECT enabled,cursor,token_budget AS tokenBudget,interval_seconds AS intervalSeconds,next_at AS nextAt FROM bot_memory_jobs WHERE owner_id=?').get(u.id) ?? { enabled: 0, cursor: null, tokenBudget: 10000, intervalSeconds: 86400 },
       runs: store.db.prepare('SELECT r.id,r.thread_id AS threadId,t.title,r.status,r.error_code AS errorCode,r.step_count AS steps,r.active_ms AS activeMs,r.created_at AS createdAt FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND r.mode=? ORDER BY r.created_at DESC LIMIT 50 OFFSET ?').all(u.id, 'bot', offset),
       usage: store.db.prepare(`SELECT COUNT(*) AS requests,COALESCE(SUM(input_tokens+output_tokens),0) AS knownTokens,
+        COALESCE(SUM(input_tokens),0) AS inputTokens,COALESCE(SUM(output_tokens),0) AS outputTokens,
+        COUNT(cache_tokens) AS cacheMeasuredRequests,COALESCE(SUM(cache_tokens),0) AS cacheReadTokens,
+        COALESCE(SUM(cache_creation_tokens),0) AS cacheWriteTokens,
+        COALESCE(SUM(CASE WHEN cache_tokens IS NOT NULL THEN input_tokens ELSE 0 END),0) AS cacheMeasuredInputTokens,
+        1.0*SUM(cache_tokens)/NULLIF(SUM(CASE WHEN cache_tokens IS NOT NULL THEN input_tokens ELSE 0 END),0) AS cacheHitRate,
         COALESCE(SUM(CASE WHEN input_tokens IS NULL THEN reserved_tokens ELSE 0 END),0) AS unknownReservedTokens,
         SUM(cost) AS knownCost,COALESCE(SUM(CASE WHEN cost IS NULL THEN 1 ELSE 0 END),0) AS unknownCostRequests
         FROM bot_requests WHERE owner_id=? AND started_at>=?`).get(u.id, new Date().toISOString().slice(0, 10)),
+      cacheByModel: store.db.prepare(`SELECT provider,model,COUNT(*) AS requests,COUNT(cache_tokens) AS measuredRequests,
+        SUM(cache_tokens) AS cacheReadTokens,SUM(cache_creation_tokens) AS cacheWriteTokens,
+        SUM(CASE WHEN cache_tokens IS NOT NULL THEN input_tokens ELSE 0 END) AS measuredInputTokens,
+        1.0*SUM(cache_tokens)/NULLIF(SUM(CASE WHEN cache_tokens IS NOT NULL THEN input_tokens ELSE 0 END),0) AS hitRate
+        FROM bot_requests WHERE owner_id=? AND started_at>=? GROUP BY provider,model`).all(u.id, new Date().toISOString().slice(0, 10)),
     };
   });
   app.post<{ Body: BotBudget }>('/api/v1/bot/budget', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => configuration.save(u.id, { ...configuration.get(u.id, true), botBudget: validateBudget(r.body) })); });
