@@ -28,7 +28,10 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  width: calc(100% + 8px);
+  /* Only the heading paints a full-width canvas for sticky content below it.
+     Keep the interactive highlight around the label, counts and chevron. */
+  width: fit-content;
+  max-width: calc(100% + 8px);
   min-height: 40px;
   padding: 8px;
   margin-inline-start: -8px;

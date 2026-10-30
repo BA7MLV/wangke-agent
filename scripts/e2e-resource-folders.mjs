@@ -65,7 +65,7 @@ try {
     await page.getByTestId('chat-recent-91001').click();
     await page.getByTestId('course-chat-messages').getByText('资源页也能继续这段对话', { exact: true }).waitFor();
     await page.getByTestId('nav-rail-chat').click();
-    assert.equal(await page.getByTestId('page-title').innerText(), '主页');
+  assert.equal(await page.getByTestId('page-title').innerText(), '');
     await page.getByTestId('nav-rail-home').click();
     await page.getByTestId('resource-list').waitFor();
     assert.equal(await page.evaluate(() => window.resourceSidebar === document.querySelector('[data-testid="nav-rail"]')), true,

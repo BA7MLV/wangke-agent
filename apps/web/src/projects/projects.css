@@ -1,5 +1,5 @@
 .project-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(min(100%, 280px), 1fr)); gap: 16px; }
-.project-card { min-width: 0; padding: 16px; background: var(--surface-secondary); border-radius: var(--radius-dialog); display: grid; gap: 16px; }
+.project-card { min-width: 0; padding: 16px; background: var(--surface-secondary); border-radius: var(--radius-panel); display: grid; gap: 16px; }
 .project-card-open { display: flex; align-items: center; gap: 12px; text-align: start; cursor: pointer; }
 .project-card-open h2 { font-size: 1.1rem; font-weight: 600; overflow-wrap: anywhere; }
 .project-card-open > .sym { color: var(--accent); font-size: 1.7rem; }

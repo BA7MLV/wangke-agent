@@ -20,6 +20,7 @@ import { compileExpression } from '../apps/web/src/components/mermaid/expr.ts';
 import {
   validateDiagram,
   DiagramSchemaError,
+  LIMITS,
 } from '../apps/web/src/components/mermaid/diagramSchema.ts';
 import { renderDiagram } from '../apps/web/src/components/mermaid/diagramRender.ts';
 import { peekDiagramProgress } from '../apps/web/src/components/mermaid/diagramStream.ts';
@@ -85,6 +86,14 @@ const GOOD_PLOT = {
   points: [{ at: [0, 0], label: '顶点' }],
 };
 
+// 同时跨过旧版的 10 节点 / 16 条边门槛，保证不再为可读性建议截断内容。
+const graphOf = (count) => ({
+  type: 'graph',
+  nodes: Array.from({ length: count }, (_, i) => ({ id: `n${i}`, label: `节点${i}` })),
+  edges: Array.from({ length: count - 1 }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` }))
+    .concat(Array.from({ length: count - 2 }, (_, i) => ({ from: `n${i}`, to: `n${i + 2}` }))),
+});
+
 test('合法 graph / plot 通过校验并原样保留字段', () => {
   assert.deepEqual(validateDiagram(structuredClone(GOOD_GRAPH)), GOOD_GRAPH);
   const p = validateDiagram(structuredClone(GOOD_PLOT));
@@ -125,12 +134,12 @@ test('未知字段一律拒绝并列出可用字段（防字段漂移）', () =>
   );
 });
 
-test('graph 节点上限 / 空 / id 重复 / 悬空边 / 自环全部可执行报错', () => {
+test('graph 资源上限 / 空 / id 重复 / 悬空边 / 自环全部可执行报错', () => {
   const node = (i) => ({ id: `n${i}`, label: `节点${i}` });
   assert.throws(() => validateDiagram({ type: 'graph', nodes: [] }), /nodes 不能为空/);
   assert.throws(
-    () => validateDiagram({ type: 'graph', nodes: Array.from({ length: 11 }, (_, i) => node(i)) }),
-    (e) => /超过 10 个/.test(e.message) && /拆成两张图/.test(e.message),
+    () => validateDiagram({ type: 'graph', nodes: Array.from({ length: LIMITS.maxNodes + 1 }, (_, i) => node(i)) }),
+    (e) => e.message.includes(`超过渲染安全上限 ${LIMITS.maxNodes} 个`) && /保留全部节点与关系/.test(e.message),
   );
   assert.throws(
     () => validateDiagram({ type: 'graph', nodes: [node(0), { id: 'n0', label: '重名' }] }),
@@ -145,11 +154,49 @@ test('graph 节点上限 / 空 / id 重复 / 悬空边 / 自环全部可执行�
     /自环/,
   );
   assert.throws(
-    () => validateDiagram({ type: 'graph', nodes: [{ id: 'a', label: 'x'.repeat(21) }] }),
-    (e) => /超过 20 字/.test(e.message),
+    () => validateDiagram({ type: 'graph', nodes: [{ id: 'a', label: 'x'.repeat(LIMITS.maxNodeLabel + 1) }] }),
+    (e) => e.message.includes(`超过 ${LIMITS.maxNodeLabel} 字`),
   );
   assert.throws(() => validateDiagram({ type: 'graph', nodes: [{ id: 'a', label: 'x', shape: 'star' }] }), /shape 只能/);
   assert.throws(() => validateDiagram({ type: 'graph', direction: 'RL', nodes: [node(0)] }), /direction 只能/);
+});
+
+test('graph 安全边界允许完整结构与长术语，超限给出资源保护原因', () => {
+  const nodes = Array.from({ length: LIMITS.maxNodes }, (_, i) => ({ id: `n${i}`, label: '词'.repeat(LIMITS.maxNodeLabel) }));
+  const edge = { from: 'n0', to: 'n1', label: '关'.repeat(LIMITS.maxEdgeLabel) };
+  const doc = { type: 'graph', nodes, edges: Array.from({ length: LIMITS.maxEdges }, () => ({ ...edge })) };
+  const validated = validateDiagram(doc);
+  assert.equal(validated.nodes.length, LIMITS.maxNodes);
+  assert.equal(validated.edges.length, LIMITS.maxEdges);
+  assert.equal(validated.nodes[0].label, nodes[0].label, '完整术语不能被截断');
+  assert.equal(validated.edges[0].label, edge.label);
+  assert.throws(() => validateDiagram({ ...doc, edges: [...doc.edges, edge] }),
+    (e) => e.message.includes(`超过渲染安全上限 ${LIMITS.maxEdges} 条`) && /保留全部节点与关系/.test(e.message));
+  assert.throws(() => validateDiagram({ ...doc, edges: [{ ...edge, label: '字'.repeat(LIMITS.maxEdgeLabel + 1) }] }),
+    (e) => e.message.includes(`超过 ${LIMITS.maxEdgeLabel} 字`));
+});
+
+test('12 / 30 节点图完整出图，流式预览不再截在 10 节点 / 16 条边', () => {
+  for (const count of [12, 30]) {
+    const doc = validateDiagram(graphOf(count));
+    const rendered = renderDiagram(doc);
+    assert.equal(rendered.shapes.filter(s => s.key.startsWith('node:')).length, count);
+    assert.equal(rendered.shapes.filter(s => s.key.startsWith('edge:')).length, doc.edges.length);
+    assert.equal(rendered.svg, renderDiagram(doc).svg, '大图布局同样必须确定');
+    const progress = peekDiagramProgress(JSON.stringify(doc).slice(0, -1));
+    assert.ok(progress, 'JSON 尚未闭合时也能完整预览');
+    assert.deepEqual(progress.shapes, rendered.shapes, '流式最后一拍与终态一致，不丢图元');
+    assert.equal(progress.viewBox, rendered.viewBox);
+  }
+});
+
+test('graph 流式预览与终态共用资源上限，不无限制布局超大输入', () => {
+  const nodes = Array.from({ length: LIMITS.maxNodes + 1 }, (_, i) => ({ id: `n${i}`, label: `节点${i}` }));
+  const edges = Array.from({ length: LIMITS.maxEdges + 1 }, () => ({ from: 'n0', to: 'n1' }));
+  const progress = peekDiagramProgress(JSON.stringify({ type: 'graph', nodes, edges }).slice(0, -1));
+  assert.ok(progress);
+  assert.equal(progress.shapes.filter(s => s.key.startsWith('node:')).length, LIMITS.maxNodes);
+  assert.equal(progress.shapes.filter(s => s.key.startsWith('edge:')).length, LIMITS.maxEdges);
 });
 
 test('plot 范围 / 几何 / 颜色的报错都可执行', () => {
@@ -234,7 +281,7 @@ test('改一个 label 只动那一个图元（diff 友好）', () => {
   assert.ok(same('edge:0'), '连线不该被无关改动波及');
 });
 
-test('标签变宽会撑开列宽、兄弟节点平移（已知取舍，≤10 节点的图可接受）', () => {
+test('标签变宽会撑开列宽、兄弟节点平移（流式静默更新）', () => {
   const mk = (label) =>
     renderDiagram(
       validateDiagram({

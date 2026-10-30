@@ -7,6 +7,7 @@ import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { parseSkillMarkdown } from '../apps/web/src/skills/types.ts';
 import { isLegacyHandoutSkill } from '../apps/web/src/skills/catalog.ts';
+import { LIMITS } from '../packages/study-core/src/diagrams/schema.ts';
 
 const DIR = 'packages/study-core/assets/builtin';
 let passed = 0;
@@ -61,7 +62,7 @@ test('包含必备的七个：公文讲义写作 / 公文版式规格 / 学科�
   assert.ok(names.includes('资料整理'));
 });
 
-test('「讲解配图」约定图种、节点上限、数学坐标及文件导出边界', () => {
+test('「讲解配图」区分可读性建议与安全上限，保留数学坐标及文件导出边界', () => {
   const s = skills.find((x) => x.name === '讲解配图');
   assert.ok(s, '缺讲解配图');
   // 围栏名是「提示词 ↔ 渲染层」的硬契约（components/mermaid/fence.ts 只认这三个，
@@ -74,9 +75,14 @@ test('「讲解配图」约定图种、节点上限、数学坐标及文件导�
   for (const kw of ['graph', 'plot', 'chart', 'sequenceDiagram', 'stateDiagram-v2', 'pie']) {
     assert.ok(s.body.includes(kw), `缺图种：${kw}`);
   }
-  // 数量上限与防滥画
-  assert.match(s.body, /不超过 10 个节点/);
-  assert.match(s.body, /不超过 10 个字/);
+  // 可读性不再是 10 节点硬门槛；大图与多图都有完整的信息保留策略。
+  assert.match(s.body, /节点数量按内容决定/);
+  assert.match(s.body, /缩放、滚动查看/);
+  assert.match(s.body, /不限制一段回答只能一张图/);
+  assert.match(s.body, /保留全部节点与关系/);
+  assert.ok(!/不超过 10 个节点|不超过 10 个字|一段回答最多一张图/.test(s.body));
+  assert.ok(s.body.includes(`安全上限是 ${LIMITS.maxNodes} 个节点、${LIMITS.maxEdges} 条边`));
+  assert.ok(s.body.includes(`节点标签最多 ${LIMITS.maxNodeLabel} 字，连线标签最多 ${LIMITS.maxEdgeLabel} 字`));
   // JSON 中间层的口径（替代了过去的 svg 安全约束）：
   // 布局由渲染器计算，plot 的数学坐标仍须按题意提供。
   assert.match(s.body, /不要手算节点布局或连线路由坐标/);

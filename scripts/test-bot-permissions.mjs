@@ -33,7 +33,7 @@ let commands = 0;
 async function runTool(name, args, { approved, beforeResolve, restart = false, targetThread = threadId } = {}) {
   const id = crypto.randomUUID();
   let calls = 0;
-  const options = { configuration, projects, sandbox: async () => { commands++; return { stdout: 'done', stderr: '', exitCode: 0 }; },
+  const options = { configuration, projects, sandbox: async request => { commands++; assert.equal(request.timeoutSeconds, args.timeoutSeconds, 'deadline survives approval and restart'); return { stdout: 'done', stderr: '', exitCode: 0 }; },
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body);
       if (calls++ === 0) return response(name, args);
@@ -127,8 +127,12 @@ try {
     assert.match(prompt, /对外产生影响/);
   } });
   assert.equal(commands, 1);
-  await runTool('shell', { command: 'rm -rf /workspace/results' }, { approved: true, restart: true });
+  await runTool('shell', { command: 'rm -rf /workspace/results', timeoutSeconds: 600 }, { approved: true, restart: true });
   assert.equal(commands, 2, 'one approved operation is executed exactly once after restart');
+  for (const timeoutSeconds of [0, 601, 1.5, '600', null]) {
+    assert.match((await runTool('shell', { command: 'echo invalid', timeoutSeconds })).result, /invalid_arguments/);
+    assert.equal(commands, 2, 'invalid deadlines never execute');
+  }
 
   projects.update(owner, workspace.id, { policy: { shell: 'ask', network: 'allow' } });
   await runTool('shell', { command: 'echo hello' }, { approved: false, beforeResolve: () => {

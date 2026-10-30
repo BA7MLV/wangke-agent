@@ -91,7 +91,7 @@ type RootResource = 'courses' | 'skills' | 'overview' | 'folders' | 'context';
 type Resource = { [K in RootResource]: { type: K } }[RootResource]
   | { type: 'course'; id: string; leaf?: string }
   | { type: 'markdown'; id: string }
-  | { type: 'system'; leaf?: 'AGENTS.md' | 'memory'; id?: string }
+  | { type: 'system'; leaf?: 'AGENTS.md' | 'mcp.json' | 'memory'; id?: string }
   | { type: 'skill'; name: string; reference?: string };
 
 export function parseResource(path: unknown): Resource | undefined {
@@ -102,6 +102,7 @@ export function parseResource(path: unknown): Resource | undefined {
     if (p.some((s) => !s || s === '.' || s === '..')) return;
     if (p.length === 1 && p[0] === 'system') return { type: 'system' };
     if (p.length === 2 && p[0] === 'system' && p[1] === 'AGENTS.md') return { type: 'system', leaf: 'AGENTS.md' };
+    if (p.length === 2 && p[0] === 'system' && p[1] === 'mcp.json') return { type: 'system', leaf: 'mcp.json' };
     if (p.length === 2 && p[0] === 'system' && p[1] === 'memory') return { type: 'system', leaf: 'memory' };
     if (memoryName(path)) return { type: 'system', leaf: 'memory', id: memoryName(path) };
     if (p.length === 1 && /^[^/\\]+\.md$/.test(p[0])) return { type: 'markdown', id: p[0] };
@@ -214,7 +215,7 @@ export function createResourceExecutor(options: ResourceExecutorOptions = {}) {
     if (resource.type === 'system') {
       if (!resource.leaf) {
         if (name !== 'read') return '系统目录只支持 read 列出文件；请对 /system/AGENTS.md 使用 read、grep、edit。';
-        const entries = ['/system/AGENTS.md — 全局 Agent 指令，与「设置 → Agent」共用原文。', '/system/memory — Bot 长期记忆目录，与 Bot 共用内容。'];
+        const entries = ['/system/AGENTS.md — 全局 Agent 指令，与「设置 → Agent」共用原文。', '/system/mcp.json — MCP 配置，与设置及主 Bot 共用；不含密钥。学习任务不能修改全局连接，请在主 Bot 中操作。', '/system/memory — Bot 长期记忆目录，与 Bot 共用内容。'];
         return `path=/system\n${entries.slice(Number(args.offset ?? 0), Number(args.offset ?? 0) + Number(args.limit ?? 50)).join('\n') || '目录已到末尾。'}`;
       }
       try {

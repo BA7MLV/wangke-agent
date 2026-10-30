@@ -215,7 +215,7 @@ export default function ResourceLibrary({ onImport }: { onImport: (folderId?: nu
     } catch { /* Unrelated drag payload. */ }
   };
   const entries = (data?.entries ?? []).filter(entry => entry.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())).sort((a, b) => Number(b.kind === 'directory') - Number(a.kind === 'directory') || a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const showSystemFolder = !projectId && 'system'.includes(query.toLocaleLowerCase());
+  const showSystemFolder = !projectId && 'system skills 技能'.includes(query.toLocaleLowerCase());
   const entryCount = entries.length + Number(showSystemFolder);
   const breadcrumbs = directory.split('/').filter(Boolean);
   const readOnly = Boolean(data?.project?.archived);

@@ -16,7 +16,7 @@
   overflow-x: auto;
   overflow-y: hidden;
   overscroll-behavior-x: contain;
-  border-radius: var(--radius-2xl);
+  border-radius: var(--radius-panel);
   background: var(--background-secondary);
   scrollbar-width: thin;
 }
@@ -31,7 +31,7 @@
   gap: 8px;
   min-height: 44px;
   padding: 8px 16px;
-  border-radius: var(--radius-xl);
+  border-radius: var(--radius-sm);
   color: var(--muted);
   font-size: 0.875rem;
   font-weight: 500;

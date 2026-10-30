@@ -630,18 +630,95 @@
   }
 }
 
-/* ── 侧栏 Recent 行标题：超出可用宽度时始终显示省略号。 ─────────────── */
+/* ── 侧栏 Recent 行标题：长标题 hover 时横向滚动，并在两端渐进淡化。 ─────── */
 .recent-title {
   display: block;
+  flex: 1 1 0%;
   min-width: 0;
   overflow: hidden;
+  position: relative;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .recent-title > span {
   display: inline-block;
+  width: max-content;
   white-space: nowrap;
+  transform: translateX(0);
+}
+
+.recent-title[data-overflow='true'] > span {
+  will-change: transform;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true'],
+  .recent-item:focus-within .recent-title[data-overflow='true'] {
+    -webkit-mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 14px,
+      #000 calc(100% - 14px),
+      transparent
+    );
+    mask-image: linear-gradient(
+      to right,
+      transparent,
+      #000 14px,
+      #000 calc(100% - 14px),
+      transparent
+    );
+  }
+
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::before,
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::after,
+  .recent-item:focus-within .recent-title[data-overflow='true']::before,
+  .recent-item:focus-within .recent-title[data-overflow='true']::after {
+    position: absolute;
+    z-index: 1;
+    top: 0;
+    bottom: 0;
+    width: 14px;
+    content: '';
+    pointer-events: none;
+    -webkit-backdrop-filter: blur(4px);
+    backdrop-filter: blur(4px);
+  }
+
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::before,
+  .recent-item:focus-within .recent-title[data-overflow='true']::before {
+    left: 0;
+  }
+
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::after,
+  .recent-item:focus-within .recent-title[data-overflow='true']::after {
+    right: 0;
+  }
+
+  .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true'] > span,
+  .recent-item:focus-within .recent-title[data-overflow='true'] > span {
+    animation: recent-title-marquee var(--recent-duration, 5s) var(--ease-in-out, ease-in-out) infinite alternate;
+  }
+}
+
+@keyframes recent-title-marquee {
+  0%,
+  18% {
+    transform: translateX(0);
+  }
+
+  82%,
+  100% {
+    transform: translateX(var(--recent-shift, 0px));
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .recent-title[data-overflow='true'] > span {
+    animation: none;
+    transform: none;
+  }
 }
 .app-nav-drawer[data-placement='left'] {
   width: min(320px, 88vw);
@@ -701,13 +778,13 @@
 }
 
 .page-shell__rail-header { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 8px; }
-.page-shell__brand { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 13px; color: var(--foreground); font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
+.page-shell__brand { display: flex; align-items: center; gap: 8px; min-width: 0; padding-left: 12px; color: var(--foreground); font-size: 0.875rem; font-weight: 600; white-space: nowrap; }
 .page-shell__brand svg { flex-shrink: 0; }
 .page-shell__compact-rail .page-shell__rail-header { flex-direction: column; }
 .page-shell__compact-rail .page-shell__brand { justify-content: center; width: 44px; height: 44px; padding: 0; }
 .page-shell__rail-content { display: flex; flex: 1; flex-direction: column; min-height: 0; width: calc(16.5rem - 24px); }
 
-/* Logo 与导航图标共享左缘：行内 12px padding + 1px 边框（导航项为透明边框）。 */
+/* Logo 与导航图标共享左缘：行内 12px padding。 */
 .page-shell__nav-icon {
   display: grid;
   width: 20px;

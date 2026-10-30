@@ -8,12 +8,14 @@ import type { McpServer, McpServerInput, McpTool } from '@wangke/contracts/mcp';
 import settingsMessages from '../i18n/locales/zh-CN/settings.json';
 import { McpImport, McpConnectionActions } from './McpAdvanced';
 import { SettingSelect } from '../components/settings/controls';
+import { MotionDisclosure } from '../components/motion';
+import { closeSettings } from '../components/settingsDialogStore';
 
 const initial: McpServerInput = { name: '', url: '', transport: 'streamable-http', auth: 'none', enabled: true, timeoutMs: 30000, disabledTools: [] };
 export default function McpSettings() {
   const { t } = useTranslation('settings');
   const [servers, setServers] = useState<McpServer[]>([]);
-  const [draft, setDraft] = useState<(McpServerInput & { id?: string; configured?: boolean }) | null>(null);
+  const [draft, setDraft] = useState<(McpServerInput & { id?: string; configured?: boolean; revision?: string }) | null>(null);
   const [headerText, setHeaderText] = useState('');
   const [argsText, setArgsText] = useState('[]');
   const [envText, setEnvText] = useState('');
@@ -31,9 +33,16 @@ export default function McpSettings() {
   const reload = useCallback(async () => { setServers((await listMcpServers()).servers); setLoaded(true); }, []);
   useEffect(() => {
     if (!cloud.enabled) return;
-    let cancelled = false;
-    void listMcpServers().then(r => { if (!cancelled) { setServers(r.servers); setLoaded(true); } }).catch(() => { if (!cancelled) setError(t('mcp.errors.generic')); });
-    return () => { cancelled = true; };
+    let cancelled = false, request = 0;
+    const refresh = () => {
+      const id = ++request;
+      void listMcpServers().then(r => { if (!cancelled && id === request) { setServers(r.servers); setLoaded(true); } }).catch(e => { if (!cancelled && id === request) setError(message(e)); });
+    };
+    refresh();
+    const timer = setInterval(refresh, 5000);
+    window.addEventListener('focus', refresh);
+    window.addEventListener('system-files-changed', refresh);
+    return () => { cancelled = true; clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('system-files-changed', refresh); };
   }, [t]);
   const action = async (id: string, work: () => Promise<unknown>) => {
     setBusy(id); setError('');
@@ -62,11 +71,12 @@ export default function McpSettings() {
   if (!cloud.enabled) return <SectionCard title="MCP" subtitle={t('mcp.offline')}><p>{t('mcp.description')}</p></SectionCard>;
   return <SectionCard title={t('mcp.title')} subtitle={t('mcp.description')}>
     <div className="flex flex-col gap-4" data-testid="mcp-settings">
+      <a href="#/library?file=/system/mcp.json" onClick={() => closeSettings()} className="text-sm text-accent underline" data-testid="mcp-open-file">{t('mcp.openFile')}</a>
       <div className="flex flex-wrap gap-2"><Button onPress={() => edit()} isDisabled={!!busy}>{t('mcp.add')}</Button><McpImport onSaved={reload} /><Button variant="tertiary" isDisabled={!!busy} onPress={() => void action('reload', reload)}>{t('mcp.refresh')}</Button></div>
       {error && <p role="alert" className="text-danger">{error}</p>}
       {!loaded && !error ? <p role="status">{t('mcp.loading')}</p> : null}
       {loaded && !servers.length ? <p className="text-muted">{t('mcp.empty')}</p> : null}
-      {servers.map(server => <section key={server.id} className="rounded-3xl bg-background-secondary p-4 flex flex-col gap-3">
+      {servers.map(server => <section key={server.id} className="rounded-panel bg-background-secondary p-4 flex flex-col gap-3">
         <div className="flex items-center justify-between gap-3">
           <div className="min-w-0"><h3 className="font-semibold break-words">{server.name}</h3><p className="text-sm text-muted break-all">{server.transport === 'stdio' ? server.command : server.url}</p></div>
           <Switch aria-label={t('mcp.enableServer', { name: server.name })} isSelected={server.enabled} isDisabled={!!busy} onChange={enabled => void action(server.id, () => saveMcpServer({ ...server, enabled }, server.id))}><Switch.Control><Switch.Thumb /></Switch.Control></Switch>
@@ -85,7 +95,7 @@ export default function McpSettings() {
           {tools[server.id].map(tool => <div key={tool.name} className="rounded-xl bg-background p-3">
             <div className="flex justify-between gap-2"><strong className="break-all">{tool.originalName}</strong><Switch aria-label={t('mcp.enableTool', { name: tool.originalName })} isSelected={!server.disabledTools.includes(tool.originalName)} isDisabled={!!busy} onChange={enabled => void action(server.id, () => saveMcpServer({ ...server, disabledTools: enabled ? server.disabledTools.filter(n => n !== tool.originalName) : [...server.disabledTools, tool.originalName] }, server.id))}><Switch.Control><Switch.Thumb /></Switch.Control></Switch></div>
             <p className="text-sm whitespace-pre-wrap break-words">{tool.description}</p>
-            <details><summary className="text-sm text-muted cursor-pointer">{t('mcp.parameters')}</summary><pre className="text-xs overflow-x-auto max-h-60">{JSON.stringify(tool.inputSchema, null, 2)}</pre></details>
+            <MotionDisclosure title={t('mcp.parameters')} triggerClassName="text-sm text-muted"><pre className="max-h-60 overflow-auto text-xs">{JSON.stringify(tool.inputSchema, null, 2)}</pre></MotionDisclosure>
           </div>)}
         </div> : null}
       </section>)}
@@ -122,7 +132,7 @@ export default function McpSettings() {
     </Modal.Root>
     <Modal.Root isOpen={remove !== null} onOpenChange={open => { if (!open && !busy) setRemove(null); }}><Modal.Backdrop><Modal.Container className={MODAL_CONTAINER_CLASS} size="sm"><Modal.Dialog>
       <Modal.Header><Modal.Heading>{t('mcp.delete')}</Modal.Heading></Modal.Header><Modal.Body>{t('mcp.deleteConfirm', { name: remove?.name })}</Modal.Body>
-      <Modal.Footer><Button variant="tertiary" isDisabled={!!busy} onPress={() => setRemove(null)}>{t('mcp.cancel')}</Button><Button variant="danger" isDisabled={!!busy} onPress={() => { if (remove) void action(remove.id, async () => { await deleteMcpServer(remove.id); setRemove(null); }); }}>{t('mcp.delete')}</Button></Modal.Footer>
+      <Modal.Footer><Button variant="tertiary" isDisabled={!!busy} onPress={() => setRemove(null)}>{t('mcp.cancel')}</Button><Button variant="danger" isDisabled={!!busy} onPress={() => { if (remove) void action(remove.id, async () => { await deleteMcpServer(remove.id, remove.revision); setRemove(null); }); }}>{t('mcp.delete')}</Button></Modal.Footer>
     </Modal.Dialog></Modal.Container></Modal.Backdrop></Modal.Root>
   </SectionCard>;
 }

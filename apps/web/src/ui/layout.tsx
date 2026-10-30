@@ -121,6 +121,16 @@ export interface RecentItem {
   deleteDisabled?: boolean;
 }
 
+/** 量出 Recent 标题的实际溢出量，供 hover 跑马灯使用。 */
+function measureRecentTitle(row: HTMLElement) {
+  const title = row.querySelector<HTMLElement>('.recent-title');
+  if (!title) return;
+  const overflow = Math.max(0, title.scrollWidth - title.clientWidth);
+  title.dataset.overflow = String(overflow > 0);
+  title.style.setProperty('--recent-shift', `${-overflow}px`);
+  title.style.setProperty('--recent-duration', `${Math.max(5, overflow / 40)}s`);
+}
+
 export interface PageShellProps {
   /** 顶部标题栏标题 */
   title: string;
@@ -348,7 +358,11 @@ function Sidebar({
                       id={item.id}
                       textValue={item.label}
                       data-testid={item.testId}
-                      onFocus={() => setFocusedRecentId(item.id)}
+                      onFocus={(event) => {
+                        setFocusedRecentId(item.id);
+                        measureRecentTitle(event.currentTarget);
+                      }}
+                      onMouseEnter={(event) => measureRecentTitle(event.currentTarget)}
                       /* 右键整行开菜单。preventDefault 挡掉浏览器自带的上下文菜单 ——
                          不挡的话用户的右键永远看到浏览器的菜单，我们的入口等于没有。 */
                       onContextMenu={
@@ -382,7 +396,7 @@ function Sidebar({
                       ) : <span className="grid size-6 shrink-0 place-items-center text-sm" aria-hidden="true">
                         <Sym name="chat_bubble" />
                       </span>}
-                      {/* 长标题始终用省略号收尾，完整内容可在重命名对话框中查看。 */}
+                      {/* 长标题在 hover / 聚焦时横向滚动；完整内容仍保留在 DOM 中。 */}
                       <span className="recent-title min-w-0">
                         <span>{item.label}</span>
                       </span>
@@ -848,7 +862,7 @@ export interface SectionCardProps {
  */
 export function SectionCard({ title, actions, subtitle, testId, children }: SectionCardProps) {
   return (
-    <Card className="mb-4" data-testid={testId}>
+    <Card className="ui-smooth mb-4" data-testid={testId}>
       <Card.Header className="min-h-8 flex-row items-center gap-3">
         <Card.Title
           render={(props) => <h2 {...props} />}

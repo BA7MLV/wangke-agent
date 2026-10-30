@@ -183,18 +183,6 @@
   overflow: hidden;
 }
 
-.chat-user-text[data-collapsed='true']::after {
-  content: '';
-  position: absolute;
-  inset: auto 0 0;
-  height: 3lh;
-  pointer-events: none;
-  -webkit-backdrop-filter: blur(4px);
-  backdrop-filter: blur(4px);
-  -webkit-mask-image: linear-gradient(to bottom, transparent, #000);
-  mask-image: linear-gradient(to bottom, transparent, #000);
-}
-
 .chat-user-expand {
   display: flex;
   width: fit-content;

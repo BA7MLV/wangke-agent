@@ -19,9 +19,10 @@ export async function executeSystemDocumentResource(name: string, path: string, 
   }
   const text = document.content;
   const agent = path === '/system/AGENTS.md';
+  const mcp = path === '/system/mcp.json';
   const link = `[${document.name}](#/library?file=${path})`;
-  const detail = agent ? '与「设置 → Agent」共用同一份内容。' : `与 Bot 共用同一份记忆；scope=${document.scope}:${document.scopeId ?? ''}，revision=${document.revision}，status=${document.status}，source=${document.source}。`;
-  if (name === 'read') return `${readMarkdownText(text, path, args)}\n\n系统${agent ? '指令' : '记忆'}文件：${link}，${detail}${text.length === 0 ? '当前为空，使用应用默认行为；用户要求写入指令时，可用 edit(create=true, content=...) 初始化。' : ''}`;
+  const detail = mcp ? '与 MCP 设置和主 Bot 共用同一份 JSON 配置，不含密钥。修改由服务端校验；学习任务不能修改全局 MCP 连接。' : agent ? '与「设置 → Agent」共用同一份内容。' : `与 Bot 共用同一份记忆；scope=${document.scope}:${document.scopeId ?? ''}，revision=${document.revision}，status=${document.status}，source=${document.source}。`;
+  if (name === 'read') return `${readMarkdownText(text, path, args)}\n\n系统${mcp ? '配置' : agent ? '指令' : '记忆'}文件：${link}，${detail}${text.length === 0 && !mcp ? '当前为空，使用应用默认行为；用户要求写入指令时，可用 edit(create=true, content=...) 初始化。' : ''}`;
   if (name === 'grep') return grepMarkdownText(text, path, args);
   if (name !== 'edit') return '此文件支持 read、grep、edit。';
   if (args.create === true) {
@@ -33,5 +34,5 @@ export async function executeSystemDocumentResource(name: string, path: string, 
     if (typeof result === 'string') return result;
     await saveSystemMarkdown(systemMaterialId(path)!, result.text, text);
   }
-  return `已保存 ${path}，已同步到${agent ? '「设置 → Agent」' : 'Bot 记忆'}和资料中的 ${link}。${agent ? '新的默认提示词从下一次发送起生效。' : '作用域、来源和版本由服务端保留。'}`;
+  return `已保存 ${path}，已同步到${mcp ? 'MCP 设置' : agent ? '「设置 → Agent」' : 'Bot 记忆'}和资料中的 ${link}。${mcp ? '连接配置已更新，凭据单独管理。' : agent ? '新的默认提示词从下一次发送起生效。' : '作用域、来源和版本由服务端保留。'}`;
 }

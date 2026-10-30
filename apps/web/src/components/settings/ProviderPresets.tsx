@@ -41,7 +41,7 @@ export default function ProviderPresets({ providers, onSelect, onCustom, renderP
       <div className="provider-overview-grid grid grid-cols-3 gap-4 max-[640px]:grid-cols-1 max-[640px]:gap-2" data-testid="provider-overview-grid">
         <Button
           variant="ghost"
-          className="h-auto min-h-[218px] w-full flex-col items-center justify-center gap-4 whitespace-normal rounded-3xl border border-dashed border-border bg-transparent p-4 text-center text-muted hover:bg-background-secondary max-[640px]:min-h-[150px] max-[640px]:gap-2"
+          className="ui-smooth h-auto min-h-[218px] w-full flex-col items-center justify-center gap-4 whitespace-normal rounded-panel border border-dashed border-border bg-transparent p-4 text-center text-muted hover:bg-background-secondary max-[640px]:min-h-[150px] max-[640px]:gap-2"
           data-testid="provider-add-card"
           aria-label="自定义添加"
           onPress={onCustom}
@@ -55,7 +55,7 @@ export default function ProviderPresets({ providers, onSelect, onCustom, renderP
             {provider ? renderProvider(provider) : (
               <Button
                 variant="ghost"
-                className="h-auto min-h-[218px] w-full flex-col items-stretch justify-start gap-5 whitespace-normal rounded-3xl border border-border/80 bg-background-secondary p-4 text-left text-foreground hover:bg-foreground/5 max-[640px]:min-h-[150px] max-[640px]:gap-3"
+                className="ui-smooth h-auto min-h-[218px] w-full flex-col items-stretch justify-start gap-5 whitespace-normal rounded-panel border border-border/80 bg-background-secondary p-4 text-left text-foreground hover:bg-foreground/5 max-[640px]:min-h-[150px] max-[640px]:gap-3"
                 data-testid={`provider-preset-${preset.id}`}
                 aria-label={`连接 ${preset.name}`}
                 onPress={() => onSelect(preset)}

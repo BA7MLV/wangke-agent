@@ -1,6 +1,8 @@
 import { BudgetBlocked, type RequestAttribution, type UsageLedger } from './budget.js';
 import { boundedRequest, checkRequestCapacity } from './request-budget.js';
 import { modelUsage } from '@wangke/study-core/model/usage';
+import { modelRequestPolicy, type ModelRequestOptions } from './model-policy.js';
+import { agentHttpInit } from './http.js';
 export { modelUsage } from '@wangke/study-core/model/usage';
 
 type JsonObject = Record<string, unknown>;
@@ -18,6 +20,7 @@ function classify(status: number, delay?: number) {
   if (status === 401 || status === 403) return new ModelFailure('model_auth_failed');
   if (status === 402) return new ModelFailure('model_quota_exhausted');
   if (status === 429) return new ModelFailure('model_rate_limited', true, delay);
+  if (status === 408 || status === 409) return new ModelFailure('model_transient_error', true, delay);
   if (status >= 500) return new ModelFailure('model_server_error', true, delay);
   return new ModelFailure('model_invalid_request');
 }
@@ -57,7 +60,8 @@ async function sleep(ms: number, signal: AbortSignal) {
  * reservation; model retries never replay a tool or commit a late response. */
 export class ModelClient {
   constructor(readonly ledger: UsageLedger, readonly fetcher: typeof fetch = fetch) {}
-  async request(url: string, init: RequestInit, attribution: RequestAttribution, reserveTokens: number, options: { attempts?: number; timeoutMs?: number; chainMs?: number } = {}): Promise<unknown> {
+  async request(url: string, init: RequestInit, attribution: RequestAttribution, reserveTokens: number, options: ModelRequestOptions = {}): Promise<unknown> {
+    const policy = modelRequestPolicy(options);
     if (typeof init.body === 'string') {
       const payload: unknown = JSON.parse(init.body);
       if (!object(payload)) throw new Error('invalid_model_body');
@@ -67,14 +71,14 @@ export class ModelClient {
       reserveTokens = request.total;
       init = { ...init, body: JSON.stringify(request.body) };
     }
-    const signal = AbortSignal.any([init.signal ?? new AbortController().signal, AbortSignal.timeout(options.chainMs ?? 120000)]);
-    for (let attempt = 1; attempt <= (options.attempts ?? 3); attempt++) {
+    const signal = AbortSignal.any([init.signal ?? new AbortController().signal, AbortSignal.timeout(policy.chainMs)]);
+    for (let attempt = 1; attempt <= policy.attempts; attempt++) {
       signal.throwIfAborted();
       const id = this.ledger.reserve(attribution, attempt, reserveTokens);
       let failure: ModelFailure;
       try {
-        const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(options.timeoutMs ?? 30000)]);
-        const response = await abortable(this.fetcher(url, { ...init, redirect: 'error', signal: requestSignal }), requestSignal);
+        const requestSignal = AbortSignal.any([signal, AbortSignal.timeout(policy.timeoutMs)]);
+        const response = await abortable(this.fetcher(url, agentHttpInit({ ...init, redirect: 'error', signal: requestSignal })), requestSignal);
         requestSignal.throwIfAborted();
         if (!response.ok) {
           if (response.status === 429) {
@@ -98,7 +102,7 @@ export class ModelClient {
         failure = error instanceof ModelFailure ? error : new ModelFailure('model_connection_failed', true);
       }
       if (!failure.retryable) throw failure;
-      if (attempt === (options.attempts ?? 3)) throw new ModelFailure('model_request_failed');
+      if (attempt === policy.attempts) throw new ModelFailure('model_request_failed');
       await sleep(failure.delay ?? Math.round(500 * 2 ** (attempt - 1) * (0.75 + Math.random() * 0.5)), signal);
     }
     throw new ModelFailure('model_request_failed');

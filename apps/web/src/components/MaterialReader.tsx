@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from 'react';
+import { MCP_PATH } from '@wangke/contracts/system';
 import { useSearchParams } from 'react-router-dom';
 import { liveQuery } from 'dexie';
 import { Button } from '@heroui/react';
@@ -30,7 +31,15 @@ interface Props {
   handleRef: React.RefObject<MaterialReaderHandle | null>;
 }
 
-export default function MaterialReader({ material, handleRef }: Props) {
+const McpConfigReader = lazy(() => import('../mcp/McpConfigReader'));
+
+export default function MaterialReader(props: Props) {
+  return systemMaterialPath(props.material.id) === MCP_PATH
+    ? <Suspense fallback={<p role="status">正在读取 mcp.json…</p>}><McpConfigReader /></Suspense>
+    : <DocumentMaterialReader {...props} />;
+}
+
+function DocumentMaterialReader({ material, handleRef }: Props) {
   const [searchParams] = useSearchParams();
   const requested = Number(searchParams.get('unit'));
   const requestedUnit = Number.isSafeInteger(requested) && requested > 0 ? requested : undefined;

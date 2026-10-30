@@ -4,7 +4,7 @@ import { MD_MIME } from './md';
 import { create } from 'zustand';
 import { cloud, cloudRequest, requestToolPermission } from '../cloud/state';
 import { request, ServerApiError } from '../api/serverClient';
-import { AGENTS_PATH, MEMORY_PATH, memoryName, memoryPath, systemSaveArguments, type SystemDocument, type SystemDirectory } from '@wangke/contracts/system';
+import { AGENTS_PATH, MCP_PATH, MEMORY_PATH, SKILLS_PATH, memoryName, memoryPath, systemSaveArguments, type SystemDocument, type SystemDirectory } from '@wangke/contracts/system';
 
 export const AGENT_INSTRUCTIONS_FILE_ID = 'system:agent-instructions';
 export const AGENT_INSTRUCTIONS_ROUTE = `/player/${encodeURIComponent(AGENT_INSTRUCTIONS_FILE_ID)}`;
@@ -12,10 +12,19 @@ export const useSystemDocuments = create<{ documents: Record<string, SystemDocum
 export function systemMaterialPath(id: string): string | undefined {
   if (id === AGENT_INSTRUCTIONS_FILE_ID) return AGENTS_PATH;
   const path = memoryPath(id.replace(/^system:memory:/, ''));
-  return id.startsWith('system:memory:') && memoryName(path) ? path : undefined;
+  if (id.startsWith('system:memory:') && memoryName(path)) return path;
+  if (id.startsWith('system:file:')) {
+    try {
+      const candidate = decodeURIComponent(id.slice('system:file:'.length));
+      return candidate === MCP_PATH || candidate.startsWith(`${SKILLS_PATH}/`) && candidate.slice(1).split('/').every(part => part && part !== '.' && part !== '..') ? candidate : undefined;
+    } catch { return undefined; }
+  }
+  return undefined;
 }
 export function systemMaterialId(path: string): string | undefined {
-  return path === AGENTS_PATH ? AGENT_INSTRUCTIONS_FILE_ID : memoryName(path) ? `system:memory:${memoryName(path)}` : undefined;
+  if (path === AGENTS_PATH) return AGENT_INSTRUCTIONS_FILE_ID;
+  if (memoryName(path)) return `system:memory:${memoryName(path)}`;
+  return path === MCP_PATH || path.startsWith(`${SKILLS_PATH}/`) ? `system:file:${encodeURIComponent(path)}` : undefined;
 }
 export const systemMaterialRoute = (path: string) => `/player/${encodeURIComponent(systemMaterialId(path)!)}`;
 
@@ -38,8 +47,12 @@ export async function readSystemDocument(path: string): Promise<SystemDocument> 
 }
 
 export async function listSystemMemory(offset = 0, query = ''): Promise<SystemDirectory> {
+  return listSystemDirectory(MEMORY_PATH, offset, query);
+}
+
+export async function listSystemDirectory(path: string, offset = 0, query = ''): Promise<SystemDirectory> {
   if (!cloud.enabled) return { files: [], nextOffset: null };
-  return systemRequest<SystemDirectory>(`/system/files?path=${encodeURIComponent(MEMORY_PATH)}&offset=${offset}&query=${encodeURIComponent(query)}`);
+  return systemRequest<SystemDirectory>(`/system/files?path=${encodeURIComponent(path)}&offset=${offset}&query=${encodeURIComponent(query)}`);
 }
 
 export async function loadSystemMaterialFile(id: string): Promise<Blob | undefined> {
@@ -65,7 +78,7 @@ export function getSystemMaterial(id: string): VideoRow | undefined {
     size: file?.size ?? 0, duration: 0, createdAt: 0, status: 'transcribed' };
 }
 
-export async function saveSystemMarkdown(id: string, text: string, expected?: string, create = false): Promise<boolean> {
+export async function saveSystemMarkdown(id: string, text: string, expected?: string, create = false, expectedRevision?: number): Promise<boolean> {
   const path = systemMaterialPath(id);
   if (!path) return false;
   if (cloud.enabled) {
@@ -79,6 +92,7 @@ export async function saveSystemMarkdown(id: string, text: string, expected?: st
     }
     if (create && current.revision !== 0) throw new Error('文件已存在，请先读取，再按原文修改。');
     if (expected !== undefined && current.content !== expected) throw new Error('文件已在其他页面更新，请重新读取后再修改。');
+    if (expectedRevision !== undefined && current.revision !== expectedRevision) throw new Error('文件已在其他页面更新，请重新读取后再修改。');
     let saved: SystemDocument;
     const args = systemSaveArguments(path, text, current.content, current.revision);
     const permissionId = await requestToolPermission('write', args);

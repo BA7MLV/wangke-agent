@@ -282,8 +282,10 @@ test('失败回执：diagram 的每类 schema / 表达式报错都要翻译成�
     ['edges[0].to 引用了不存在的节点「z」。可用 id：a / b', /from\/to/],
     ['type 必须是 "graph"（节点+连线的结构图）或 "plot"（函数图像/几何图形/坐标轴），实得 "diagram"。流程/时序/状态/层级这类标准结构图优先用 ```mermaid 围栏', /只能取/],
     ['diagram 围栏里不是合法的 JSON：Unexpected token } in JSON。请检查多余的逗号', /JSON 对象/],
-    ['nodes 超过 10 个（实得 11 个）：拆成两张图，或改用列表', /数量上限/],
-    ['edges 超过 16 条（实得 17 条）：连线太多说明图该拆', /数量上限/],
+    ['nodes 超过渲染安全上限 100 个（实得 101 个）：按主题分图，保留全部节点与关系', /资源保护/],
+    ['edges 超过渲染安全上限 200 条（实得 201 条）：按主题分图，保留全部节点与关系', /资源保护/],
+    ['nodes[0].label超过 80 字（实得 81 字）：图里放不下的长文改正文', /图中文字过长/],
+    ['curves 超过 4 项（实得 5 项）：一张图讲一件事，拆开画', /数量上限/],
     ['edges[0] 是自环（from 与 to 都是「a」）：本渲染器不支持自环，去掉它或把说明写进节点文案', /自环/],
     ['curves[0].domain [-3, 3] 超出了 x 范围 [-5, 5]：曲线只能画在坐标轴范围内', /domain/],
     ['polygons[0].points 至少需要 3 个点（实得 2 个）', /至少 3 个点/],
@@ -299,6 +301,15 @@ test('失败回执：diagram 的每类 schema / 表达式报错都要翻译成�
     assert.ok(t.includes(raw), '必须带上原始报错，否则模型无从定位');
     assert.match(t, /图不会上屏/, '要说清后果');
   }
+});
+
+test('规模超限回执要求保留信息分图，不再建议删除节点', () => {
+  const raw = 'nodes 超过渲染安全上限 100 个（实得 101 个）：按主题分图，保留全部节点与关系';
+  const text = widgetRejectedText(new Error(raw));
+  assert.match(text, /不是可读性要求/);
+  assert.match(text, /保留全部节点与关系后重新调用 show_widget/);
+  assert.match(text, /不要丢弃信息或换格式绕过安全上限/);
+  assert.ok(!text.includes('删掉不重要的节点'));
 });
 
 test('失败回执：diagram 的 type 报错不被 mermaid 分支截胡（归因顺序）', () => {

@@ -34,10 +34,10 @@ try {
   const id = createRun(); let commands = 0; let calls = 0;
   runner = new BotRunner(store, {
     configuration,
-    sandbox: async (req) => { commands++; assert.equal(req.threadId, thread); return { stdout: '42', stderr: '', exitCode: 0 }; },
+    sandbox: async (req) => { commands++; assert.equal(req.threadId, thread); assert.equal(req.timeoutSeconds, 600); return { stdout: '42', stderr: '', exitCode: 0 }; },
     fetch: async (_url, init) => {
       const body = JSON.parse(init.body); calls++;
-      if (calls === 1) return response('shell', { command: 'node -e "console.log(42)"' });
+      if (calls === 1) return response('shell', { command: 'node -e "console.log(42)"', timeoutSeconds: 600 });
       assert.match(body.messages.at(-1).content, /42/);
       return response('wait', { seconds: 1, reason: 'Follow up' });
     },

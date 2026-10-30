@@ -13,7 +13,8 @@ export interface ExecutionContext {
   readonly signal: AbortSignal;
   checkActive(): void;
 }
-type Entry = { definition: ToolDefinition; validate: ValidateFunction; recovery: Recovery; timeoutMs: number };
+type ToolTimeout = number | ((args: any) => number);
+type Entry = { definition: ToolDefinition; validate: ValidateFunction; recovery: Recovery; timeoutMs: ToolTimeout };
 
 /** Deliberately bounded draft-07 subset. Unsupported validation must fail
  * closed, not silently become an unconstrained tool. No remote resolution,
@@ -34,7 +35,7 @@ function inspect(schema: unknown, depth = 0, count = { value: 0 }): void {
 export class ToolRegistry {
   private readonly entries = new Map<string, Entry>();
   private readonly ajv = new Ajv({ strict: true, strictTypes: false, strictTuples: false, allowUnionTypes: true, ownProperties: true, allErrors: false, addUsedSchema: false });
-  register(definition: ToolDefinition, recovery: Recovery, timeoutMs = 120000) {
+  register(definition: ToolDefinition, recovery: Recovery, timeoutMs: ToolTimeout = 120000) {
     const name = definition.function.name;
     if (!/^[a-zA-Z0-9_-]{1,128}$/.test(name) || this.entries.has(name)) throw new Error('tool_duplicate_or_invalid_name');
     if (JSON.stringify(definition.function.parameters).length > 32768) throw new Error('tool_schema_too_large');
@@ -53,7 +54,8 @@ export class ToolRegistry {
     const validation = this.validate(name, args);
     if (!validation.ok) return validation;
     const entry = this.entries.get(name)!;
-    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(entry.timeoutMs)]);
+    const timeoutMs = typeof entry.timeoutMs === 'function' ? entry.timeoutMs(args) : entry.timeoutMs;
+    const signal = AbortSignal.any([context.signal, AbortSignal.timeout(timeoutMs)]);
     const scoped: ExecutionContext = { ...context, signal, checkActive: () => { signal.throwIfAborted(); context.checkActive(); } };
     scoped.checkActive();
     let abort: (() => void) | undefined;

@@ -245,7 +245,7 @@
   margin-top: 8px;
   padding: 16px;
   border: 1px solid var(--border-secondary);
-  border-radius: var(--radius-2xl);
+  border-radius: var(--radius-panel);
   background: var(--background-tertiary);
 }
 

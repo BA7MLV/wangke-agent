@@ -1,20 +1,23 @@
-import { useCallback } from 'react';
+import { useCallback, useId } from 'react';
 import { THINKING_LEVELS } from '../api/modelCaps';
 import type { ThinkingLevel } from '../api/siliconflow';
+import ReasoningMeteorTexture from './ReasoningMeteorTexture';
+import { meteorProfile } from './reasoning-meteors';
 import './reasoning-effort-slider.css';
 
 interface Props {
   value: ThinkingLevel;
   onChange: (next: ThinkingLevel) => void;
   disabled?: boolean;
-  /**
-   * 铺满容器宽度（下拉面板里用），而不是工具行上那种 108px 定宽小块。
-   *
-   * 定宽是给工具行准备的：那一行已经并排放了模型 chip、技能、发送键，滑块再宽就换行了。
-   * 进了面板之后横向空间是白给的，不铺满反而像没做完。
-   */
+  /** 在模型面板中铺满可用宽度。 */
   fluid?: boolean;
 }
+
+// Native range thumb centers travel from half a thumb inside either edge.
+const position = (index: number) => {
+  const progress = index / (THINKING_LEVELS.length - 1);
+  return `calc(${progress * 100}% + ${0.5 - progress} * var(--reasoning-thumb-size))`;
+};
 
 /**
  * 思考深度：一条带节点刻度的横向滑块，**6 档，第一档是不思考**。
@@ -23,7 +26,7 @@ interface Props {
  * 纯逻辑测试要能钉住它，所以不放在组件里。
  *
  * 用原生 `<input type="range">` 做交互与无障碍（键盘左右键、屏幕阅读器），
- * 外观纯 CSS。`step={1}` 保证松手后落回最近节点。
+ * `step={1}` 保证松手后落回最近节点。胶囊轨道与原生 thumb 使用同一组几何参数。
  *
  * 节点圆点用绝对定位叠在轨道正中，pointer-events:none 避免抢滑块的点击/拖拽。
  *
@@ -32,7 +35,10 @@ interface Props {
  * 是为了让「这台模型能到多深」这件事在视觉上有参照物。
  */
 export default function ReasoningEffortSlider({ value, onChange, disabled, fluid }: Props) {
+  const inputId = useId();
   const index = THINKING_LEVELS.findIndex((s) => s.value === value);
+  const depth = Math.max(0, index) / (THINKING_LEVELS.length - 1);
+  const remaining = depth === 0 ? '100%' : index === THINKING_LEVELS.length - 1 ? '0%' : position(THINKING_LEVELS.length - 1 - Math.max(0, index));
   const handleChange = useCallback(
     (event: React.ChangeEvent<HTMLInputElement>) => {
       const idx = Number(event.target.value);
@@ -43,14 +49,28 @@ export default function ReasoningEffortSlider({ value, onChange, disabled, fluid
   );
 
   return (
-    <div className={fluid ? 'reasoning-slider reasoning-slider--fluid' : 'reasoning-slider'} data-testid="chat-effort-slider">
-      {/* 轨道容器：底色 + 已填充区（由 JS 计算宽度）+ range input + 刻度圆点 */}
-      <div className="reasoning-slider__track">
-        <div
-          className="reasoning-slider__fill"
-          style={{ width: `${(Math.max(0, index) / (THINKING_LEVELS.length - 1)) * 100}%` }}
-        />
+    <div className={fluid ? 'reasoning-slider reasoning-slider--fluid' : 'reasoning-slider'} data-testid="chat-effort-slider" data-disabled={disabled ? 'true' : undefined}>
+      <div className="reasoning-slider__header">
+        <label htmlFor={inputId}>思考深度</label>
+        <span className="reasoning-slider__value" aria-hidden="true">{THINKING_LEVELS[index]?.label ?? ''}</span>
+      </div>
+      <div className="reasoning-slider__control">
+        <div className="reasoning-slider__track" aria-hidden="true">
+          <div
+            className="reasoning-slider__fill"
+            style={{ width: depth === 0 ? '0%' : index === THINKING_LEVELS.length - 1 ? '100%' : position(Math.max(0, index)), opacity: 0.65 + depth * 0.35 }}
+          />
+          <div className="reasoning-slider__meteors" style={{ clipPath: `inset(0 ${remaining} 0 0 round 999px)`, opacity: meteorProfile(depth).opacity }}>
+            <ReasoningMeteorTexture intensity={depth} active={!disabled} />
+          </div>
+          <div className="reasoning-slider__ticks">
+            {THINKING_LEVELS.map((s, i) => (
+              <span key={s.value} className="reasoning-slider__tick" style={{ left: position(i) }} data-filled={i <= index ? '1' : undefined} />
+            ))}
+          </div>
+        </div>
         <input
+          id={inputId}
           className="reasoning-slider__input"
           type="range"
           min={0}
@@ -62,20 +82,7 @@ export default function ReasoningEffortSlider({ value, onChange, disabled, fluid
           aria-valuetext={THINKING_LEVELS[index]?.label ?? ''}
           onChange={handleChange}
         />
-        {/* 六个刻度圆点：告诉用户这里是几档、能停在哪。
-            `data-filled` 是给填充侧那几颗换个颜色用的（它们压在填充色上，同一个灰点在
-            两种底色里必有一种看不见）；**当前档位那颗不需要「选中态」** —— 它正好被
-            thumb 盖住，标了也看不见。 */}
-        <div className="reasoning-slider__ticks" aria-hidden="true">
-          {THINKING_LEVELS.map((s, i) => (
-            <span key={s.value} className="reasoning-slider__tick" data-filled={i <= index ? '1' : undefined} />
-          ))}
-        </div>
       </div>
-      {/* 当前档位文字：thumb 右侧的微型标签 */}
-      <span className="reasoning-slider__value" aria-hidden="true">
-        {THINKING_LEVELS[index]?.label ?? ''}
-      </span>
     </div>
   );
 }

@@ -34,15 +34,53 @@ try {
     } },
   } }));
   await page.goto(`${origin}/#/setup`);
+  const assertDesktopSetupLayout = async () => {
+    const layout = await page.locator('.ob__panel').evaluate(panel => {
+      const scene = panel.querySelector('.ob__scene');
+      const bounds = panel.getBoundingClientRect();
+      return {
+        height: bounds.height,
+        expectedHeight: Math.min(640, innerHeight - 64),
+        withinViewport: bounds.top >= 0 && bounds.bottom <= innerHeight,
+        pageScrolls: document.documentElement.scrollHeight > innerHeight + 1,
+        sceneScrolls: scene.scrollHeight > scene.clientHeight,
+        overflow: getComputedStyle(scene).overflowY,
+        visualHeight: panel.querySelector('.ob__visual').getBoundingClientRect().height,
+      };
+    });
+    assert.equal(layout.height, layout.expectedHeight, 'setup canvas height depends only on the desktop viewport, not form length');
+    assert.ok(layout.withinViewport, 'setup canvas stays inside the desktop viewport');
+    assert.equal(layout.pageScrolls, false, 'long setup forms never make the desktop page scroll');
+    assert.equal(layout.overflow, 'auto', 'desktop form content has its own scroll container');
+    assert.equal(layout.visualHeight, layout.height - 32, 'illustration fills the same fixed-height canvas at every step');
+    return layout;
+  };
+  await page.getByRole('button', { name: '开始', exact: true }).waitFor();
+  await assertDesktopSetupLayout();
   await page.getByRole('button', { name: '开始', exact: true }).click();
   await page.getByLabel('一次性初始化密钥', { exact: true }).fill(fs.readFileSync(process.env.BOOTSTRAP_SECRET_FILE, 'utf8').trim());
   await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByLabel('密码', { exact: true }).fill('test-password-12345');
   await page.getByRole('button', { name: '创建管理员', exact: true }).click();
   await page.getByLabel('你的称呼', { exact: true }).fill('模型测试');
+  await assertDesktopSetupLayout();
   await page.getByRole('button', { name: '继续', exact: true }).click();
   await page.getByTestId('provider-add-card').waitFor();
   await page.getByTestId('model-meta-updated-at').locator('time').waitFor();
+  assert.equal((await assertDesktopSetupLayout()).sceneScrolls, true, 'long model setup scrolls inside the right column');
+  for (const viewport of [{ width: 1280, height: 768 }, { width: 960, height: 600 }, { width: 1280, height: 400 }]) {
+    await page.setViewportSize(viewport);
+    await assertDesktopSetupLayout();
+    await page.getByTestId('onboarding-models-done').scrollIntoViewIfNeeded();
+    await assertDesktopSetupLayout();
+    assert.ok(await page.getByTestId('onboarding-models-done').evaluate(element => {
+      const button = element.getBoundingClientRect();
+      const scene = element.closest('.ob__scene').getBoundingClientRect();
+      return button.top >= scene.top && button.bottom <= scene.bottom;
+    }), 'completion remains reachable inside the scrollable form, including short desktop windows');
+  }
+  await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.locator('.ob__scene').evaluate(element => { element.scrollTop = 0; });
   await page.screenshot({ path: path.join(os.tmpdir(), 'opencode/onboarding-models-desktop.png') });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false, 'onboarding editor stays within the mobile viewport');
@@ -54,6 +92,7 @@ try {
   await page.getByTestId('api-key-draft').fill('secret-for-server-only');
   await page.getByTestId('provider-draft-save').click();
   await page.getByTestId('provider-back').waitFor();
+  await assertDesktopSetupLayout();
   const noBrowserKey = async () => assert.ok(!(await page.evaluate(() => JSON.stringify(localStorage))).includes('secret-for-server-only'));
   await noBrowserKey();
   await page.getByText(/2 个可用模型/).first().waitFor();
@@ -101,6 +140,7 @@ try {
   });
   await page.screenshot({ path: path.join(os.tmpdir(), 'opencode/onboarding-model-picker.png') });
   await page.getByTestId('model-option-catalog-model').click();
+  await assertDesktopSetupLayout();
   // Completion must save pending model choices, and failures must keep the editor open.
   await page.route('**/api/v1/cloud/model-settings', route => route.request().method() === 'PUT'
     ? route.fulfill({ status: 503, json: { error: 'test_save_failed' } }) : route.continue());

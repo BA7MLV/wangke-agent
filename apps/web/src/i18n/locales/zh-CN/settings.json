@@ -49,6 +49,7 @@
     "updated": "统计时间：{{time}}"
   },
   "mcp": {
+    "openFile": "在资料中打开 /system/mcp.json", "jsonEditor": "MCP 配置 JSON", "reloadFile": "放弃草稿并重载", "fileConflict": "文件已在其他页面或 Bot 中更新。草稿已保留，请重载最新版本后再修改。", "fileHint": "这里直接编辑 JSON；可视化管理位于「设置 → 技能 → MCP」，共用这一份文件。Bot 可读写，修改需单次确认；密钥与 OAuth 凭据单独加密保存。", "jsonHint": "格式为 version: 1 和 servers 数组。保留已有 id；新服务可省略 id，默认禁用。仅配置非敏感字段，Token、请求头和环境变量请在 MCP 设置中管理。更换服务地址或启动命令会清除原凭据。",
     "transport": "连接类型", "stdioHint": "命令在后端服务器运行。请先安装依赖，使用独立容器时可填写 docker 命令；进程由连接管理器启动，禁用后关闭。", "command": "可执行程序", "args": "参数（JSON 数组）", "cwd": "工作目录（服务器绝对路径，可留空）", "env": "环境变量（JSON，留空保留）", "logs": "进程日志", "noLogs": "暂无进程日志。", "import": "导入 JSON", "importHint": "支持 mcpServers 和 VS Code mcp.servers / servers。先预览再导入；同名项不会被覆盖。变量占位符需替换为实际值。", "preview": "预览", "importConfirm": "确认导入", "authorize": "开始 OAuth 授权", "authorized": "OAuth 已授权", "notAuthorized": "OAuth 未授权", "openAuthorization": "前往授权（完成后返回刷新）", "disconnect": "断开授权", "revoked": "已撤销远程令牌并清除本地凭据。", "disconnectedLocal": "本地凭据已清除。远程未确认撤销，如需撤销请到服务方账号设置操作。",
     "skills": "技能", "title": "MCP 服务器", "description": "技能决定怎么做，MCP 提供外部工具。连接由服务器管理，问答和 Bot 均可使用。",
     "offline": "连接服务端后即可配置 MCP。", "add": "添加服务器", "refresh": "刷新", "loading": "正在读取…", "empty": "尚未添加 MCP 服务器。", "edit": "编辑服务器", "delete": "删除", "deleteConfirm": "删除「{{name}}」的连接配置？历史对话会保留。", "cancel": "取消", "save": "保存",
@@ -56,6 +57,7 @@
     "scope": "MCP 范围", "scopeTitle": "技能与 MCP 范围", "scopeHint": "仅选中的服务器可供本次会话使用。继承全局会自动包含后续启用的服务器。", "inherited": "当前继承全局启用项", "scopeNone": "本次会话已关闭全部 MCP", "scopeSelected": "已选择 {{count}} 个服务器", "inherit": "继承全局", "disableAll": "全部关闭",
     "status": { "disconnected": "未连接", "connecting": "连接中", "ready": "可用", "auth_failed": "认证失败", "failed": "连接失败", "disabled": "已禁用" },
     "errors": {
+      "mcp_invalid_json": "JSON 语法不正确，未保存任何修改。", "mcp_config_fields": "mcp.json 包含不支持的字段。Token、请求头和环境变量请在可视化设置中单独管理。", "system_revision_conflict": "文件已更新，请重新读取后再修改。", "system_file_too_large": "配置文件过大（最多 100000 字符）。",
       "mcp_invalid_import": "JSON 配置格式不正确。", "mcp_import_fields": "配置包含不支持的字段，请核对后导入。", "mcp_import_variables": "请先替换环境变量或输入占位符。", "mcp_import_duplicate": "已有同名服务器，未导入任何配置。请先重命名。", "mcp_invalid_command": "请检查程序、参数 JSON 数组和服务器绝对工作目录。", "mcp_oauth_required": "请先在设置中完成 OAuth 授权。", "mcp_oauth_state": "授权已过期或已使用，请重新发起。", "mcp_oauth_failed": "OAuth 授权失败，请检查服务端授权支持。", "mcp_oauth_origin": "请设置 MCP_PUBLIC_ORIGIN 为后端可公开访问的地址。", "mcp_oauth_denied": "授权已取消，请重新发起。",
       "generic": "操作失败，请检查连接后重试。", "mcp_auth_failed": "认证失败，请检查 Token、请求头或重新完成 OAuth 授权。", "mcp_timeout": "连接或工具调用超时，请检查服务状态或调整超时。", "mcp_connection_failed": "无法连接，请确认连接类型、服务地址或程序、依赖和网络。", "mcp_invalid_url": "请填写 HTTP(S) 地址，不含账号、查询参数或片段。认证请使用专用配置。", "mcp_invalid_config": "请检查名称、连接类型、地址及超时范围（1–120 秒）。", "mcp_invalid_credentials": "凭据格式不正确。请求头和环境变量必须是字符串键值 JSON，不能覆盖协议请求头。", "mcp_not_found": "服务器已删除，请刷新。", "mcp_server_limit": "最多添加 30 个服务器。", "mcp_tools_unsupported": "该服务器不支持 MCP 工具。", "mcp_catalog_limit": "工具目录过大，请减少服务器暴露的工具。", "mcp_config_changed": "配置已更新，请重新测试连接。"
     }

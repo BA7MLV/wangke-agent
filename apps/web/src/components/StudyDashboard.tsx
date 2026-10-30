@@ -3,6 +3,7 @@ import { Button, ToggleButton, ToggleButtonGroup } from '@heroui/react';
 import { Banner, SectionCard, Sym, useSkeletonGate } from '../ui';
 import { loadStudyDays, useStudyTime } from '../store/studyTime';
 import { useSettings } from '../store/settings';
+import { NumberPop, useSlidingTabs } from './motion';
 import {
   buildHeatmap,
   computeStats,
@@ -46,6 +47,7 @@ export function StudyDashboard() {
    */
   const [loadState, setLoadState] = useState<'loading' | 'ready' | 'error'>('loading');
   const [range, setRange] = useState<RangeKey>('1y');
+  const { barRef, pillRef } = useSlidingTabs(range);
   const [today, setToday] = useState(() => dateKey(Date.now()));
   const [tip, setTip] = useState<{ cell: HeatCell; x: number; y: number } | null>(null);
   /** 提示气泡是否已进入。挂载帧 false、下一帧 true，给 .t-tt 一个可插值的起点。 */
@@ -215,7 +217,7 @@ export function StudyDashboard() {
             {/* 数字槽：读数没到齐时要么留空（等得短，用户看不见）、要么放一条灰
                 （等得久，说明在加载）。**不能**放 0 —— 那是在报一个错的数。 */}
             <div className="study-tile__value">
-              {dataReady ? t.value : showSkeleton ? <span className="skel-bar" /> : null}
+              {dataReady ? <NumberPop text={t.value} /> : showSkeleton ? <span className="skel-bar" /> : null}
             </div>
             <div className="study-tile__sub">
               {/* 「今日」那一格的副文案是计时器的实时状态（记录中 / 未在计时），
@@ -265,24 +267,27 @@ export function StudyDashboard() {
           stats.best ? `。单日最高：${formatStudyDuration(stats.best.seconds)}（${formatDayLabel(stats.best.date)}）` : ''
         }`}
         actions={
-          <ToggleButtonGroup
-            data-testid="study-range"
-            aria-label="学习记录时间范围"
-            selectionMode="single"
-            disallowEmptySelection
-            size="sm"
-            selectedKeys={[range]}
-            onSelectionChange={(keys) => {
-              const next = [...keys][0];
-              if (next) setRange(next as RangeKey);
-            }}
-          >
-            {RANGES.map((r) => (
-              <ToggleButton key={r.key} id={r.key} data-testid={`study-range-${r.key}`}>
-                {r.label}
-              </ToggleButton>
-            ))}
-          </ToggleButtonGroup>
+          <div ref={barRef} className="t-tabs study-range">
+            <span ref={pillRef} className="t-tabs-pill" aria-hidden="true" />
+            <ToggleButtonGroup
+              data-testid="study-range"
+              aria-label="学习记录时间范围"
+              selectionMode="single"
+              disallowEmptySelection
+              size="sm"
+              selectedKeys={[range]}
+              onSelectionChange={(keys) => {
+                const next = [...keys][0];
+                if (next) setRange(next as RangeKey);
+              }}
+            >
+              {RANGES.map((r) => (
+                <ToggleButton className="t-tab" key={r.key} id={r.key} data-testid={`study-range-${r.key}`}>
+                  {r.label}
+                </ToggleButton>
+              ))}
+            </ToggleButtonGroup>
+          </div>
         }
       >
         <div

@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { AGENTS_PATH, MEMORY_PATH, memoryName } from '@wangke/contracts/system';
+import { AGENTS_PATH, MCP_PATH, MEMORY_PATH, memoryName } from '@wangke/contracts/system';
 
 type Entry = { owner_id: string; path: string; memory_id: string | null; pending: number; content: string | null; expected: string | null };
 
@@ -12,7 +12,7 @@ export class SystemFiles {
 
   private filename(owner: string, resource: string) {
     const name = memoryName(resource);
-    if (resource !== AGENTS_PATH && resource !== MEMORY_PATH && !name) throw new Error('invalid_system_path');
+    if (resource !== AGENTS_PATH && resource !== MCP_PATH && resource !== MEMORY_PATH && !name) throw new Error('invalid_system_path');
     const account = crypto.createHash('sha256').update(owner).digest('hex');
     const directories = [this.root, path.join(this.root, account), path.join(this.root, account, 'system'), path.join(this.root, account, 'system', 'memory')];
     for (const directory of directories) {
@@ -21,7 +21,7 @@ export class SystemFiles {
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe_system_path');
     }
     if (resource === MEMORY_PATH) return directories[3];
-    const filename = resource === AGENTS_PATH ? path.join(directories[2], 'AGENTS.md') : path.join(directories[3], `${name}.md`);
+    const filename = resource === AGENTS_PATH || resource === MCP_PATH ? path.join(directories[2], resource === MCP_PATH ? 'mcp.json' : 'AGENTS.md') : path.join(directories[3], `${name}.md`);
     const stat = fs.lstatSync(filename, { throwIfNoEntry: false });
     if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.size > 400000)) throw new Error('unsafe_system_path');
     return filename;

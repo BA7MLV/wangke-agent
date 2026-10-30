@@ -187,6 +187,32 @@ const result = await page.evaluate(async () => {
     badType: runWidget('diagram', '{"type":"mindmap","root":"x"}'),
   };
 
+  // 大图不再因可读性建议被拒；DOM 与流式路径都保留全部节点、边和长术语。
+  out.largeGraphs = [12, 30].map(count => {
+    const nodes = Array.from({ length: count }, (_, i) => ({
+      id: `n${i}`, label: i === 0 ? '课程资料检索与问答处理流程中的完整术语\n分支处理' : `节点${i}`,
+    }));
+    const edges = Array.from({ length: count - 1 }, (_, i) => ({ from: `n${i}`, to: `n${i + 1}` }))
+      .concat(Array.from({ length: count - 2 }, (_, i) => ({ from: `n${i}`, to: `n${i + 2}` })));
+    const code = JSON.stringify({ type: 'graph', nodes, edges });
+    const rendered = renderDiagram(validateDiagram(JSON.parse(code)));
+    const progress = peekDiagramProgress(code.slice(0, -1));
+    const host = document.createElement('div');
+    host.innerHTML = sanitizeSvg(rendered.svg);
+    document.body.appendChild(host);
+    const texts = [...host.querySelectorAll('text')].map(el => el.textContent);
+    const result = {
+      count, edges: edges.length, stage: runWidget('diagram', code).stage,
+      allLabels: nodes.every(node => texts.includes(node.label.replace(/\n/g, ''))),
+      domNodes: texts.length,
+      domEdges: host.querySelectorAll('path[marker-end]').length,
+      streamMatches: JSON.stringify(progress?.shapes) === JSON.stringify(rendered.shapes),
+      fragmentsClean: progress?.shapes.every(shape => sanitizeSvgFragment(shape.svg).length > 0),
+    };
+    host.remove();
+    return result;
+  });
+
   // ── 5. 插进真 DOM：尺寸、文字宽度、恶意标签不执行 ──
   const hostileDoc = {
     type: 'plot',
@@ -281,6 +307,11 @@ check(result.widget.svgInFence.stage === 'reject' && /JSON 对象/.test(result.w
   '把 SVG 塞进 diagram 围栏归因到「只放 JSON」');
 check(result.widget.badType.stage === 'reject' && /只能取/.test(result.widget.badType.text),
   'type 写错归因到两种合法值');
+for (const graph of result.largeGraphs) {
+  check(graph.stage === 'ok' && graph.domNodes === graph.count && graph.domEdges === graph.edges && graph.allLabels,
+    `${graph.count} 节点 / ${graph.edges} 条边大图通过预检与净化，DOM 保留全部结构和完整术语`);
+  check(graph.streamMatches && graph.fragmentsClean, `${graph.count} 节点大图的流式预览干净且收敛到完整渲染`);
+}
 
 console.log('\n=== 5. 插进真 DOM：尺寸、文字、恶意标签不执行 ===');
 check(result.dom.hasSvg, '插入 DOM 后确实是一个 <svg> 元素');

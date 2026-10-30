@@ -20,10 +20,11 @@
  *    `confirm-dialog-danger`，带输入框的是 `prompt-dialog`），确认/取消按钮带
  *    `data-testid` 后缀，选择器不依赖 HeroUI 的内部类名。
  */
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from 'react';
 import { Button, Input, Label, Modal, TextField, Toast, toast as heroToast } from '@heroui/react';
 import { Sym } from './icons';
 import { MODAL_CONTAINER_CLASS } from './modalContainer';
+import { ms } from '../components/motion';
 
 export interface ConfirmOptions {
   /** 标题 */
@@ -205,6 +206,23 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
   const [draft, setDraft] = useState(promptOptions?.defaultValue ?? '');
   /** 校验没过时的提示；有值就渲染在输入框下面并把它标红 */
   const [error, setError] = useState<string | null>(null);
+  const [validationAttempt, setValidationAttempt] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const errorId = useId();
+
+  useLayoutEffect(() => {
+    const input = inputRef.current;
+    if (!input || !error || validationAttempt === 0 || window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    input.classList.remove('is-shaking');
+    void input.offsetWidth;
+    input.classList.add('is-shaking');
+    const shakeMs = ms('--shake-dur-a', 80) * 2 + ms('--shake-dur-b', 60) * 2;
+    const timer = window.setTimeout(() => input.classList.remove('is-shaking'), shakeMs + 20);
+    return () => {
+      window.clearTimeout(timer);
+      input.classList.remove('is-shaking');
+    };
+  }, [validationAttempt, error]);
   // 用 ref 拿最新的 resolve，避免按钮回调闭包过期
   const commandRef = useRef(command);
   commandRef.current = command;
@@ -226,7 +244,11 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
     const value = promptOptions?.trim === false ? draft : draft.trim();
     if (!value) return;
     const problem = promptOptions?.validate?.(value) ?? null;
-    if (problem) return setError(problem);
+    if (problem) {
+      setError(problem);
+      setValidationAttempt((attempt) => attempt + 1);
+      return;
+    }
     const cmd = commandRef.current;
     if (cmd.kind === 'prompt') cmd.resolve(value);
     dequeue();
@@ -263,6 +285,9 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
                 >
                   <Label>{promptOptions.headline}</Label>
                   <Input
+                    ref={inputRef}
+                    className={`t-input${error ? ' is-error' : ''}`}
+                    aria-describedby={error ? errorId : undefined}
                     autoFocus
                     data-testid="prompt-dialog-input"
                     type={promptOptions.inputType ?? 'text'}
@@ -281,7 +306,7 @@ function FeedbackDialog({ command, onOpenChange }: FeedbackDialogProps) {
               {error && (
                 /* 错误自己渲染：HeroUI 的 TextField 没有 `validationErrors`，
                    光标 `isInvalid` 只给红框，不给「为什么错」这句话。 */
-                <p className="text-danger text-sm" data-testid="prompt-dialog-error" role="alert">
+                <p id={errorId} className="text-danger text-sm" data-testid="prompt-dialog-error" role="alert">
                   {error}
                 </p>
               )}

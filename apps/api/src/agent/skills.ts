@@ -5,7 +5,7 @@ import { intersectSkillMetaIds } from '@wangke/study-core/skills/scope';
 import { parseSkillMarkdown } from '@wangke/study-core/skills/parser';
 import type { DatabaseStore } from '../storage/database.js';
 
-type Skill = { id: number; name: string; description: string; body: string; enabled: number; updatedAt: number; mcpRequired?: string[] };
+type Skill = { id: number; name: string; description: string; body: string; enabled: number; updatedAt: number; revision?: number; mcpRequired?: string[] };
 const builtinRoot = path.resolve(path.dirname(fileURLToPath(import.meta.resolve('@wangke/study-core/skills/assets'))), '..');
 // Filesystem capabilities never travel in synchronized JSON, even when it
 // claims to be a builtin. Only this module can populate the trusted map.
@@ -19,7 +19,7 @@ function synced(value: string): Skill | undefined {
   return { id: Number(r.id), name: String(r.name), description: String(r.description), body: String(r.body), enabled: r.enabled, updatedAt: r.updatedAt, mcpRequired: r.mcpRequired as string[] | undefined };
 }
 let builtins: Skill[] | undefined;
-function builtinSkills() {
+function builtinSkills(): Skill[] {
   return builtins ??= ['diagramming', 'interactive-explainer', 'library-organizer', 'course-handout', 'question-bank'].map((directory, index) => {
     const filename = path.join(builtinRoot, directory, 'SKILL.md');
     const skill = { ...parseSkillMarkdown('SKILL.md', fs.readFileSync(filename, 'utf8')), id: -index - 1, enabled: 1, updatedAt: fs.statSync(filename).mtimeMs };
@@ -33,19 +33,25 @@ export class BotSkills {
     const row = this.store.db.prepare('SELECT skill_ids,mcp_server_ids FROM threads WHERE id=? AND owner_id=?').get(thread, owner) as { skill_ids: string | null; mcp_server_ids: string | null } | undefined;
     if (!row) throw new Error('thread_not_found');
     const saved = (this.store.db.prepare("SELECT value FROM cloud_records WHERE owner_id=? AND table_name='skills' AND value IS NOT NULL").all(owner) as Array<{ value: string }>).flatMap(r => { const s = synced(r.value); return s ? [s] : []; });
-    const combined = [...saved, ...builtinSkills().filter(b => !saved.some(s => s.name === b.name))].filter(s => s.enabled === 1);
+    const physical: Skill[] = this.store.systemSkills.list(owner).map(s => ({ id: s.id, name: s.name, description: s.description, body: s.body, enabled: s.enabled, updatedAt: s.updatedAt, revision: s.revision, mcpRequired: s.mcpRequired }));
+    const names = new Set(physical.map(s => s.name));
+    const combined: Skill[] = [...physical, ...saved.filter(s => !names.has(s.name)), ...builtinSkills().filter(b => !names.has(b.name) && !saved.some(s => s.name === b.name))].filter(s => s.enabled === 1);
     const allowed = new Set(intersectSkillMetaIds(combined, row.skill_ids === null ? undefined : JSON.parse(row.skill_ids)));
-    const mcp = (this.store.db.prepare('SELECT id,config FROM mcp_servers WHERE owner_id=?').all(owner) as Array<{ id: string; config: string }>).map(r => ({ id: r.id, ...JSON.parse(r.config) as { name: string; enabled: boolean } }));
+    let mcp: Array<{ id: string; name: string; enabled: boolean }>;
+    try { mcp = this.store.systemMcp.sync(owner); }
+    catch { mcp = []; } // Invalid MCP files never satisfy a skill dependency.
     const scope = row.mcp_server_ids === null ? undefined : JSON.parse(row.mcp_server_ids) as string[];
     return combined.filter(s => allowed.has(s.id)).map(s => ({ skill: s, ...s, missingMcp: (s.mcpRequired ?? []).filter(name => !mcp.some(m => m.name === name && m.enabled && (scope === undefined || scope.includes(m.id)))) }));
   }
   catalog(owner: string, thread: string) {
-    return this.available(owner, thread).map(({ id, name, description, updatedAt, missingMcp }) => ({ id, name, description, revision: updatedAt, missingMcp: [...missingMcp].sort() })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : a.id - b.id);
+    return this.available(owner, thread).map(({ id, name, description, updatedAt, revision, missingMcp }) => ({ id, name, description, revision: revision ?? updatedAt, missingMcp: [...missingMcp].sort() })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : a.id - b.id);
   }
   load(owner: string, thread: string, id: number, reference?: string) {
     const skill = this.available(owner, thread).find(s => s.id === id);
     if (!skill) throw new Error('skill_not_available');
     if (skill.missingMcp.length) return { error: 'skill_mcp_dependency_missing', missingMcp: skill.missingMcp, hint: 'Enable/grant dependencies explicitly in MCP settings. Nothing was installed or authorized.' };
+    const physical = this.store.systemSkills.load(owner, id, reference);
+    if (physical) return physical;
     if (reference !== undefined) {
       if (!/^references\/[a-zA-Z0-9_/-]+\.md$/.test(reference) || reference.includes('..')) throw new Error('invalid_skill_reference');
       const builtinPath = builtinPaths.get(skill.skill);

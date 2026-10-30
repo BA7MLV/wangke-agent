@@ -27,7 +27,7 @@ try {
     useCourseChat.setState({ messages: [
       { key: 'hover-question', role: 'user', content: '请梳理这节课的重点。' },
       { key: 'hover-answer', role: 'ai', content: '可以从核心概念、关键步骤和练习三个方面梳理。',
-        reasoning: '先梳理核心概念，再整理关键步骤，最后结合练习归纳重点。', reasoningMs: 1800 },
+        tools: [{ name: 'grep', detail: '课程重点', status: 'done', result: '找到 2 段内容', ms: 120 }] },
     ] });
   });
   const toggle = page.getByTestId('response-process-toggle');
@@ -35,7 +35,8 @@ try {
   const style = () => toggle.evaluate(el => {
     const css = getComputedStyle(el);
     return { background: css.backgroundColor, radius: css.borderRadius,
-      corner: css.getPropertyValue('corner-shape'), decoration: css.textDecorationLine };
+      corner: css.getPropertyValue('corner-shape'), decoration: css.textDecorationLine,
+      width: el.getBoundingClientRect().width, headingWidth: el.parentElement.getBoundingClientRect().width };
   });
   const settle = () => page.evaluate(async () => {
     for (let i = 0; i < 12; i++) await new Promise(requestAnimationFrame);
@@ -55,10 +56,12 @@ try {
       await settle();
       const hover = await style();
       assert.notEqual(hover.background, normal.background, `${theme}/${width}: neutral hover background appears`);
-      assert.equal(hover.radius, '10px', 'hover matches the import action corner radius');
+      assert.ok(parseFloat(hover.radius) > 0, 'hover keeps rounded corners');
+      assert.equal(hover.radius, normal.radius, 'hover uses the same corner radius as the resting trigger');
+      assert.ok(hover.width < hover.headingWidth * 0.75, 'hover stays around the label rather than filling the message');
       assert.equal(hover.decoration, 'none', 'hover never underlines the text');
-      if (await page.evaluate(() => CSS.supports('corner-shape', 'squircle'))) {
-        assert(['squircle', 'superellipse(2)'].includes(hover.corner), 'hover uses continuous corners');
+      if (await page.evaluate(() => CSS.supports('corner-shape', 'superellipse(1.25)'))) {
+        assert.equal(hover.corner, 'superellipse(1.25)', 'hover follows the application corner shape');
       }
       await toggle.locator('.reasoning-chain__indicator').hover();
       await settle();
@@ -71,10 +74,14 @@ try {
       await toggle.click();
       await page.waitForFunction(() => document.querySelector('[data-testid="response-process"]')?.dataset.mode === 'expanded');
       assert.equal(await toggle.getAttribute('aria-expanded'), 'true', 'click still expands reasoning');
+      await page.mouse.move(0, 899);
+      await settle();
+      assert.equal((await style()).background, normal.background, 'expanded is not a persistent selected background');
       await toggle.focus();
       await page.keyboard.press('Enter');
       await page.waitForFunction(() => document.querySelector('[data-testid="response-process"]')?.dataset.mode === 'closed');
       assert.equal(await chain.getAttribute('data-mode'), 'closed', 'keyboard still collapses reasoning');
+      assert.equal(await toggle.evaluate(el => getComputedStyle(el).outlineStyle), 'solid', 'keyboard focus ring stays visible');
     }
   }
   assert.deepEqual(errors, []);

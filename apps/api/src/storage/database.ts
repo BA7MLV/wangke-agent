@@ -2,6 +2,8 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { SystemFiles } from './system-files.js';
+import { SystemMcp } from './system-mcp.js';
+import { SystemSkills } from './system-skills.js';
 
 const MIGRATIONS: Array<[number, string]> = [
   [1, `
@@ -388,6 +390,20 @@ const MIGRATIONS: Array<[number, string]> = [
     );
     CREATE INDEX model_observations_owner_time ON model_observations(owner_id,started_at);
   `],
+  [23, `
+    CREATE TABLE system_skills (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      slug TEXT NOT NULL,
+      source_url TEXT,
+      sha256 TEXT NOT NULL,
+      revision INTEGER NOT NULL,
+      version TEXT,
+      enabled INTEGER NOT NULL DEFAULT 1 CHECK(enabled IN (0,1)),
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY(owner_id, slug)
+    );
+    CREATE INDEX system_skills_owner_enabled ON system_skills(owner_id, enabled, updated_at);
+  `],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -432,6 +448,12 @@ const PROJECT_MIGRATION = `
       WHEN NOT EXISTS(SELECT 1 FROM projects p JOIN agent_profiles a ON a.owner_id=p.owner_id WHERE p.id=NEW.project_id AND a.id=NEW.agent_id)
       BEGIN SELECT RAISE(ABORT, 'project_owner_mismatch'); END;
 `;
+const MCP_FILE_MIGRATION = `
+    CREATE TABLE system_mcp_files (
+      owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      revision INTEGER NOT NULL, sha256 TEXT NOT NULL, updated_at TEXT NOT NULL
+    );
+`;
 const LEASE_MIGRATION = `
     ALTER TABLE cloud_tasks ADD COLUMN worker_id TEXT;
     ALTER TABLE cloud_tasks ADD COLUMN lease_expires_at TEXT;
@@ -441,11 +463,15 @@ const LEASE_MIGRATION = `
 export class DatabaseStore {
   readonly db: Database.Database;
   readonly systemFiles: SystemFiles;
+  readonly systemMcp: SystemMcp;
+  readonly systemSkills: SystemSkills;
 
   constructor(filename = process.env.DB_PATH ?? '/data/db/wangke.sqlite', systemFilesDir = path.join(path.dirname(filename), 'system-files')) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
     this.db = new Database(filename);
     this.systemFiles = new SystemFiles(systemFilesDir, this.db);
+    this.systemMcp = new SystemMcp(this);
+    this.systemSkills = new SystemSkills(systemFilesDir, this.db);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
@@ -472,6 +498,7 @@ export class DatabaseStore {
         for (const [, sql] of MIGRATIONS) expected.exec(sql);
         expected.exec(PROJECT_MIGRATION);
         expected.exec(LEASE_MIGRATION);
+        expected.exec(MCP_FILE_MIGRATION);
         const groups = [
           { version: 13, tables: ['gateway_accounts', 'gateway_pairings', 'gateway_bindings', 'gateway_inbox', 'gateway_outbox', 'bot_reminders'], extra: [['cloud_tasks', 'parent_run_id'], ['cloud_tasks', 'parent_step_id'], ['approvals', 'cloud_permission_id']], sql: MIGRATIONS.find(([v]) => v === 13)![1] },
           { version: 14, tables: ['gateway_projection_failures'], extra: [], sql: MIGRATIONS.find(([v]) => v === 14)![1] },
@@ -484,6 +511,8 @@ export class DatabaseStore {
           { version: 22, tables: ['resource_attachments'], extra: [], sql: MIGRATIONS.find(([v]) => v === 20)![1] },
           { version: 23, tables: ['bot_workspaces'], extra: [], sql: MIGRATIONS.find(([v]) => v === 21)![1] },
           { version: 24, tables: ['bot_context_views', 'model_observations'], extra: [['bot_requests', 'cache_creation_tokens'], ['bot_requests', 'reasoning_tokens'], ['runs', 'context_end_seq'], ['runs', 'context_model']], sql: MIGRATIONS.find(([v]) => v === 22)![1] },
+          { version: 25, tables: ['system_skills'], extra: [], sql: MIGRATIONS.find(([v]) => v === 23)![1] },
+          { version: 26, tables: ['system_mcp_files'], extra: [], sql: MCP_FILE_MIGRATION },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -527,6 +556,8 @@ export class DatabaseStore {
         apply(20, groups[8], 8);
         apply(21, groups[9], 9);
         apply(22, groups[10], 10);
+        apply(23, groups[11], 11);
+        apply(24, groups[12], 12);
       } finally { expected.close(); }
     })();
   }

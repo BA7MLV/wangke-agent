@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import type { DatabaseStore } from './database.js';
 import { CloudRecords, CloudConflict } from '../cloud/records.js';
 import { BotMemory, type MemoryRow } from '../agent/memory.js';
-import { AGENTS_PATH, MEMORY_PATH, memoryId, memoryName, diaryDate, type SystemDirectory, type SystemDocument } from '@wangke/contracts/system';
+import { AGENTS_PATH, MCP_PATH, MEMORY_PATH, SKILLS_PATH, memoryId, memoryName, diaryDate, type SystemDirectory, type SystemDocument } from '@wangke/contracts/system';
 
 export class SystemMaterials {
   readonly memory: BotMemory;
@@ -15,7 +15,7 @@ export class SystemMaterials {
   /** Upgrade existing settings/memories without adding duplicate course records. */
   migrate() {
     const owners = this.store.db.prepare('SELECT id FROM users').all() as Array<{ id: string }>;
-    for (const owner of owners) this.records.agentInstructions(owner.id);
+    for (const owner of owners) { this.records.agentInstructions(owner.id); this.store.systemMcp.read(owner.id); }
     const rows = this.store.db.prepare('SELECT * FROM bot_memories').all() as MemoryRow[];
     for (const row of rows) this.memory.materialize(row);
     for (const owner of owners) this.memory.sync(owner.id);
@@ -28,11 +28,13 @@ export class SystemMaterials {
   }
 
   read(owner: string, path: string): SystemDocument {
+    if (path === MCP_PATH) return this.store.systemMcp.read(owner);
     if (path === AGENTS_PATH) {
       const content = this.records.agentInstructions(owner);
       const row = this.store.db.prepare("SELECT revision FROM cloud_records WHERE owner_id=? AND table_name='preferences' AND record_key=?").get(owner, JSON.stringify('agentInstructions')) as { revision: number } | undefined;
       return { path, name: 'AGENTS.md', content, revision: row?.revision ?? 0, updatedAt: null };
     }
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.readFile(owner, path);
     if (!memoryName(path)) throw new Error('invalid_system_path');
     this.memory.sync(owner, path);
     const id = this.store.systemFiles.entry(owner, path)?.memory_id ?? memoryId(path);
@@ -45,9 +47,11 @@ export class SystemMaterials {
   list(owner: string, path: string, offset = 0, query = ''): SystemDirectory {
     if (!Number.isSafeInteger(offset) || offset < 0) throw new Error('invalid_offset');
     if (path === '/system') {
-      const { content: _content, ...file } = this.read(owner, AGENTS_PATH);
-      return { files: offset === 0 ? [file] : [], directories: offset === 0 ? [MEMORY_PATH] : [], nextOffset: null };
+      const files = [AGENTS_PATH, MCP_PATH].map(path => { const { content: _content, ...file } = this.read(owner, path); return file; });
+      const matches = (value: string) => !query || value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
+      return { files: offset === 0 ? files.filter(file => matches(file.name)) : [], directories: offset === 0 ? [MEMORY_PATH, SKILLS_PATH].filter(matches) : [], nextOffset: null };
     }
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.listDirectory(owner, path, offset, query);
     if (path !== MEMORY_PATH) throw new Error('invalid_system_path');
     const rows = this.memory.list(owner, query, offset);
     return { files: rows.map(row => { const { content: _content, ...file } = this.document(row); return file; }), nextOffset: rows.length === 50 ? offset + 50 : null };
@@ -63,6 +67,8 @@ export class SystemMaterials {
 
   save(owner: string, path: string, content: string, expected: string, revision: number, source = 'user:notebook') {
     if (typeof content !== 'string' || typeof expected !== 'string' || !Number.isSafeInteger(revision) || revision < 0 || content.length > 100000) throw new Error('invalid_system_document');
+    if (path === MCP_PATH) return this.store.systemMcp.save(owner, content, expected, revision);
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.saveFile(owner, path, content, expected, revision);
     if (memoryName(path)) {
       this.memory.sync(owner, path);
       if (!this.store.systemFiles.entry(owner, path)) {

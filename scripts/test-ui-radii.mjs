@@ -38,19 +38,33 @@ test('all application radii and static spacing use the 4px grid', async () => {
   assert.deepEqual(issues, []);
 });
 
-test('continuous corners are progressive and range-thumb exceptions stay isolated', async () => {
+test('continuous corners are progressive, explicit and do not affect user content', async () => {
   const css = await readFile(path.join(root, 'theme.css'), 'utf8');
   const ast = postcss.parse(css);
   const enhancement = ast.nodes.find(node => node.type === 'atrule'
     && node.name === 'supports' && node.params === '(corner-shape: superellipse(1.25))');
   assert.ok(enhancement);
-  assert.ok(enhancement.nodes.some(rule => rule.selector === ':where(*, *::before, *::after)'));
-  for (const pseudo of ['::-webkit-slider-thumb', '::-moz-range-thumb']) {
-    const rule = enhancement.nodes.find(node => node.selector?.includes(pseudo));
-    assert.ok(rule && !rule.selector.includes(','));
-    assert.ok(rule.nodes.some(decl => decl.prop === 'corner-shape' && decl.value === 'round'));
-  }
+  assert.equal(enhancement.nodes.length, 1);
+  assert.equal(enhancement.nodes[0].selector, ':where(.ui-smooth)');
+  assert.ok(enhancement.nodes[0].nodes.some(decl => decl.prop === 'corner-shape' && decl.value === 'superellipse(1.25)'));
+  assert.doesNotMatch(await readFile(path.join(root, 'harness/widgetStyles.ts'), 'utf8'), /corner-shape/);
   for (const name of ['components/reasoning-chain.css', 'pages/course-chat.css']) {
     assert.doesNotMatch(await readFile(path.join(root, name), 'utf8'), /corner-shape:\s*squircle/);
   }
+});
+
+test('semantic radii keep dimension compatibility and map into Tailwind', async () => {
+  const css = await readFile(path.join(root, 'theme.css'), 'utf8');
+  const ast = postcss.parse(css);
+  const tokens = ast.nodes.find(node => node.selector === ':root');
+  const values = Object.fromEntries(tokens.nodes.filter(node => node.type === 'decl').map(node => [node.prop, node.value]));
+  assert.equal(values['--radius-control'], 'var(--radius-lg)');
+  assert.equal(values['--radius-panel'], 'var(--radius-xl)');
+  assert.equal(values['--radius-dialog'], 'var(--radius-2xl)');
+  assert.equal(values['--corner-20'], '1.25rem');
+  assert.equal(values['--corner-3xl'], '2rem');
+  const mapping = ast.nodes.find(node => node.name === 'theme');
+  for (const name of ['control', 'panel', 'dialog']) assert.ok(mapping.nodes.some(node => node.prop === `--radius-${name}`));
+  assert.match(css, /\.button--icon-only/);
+  assert.match(css, /\.modal__dialog:not\(\.modal__dialog--full\)/);
 });

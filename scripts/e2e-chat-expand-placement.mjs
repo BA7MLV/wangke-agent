@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { chromium } from 'playwright';
 
 const base = process.env.BASE_URL || 'http://localhost:5173';
-const longText = Array.from({ length: 20 }, (_, i) => `第 ${i + 1} 行：这是一条长消息，底部应渐进模糊，展开后恢复清晰。`).join('\n');
+const longText = Array.from({ length: 20 }, (_, i) => `第 ${i + 1} 行：这是一条长消息，收起时保持清晰，展开后显示全文。`).join('\n');
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 try {
   for (const surface of ['course', 'panel']) {
@@ -48,12 +48,12 @@ try {
       assert(Math.abs(toggleBox.x + toggleBox.width - textBox.x - textBox.width) < 2, 'message expand is right-aligned');
       const blur = await text.evaluate((node) => {
         const css = getComputedStyle(node, '::after');
-        return { content: css.content, filter: css.backdropFilter, mask: css.maskImage, height: parseFloat(css.height), lineHeight: parseFloat(getComputedStyle(node).lineHeight) };
+        return { content: css.content, filter: css.backdropFilter, mask: css.maskImage, clamp: getComputedStyle(node).webkitLineClamp };
       });
-      assert.equal(blur.content, '""');
-      assert.equal(blur.filter, 'blur(4px)');
-      assert.match(blur.mask, /linear-gradient/);
-      assert(Math.abs(blur.height - blur.lineHeight * 3) < 1, 'only the final three preview lines are blurred');
+      assert.equal(blur.content, 'none', 'collapsed preview has no blur overlay');
+      assert.equal(blur.filter, 'none');
+      assert.equal(blur.mask, 'none');
+      assert.equal(blur.clamp, '6', 'six-line preview is preserved');
       await toggle.click();
       assert.equal(await text.getAttribute('data-collapsed'), 'false');
       assert.equal(await text.evaluate((node) => getComputedStyle(node, '::after').content), 'none');
@@ -81,7 +81,7 @@ try {
       assert(await expand.isHidden());
       assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
       assert.deepEqual(errors, []);
-      console.log(`PASS ${surface} ${width}px: top-right composer control, right-aligned message control, progressive blur and full editor`);
+      console.log(`PASS ${surface} ${width}px: top-right composer control, right-aligned message control, clear preview and full editor`);
       await page.close();
     }
   }

@@ -34,6 +34,9 @@ export interface StudyToolPlugin {
   name: string; description: string; properties: Record<string, unknown>; required: string[];
   capability(args: any): 'read' | 'write' | 'remove';
   permissions?(args: any): Array<'read' | 'write' | 'remove'>;
+  /** Sensitive configuration always needs a one-shot approval, even for trusted Bots. */
+  requiresApproval?(args: any): boolean;
+  approval?(args: any, owner: string): string;
   /** Explicit side-effect-free opt-in, separate from permission requirements. */
   parallelSafe?(args: any): boolean;
   execute(args: any, context: StudyContext): Promise<unknown>;

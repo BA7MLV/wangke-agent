@@ -551,7 +551,8 @@
     grid-template-rows: auto;
     column-gap: 32px;
     width: min(100% - 64px, 1200px);
-    min-height: min(640px, 100dvh - 64px);
+    height: min(640px, 100dvh - 64px);
+    min-height: 0;
     margin-block: 32px;
     padding: 16px;
     border-radius: var(--radius-dialog);
@@ -563,6 +564,7 @@
     display: grid;
     grid-template-rows: auto minmax(0, 1fr) auto;
     min-width: 0;
+    min-height: 0;
     width: 100%;
     max-width: var(--ob-content-width);
     justify-self: center;
@@ -582,15 +584,19 @@
 
   .ob__scene {
     grid-row: 2;
-    justify-content: center;
+    min-height: 0;
+    justify-content: safe center;
     padding: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
   }
 
   .ob__visual {
     position: relative;
     grid-row: 1;
     grid-column: 1;
-    min-height: 400px;
+    min-height: 0;
     padding: 0;
     border-radius: var(--radius-panel);
     overflow: clip;
@@ -613,6 +619,7 @@
   }
 
   .ob__content {
+    flex-shrink: 0;
     padding-block: 32px;
   }
 
@@ -620,7 +627,7 @@
     margin: 0 0 32px;
   }
 
-  /* 模型配置是长表单：插画留在视口内，右列随页面自然滚动。 */
+  /* 模型配置只在右栏内容区滚动，不撑高画布；顶栏、插画与进度保持不动。 */
   .ob[data-step='models'] {
     --ob-content-width: none;
     --ob-content-inset: 0 16px;
@@ -632,13 +639,6 @@
 
   .ob[data-step='models'] .ob__content {
     padding-block: 24px;
-  }
-
-  .ob[data-step='models'] .ob__visual {
-    position: sticky;
-    top: 24px;
-    align-self: start;
-    height: min(608px, 100dvh - 112px);
   }
 }
 

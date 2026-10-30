@@ -110,15 +110,17 @@ export interface DiagramShape {
 }
 
 // ───────────────────────────────────────────────────────────────────────────────
-// 上限（与「讲解配图」技能的正文约束对齐；校验层是那道约束的硬闸门）
+// 硬上限：graph 只做资源保护，不把“小图更易读”的建议当作拒绝理由。
+// 大图由查看器缩放/滚动；流式预览与终态共用这些预算，避免预览绕过资源保护。
+// 与「讲解配图」技能的安全上限保持一致。
 // ───────────────────────────────────────────────────────────────────────────────
 
 export const LIMITS = {
   maxData: 12,
-  maxNodes: 10,
-  maxEdges: 16,
-  maxNodeLabel: 20,
-  maxEdgeLabel: 12,
+  maxNodes: 100,
+  maxEdges: 200,
+  maxNodeLabel: 80,
+  maxEdgeLabel: 40,
   maxText: 40,
   maxCurves: 4,
   maxPoints: 12,
@@ -371,7 +373,7 @@ function validateGraph(input: Record<string, unknown>): GraphDoc {
   if (!Array.isArray(input.nodes)) bad('graph 必须有 nodes 数组：[{"id":"a","label":"客户端"}, …]');
   if (input.nodes.length === 0) bad('nodes 不能为空：至少写一个节点');
   if (input.nodes.length > LIMITS.maxNodes) {
-    bad(`nodes 超过 ${LIMITS.maxNodes} 个（实得 ${input.nodes.length} 个）：拆成两张图，或改用列表`);
+    bad(`nodes 超过渲染安全上限 ${LIMITS.maxNodes} 个（实得 ${input.nodes.length} 个）：按主题分图，保留全部节点与关系`);
   }
 
   const nodes: GraphNode[] = [];
@@ -389,7 +391,7 @@ function validateGraph(input: Record<string, unknown>): GraphDoc {
   if (input.edges !== undefined && input.edges !== null) {
     if (!Array.isArray(input.edges)) bad('edges 必须是数组：[{"from":"a","to":"b"}, …]');
     if (input.edges.length > LIMITS.maxEdges) {
-      bad(`edges 超过 ${LIMITS.maxEdges} 条（实得 ${input.edges.length} 条）：连线太多说明图该拆`);
+      bad(`edges 超过渲染安全上限 ${LIMITS.maxEdges} 条（实得 ${input.edges.length} 条）：按主题分图，保留全部节点与关系`);
     }
     edges = [];
     input.edges.forEach((raw, i) => {

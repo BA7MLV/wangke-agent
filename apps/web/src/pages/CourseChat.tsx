@@ -812,8 +812,8 @@ export default function CourseChat() {
   /** 顶栏标题跟着当前会话走：标题栏写死「课程助手」的话，用户在 Recent 里切了会话，
       顶栏毫无反应，分不清自己看的是哪一段对话。 */
   const activeSession = sessions.find((session) => session.id === activeId);
-  // 草稿态是主页，不给尚未创建的会话编一个标题。
-  const activeTitle = activeSession?.title ?? (activeId == null ? '主页' : 'AI 助手');
+  // 草稿态的主页不显示标题；已有会话仍显示自己的标题。
+  const activeTitle = activeSession?.title ?? (activeId == null ? '' : 'AI 助手');
   /**
    * 本轮循环是否还活着（或卡片是否**从断点恢复**成了可答）：两张卡的 `active` 由
    * `pendingAsk` / `pendingPlan` 的 `messageKey` 是否对上这条消息决定。刷新后从库里读回的卡
@@ -939,7 +939,6 @@ export default function CourseChat() {
                 ) : courseCount == null && !coursesStuck ? null : (
                   <div className="course-chat__welcome t-stagger-line">
                     <h2>{welcomeGreeting}</h2>
-                    <p>{courseCount ? '围绕你的资料提问，或从一个新想法开始。' : '提问、梳理思路，或添加资料一起学习。'}</p>
                   </div>
                 )}
               </div>

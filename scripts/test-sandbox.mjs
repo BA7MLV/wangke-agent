@@ -6,12 +6,17 @@ import os from 'node:os';
 import path from 'node:path';
 import { spawn, execFileSync } from 'node:child_process';
 const token = crypto.randomBytes(32).toString('hex');
+const owner = crypto.randomUUID();
 const threadId = crypto.randomUUID();
 const projectId = crypto.randomUUID(), secondProjectId = crypto.randomUUID();
-const projectsRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-sandbox-projects-')));
+const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-sandbox-')));
+const projectsRoot = path.join(dataRoot, 'files', 'projects');
+fs.mkdirSync(projectsRoot, { recursive: true });
 const projectUid = process.platform === 'linux' ? process.getuid() || 1000 : 1000;
 const projectGid = process.platform === 'linux' ? process.getgid() || 1000 : 1000;
 fs.chmodSync(projectsRoot, 0o755);
+const systemSkillsRoot = path.join(path.dirname(projectsRoot), 'system-files', crypto.createHash('sha256').update(owner).digest('hex'), 'system', 'skills');
+fs.mkdirSync(systemSkillsRoot, { recursive: true, mode: 0o700 });
 for (const id of [projectId, secondProjectId]) {
   fs.mkdirSync(path.join(projectsRoot, id), { mode: 0o700 });
   if (process.platform === 'linux' && process.getuid() === 0) fs.chownSync(path.join(projectsRoot, id), projectUid, projectGid);
@@ -22,7 +27,7 @@ const broker = spawn(process.execPath, ['infra/sandbox/broker.mjs'], {
 const call = async (command, scope = {}) => {
   const r = await fetch('http://127.0.0.1:3001/execute', { method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-    body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), command, ...scope }),
+  body: JSON.stringify({ owner, threadId, executionId: crypto.randomUUID(), command, ...scope }),
   });
   assert.equal(r.status, 200); return r.json();
 };
@@ -36,7 +41,14 @@ try {
   }
   assert.ok(ready);
   assert.equal((await fetch('http://127.0.0.1:3001/execute', { method: 'POST' })).status, 401);
-  const first = await call('printf persisted > /workspace/marker; id -u');
+  const skillInstall = await call("mkdir -p /system/skills/demo && printf '---\\nname: Demo\\ndescription: sandbox\\n---\\n\\nInstalled' > /system/skills/demo/SKILL.md");
+  assert.equal(skillInstall.exitCode, 0, skillInstall.stderr);
+  assert.match(fs.readFileSync(path.join(systemSkillsRoot, 'demo', 'SKILL.md'), 'utf8'), /Installed/);
+  const zipInstall = await call("set -e; rm -rf /tmp/zip-skill /system/skills/zip-demo; mkdir -p /tmp/zip-skill/references /system/skills/zip-demo; printf '%s\\n' '---' 'name: Zip Demo' 'description: sandbox zip' '---' '' 'Unpacked' > /tmp/zip-skill/SKILL.md; printf 'Reference' > /tmp/zip-skill/references/guide.md; (cd /tmp/zip-skill && zip -qr /tmp/zip-demo.zip .); unzip -q /tmp/zip-demo.zip -d /system/skills/zip-demo; test -f /system/skills/zip-demo/SKILL.md && test -f /system/skills/zip-demo/references/guide.md");
+  assert.equal(zipInstall.exitCode, 0, zipInstall.stderr);
+  assert.match(fs.readFileSync(path.join(systemSkillsRoot, 'zip-demo', 'SKILL.md'), 'utf8'), /Unpacked/);
+  assert.equal(fs.readFileSync(path.join(systemSkillsRoot, 'zip-demo', 'references', 'guide.md'), 'utf8'), 'Reference');
+  const first = await call('printf persisted > /workspace/marker; id -u', { timeoutSeconds: 600 });
   assert.equal(first.exitCode, 0); assert.match(first.stdout, /1000/);
   const second = await call('set -e; cat marker; test ! -e /var/run/docker.sock; test ! -e /data/db/wangke.sqlite; test -z "$MODEL_API_KEY"; ! touch /outside-workspace');
   assert.equal(second.exitCode, 0); assert.match(second.stdout, /persisted/);
@@ -76,10 +88,19 @@ try {
   assert.equal(fs.existsSync(path.join(projectsRoot, projectId, 'must-not-exist')), false);
   assert.throws(() => execFileSync('docker', ['inspect', `wangke-exec-${executionId}`], { stdio: 'pipe' }));
   assert.equal((await call('cat shared.txt', { projectId })).exitCode, 0);
-  console.log('Real sandbox: legacy persistence, shared project mount, project isolation, non-root, cancellation cleanup passed');
+  const timedExecution = crypto.randomUUID();
+  const timed = await call('sleep 5; touch must-not-complete', { projectId, executionId: timedExecution, timeoutSeconds: 1 });
+  assert.notEqual(timed.exitCode, 0, 'command deadline kills the process');
+  assert.equal(fs.existsSync(path.join(projectsRoot, projectId, 'must-not-complete')), false);
+  assert.throws(() => execFileSync('docker', ['inspect', `wangke-exec-${timedExecution}`], { stdio: 'pipe' }));
+  for (const timeoutSeconds of [0, 601, '600', null]) {
+    const invalid = await fetch('http://127.0.0.1:3001/execute', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), command: 'true', timeoutSeconds }) });
+    assert.equal(invalid.status, 400, 'broker independently rejects invalid deadlines');
+  }
+  console.log('Real sandbox: owner Skill mount, legacy persistence, shared project mount, project isolation, non-root, cancellation cleanup passed');
 } finally {
   broker.kill('SIGTERM');
   await new Promise(resolve => { if (broker.exitCode !== null) resolve(); else broker.once('exit', resolve); });
   execFileSync('docker', ['volume', 'rm', `wangke-workspace-${threadId}`], { stdio: 'inherit' });
-  fs.rmSync(projectsRoot, { recursive: true, force: true });
+  fs.rmSync(dataRoot, { recursive: true, force: true });
 }

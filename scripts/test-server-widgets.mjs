@@ -274,6 +274,18 @@ try {
     ['svg', '<svg viewBox="0 0 20 20"><rect width="10" height="10"/></svg>'],
     ['mermaid', 'flowchart TD\n A-->B'],
   ]) assert.match(executeServerWidget({ format, code }, () => assert.fail('not an HTML work')), /```/);
+  const graph = {
+    type: 'graph',
+    nodes: Array.from({ length: 12 }, (_, i) => ({ id: `n${i}`, label: `节点${i}` })),
+    edges: Array.from({ length: 20 }, (_, i) => ({ from: `n${i % 12}`, to: `n${(i + 1) % 12}` })),
+  };
+  const graphCode = JSON.stringify(graph);
+  const graphReceipt = executeServerWidget({ format: 'diagram', code: graphCode, title: '完整关系图' }, () => assert.fail('not an HTML work'));
+  assert.ok(graphReceipt.includes(graphCode), '12 节点 / 20 条边通过服务端预检，原样保留全部结构');
+  assert.match(graphReceipt, /```diagram title="完整关系图"/);
+  assert.throws(() => executeServerWidget({ format: 'diagram', code: JSON.stringify({
+    ...graph, nodes: Array.from({ length: 101 }, (_, i) => ({ id: `n${i}`, label: `节点${i}` })),
+  }) }, () => {}), /渲染安全上限[\s\S]*保留全部节点与关系/);
   assert.throws(() => executeServerWidget({ format: 'diagram', code: '{"type":"plot","x":[-2,2],"y":[0,4],"curves":[{"fn":"fetch(x)"}]}' }, () => {}), /预检没通过/);
   assert.throws(() => executeServerWidget({ format: 'svg', code: '<svg viewBox="0 0 20 20"><script>alert(1)</script></svg>' }, () => {}), /预检没通过/);
   assert.equal(script.length, 0);

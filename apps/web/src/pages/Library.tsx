@@ -36,7 +36,7 @@ import {
   useSkeletonGate,
 } from '../ui';
 import { useLibraryNavigation } from '../store/libraryNavigation';
-import { AGENT_INSTRUCTIONS_ROUTE, listSystemMemory, systemMaterialId, systemMaterialRoute } from '../materials/systemFiles';
+import { AGENT_INSTRUCTIONS_ROUTE, listSystemDirectory, systemMaterialId, systemMaterialRoute } from '../materials/systemFiles';
 import type { SystemDirectory } from '@wangke/contracts/system';
 import { db, type FolderRow, type VideoRow } from '../store/db';
 import { useLibraryRevision } from '../pipelines/folderPlan';
@@ -251,6 +251,8 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
   // 设置与历史聊天中的深链接也进入普通 Markdown 阅读页。
   const agentFileRequested = ['/system/AGENTS.md', 'AGENTS.md'].includes(searchParams.get('file') ?? '');
   const memoryFileRequested = searchParams.get('file')?.startsWith('/system/memory/') ? searchParams.get('file')! : '';
+  const skillFileRequested = searchParams.get('file')?.startsWith('/system/skills/') ? searchParams.get('file')! : '';
+  const mcpFileRequested = searchParams.get('file') === '/system/mcp.json' ? '/system/mcp.json' : '';
   const isMobile = useIsMobile();
   const [videos, setVideos] = useState<VideoRow[]>([]);
   const [folders, setFolders] = useState<FolderRow[]>([]);
@@ -277,31 +279,32 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
   const setFolderHistory = useLibraryNavigation((s) => s.setFolderHistory);
   const folderKey = folderHistory.entries[folderHistory.index];
   const inMemoryFolder = folderKey === 'system/memory';
-  const inSystemFolder = folderKey === 'system' || inMemoryFolder;
-  const projectLibrary = useProjectLibrary(!inSystemFolder && !agentFileRequested && !memoryFileRequested && !importing);
-  const [memoryPage, setMemoryPage] = useState<SystemDirectory>({ files: [], nextOffset: null });
-  const [memoryOffset, setMemoryOffset] = useState(0);
-  const [memoryLoading, setMemoryLoading] = useState(false);
-  const [memoryError, setMemoryError] = useState('');
+  const inSystemFolder = typeof folderKey === 'string' && folderKey.startsWith('system');
+  const systemPath = inSystemFolder ? `/${folderKey}` : '';
+  const projectLibrary = useProjectLibrary(!inSystemFolder && !agentFileRequested && !memoryFileRequested && !skillFileRequested && !mcpFileRequested && !importing);
+  const [systemPage, setSystemPage] = useState<SystemDirectory>({ files: [], directories: [], nextOffset: null });
+  const [systemOffset, setSystemOffset] = useState(0);
+  const [systemLoading, setSystemLoading] = useState(false);
+  const [systemError, setSystemError] = useState('');
   useEffect(() => {
-    if (!inMemoryFolder) return;
+    if (!inSystemFolder) return;
     let active = true;
     let requestId = 0;
     const refresh = () => {
       const id = ++requestId;
-      setMemoryLoading(true);
-      void listSystemMemory(memoryOffset, searchText.trim()).then(page => {
-        if (active && id === requestId) { setMemoryPage(page); setMemoryError(''); }
-      }).catch(error => { if (active && id === requestId) setMemoryError(error instanceof Error ? error.message : '读取记忆失败'); })
-        .finally(() => { if (active && id === requestId) setMemoryLoading(false); });
+      setSystemLoading(true);
+      void listSystemDirectory(systemPath, systemOffset, searchText.trim()).then(page => {
+        if (active && id === requestId) { setSystemPage(page); setSystemError(''); }
+      }).catch(error => { if (active && id === requestId) setSystemError(error instanceof Error ? error.message : '读取系统文件失败'); })
+        .finally(() => { if (active && id === requestId) setSystemLoading(false); });
     };
     const debounce = setTimeout(refresh, 200);
     window.addEventListener('focus', refresh);
     window.addEventListener('system-files-changed', refresh);
     const timer = setInterval(refresh, 5000);
     return () => { active = false; clearTimeout(debounce); clearInterval(timer); window.removeEventListener('focus', refresh); window.removeEventListener('system-files-changed', refresh); };
-  }, [inMemoryFolder, memoryOffset, searchText]);
-  useEffect(() => { setMemoryOffset(0); }, [searchText, folderKey]);
+  }, [inSystemFolder, systemPath, systemOffset, searchText]);
+  useEffect(() => { setSystemOffset(0); }, [searchText, folderKey]);
   useEffect(() => {
     if (!agentFileRequested) return;
     setFolderHistory((history) => history.entries[history.index] === 'system' ? history :
@@ -309,10 +312,12 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
     navigate(AGENT_INSTRUCTIONS_ROUTE, { replace: true });
   }, [agentFileRequested, navigate, setFolderHistory]);
   useEffect(() => {
-    if (!memoryFileRequested || !systemMaterialId(memoryFileRequested)) return;
-    setFolderHistory(history => ({ entries: [...history.entries.slice(0, history.index + 1), 'system/memory'], index: history.index + 1 }));
-    navigate(systemMaterialRoute(memoryFileRequested), { replace: true });
-  }, [memoryFileRequested, navigate, setFolderHistory]);
+    const file = memoryFileRequested || skillFileRequested || mcpFileRequested;
+    if (!file || !systemMaterialId(file)) return;
+    const parent = file.slice(1, file.lastIndexOf('/')) || 'system';
+    setFolderHistory(history => ({ entries: [...history.entries.slice(0, history.index + 1), parent], index: history.index + 1 }));
+    navigate(systemMaterialRoute(file), { replace: true });
+  }, [memoryFileRequested, skillFileRequested, mcpFileRequested, navigate, setFolderHistory]);
   const [selection, setSelection] = useState<Set<string>>(new Set());
   const [mobileManaging, setMobileManaging] = useState(false);
   const marquee = useMarqueeSelection(selection, setSelection);
@@ -530,7 +535,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
     [groups, searchQuery, filter, hasFilters],
   );
   const currentFolder = inSystemFolder ? undefined : groups.find((group) => group.key === folderKey && group.folder != null);
-  const folderTitle = inMemoryFolder ? 'memory' : inSystemFolder ? 'system' : currentFolder?.name ?? '全部资料';
+  const folderTitle = inSystemFolder ? (folderKey?.split('/').at(-1) ?? 'system') : currentFolder?.name ?? '全部资料';
   const scopedGroups = currentFolder ? visibleGroups.filter((group) => group.key === currentFolder.key) : visibleGroups;
   const folderTiles = groups.filter((group) => !inSystemFolder && group.folder &&
     (group.folder.parentId ?? null) === (currentFolder?.folder?.id ?? null) &&
@@ -540,14 +545,11 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
     .sort((a, b) => (b.pinned ?? 0) - (a.pinned ?? 0) || (sort === 'name' ? a.name.localeCompare(b.name, 'zh-CN', { numeric: true }) : b.createdAt - a.createdAt));
   // 系统文件使用服务端实体 Markdown，不入课程表，不参与课程统计或移动。
   const showSystemFolder = !inSystemFolder && !currentFolder && (filter === 'all' || filter === 'material') &&
-    (!searchQuery || 'system memory 记忆 agents.md agent 默认提示词 全局指令'.includes(searchQuery));
-  const showAgentFile = inSystemFolder && !inMemoryFolder && (filter === 'all' || filter === 'material') &&
-    (!searchQuery || 'agents.md agent 默认提示词 全局指令'.includes(searchQuery));
-  const showMemoryFolder = inSystemFolder && !inMemoryFolder && (filter === 'all' || filter === 'material') &&
-    (!searchQuery || 'memory bot 记忆'.includes(searchQuery));
-  const memoryFiles = inMemoryFolder && (filter === 'all' || filter === 'material') ? memoryPage.files : [];
+    (!searchQuery || 'system memory skills 技能 记忆 agents.md agent 默认提示词 全局指令'.includes(searchQuery));
+  const systemFiles = inSystemFolder && (filter === 'all' || filter === 'material') ? systemPage.files : [];
+  const systemDirectories = inSystemFolder && (filter === 'all' || filter === 'material') ? (systemPage.directories ?? []) : [];
   const projectTiles = !currentFolder && !inSystemFolder && filter === 'all' ? projectLibrary.projects.filter(p => !searchQuery || p.name.toLocaleLowerCase().includes(searchQuery)) : [];
-  const visibleCount = displayedVideos.length + folderTiles.length + projectTiles.length + memoryFiles.length + (showMemoryFolder ? 1 : 0) + (showAgentFile ? 1 : 0) + (showSystemFolder ? 1 : 0);
+  const visibleCount = displayedVideos.length + folderTiles.length + projectTiles.length + systemFiles.length + systemDirectories.length + (showSystemFolder ? 1 : 0);
   const folderPath = folderAncestors(folders, currentFolder?.folder?.id ?? null);
   // Keep the native drag source mounted while spring-loading another directory.
   const renderedFolders = finderDragging.length
@@ -608,7 +610,9 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
     else if (key === 'system:agent-instructions') navigate(AGENT_INSTRUCTIONS_ROUTE);
     else if (key === 'system:folder') openFolder('system');
     else if (key === 'system:memory-folder') openFolder('system/memory');
+    else if (key.startsWith('system:folder:')) openFolder(key.slice('system:folder:'.length).replace(/^\//, ''));
     else if (key.startsWith('system:memory:')) navigate(`/player/${encodeURIComponent(key)}`);
+    else if (key.startsWith('system:file:')) navigate(`/player/${encodeURIComponent(key)}`);
     else if (key.startsWith('folder:')) openFolder(key.slice(7));
     else if (key.startsWith('file:')) navigate(`/player/${key.slice(5)}`);
   };
@@ -1834,11 +1838,11 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
                 </Button>
               }
             />
-           ) : !inSystemFolder && videos.length === 0 && folders.length === 0 && !projectTiles.length && !showAgentFile && !showSystemFolder && !hasFilters ? (
+           ) : !inSystemFolder && videos.length === 0 && folders.length === 0 && !projectTiles.length && !systemFiles.length && !systemDirectories.length && !showSystemFolder && !hasFilters ? (
             // 不再给 description：上面那条投放区已经把「点哪儿导入 / 从 B 站导入 / 只存本机不上传」
             // 全说完了，这里再铺一句等于让手机端多占三行重复文案。
             <EmptyState testId="empty-state" icon={<Sym name="folder_open" />} title="还没有资料" action={<Button variant="secondary" onPress={() => setImportOpen(true)}>导入文件</Button>} />
-           ) : hasFilters && visibleCount === 0 && !memoryLoading && !memoryError ? (
+             ) : hasFilters && visibleCount === 0 && !systemLoading && !systemError ? (
             <EmptyState
               testId="library-no-results"
               icon={<Sym name="search" />}
@@ -1854,38 +1858,38 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
                   <span className="finder-item__content">
                     <span className="finder-item__icon"><FolderIcon color="gray" /></span>
                     <span className="finder-item__name" title="/system">system</span>
-                    <span className="finder-item__meta">2 个项目</span>
+                    <span className="finder-item__meta">系统配置与 Bot 资源</span>
                     <span className="finder-item__date">应用系统文件</span>
                     <span className="finder-item__kind">系统文件夹</span>
                   </span>
                 </ListBox.Item>}
-                {showMemoryFolder && <ListBox.Item id="system:memory-folder" textValue="memory" className="finder-item finder-item--folder" data-testid="memory-folder" data-system-folder="true" data-selection-key="system:memory-folder">
-                  <span className="finder-item__content">
-                    <span className="finder-item__icon"><FolderIcon color="gray" /></span>
-                    <span className="finder-item__name" title="/system/memory">memory</span>
-                    <span className="finder-item__meta">Bot 长期记忆</span>
-                    <span className="finder-item__date">与 Bot 共用内容</span>
-                    <span className="finder-item__kind">系统文件夹</span>
-                  </span>
-                </ListBox.Item>}
-                {showAgentFile && <ListBox.Item id="system:agent-instructions" textValue="AGENTS.md" className="finder-item" data-testid="agent-instructions-file" data-system-file="AGENTS.md" data-selection-key="system:agent-instructions">
-                  <span className="finder-item__content">
-                    <span className="finder-item__icon"><AgentInstructionsIcon /></span>
-                    <span className="finder-item__name" title="AGENTS.md">AGENTS.md</span>
-                    <span className="finder-item__meta">全局 Agent 指令</span>
-                    <span className="finder-item__date">与设置实时同步</span>
-                    <span className="finder-item__kind">系统 Markdown</span>
-                  </span>
-                </ListBox.Item>}
-                {memoryFiles.map(file => <ListBox.Item key={file.path} id={systemMaterialId(file.path)!} textValue={file.name} className="finder-item" data-testid="memory-file" data-system-file={file.path} data-selection-key={systemMaterialId(file.path)!}>
-                  <span className="finder-item__content">
-                    <span className="finder-item__icon"><Sym name="description" className="text-6xl text-accent" /></span>
-                    <span className="finder-item__name" title={file.path}>{file.name}</span>
-                    <span className="finder-item__meta" title={`${file.scope}:${file.scopeId ?? ''} · r${file.revision} · ${file.source}`}>{file.status === 'stale' ? '来源已变化 · ' : ''}{file.summary ?? `${file.scope} · r${file.revision}`}</span>
-                    <span className="finder-item__date">{file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : ''}</span>
-                    <span className="finder-item__kind">{file.kind === 'diary' ? '日记 Markdown' : file.kind === 'note' ? '笔记 Markdown' : '记忆 Markdown'}</span>
-                  </span>
-                </ListBox.Item>)}
+                 {systemDirectories.map(directory => {
+                   const name = directory.split('/').at(-1)!;
+                   const isMemory = directory === '/system/memory';
+                   const id = `system:folder:${directory}`;
+                   return <ListBox.Item key={directory} id={id} textValue={name} className="finder-item finder-item--folder" data-testid={isMemory ? 'memory-folder' : 'system-skill-folder'} data-system-folder="true" data-selection-key={id}>
+                   <span className="finder-item__content">
+                     <span className="finder-item__icon"><FolderIcon color="gray" /></span>
+                     <span className="finder-item__name" title={directory}>{name}</span>
+                     <span className="finder-item__meta">{isMemory ? 'Bot 长期记忆' : '可由 Bot 安装和管理'}</span>
+                     <span className="finder-item__date">{isMemory ? '与 Bot 共用内容' : '真实目录资源'}</span>
+                     <span className="finder-item__kind">系统文件夹</span>
+                   </span>
+                 </ListBox.Item>;
+                 })}
+                 {systemFiles.map(file => {
+                   const id = systemMaterialId(file.path)!;
+                   const isAgent = file.path === '/system/AGENTS.md';
+                    return <ListBox.Item key={file.path} id={id} textValue={file.name} className="finder-item" data-testid={isAgent ? 'agent-instructions-file' : file.kind === 'mcp' ? 'mcp-config-file' : file.kind === 'skill' ? 'skill-file' : 'memory-file'} data-system-file={file.path} data-selection-key={id}>
+                   <span className="finder-item__content">
+                     <span className="finder-item__icon">{isAgent ? <AgentInstructionsIcon /> : <Sym name="description" className="text-6xl text-accent" />}</span>
+                     <span className="finder-item__name" title={file.path}>{file.name}</span>
+                     <span className="finder-item__meta" title={`${file.kind ?? 'system'} · r${file.revision} · ${file.sha256 ?? ''} · ${file.source ?? ''}`}>{isAgent ? '全局 Agent 指令' : file.summary ?? `${file.kind ?? '系统文件'} · r${file.revision}`}{file.kind === 'skill' && file.version ? ` · v${file.version}` : ''}</span>
+                     <span className="finder-item__date">{file.updatedAt ? new Date(file.updatedAt).toLocaleDateString() : ''}</span>
+                      <span className="finder-item__kind">{isAgent ? '系统 Markdown' : file.kind === 'mcp' ? 'MCP 配置 JSON' : file.kind === 'skill' ? 'Skill 文件' : file.kind === 'diary' ? '日记 Markdown' : file.kind === 'note' ? '笔记 Markdown' : '记忆 Markdown'}</span>
+                   </span>
+                 </ListBox.Item>;
+                 })}
                 {projectTiles.map(project => <ListBox.Item key={`project:${project.id}`} id={`project:${project.id}`} textValue={project.name} className="finder-item finder-item--folder" data-project-folder="true" data-system-folder="true" data-selection-key={`project:${project.id}`}>
                   <span className="finder-item__content">
                     <span className="finder-item__icon"><FolderIcon color="blue" /></span>
@@ -1912,10 +1916,10 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
                   </span>
                 </ListBox.Item>)}
               </ListBox>
-              {inMemoryFolder && memoryError && <p role="alert" className="text-danger">记忆读取失败：{memoryError}</p>}
-              {inMemoryFolder && memoryLoading && memoryFiles.length === 0 && <p role="status">正在读取 Bot 记忆…</p>}
-              {inMemoryFolder && !memoryLoading && !memoryError && !memoryFiles.length && !hasFilters && <EmptyState icon={<Sym name="folder_open" />} title="还没有 Bot 记忆" description="Bot 保存的长期记忆会显示在这里，与 Bot 记忆管理共用同一份内容。" />}
-              {inMemoryFolder && (memoryOffset > 0 || memoryPage.nextOffset !== null) && <div className="flex gap-2 p-3"><Button variant="secondary" isDisabled={memoryLoading || memoryOffset === 0} onPress={() => setMemoryOffset(Math.max(0, memoryOffset - 50))}>上一页</Button><Button variant="secondary" isDisabled={memoryLoading || memoryPage.nextOffset === null} onPress={() => setMemoryOffset(memoryPage.nextOffset!)}>下一页</Button></div>}
+               {inSystemFolder && systemError && <p role="alert" className="text-danger">系统文件读取失败：{systemError}</p>}
+               {inSystemFolder && systemLoading && !systemFiles.length && !systemDirectories.length && <p role="status">正在读取系统文件…</p>}
+               {inMemoryFolder && !systemLoading && !systemError && !systemFiles.length && !systemDirectories.length && !hasFilters && <EmptyState icon={<Sym name="folder_open" />} title="还没有 Bot 记忆" description="Bot 保存的长期记忆会显示在这里，与 Bot 记忆管理共用同一份内容。" />}
+               {inSystemFolder && (systemOffset > 0 || systemPage.nextOffset !== null) && <div className="flex gap-2 p-3"><Button variant="secondary" isDisabled={systemLoading || systemOffset === 0} onPress={() => setSystemOffset(Math.max(0, systemOffset - 50))}>上一页</Button><Button variant="secondary" isDisabled={systemLoading || systemPage.nextOffset === null} onPress={() => setSystemOffset(systemPage.nextOffset!)}>下一页</Button></div>}
               {currentFolder && visibleCount === 0 && <EmptyState icon={<Sym name="folder_open" />} title="文件夹还是空的" description="通过资料的更多菜单，将已有资料移动到这里。" action={<Button variant="secondary" onPress={() => openFolder(null)}>浏览全部资料</Button>} />}
             </>
           )}
@@ -1932,7 +1936,7 @@ function LegacyLibrary({ importing }: { importing?: { folderId?: number; onClose
             </div>
           </div>}
           {moveNotice && !finderDragging.length && <div className="finder-move-notice" data-error={moveNotice.error || undefined} role={moveNotice.error ? 'alert' : 'status'}><span>{moveNotice.text}</span>{lastMove.length > 0 && <Button size="sm" variant="ghost" onPress={() => void undoFinderMove()} isDisabled={undoingMove}>撤销移动</Button>}<Button size="sm" isIconOnly variant="ghost" aria-label="关闭移动提示" onPress={() => setMoveNotice(null)}>×</Button></div>}
-           <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{inSystemFolder && <><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={inMemoryFolder ? undefined : 'page'} onPress={() => openFolder('system')}>system</Button></>}{inMemoryFolder && <><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current="page" onPress={() => openFolder('system/memory')}>memory</Button></>}{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
+            <nav aria-label="资料路径" className="finder-path"><span className="finder-path-target" data-drop-target={dropFolder === 'root' || undefined} {...pathDropProps(null)}><Button variant="ghost" size="sm" onPress={() => openFolder(null)}><Sym name="folder" />全部资料</Button></span>{inSystemFolder && systemPath.split('/').filter(Boolean).map((part, index, parts) => { const key = parts.slice(0, index + 1).join('/'); return <span key={key}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={key === folderKey ? 'page' : undefined} onPress={() => openFolder(key)}>{part}</Button></span>; })}{folderPath.map((folder) => <span key={folder.id} className="finder-path-target" data-folder-id={folder.id} data-drop-target={dropFolder === String(folder.id) || undefined} {...pathDropProps(folder.id!)}><Sym name="chevron_right" /><Button variant="ghost" size="sm" aria-current={folder.id === currentFolder?.folder?.id ? 'page' : undefined} onPress={() => openFolder(String(folder.id))}>{folder.name}</Button></span>)}{!finderDragging.length && (selectedVideo || selectedFolder) && <><Sym name="chevron_right" /><span>{selectedVideo?.name ?? selectedFolder?.name}</span></>}</nav>
           {finderDragging.length > 0 && <div className="finder-drag-status" role="status"><Sym name={dropHint.startsWith('不能') ? 'block' : 'folder_open'} /><span>{dropHint}</span><kbd>Esc 取消</kbd></div>}
           <div className="finder-status"><span role="status">{selection.size > 0 ? `已选择 ${selection.size} 项，共 ${visibleCount} 项` : `${visibleCount} 个项目`}</span><span className="finder-interaction-hint">{isMobile ? '轻点打开 · 长按选择' : '拖动空白处框选 · 双击打开'}</span>{selectedVideo && <Button isIconOnly size="sm" variant="ghost" aria-label="显示简介" onPress={() => setDetails(selectedVideo)}><Sym name="info" /></Button>}</div>
         </footer>

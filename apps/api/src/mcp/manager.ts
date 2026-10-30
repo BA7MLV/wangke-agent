@@ -41,7 +41,9 @@ export class McpManager {
   list(owner: string): McpServer[] {
     return this.repository.list(owner).map(s => {
       const key = this.key(owner, s.id), connection = this.connections.get(key);
-      return { ...this.repository.public(s), ...(s.enabled ? this.states.get(key) : { status: 'disabled' as const }), ...(connection ? { toolCount: connection.tools.length, ...(connection.transport instanceof StdioClientTransport ? { pid: connection.transport.pid ?? undefined } : {}) } : {}) };
+      const current = connection?.revision === s.revision;
+      if (connection && (!current || !s.enabled)) void this.dispose(key);
+      return { ...this.repository.public(s), ...(s.enabled ? this.states.get(key) : { status: 'disabled' as const }), ...(current && connection ? { toolCount: connection.tools.length, ...(connection.transport instanceof StdioClientTransport ? { pid: connection.transport.pid ?? undefined } : {}) } : {}) };
     });
   }
   private async dispose(key: string) {
@@ -182,7 +184,15 @@ export class McpManager {
     return { tools: c.tools, durationMs: Date.now() - start };
   }
   async catalog(owner: string, scope?: string[]): Promise<McpCatalog> {
-    const servers = this.repository.list(owner).filter(s => s.enabled && (scope === undefined || scope.includes(s.id)));
+    let configured: StoredServer[];
+    try { configured = this.repository.list(owner); }
+    catch (error) {
+      // Keep the basic Bot file tools available to repair an invalid configuration.
+      await Promise.all([...this.connections.keys()].filter(key => key.startsWith(`${owner}:`)).map(key => this.dispose(key)));
+      return { tools: [], warnings: [mcpError(error)] };
+    }
+    for (const key of this.connections.keys()) if (key.startsWith(`${owner}:`) && !configured.some(s => s.enabled && this.key(owner, s.id) === key && this.connections.get(key)?.revision === s.revision)) await this.dispose(key);
+    const servers = configured.filter(s => s.enabled && (scope === undefined || scope.includes(s.id)));
     const results = await Promise.all(servers.map(async server => {
       try { return { tools: (await this.connect(owner, server)).tools.filter(t => t.enabled), warnings: [] as string[] }; }
       catch (e) { return { tools: [] as McpTool[], warnings: [`${server.name}: ${mcpError(e)}`] }; }
@@ -199,7 +209,7 @@ export class McpManager {
     const known = servers.find(s => this.gateway(s).name === name || this.connections.get(this.key(owner, s.id))?.tools.some(t => t.name === name));
     for (const server of known ? [known] : servers) {
       let c = this.connections.get(this.key(owner, server.id));
-      if (!c) { try { c = await this.connect(owner, server); } catch { continue; } }
+      if (!c || c.revision !== server.revision) { try { c = await this.connect(owner, server); } catch { continue; } }
       const gateway = this.gateway(server);
       const tool = c?.tools.find(t => t.name === name) ?? (gateway.name === name ? gateway : undefined);
       if (!c || !tool) continue;

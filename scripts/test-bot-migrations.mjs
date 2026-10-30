@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { execFileSync } from 'node:child_process';
 import Database from 'better-sqlite3';
 import { DatabaseStore } from '../apps/api/src/storage/database.ts';
@@ -98,7 +99,12 @@ try {
         }
         const config = new CloudConfiguration(wrapper(db), configDir);
         seedCommon(db, config, name);
-        if (name === 'mcp13' || name.startsWith('main')) mcpId = new McpRepository(wrapper(db), config).save(owner, mcpInput(name)).id;
+        if (name === 'mcp13' || name.startsWith('main')) {
+          // Seed the historical database layout, not today's file-backed repository.
+          const { token, ...server } = mcpInput(name);
+          mcpId = crypto.randomUUID();
+          db.prepare('INSERT INTO mcp_servers VALUES(?,?,?,?,?)').run(mcpId, owner, JSON.stringify(server), config.seal(JSON.stringify({ token, headers: {}, env: {} })), crypto.randomUUID());
+        }
         if (name.startsWith('main')) {
           db.prepare("INSERT INTO projects(id,owner_id,name,instructions,created_at,updated_at) VALUES('old-project',?,'Retained project','Keep workspace isolation',?,?)").run(owner, at, at);
           db.prepare("INSERT INTO project_agents VALUES('old-project','bot','manage')").run();
@@ -111,10 +117,10 @@ try {
       } finally { db.close(); }
     }
     for (let restart = 0; restart < 2; restart++) {
-      const store = new DatabaseStore(filename);
+      const store = new DatabaseStore(filename, path.join(root, name, 'system-files'));
       let manager, runner, gateway;
       try {
-        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 22);
+        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 24);
         assert.deepEqual(store.db.pragma('foreign_key_check'), []);
         preserved(store.db, expected);
         const config = new CloudConfiguration(store, configDir);

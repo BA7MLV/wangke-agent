@@ -81,12 +81,14 @@ try {
   const course = createResourceExecutor({ courseId: 'test-course' });
   assert.deepEqual(parseResource('/system'), { type: 'system' });
   assert.deepEqual(parseResource('/system/AGENTS.md'), { type: 'system', leaf: 'AGENTS.md' });
+  assert.deepEqual(parseResource('/system/mcp.json'), { type: 'system', leaf: 'mcp.json' });
   assert.equal(parseResource('/system/unknown.md'), undefined);
   assert.equal(parseResource('/system/../AGENTS.md'), undefined);
   assert.match(await library('read', { path: '/system' }), /\/system\/AGENTS\.md/);
   assert.match(await course('read', { path: '/system' }), /\/system\/AGENTS\.md/);
-  assert.match(await library('read', { path: '/system', offset: 1 }), /\/system\/memory/);
-  assert.match(await library('read', { path: '/system', offset: 2 }), /末尾/);
+  assert.match(await library('read', { path: '/system', offset: 1 }), /\/system\/mcp\.json/);
+  assert.match(await library('read', { path: '/system', offset: 2 }), /\/system\/memory/);
+  assert.match(await library('read', { path: '/system', offset: 3 }), /末尾/);
   assert.match(await library('edit', { path: '/system', create: true, content: '禁止覆盖目录' }), /目录只支持 read/);
   // 旧路径仅作为兼容别名，输出始终指向新位置。
   assert.deepEqual(parseResource('/AGENTS.md'), { type: 'markdown', id: 'AGENTS.md' });

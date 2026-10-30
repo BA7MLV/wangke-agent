@@ -113,7 +113,7 @@ export default function SettingsModal() {
       <Drawer.Root isOpen={open} onOpenChange={(next) => { if (!next) void close(); }}>
         <Drawer.Backdrop variant="opaque" className="settings-sheet__backdrop">
           <Drawer.Content placement="bottom" className="settings-sheet__content">
-            <Drawer.Dialog className="settings-sheet__dialog" data-testid="settings-modal">
+            <Drawer.Dialog className="settings-sheet__dialog ui-smooth" data-testid="settings-modal">
               <SheetChrome>
                 <Drawer.Handle />
                 <Drawer.Header className="settings-sheet__header">
@@ -187,7 +187,7 @@ export default function SettingsModal() {
             避免它取消时让 React Aria 的退出等待悬空。HeroUI 的 keyframe 动画不受影响。 */}
         <Modal.Container placement="center" className={`${MODAL_CONTAINER_CLASS} transition-none`}>
           <Modal.Dialog
-            className="flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-3xl bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full max-[760px]:rounded-none"
+            className="ui-smooth flex h-[calc(100%-2rem)] max-h-[calc(100%-2rem)] w-[min(64rem,calc(100%-2rem))] max-w-[min(64rem,calc(100%-2rem))] flex-col items-stretch overflow-hidden rounded-dialog bg-background p-0 shadow-[0_12px_40px_rgb(0_0_0/0.22)] max-[760px]:h-full max-[760px]:max-h-full max-[760px]:w-full max-[760px]:max-w-full max-[760px]:rounded-none"
             data-testid="settings-modal"
           >
             <Modal.CloseTrigger className="z-10" aria-label={common('closeSettings')}>

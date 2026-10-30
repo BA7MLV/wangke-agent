@@ -59,7 +59,7 @@ try {
     await page.waitForURL('**/#/');
     await page.getByTestId('chat-recent-91001').waitFor();
     assert.equal(await page.getByTestId('nav-rail-chat').getAttribute('aria-current'), 'page');
-    assert.equal(await page.getByTestId('page-title').innerText(), '主页');
+    assert.equal(await page.getByTestId('page-title').innerText(), '');
     await page.getByTestId('nav-rail-home').click();
     await page.waitForURL('**/#/library');
     await page.getByTestId('chat-recent-91001').waitFor();

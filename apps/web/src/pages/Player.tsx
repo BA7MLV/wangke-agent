@@ -583,7 +583,7 @@ function PlayerResource({ id }: { id: string | undefined }) {
       onBack={() => {
         const path = systemMaterialPath(id);
         if (path) {
-          const folder = path.startsWith('/system/memory/') ? 'system/memory' : 'system';
+          const folder = path.slice(1, path.lastIndexOf('/')) || 'system';
           useLibraryNavigation.getState().setFolderHistory((history) => history.entries[history.index] === folder ? history :
             { entries: [...history.entries.slice(0, history.index + 1), folder], index: history.index + 1 });
         }

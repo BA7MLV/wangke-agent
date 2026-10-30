@@ -61,6 +61,10 @@
   min-height: calc(22px * 1.2);
 }
 
+.study-tile__value .t-digit {
+  white-space: pre;
+}
+
 .study-tile__sub {
   font-size: 12px;
   color: var(--muted);
@@ -132,6 +136,28 @@
 }
 
 /* ── 热力图 ─────────────────────────────────────────────────────────────── */
+
+/* 保留单选 ToggleButtonGroup 的 radio 语义与方向键行为，只替换选中态的底色层。 */
+.study-range .toggle-button-group {
+  position: static;
+  gap: 4px;
+}
+.study-range .t-tab {
+  height: 32px;
+  min-height: 32px;
+  border: 0;
+  border-radius: var(--radius-full);
+  background: transparent;
+  box-shadow: none;
+}
+.study-range .t-tab[aria-checked='true'] {
+  color: var(--tabs-text-active);
+  background: transparent;
+}
+.study-range .t-tabs-pill {
+  height: 32px;
+  box-shadow: var(--shadow-sm);
+}
 
 /* 顶部留 34px 给提示条：这个容器是 overflow-x:auto（于是 overflow-y 也变成 auto），
    不留出空间的话悬浮提示会被裁掉，还会平白多出一条纵向滚动条。 */

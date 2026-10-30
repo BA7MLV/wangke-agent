@@ -17,10 +17,6 @@ export const WIDGET_STYLES = `
     color-scheme: dark;
   }
   *, *::before, *::after { box-sizing: border-box; }
-  @supports (corner-shape: superellipse(1.25)) {
-    :where(*, *::before, *::after) { corner-shape: superellipse(1.25); }
-    input[type="radio"] { corner-shape: round; }
-  }
   html { --wbw-available-height: 560px; }
   body {
     margin: 0; padding: 4px; min-width: 0;

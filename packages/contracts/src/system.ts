@@ -11,6 +11,10 @@ export interface SystemDocument {
   source?: string;
   summary?: string;
   kind?: string;
+  slug?: string;
+  version?: string;
+  sha256?: string;
+  enabled?: boolean;
 }
 
 export interface SystemDirectory {
@@ -20,7 +24,9 @@ export interface SystemDirectory {
 }
 
 export const AGENTS_PATH = '/system/AGENTS.md';
+export const MCP_PATH = '/system/mcp.json';
 export const MEMORY_PATH = '/system/memory';
+export const SKILLS_PATH = '/system/skills';
 export const memoryPath = (id: string) => `${MEMORY_PATH}/${id}.md`;
 export const systemSaveArguments = (path: string, content: string, expected: string, revision: number) => ({ tool: 'system_file_save', path, content, expected, revision });
 export function memoryId(path: unknown): string | undefined {

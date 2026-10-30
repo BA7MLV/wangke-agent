@@ -1,6 +1,8 @@
 import {
   useCallback,
   useEffect,
+  useId,
+  useLayoutEffect,
   useRef,
   useState,
   type CSSProperties,
@@ -106,6 +108,42 @@ export const ms = (name: string, fb: number): number => {
   if (!Number.isFinite(v)) return fb;
   return raw.endsWith('ms') ? v : raw.endsWith('s') ? v * 1000 : v;
 };
+
+/** 16 Tabs sliding — React Aria 负责选择与键盘操作，滑块只负责视觉反馈。 */
+export function useSlidingTabs(selectedKey: string) {
+  const barRef = useRef<HTMLDivElement>(null);
+  const pillRef = useRef<HTMLSpanElement>(null);
+
+  const moveToSelected = useCallback((animate: boolean) => {
+    const bar = barRef.current;
+    const pill = pillRef.current;
+    const tab = bar?.querySelector<HTMLElement>('.t-tab[aria-checked="true"], .t-tab[aria-pressed="true"], .t-tab[aria-selected="true"]');
+    if (!pill || !tab) return;
+    const previous = pill.style.transition;
+    if (!animate) pill.style.transition = 'none';
+    pill.style.transform = `translateX(${tab.offsetLeft}px)`;
+    pill.style.width = `${tab.offsetWidth}px`;
+    if (!animate) {
+      void pill.offsetWidth;
+      pill.style.transition = previous;
+    }
+  }, []);
+
+  useLayoutEffect(() => {
+    moveToSelected(false);
+    const bar = barRef.current;
+    if (!bar) return;
+    // 同时覆盖窗口、字体缩放与容器布局变化，不从 0 宽度播放首帧。
+    const observer = new ResizeObserver(() => moveToSelected(false));
+    observer.observe(bar);
+    for (const tab of bar.querySelectorAll('.t-tab')) observer.observe(tab);
+    return () => observer.disconnect();
+  }, [moveToSelected]);
+
+  useLayoutEffect(() => moveToSelected(true), [selectedKey, moveToSelected]);
+
+  return { barRef, pillRef };
+}
 
 /**
  * 04 Text states swap — 状态文案原地交换（旧文上飘模糊退出，新文从下方进入）。
@@ -709,6 +747,45 @@ export function Collapse({
       >
         {children}
       </div>
+    </div>
+  );
+}
+
+/** 原生按钮保持 Enter / Space 操作；收起正文留在 DOM 中，但不可聚焦或朗读。 */
+export function MotionDisclosure({
+  title,
+  open,
+  onOpenChange,
+  className,
+  triggerClassName,
+  children,
+}: {
+  title: ReactNode;
+  open?: boolean;
+  onOpenChange?: (open: boolean) => void;
+  className?: string;
+  triggerClassName?: string;
+  children: ReactNode;
+}) {
+  const [localOpen, setLocalOpen] = useState(false);
+  const expanded = open ?? localOpen;
+  const panelId = useId();
+  return (
+    <div className={className ? `t-acc ${className}` : 't-acc'} data-open={expanded ? 'true' : 'false'}>
+      <button
+        type="button"
+        className={`flex w-full cursor-pointer items-center justify-between gap-2 rounded-sm bg-transparent text-left focus-visible:outline-2 focus-visible:outline-focus ${triggerClassName ?? ''}`}
+        aria-expanded={expanded}
+        aria-controls={panelId}
+        onClick={() => {
+          if (open === undefined) setLocalOpen(!expanded);
+          onOpenChange?.(!expanded);
+        }}
+      >
+        {title}
+        <Sym name="keyboard_arrow_down" className="t-acc-chevron shrink-0" />
+      </button>
+      <Collapse open={expanded} id={panelId}>{children}</Collapse>
     </div>
   );
 }

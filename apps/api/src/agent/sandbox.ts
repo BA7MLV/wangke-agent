@@ -1,4 +1,14 @@
-export type SandboxRequest = { threadId: string; projectId?: string; executionId: string; command: string; network?: boolean };
+import { agentHttpInit } from './http.js';
+
+export type SandboxRequest = { owner: string; threadId: string; projectId?: string; executionId: string; command: string; network?: boolean; timeoutSeconds?: number };
+export function shellTimeoutSeconds(value?: number) {
+  if (value === undefined) return 120;
+  if (!Number.isInteger(value) || value < 1 || value > 600) throw new Error('invalid_shell_timeout');
+  return value;
+}
+// Container deadline < broker watchdog (+10s) < HTTP deadline (+30s) < tool
+// deadline (+40s), leaving room for Docker startup and confirmed cleanup.
+export const shellToolTimeoutMs = (args: { timeoutSeconds?: number }) => shellTimeoutSeconds(args.timeoutSeconds) * 1000 + 40_000;
 export type SandboxResult = { stdout: string; stderr: string; exitCode: number };
 export type SandboxExecutor = (request: SandboxRequest, signal: AbortSignal) => Promise<SandboxResult>;
 export type SandboxCleanup = (executionId: string) => Promise<void>;
@@ -50,14 +60,15 @@ export const cancelSandbox: SandboxCleanup = async executionId => {
 
 // Only the broker has Docker access. Neither the API nor model commands get its socket.
 export const executeSandbox: SandboxExecutor = async (request, signal) => {
+  const timeoutMs = shellTimeoutSeconds(request.timeoutSeconds) * 1000 + 30_000;
   const url = process.env.SANDBOX_URL;
   const token = process.env.SANDBOX_TOKEN;
   if (!url || !token) throw new Error('sandbox_not_configured');
-  const response = await fetch(`${url}/execute`, {
-    method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(150_000)]),
+  const response = await fetch(`${url}/execute`, agentHttpInit({
+    method: 'POST', signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
     headers: { 'content-type': 'application/json', authorization: `Bearer ${token}` },
     body: JSON.stringify(request),
-  });
+  }));
   if (!response.ok) throw new Error('sandbox_unavailable');
   return await response.json() as SandboxResult;
 };

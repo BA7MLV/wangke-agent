@@ -5,8 +5,16 @@ import type { ToolDef } from '../api/siliconflow';
 import i18n from '../i18n';
 
 export const listMcpServers = () => cloudRequest<{ servers: McpServer[] }>('/mcp');
-export const saveMcpServer = (input: McpServerInput, id?: string) => cloudRequest<McpServer>(`/mcp${id ? `/${id}` : ''}`, { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) });
-export const deleteMcpServer = (id: string) => cloudRequest(`/mcp/${id}`, { method: 'DELETE' });
+export const saveMcpServer = async (input: McpServerInput & { revision?: string }, id?: string) => {
+  const result = await cloudRequest<McpServer>(`/mcp${id ? `/${id}` : ''}`, { method: id ? 'PUT' : 'POST', body: JSON.stringify(input) });
+  window.dispatchEvent(new Event('system-files-changed'));
+  return result;
+};
+export const deleteMcpServer = async (id: string, revision?: string) => {
+  const result = await cloudRequest(`/mcp/${id}${revision ? `?revision=${encodeURIComponent(revision)}` : ''}`, { method: 'DELETE' });
+  window.dispatchEvent(new Event('system-files-changed'));
+  return result;
+};
 export const testMcpServer = (id: string) => cloudRequest<{ tools: McpTool[]; durationMs: number }>(`/mcp/${id}/test`, { method: 'POST' });
 
 export async function loadMcpTools(context: McpContext, signal?: AbortSignal) {

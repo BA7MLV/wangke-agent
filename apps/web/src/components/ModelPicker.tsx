@@ -327,15 +327,13 @@ function ChipDropdown({
             {/* HeroUI 的 Separator **默认 orientation="vertical"**：在 flex 容器里
                 可能变成一条 8px 宽的竖条，夹在两段内容中间像块补丁。横线得显式点名。 */}
             <Separator orientation="horizontal" className="model-picker__panel-sep" />
-            {/* 一条紧凑的设置行：**左边一个标签、右边是控件本身**，没有第二行说明。
-                这一段曾经是「思考 / 先推演再作答…」两行标题 + 下面再来一行「思考深度」，
-                同一个东西被起了两次名字，而中间那句文案只是承诺、不带信息 —— 全砍掉。
-                深度控件只在模型**声明了**档位或预算区间时出现：只有开关的模型
+            {/* 深度控件自带标题和当前档位，轨道独占整行。
+                只在模型**声明了**档位或预算区间时出现：只有开关的模型
                 （Qwen3.5 系、部分 DeepSeek）给不出深度，给个装饰性旋钮反而是骗人。
                 它**不跟着 `thinking` 隐藏** —— 第一档就是「不思考」，藏起来用户就没法
                 把思考关回去。 */}
             <div className="model-picker__think">
-              <span className="model-picker__think-label">{canDepth ? '思考深度' : '思考'}</span>
+              {!canDepth && <span className="model-picker__think-label">思考</span>}
               {canDepth ? (
                 <ReasoningEffortSlider
                   fluid

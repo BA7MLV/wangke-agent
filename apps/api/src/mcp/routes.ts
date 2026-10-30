@@ -43,7 +43,10 @@ export function registerMcpRoutes(app: FastifyInstance, deps: {
     if (ids !== undefined && (!Array.isArray(ids) || ids.some(id => typeof id !== 'string'))) throw new Error('mcp_invalid_scope');
     return ids as string[] | undefined;
   };
-  const fail = (reply: FastifyReply, error: unknown) => reply.code(400).send({ error: mcpError(error) });
+  const fail = (reply: FastifyReply, error: unknown) => {
+    const code = mcpError(error);
+    return reply.code(code === 'mcp_config_changed' ? 409 : 400).send({ error: code });
+  };
   app.post<{ Body: unknown }>('/api/v1/cloud/mcp/import/preview', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
     try { return { servers: manager.repository.previewImport(user.id, request.body) }; } catch (e) { return fail(reply, e); }
@@ -85,23 +88,23 @@ export function registerMcpRoutes(app: FastifyInstance, deps: {
   });
   app.get('/api/v1/cloud/mcp', async (request, reply) => {
     const user = authorize(request, reply); if (!user) return;
-    return { servers: manager.list(user.id) };
+    try { return { servers: manager.list(user.id) }; } catch (e) { return fail(reply, e); }
   });
   app.post<{ Body: McpServerInput }>('/api/v1/cloud/mcp', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
     try { return manager.repository.public(manager.repository.save(user.id, request.body)); } catch (e) { return fail(reply, e); }
   });
-  app.put<{ Params: { id: string }; Body: McpServerInput }>('/api/v1/cloud/mcp/:id', async (request, reply) => {
+  app.put<{ Params: { id: string }; Body: McpServerInput & { revision?: string } }>('/api/v1/cloud/mcp/:id', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
     try {
-      const server = manager.repository.save(user.id, request.body, request.params.id);
+      const server = manager.repository.save(user.id, request.body, request.params.id, request.body.revision);
       await manager.invalidate(user.id, server.id);
       return manager.repository.public(server);
     } catch (e) { return fail(reply, e); }
   });
-  app.delete<{ Params: { id: string } }>('/api/v1/cloud/mcp/:id', async (request, reply) => {
+  app.delete<{ Params: { id: string }; Querystring: { revision?: string } }>('/api/v1/cloud/mcp/:id', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;
-    try { manager.repository.remove(user.id, request.params.id); await manager.invalidate(user.id, request.params.id); return { ok: true }; }
+    try { manager.repository.remove(user.id, request.params.id, request.query.revision); await manager.invalidate(user.id, request.params.id); return { ok: true }; }
     catch (e) { return fail(reply, e); }
   });
   app.post<{ Params: { id: string } }>('/api/v1/cloud/mcp/:id/test', async (request, reply) => {

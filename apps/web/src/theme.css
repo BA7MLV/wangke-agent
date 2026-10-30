@@ -15,6 +15,9 @@
    分成两个 JS import 时，Tailwind 会提前把旧的比例值固化到工具类里。 */
 @import '@heroui/styles/css';
 
+/* 保留公开尺寸档位和语义工具类，即使某档暂时没有业务引用。 */
+@source inline("rounded-xs rounded-sm rounded-md rounded-lg rounded-xl rounded-2xl rounded-3xl rounded-control rounded-panel rounded-dialog");
+
 /* HeroUI 用 @theme inline 展开圆角工具类；只覆盖 :root 的 --radius-lg
    无法改变 rounded-lg。工具类与原生 CSS 必须一起指向应用的同一组令牌。 */
 @theme inline {
@@ -27,6 +30,9 @@
   --radius-3xl: var(--corner-3xl);
   --radius-4xl: var(--corner-3xl);
   --radius-field: var(--field-radius);
+  --radius-control: var(--corner-lg);
+  --radius-panel: var(--corner-xl);
+  --radius-dialog: var(--corner-2xl);
 
   /* 侧栏所有入口共用交互色；选中态与瞬时 hover 分开。 */
   --sidebar-hover: var(--background);
@@ -62,14 +68,14 @@ body,
 
 /* ── 应用级令牌 ───────────────────────────────────────────────────────── */
 :root {
-  /* 4px 网格：外层 32 - 内边距 16 = 面板/控件 16；16 - 8 = 标签 8。
-     显式覆盖 HeroUI / Tailwind 的比例档位，避免再次生成 2px / 6px 圆角。
-     0 仅用于贴边/拼接；药丸与圆形始终使用 full，不参与嵌套减法。 */
+  /* 尺寸档位保持兼容；业务优先使用 control / panel / dialog 语义。
+     同心减法仅用于真正沿边嵌套，不决定所有子控件的形状。 */
   --radius: 0.5rem;
   --corner-xs: 0.25rem;
   --corner-sm: 0.5rem;
   --corner-lg: 0.75rem;
   --corner-xl: 1rem;
+  --corner-20: 1.25rem;
   --corner-2xl: 1.5rem;
   --corner-3xl: 2rem;
   --radius-xs: var(--corner-xs);
@@ -81,9 +87,9 @@ body,
   --radius-3xl: var(--corner-3xl);
   --radius-4xl: var(--corner-3xl);
   --radius-full: 999px;
-  --radius-dialog: var(--radius-3xl);
+  --radius-dialog: var(--radius-2xl);
   --radius-panel: var(--radius-xl);
-  --radius-control: var(--radius-xl);
+  --radius-control: var(--radius-lg);
   --radius-chip: var(--radius-sm);
   --field-radius: var(--radius-control);
   --radius-field: var(--field-radius);
@@ -99,62 +105,31 @@ body,
   --border: #dedede;
 }
 
-/* 保留 border-radius 作为回退；不支持连续圆角的浏览器忽略整个增强块。
-   伪元素也遵循相同曲线，避免装饰层与容器边缘错位。 */
+/* 仅显式选择的主要表面启用原生视觉近似，并非 Lisse / Figma 60%。
+   不新增裁切，不覆盖后代、伪元素、用户内容或图表几何。 */
 @supports (corner-shape: superellipse(1.25)) {
-  :where(*, *::before, *::after) {
+  :where(.ui-smooth) {
     corner-shape: superellipse(1.25);
   }
-
-  /* HeroUI 的默认按钮、头像、开关、单选项、滑块是药丸/圆形。
-     自定义 CSS 的 full/50% 形状在各自规则里显式保留 round。 */
-  :where(.rounded-full,
-    .button:not([class*='rounded-'], [class*='finder-'], .course-chat__import-label),
-    .toggle-button:not([class*='rounded-'], [class*='finder-']),
-    .avatar:not(.avatar--square), .avatar__image, .avatar__fallback, .chip, .tag, .badge,
-    .color-swatch:not(.color-swatch--square),
-    .color-swatch-picker:not(.color-swatch-picker--square) .color-swatch-picker__item,
-    .color-swatch-picker:not(.color-swatch-picker--square) .color-swatch-picker__swatch,
-    .tabs__tab, .tabs__indicator, .pagination__item,
-    .switch__control, .switch__thumb, .radio__control,
-    .slider__track, .slider__fill, .slider__thumb, .color-slider__thumb,
-    .progress-bar__track, .progress-bar__fill, .meter__track, .meter__fill,
-    .spinner, .spinner *) {
-    corner-shape: round;
-  }
-
-  /* 全站自有的药丸/圆形；伪元素与 range thumb 必须单独声明，
-     不与普通选择器并列，以免不识别某个伪元素时整条规则失效。 */
-  :where(.ob__dot, .ob__floor, .ask-card__restored,
-    .chat-add-menu__context-dot, .chat-image-draft__remove, .chat-image-pending__indicator,
-    .chat-message-nav__tick, .chat-action, .chat-shot__remove, .chat-send, .chat-ref__where,
-    .comments-sort__button, .cmt-avatar, .cmt-role, .xmd-mermaid-dots,
-    .imsg-composer__send, .password-access__field, .reasoning-slider__track,
-    .reasoning-slider__fill, .reasoning-slider__tick, .ask-float__where,
-    .widget-stream-preview__dot, .study-assistant__trigger, .model-picker__trigger--chip,
-    .hd-chip, .mr-md__badge, .mr-html__badge, .bh-avatar, .bot-panel__switcher,
-    .imsg-typing i, .course-chat__starter, .course-chat__import-close,
-    .course-chat__empty-skel__pill, .course-chat__action, .course-chat__scroll-bottom,
-    .course-chat__new-chat, .course-chat__send, .course-chat__send-mode,
-    .course-chat__send-mode button, .course-chat__stream-dot, .finder-drag-preview__badge,
-    .finder-file-pin, .ph-empty__cta, .seek-pulse, .study-live__dot,
-    [data-testid='nav-rail-toggle'], [data-testid='nav-rail-open'], [data-testid='nav-back'],
-    .nav-unread .t-badge-dot, .page-shell__rail-icon) {
-    corner-shape: round;
-  }
-
-  .md-table-progress::before { corner-shape: round; }
-  .radio__indicator::before { corner-shape: round; }
-  .slider__thumb::after { corner-shape: round; }
-  .finder-window[data-mobile='true'][data-managing='true'] .finder-item__icon::before { corner-shape: round; }
-  .reasoning-slider__input::-webkit-slider-thumb { corner-shape: round; }
-  .reasoning-slider__input::-moz-range-thumb { corner-shape: round; }
 }
 
-/* HeroUI 的列表项与同级输入框共用 16px，而不是跟随外层卡片的 24px 档。
-   第三方组件的默认 6px 内边距也在这里收敛到 4px 网格。 */
+/* 同一组件层覆盖 HeroUI 默认值；工具类和业务 CSS 仍可明确选择例外。
+   图标按钮保留圆形，普通按钮不再因库默认值而变成胶囊。 */
+@layer components {
+  .button, .toggle-button { border-radius: var(--radius-control); }
+  .button--icon-only, .toggle-button--icon-only { border-radius: var(--radius-full); }
+  .card { border-radius: var(--radius-panel); }
+  .modal__dialog:not(.modal__dialog--full), .alert-dialog__dialog {
+    border-radius: var(--radius-dialog);
+  }
+  .popover, .dropdown__popover, .select__popover, .combo-box__popover, .tooltip {
+    border-radius: var(--radius-control);
+  }
+}
+
+/* 紧凑菜单项使用 8px，表单控件仍使用 field/control 的 12px。 */
 :where(.menu-item:not(.rounded-full), .list-box-item:not(.rounded-full)) {
-  border-radius: var(--radius-control);
+  border-radius: var(--radius-sm);
   padding-block: 8px;
 }
 

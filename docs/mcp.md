@@ -2,6 +2,40 @@
 
 入口：**设置 → 技能与 MCP → MCP**。原有 `#/settings/skills` 链接继续有效。
 
+## 配置文件
+
+每个账号的 `/system/mcp.json` 是 MCP **非敏感配置的唯一来源**。在「资料 → system」中打开后直接查看、编辑 JSON 原文，不提供可视化视图；可视化管理位于「设置 → 技能 → MCP」。两处编辑同一份文件，不保存第二套配置。
+
+```json
+{
+  "version": 1,
+  "servers": [
+    {
+      "name": "Example",
+      "url": "https://example.com/mcp",
+      "transport": "streamable-http",
+      "enabled": false,
+      "auth": "none",
+      "timeoutMs": 30000,
+      "disabledTools": []
+    }
+  ]
+}
+```
+
+- 保存时会补上稳定的 `id`，修改已有服务时应保留它，以维持会话范围和工具标识。新服务默认禁用；最多 30 个服务，文件最多 100000 字符。
+- 支持 `streamable-http`、旧 `sse` 和 `stdio`。stdio 使用 `command`、`args`、可选 `cwd`，认证方式为 `none`。本地程序在后端执行，应使用受控容器和最小权限；本功能不把任意本地程序自动变成沙箱程序。
+- `token`、`headers`、`env` 和 OAuth 授权数据不允许写入此文件，仍在可视化设置中单独管理并加密存储；服务 `id` 关联凭据。不要把秘密塞进 URL、命令参数或名称。更换 URL、传输类型、认证类型、可执行命令、参数或工作目录会清除旧凭据，防止密钥被带到其他服务。
+- 首次升级会把原数据库配置迁入文件，保留服务 id 和加密凭据。数据库仅保留运行所需的可重建索引、版本和凭据。
+- 保存使用原文与版本双重冲突检测、校验和原子写入。无效配置不会覆盖文件；直接从磁盘写入的无效 JSON 仍可在资源编辑器修复，但运行时拒绝加载。删除已登记文件会撤销全部服务，不会用数据库副本复活。
+- MCP 设置继续支持导入 `mcpServers` 和 VS Code `mcp.servers` / `servers`。导入后统一写入本项目的上述格式，不代表这些客户端共享同一种文件 schema；不支持变量占位符展开。
+
+## Bot 修改
+
+主 Bot 的 `read`、`grep`、`edit` 工具可访问 `/system/mcp.json`。先读取文件并保留 `revision`，再用 `edits` 中的精确 `old_string` / `new_string` 修改。保存会校验完整 JSON。
+
+**每次 Bot 修改都需要一次与具体参数绑定的人工批准**，即使 Bot 的普通写入权限是允许或已受信任；拒绝、权限撤回或版本变化都不会写入。Bot 无权读取密钥、替用户完成 OAuth，也不能通过沙箱 shell 直接改写此文件。项目会话和浏览器学习任务不能修改账号全局 MCP 配置。现有外部 MCP 工具调用的批准机制保持不变。
+
 ## 支持范围
 
 - **Streamable HTTP**、旧 **HTTP + SSE** 和后端 **stdio**；官方 TypeScript SDK 固定版本 `1.32.2`，运行于 Node 后端。
@@ -34,7 +68,7 @@
 
 ## JSON 配置导入
 
-点击「导入 JSON」，粘贴 `mcpServers`、`mcp.servers` 或 `servers` 格式。预览阶段校验连接类型、地址、命令、凭据和数量，只显示名称与类型；确认后原子写入，任一条失败都不导入。同名服务器（含去除前后空格后重名）不会被覆盖。最多配置 30 个服务器。
+点击「导入 JSON」，粘贴 `mcpServers`、`mcp.servers` 或 `servers` 格式。预览阶段校验连接类型、地址、命令、凭据和数量，只显示名称与类型；确认后原子写入，任一条失败都不导入。同名服务器（含去除前后空格后重名）不会被覆盖。最多配置 30 个服务器。此处是一次性导入，随后统一由 `/system/mcp.json` 管理。
 
 ```json
 {
@@ -52,7 +86,7 @@
 }
 ```
 
-支持 `type`／`transport`、`url`、`command`、`args`、`cwd`、`env`、`headers`、`enabled`／`disabled`、`timeoutMs`／`timeout`（毫秒）。未知字段会报错；`${env:...}`、`${input:...}` 等变量须事先替换。OAuth 连接导入后在编辑页选择 OAuth 并发起授权。
+导入支持 `type`／`transport`、`url`、`command`、`args`、`cwd`、`env`、`headers`、`enabled`／`disabled`、`timeoutMs`／`timeout`（毫秒）。未知字段会报错；`${env:...}`、`${input:...}` 等变量须事先替换。OAuth 连接导入后在编辑页选择 OAuth 并发起授权。导入中的凭据会单独加密，不写入配置文件。
 
 ## stdio 进程
 
@@ -75,7 +109,7 @@
 ## 生命周期和失败行为
 
 - 连接按账户、服务器和配置版本隔离；并发发现去重，空闲五分钟后释放，配置变更／禁用／删除会使旧连接失效。
-- 单个服务不可用时，对话仍可使用内置工具，并展示 MCP 连接失败记录。
+- 单个服务不可用或配置文件无效时，对话仍可使用内置工具，并展示 MCP 失败记录；可通过 Bot 或资源 JSON 编辑器修复文件。
 - 每轮直接注入最多 80 个 MCP 工具，元数据预算 60,000 字符。超限时改为每个服务器一个 gateway，模型先按名称／描述查询分页目录，再调用选中的工具；禁用工具和会话范围仍在调用时核验。后端发现目录上限为每服务 2,000 个工具、1,000,000 字符、100 页。
 - 提供 Resources／Prompts 的服务也会出现 `@mcp/gateway`，支持 `resources`、`resource_templates`、`resource`、`prompts`、`prompt` 操作；该入口可像工具一样禁用。
 - 工具结果超过 24,000 字符会截断并标记；Bot 还受其既有上下文预算限制。
@@ -84,9 +118,9 @@
 
 ## 存储和部署
 
-数据库迁移 13 添加 `mcp_servers` 和 Bot 会话范围字段。普通会话的 `mcpServerIds` 是同步记录中的非索引字段，无需 IndexedDB schema 升级。配置表按 owner 隔离，凭据沿用服务器 `credentials.key` 的 AES-256-GCM 加密能力。备份恢复时需同时保存数据库及配置密钥；公开接口、普通前端缓存和技能导出不含认证明文。
+`mcp_servers` 仍按 owner 隔离，作为文件的运行索引并保存加密凭据，文件版本记录在 `system_mcp_files`。普通会话的 `mcpServerIds` 是同步记录中的非索引字段，无需 IndexedDB schema 升级。凭据沿用服务器 `credentials.key` 的 AES-256-GCM 加密能力。备份恢复时需同时保存系统资源目录、数据库及配置密钥；公开接口、普通前端缓存和技能导出不含认证明文。
 
-核心实现：`apps/api/src/mcp/`、`packages/contracts/src/mcp.ts`、`src/mcp/`。浏览器与 Bot 共用服务端连接管理及结果规范化。
+核心实现：`apps/api/src/mcp/`、`apps/api/src/storage/system-mcp.ts`、`packages/contracts/src/mcp.ts`、`apps/web/src/mcp/`。浏览器与 Bot 共用服务端连接管理及结果规范化。
 
 ## 技能依赖
 
@@ -107,5 +141,7 @@ requires-mcp: ["资料检索"]
 
 - `npm run test:mcp`：真实 HTTP 协议连接、分页、认证、账号隔离、作用域、worker 鉴权、取消／超时、目录预算，以及 Bot 执行和重启不重放。
 - 该命令也运行兼容性测试：JSON 预览校验／原子导入、真实 stdio 进程退出／日志脱敏、SSE 长连接与握手超时、资源／模板／提示词、OAuth PKCE／state 过期与重放／续期／撤销／实际回调路由，以及技能依赖序列化。
+- 文件配置测试覆盖旧配置迁移、凭据隔离、版本冲突、外部编辑／删除、无效 JSON、Bot 精确批准／拒绝／权限撤回。
+- `npm run test:mcp:e2e`：桌面／手机资源导航与纯 JSON 编辑、设置中的可视化管理及同文件同步、无效 JSON 草稿、并发冲突保留、刷新持久化和设置深链接。
 - `npm run build` 后 `npx tsx scripts/e2e-mcp.mjs`：桌面／手机配置、JSON 预览导入、stdio 表单／实际进程／日志脱敏、第二设备读取、草稿会话范围持久化；关闭用户页面后通过真实 Chromium worker 完成资料库、视频与阅读三类对话，并核验工具记录和技能缺失依赖提示。
-- E2E 通过 `CHROMIUM_PATH` 指定浏览器；macOS 默认使用本机 Google Chrome。测试使用临时数据库、模拟模型及本地 MCP 服务，不消耗真实模型额度。
+- 原有 E2E 通过 `CHROMIUM_PATH` 指定浏览器；macOS 默认使用本机 Google Chrome。测试使用临时数据库、模拟模型及本地 MCP 服务，不消耗真实模型额度。

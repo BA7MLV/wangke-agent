@@ -33,7 +33,7 @@ import {
 } from '../../api/modelCaps';
 import { UNLIMITED_ROUNDS } from '../../harness/loopGuard';
 import { getModelMeta, isModelMetaStale, modelMetaInfo, refreshModelMeta, type ModelOverrides } from '../../api/modelMeta';
-import { ms } from '../motion';
+import { IconSwap, MotionDisclosure, ms } from '../motion';
 import { confirmDialog, Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { ALL_SLOTS, refKey, type ModelFieldName } from './shared';
 import JevCard from './JevCard';
@@ -178,7 +178,7 @@ function ModelOptionRow({
           onToggleFavorite();
         }}
       >
-        <Sym name="star" filled={favorite} />
+        <IconSwap a={<Sym name="star" />} b={<Sym name="star" filled />} active={favorite ? 'b' : 'a'} />
       </span>
     </ListBox.Item>
   );
@@ -344,7 +344,7 @@ function SlotModelSelect({
   const totalResults = favRows.length + orphanFavs.length + groups.reduce((n, g) => n + g.ids.length, 0);
 
   return (
-    <div data-model-field={name} className={`flex flex-col gap-3 rounded-3xl bg-background-secondary p-4 transition-shadow hover:shadow-sm ${issue ? 'ring-1 ring-danger' : ''}`}>
+    <div data-model-field={name} className={`flex flex-col gap-3 rounded-panel bg-background-secondary p-4 transition-shadow hover:shadow-sm ${issue ? 'ring-1 ring-danger' : ''}`}>
       <div className="flex min-w-0 items-center gap-3">
         <span className="flex h-[30px] w-[30px] shrink-0 items-center justify-center rounded-full bg-background text-[17px] text-muted" aria-hidden="true">
           {SLOT_ICON[slot]}
@@ -672,7 +672,7 @@ function ProviderRow({
 
   return (
     <div
-      className={`relative overflow-hidden rounded-3xl border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
+      className={`ui-smooth relative overflow-hidden rounded-panel border border-border/80 bg-background-secondary transition-shadow ${open ? 'border-accent/45 bg-background shadow-md' : 'min-h-[218px] hover:shadow-sm max-[640px]:min-h-[150px]'}`}
       data-testid={`provider-card-${provider.id}`}
       data-open={open ? 'true' : undefined}
     >
@@ -727,8 +727,8 @@ function ProviderRow({
 
       {open && (
         <div className="flex flex-col gap-3 border-t border-border/70 px-5 pt-4 pb-5">
-          <details open={showConnection} onToggle={(event) => setShowConnection(event.currentTarget.open)}>
-            <summary className="cursor-pointer py-2 text-sm font-medium">{showEndpoint ? '连接设置 · 地址、密钥与协议' : '连接设置'}</summary>
+          <MotionDisclosure open={showConnection} onOpenChange={setShowConnection}
+            title={showEndpoint ? '连接设置 · 地址、密钥与协议' : '连接设置'} triggerClassName="py-2 text-sm font-medium">
             <div className="flex flex-col gap-3 pt-3">
           <Field label="名称">
             <Input
@@ -816,7 +816,7 @@ function ProviderRow({
             </div>
           </Field>
             </div>
-          </details>
+          </MotionDisclosure>
           {note && (
             <div role={status === 'failed' ? 'alert' : 'status'} className="text-xs leading-relaxed text-muted" data-testid={`provider-note-${provider.id}`}>
               {note}

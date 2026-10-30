@@ -142,16 +142,28 @@ test('qaSystem 截图规则与画面引用规则编号连续', () => {
 
 // —— 2026-09-17 新增：讲不清就画图（问答正文与题卡解析共用同一句话术） ——
 // 前端只认 mermaid / diagram / svg 三个语言标记（components/mermaid/fence.ts 的 LANG_RULES），
-// 提示词里写错围栏名，模型就会输出一坨源码；节点上限那句是防模型画出手机屏放不下的大图。
+// 提示词里写错围栏名，模型就会输出一坨源码；大图可读性建议不能退回小图数量硬门槛。
 // 2026-10-13 起：**新内容只教 mermaid 与 diagram 两种**（svg 围栏退场成历史数据兼容，
 // 见 fence.ts 头部），所以这里的断言也从「点明 svg」换成了「点明 diagram、不再教 svg」。
 
-test('qaSystem 注入出图规则（围栏名 + 节点上限 + 防滥画）', () => {
+test('qaSystem 注入出图规则（围栏名 + 防滥画）', () => {
   const p = PROMPTS.qaSystem('测试课程');
   assert.match(p, /```mermaid 围栏/);
   assert.match(p, /```diagram 围栏/);
-  assert.match(p, /不超过 10 个节点/);
   assert.match(p, /一句话能说清的就别画/);
+});
+
+test('出图规则允许大图与多图，不为了凑节点数丢信息', () => {
+  for (const p of [PROMPTS.qaSystem('测试课程'), PROMPTS.qaSystemMaterial('阅读材料', 'page')]) {
+    assert.match(p, /节点数量按内容决定/);
+    assert.match(p, /缩放、滚动查看/);
+    assert.match(p, /不要为了凑节点数删减信息/);
+    assert.match(p, /不限制一段回答只能一张图/);
+    assert.match(p, /渲染安全上限/);
+    assert.match(p, /不必为塞进一屏删节点或强制拆图/);
+    assert.ok(!p.includes('主体图示适合一屏'), '通用布局规则不能反过来强迫大图删节点');
+    assert.ok(!/不超过 10 个节点|不超过 10 个字|一段回答最多一张图/.test(p));
+  }
 });
 
 test('qaSystemMaterial 同样注入出图规则，且不引入时间戳口径', () => {

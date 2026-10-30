@@ -4,7 +4,7 @@ import { timingSafeEqual } from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { sandboxArgs, uuid } from './arguments.mjs';
+import { sandboxArgs, commandTimeoutSeconds, uuid } from './arguments.mjs';
 import { workspacePath, workspaceFileLimit } from './file-read.mjs';
 export { sandboxArgs } from './arguments.mjs';
 
@@ -19,11 +19,9 @@ const remove = async name => {
 };
 
 let hostRoot;
-async function projectRoot(id) {
+async function projectsHostRoot() {
   const root = process.env.SANDBOX_PROJECTS_DIR;
   if (!root || !path.isAbsolute(root)) throw new Error('project_mount_not_configured');
-  const target = path.join(root, id);
-  if (!fs.lstatSync(target).isDirectory() || fs.realpathSync(target) !== path.join(fs.realpathSync(root), id)) throw new Error('invalid_project_directory');
   if (!hostRoot) {
     if (process.env.SANDBOX_PROJECTS_HOST_DIR) hostRoot = process.env.SANDBOX_PROJECTS_HOST_DIR;
     else if (fs.existsSync('/.dockerenv')) {
@@ -36,6 +34,16 @@ async function projectRoot(id) {
     } else hostRoot = fs.realpathSync(root);
   }
   return hostRoot;
+}
+async function projectRoot(id) {
+  const root = process.env.SANDBOX_PROJECTS_DIR;
+  const target = path.join(root, id);
+  if (!fs.lstatSync(target).isDirectory() || fs.realpathSync(target) !== path.join(fs.realpathSync(root), id)) throw new Error('invalid_project_directory');
+  return projectsHostRoot();
+}
+async function systemFilesRoot() {
+  const projects = await projectsHostRoot();
+  return path.join(path.dirname(projects), 'system-files');
 }
 
 const server = http.createServer(async (req, res) => {
@@ -55,7 +63,8 @@ const server = http.createServer(async (req, res) => {
     if (req.url !== '/cancel' && (!uuid.test(body.threadId) || (body.projectId !== undefined && !uuid.test(body.projectId)))) throw new Error();
     if (readingFile) body = { threadId: body.threadId, projectId: body.projectId, executionId: body.executionId, filePath: workspacePath(body.path) };
     else if (req.url === '/execute') {
-      if ((body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000 || body.filePath !== undefined) throw new Error();
+      if (!uuid.test(body.owner) || (body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000 || body.filePath !== undefined) throw new Error();
+      body.timeoutSeconds = commandTimeoutSeconds(body.timeoutSeconds);
     }
   } catch { return reply(400, { error: 'invalid_request' }); }
   for (const [id, expires] of cancelled) if (expires < Date.now()) cancelled.delete(id);
@@ -76,7 +85,7 @@ const server = http.createServer(async (req, res) => {
   const finish = () => { active.delete(scope); executions.delete(body.executionId); resolveDone(); };
   active.set(scope, execution); executions.set(body.executionId, execution);
   let args;
-  try { args = sandboxArgs(body, body.projectId ? await projectRoot(body.projectId) : undefined); }
+  try { args = sandboxArgs(body, body.projectId ? await projectRoot(body.projectId) : undefined, readingFile ? undefined : await systemFilesRoot()); }
   catch { finish(); return reply(400, { error: 'invalid_project_workspace' }); }
   if (res.destroyed || execution.cancelled) { finish(); return reply(409, { error: 'execution_cancelled' }); }
   let stdout = ''; let stderr = ''; let size = 0; let timer;
@@ -87,7 +96,7 @@ const server = http.createServer(async (req, res) => {
   execution.stop = stop;
   const disconnected = () => { if (!res.writableEnded) stop(); };
   res.on('close', disconnected);
-  timer = setTimeout(stop, 130_000);
+  timer = setTimeout(stop, (readingFile ? 120 : body.timeoutSeconds) * 1000 + 10_000);
   const collect = (kind, chunk) => {
     if (readingFile && kind === 'stdout') {
       fileBytes += chunk.length;
