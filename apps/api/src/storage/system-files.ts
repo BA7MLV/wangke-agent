@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import type Database from 'better-sqlite3';
-import { AGENTS_PATH, MCP_PATH, MEMORY_PATH, memoryName } from '@wangke/contracts/system';
+import { AGENTS_PATH, MCP_PATH, MEMORY_PATH, SKILLS_PATH, memoryName } from '@wangke/contracts/system';
 
 type Entry = { owner_id: string; path: string; memory_id: string | null; pending: number; content: string | null; expected: string | null };
 
@@ -12,18 +12,26 @@ export class SystemFiles {
 
   private filename(owner: string, resource: string) {
     const name = memoryName(resource);
-    if (resource !== AGENTS_PATH && resource !== MCP_PATH && resource !== MEMORY_PATH && !name) throw new Error('invalid_system_path');
+    const skill = resource.startsWith(`${SKILLS_PATH}/`) ? resource.slice(SKILLS_PATH.length + 1).split('/') : undefined;
+    if (skill && (skill.length < 2 || !/^[a-z0-9][a-z0-9_-]{0,63}$/.test(skill[0]) || skill.slice(1).some((part, i) =>
+      !part || part === '.' || part === '..' || part.length > 255 || /[\\\u0000-\u001f\u007f]/.test(part) || part.startsWith('.') && !(i === 0 && skill.length === 2 && part === '.wangke-skill.json')))) throw new Error('invalid_system_path');
+    if (resource !== AGENTS_PATH && resource !== MCP_PATH && resource !== MEMORY_PATH && !name && !skill) throw new Error('invalid_system_path');
     const account = crypto.createHash('sha256').update(owner).digest('hex');
     const directories = [this.root, path.join(this.root, account), path.join(this.root, account, 'system'), path.join(this.root, account, 'system', 'memory')];
+    if (skill) {
+      let current = path.join(directories[2], 'skills');
+      directories.push(current);
+      for (const part of skill.slice(0, -1)) { current = path.join(current, part); directories.push(current); }
+    }
     for (const directory of directories) {
       fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
       const stat = fs.lstatSync(directory);
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('unsafe_system_path');
     }
     if (resource === MEMORY_PATH) return directories[3];
-    const filename = resource === AGENTS_PATH || resource === MCP_PATH ? path.join(directories[2], resource === MCP_PATH ? 'mcp.json' : 'AGENTS.md') : path.join(directories[3], `${name}.md`);
+    const filename = skill ? path.join(directories.at(-1)!, skill.at(-1)!) : resource === AGENTS_PATH || resource === MCP_PATH ? path.join(directories[2], resource === MCP_PATH ? 'mcp.json' : 'AGENTS.md') : path.join(directories[3], `${name}.md`);
     const stat = fs.lstatSync(filename, { throwIfNoEntry: false });
-    if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.size > 400000)) throw new Error('unsafe_system_path');
+    if (stat && (!stat.isFile() || stat.isSymbolicLink() || stat.size > (skill ? 2 * 1024 * 1024 : 400000))) throw new Error('unsafe_system_path');
     return filename;
   }
 
@@ -41,7 +49,7 @@ export class SystemFiles {
     const filename = this.filename(owner, resource);
     if (!fs.existsSync(filename)) return;
     const text = fs.readFileSync(filename, 'utf8');
-    if (text.length > 100000) throw new Error('system_file_too_large');
+    if (text.length > (resource.startsWith(`${SKILLS_PATH}/`) ? 2 * 1024 * 1024 : 100000)) throw new Error('system_file_too_large');
     return text;
   }
   read(owner: string, resource: string): string | undefined {
@@ -84,9 +92,10 @@ export class SystemFiles {
         }
         if (entry.content === null) fs.rmSync(filename, { force: true });
         else {
-          const temporary = `${filename}.${crypto.randomUUID()}.tmp`;
+          const temporary = path.join(path.dirname(filename), `.${path.basename(filename)}.${crypto.randomUUID()}.tmp`);
           try {
-            const fd = fs.openSync(temporary, 'wx', 0o600);
+            const mode = fs.statSync(filename, { throwIfNoEntry: false })?.mode ?? 0o600;
+            const fd = fs.openSync(temporary, 'wx', mode & 0o777);
             try { fs.writeFileSync(fd, entry.content, 'utf8'); fs.fsyncSync(fd); } finally { fs.closeSync(fd); }
             if ((this.physical(entry.owner_id, entry.path) ?? null) !== current) throw new Error('system_file_changed');
             fs.renameSync(temporary, filename);

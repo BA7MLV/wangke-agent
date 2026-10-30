@@ -4,6 +4,7 @@ import Database from 'better-sqlite3';
 import { SystemFiles } from './system-files.js';
 import { SystemMcp } from './system-mcp.js';
 import { SystemSkills } from './system-skills.js';
+import { SystemSkillRecords } from './system-skill-records.js';
 
 const MIGRATIONS: Array<[number, string]> = [
   [1, `
@@ -454,6 +455,13 @@ const MCP_FILE_MIGRATION = `
       revision INTEGER NOT NULL, sha256 TEXT NOT NULL, updated_at TEXT NOT NULL
     );
 `;
+const SKILL_RECORDS_MIGRATION = `
+    CREATE TABLE system_skill_bindings (
+      owner_id TEXT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+      skill_id INTEGER NOT NULL, slug TEXT NOT NULL, builtin_slug TEXT,
+      PRIMARY KEY(owner_id,skill_id), UNIQUE(owner_id,slug)
+    );
+`;
 const LEASE_MIGRATION = `
     ALTER TABLE cloud_tasks ADD COLUMN worker_id TEXT;
     ALTER TABLE cloud_tasks ADD COLUMN lease_expires_at TEXT;
@@ -465,6 +473,7 @@ export class DatabaseStore {
   readonly systemFiles: SystemFiles;
   readonly systemMcp: SystemMcp;
   readonly systemSkills: SystemSkills;
+  readonly skillRecords: SystemSkillRecords;
 
   constructor(filename = process.env.DB_PATH ?? '/data/db/wangke.sqlite', systemFilesDir = path.join(path.dirname(filename), 'system-files')) {
     fs.mkdirSync(path.dirname(filename), { recursive: true });
@@ -472,6 +481,7 @@ export class DatabaseStore {
     this.systemFiles = new SystemFiles(systemFilesDir, this.db);
     this.systemMcp = new SystemMcp(this);
     this.systemSkills = new SystemSkills(systemFilesDir, this.db);
+    this.skillRecords = new SystemSkillRecords(this);
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.db.pragma('busy_timeout = 5000');
@@ -499,6 +509,7 @@ export class DatabaseStore {
         expected.exec(PROJECT_MIGRATION);
         expected.exec(LEASE_MIGRATION);
         expected.exec(MCP_FILE_MIGRATION);
+        expected.exec(SKILL_RECORDS_MIGRATION);
         const groups = [
           { version: 13, tables: ['gateway_accounts', 'gateway_pairings', 'gateway_bindings', 'gateway_inbox', 'gateway_outbox', 'bot_reminders'], extra: [['cloud_tasks', 'parent_run_id'], ['cloud_tasks', 'parent_step_id'], ['approvals', 'cloud_permission_id']], sql: MIGRATIONS.find(([v]) => v === 13)![1] },
           { version: 14, tables: ['gateway_projection_failures'], extra: [], sql: MIGRATIONS.find(([v]) => v === 14)![1] },
@@ -513,6 +524,7 @@ export class DatabaseStore {
           { version: 24, tables: ['bot_context_views', 'model_observations'], extra: [['bot_requests', 'cache_creation_tokens'], ['bot_requests', 'reasoning_tokens'], ['runs', 'context_end_seq'], ['runs', 'context_model']], sql: MIGRATIONS.find(([v]) => v === 22)![1] },
           { version: 25, tables: ['system_skills'], extra: [], sql: MIGRATIONS.find(([v]) => v === 23)![1] },
           { version: 26, tables: ['system_mcp_files'], extra: [], sql: MCP_FILE_MIGRATION },
+          { version: 27, tables: ['system_skill_bindings'], extra: [], sql: SKILL_RECORDS_MIGRATION },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -558,6 +570,7 @@ export class DatabaseStore {
         apply(22, groups[10], 10);
         apply(23, groups[11], 11);
         apply(24, groups[12], 12);
+        apply(25, groups[13], 13);
       } finally { expected.close(); }
     })();
   }

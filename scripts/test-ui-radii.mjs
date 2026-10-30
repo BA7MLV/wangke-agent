@@ -12,7 +12,7 @@ async function sources(directory) {
     : /\.(css|tsx)$/.test(entry.name) ? [path.join(directory, entry.name)] : []))).flat();
 }
 
-test('all application radii and static spacing use the 4px grid', async () => {
+test('application radii and layout spacing use the 4px grid, except internal icon geometry', async () => {
   const issues = [];
   for (const file of await sources(root)) {
     const source = await readFile(file, 'utf8');
@@ -25,6 +25,9 @@ test('all application radii and static spacing use the 4px grid', async () => {
     postcss.parse(source, { from: file }).walkDecls(decl => {
       const radius = /radius$/.test(decl.prop);
       if (!radius && !/^(?:padding(?:-[\w-]+)?|(?:row-|column-)?gap|--heat-gap)$/.test(decl.prop)) return;
+      // A 4×4 icon needs 2px internal gaps, not the page layout's 4px spacing.
+      if (file === path.join(root, 'transitions.css') && decl.parent.selector === '.t-matrix'
+        && decl.prop === 'gap' && decl.value === '2px') return;
       // Dynamic viewport geometry and safe-area insets aren't fixed design spacing.
       let value = decl.value;
       while (/[\w-]+\([^()]*\)/.test(value)) value = value.replace(/[\w-]+\([^()]*\)/g, '');
@@ -36,6 +39,23 @@ test('all application radii and static spacing use the 4px grid', async () => {
     });
   }
   assert.deepEqual(issues, []);
+});
+
+test('matrix loader stays compact and preserves its reduced-motion guard', async () => {
+  const ast = postcss.parse(await readFile(path.join(root, 'transitions.css'), 'utf8'));
+  const matrix = ast.nodes.find(node => node.selector === '.t-matrix');
+  const values = Object.fromEntries(matrix.nodes.filter(node => node.type === 'decl').map(node => [node.prop, node.value]));
+  assert.equal(values['grid-template-columns'], 'repeat(4, 2px)');
+  assert.equal(values['grid-auto-rows'], '2px');
+  assert.equal(values.gap, '2px');
+  assert.equal(values.width, '14px');
+  assert.equal(values.height, '14px');
+  assert.equal(values.flex, 'none');
+  const reduced = ast.nodes.find(node => node.type === 'atrule' && node.name === 'media'
+    && node.params === '(prefers-reduced-motion: reduce)'
+    && node.nodes.some(rule => rule.selector === '.t-matrix i'));
+  assert.ok(reduced?.nodes.some(rule => rule.selector === '.t-matrix i'
+    && rule.nodes.some(decl => decl.prop === 'animation' && decl.value === 'none' && decl.important)));
 });
 
 test('continuous corners are progressive, explicit and do not affect user content', async () => {

@@ -82,9 +82,6 @@ export default function ChatAddMenu({ disabled, onSelectProject }: { disabled?: 
           {contextCourses.length > 0 && <span className="chat-add-menu__context-dot" data-testid="chat-context-dot" aria-hidden="true" />}
         </Button>
         <Dropdown.Popover placement="top start">
-          <div className="px-2 py-1">
-            <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} onClose={() => setAddOpen(false)} />
-          </div>
           <Dropdown.Menu aria-label="添加到对话" disabledKeys={[...(loading ? ['handout', 'project'] : []), ...(handoutPreparing ? ['handout'] : [])]} onAction={(key) => {
             if (key === 'courses') void openCourses();
             else if (key === 'images') imageInput.current?.click();
@@ -103,6 +100,9 @@ export default function ChatAddMenu({ disabled, onSelectProject }: { disabled?: 
             <Dropdown.Item id="handout" textValue="生成讲义" data-testid="handout-prompt"><Sym name="description" />生成讲义</Dropdown.Item>
             <Dropdown.Item id="skills" textValue={t('mcp.scopeTitle')}><Sym name="extension" />{t('mcp.scopeTitle')}{skillIds !== undefined || mcpServerIds !== undefined ? ' · 已限定' : ''}</Dropdown.Item>
           </Dropdown.Menu>
+          <div className="chat-add-menu__model px-2 py-1">
+            <ModelPicker slot="chat" field="llmModel" variant="chip" showThinking thinkingDepthDisabled={loading} onClose={() => setAddOpen(false)} />
+          </div>
         </Dropdown.Popover>
       </Dropdown>
       <input ref={imageInput} type="file" accept={CHAT_IMAGE_ACCEPT} multiple hidden data-testid="chat-image-input" onChange={(event) => { addFiles(Array.from(event.target.files ?? [])); event.target.value = ''; }} />

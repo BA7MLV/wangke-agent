@@ -29,7 +29,7 @@ try {
   const original = { id: 'a', name: 'lecture', lastPosition: 0 };
   const create = mutation('videos', 'a', null, original);
   records.apply(owner, [create]); records.apply(owner, [create]);
-  assert.equal(records.list(owner, 0).length, 1);
+  assert.equal(records.list(owner, 0).filter(r => r.table === 'videos').length, 1);
   assert.equal(records.get(other, 'videos', 'a'), null);
   records.apply(owner, [mutation('videos', 'a', original, { ...original, lastPosition: 10 })]);
   records.apply(owner, [mutation('videos', 'a', original, { ...original, name: 'renamed' })]);
@@ -38,8 +38,9 @@ try {
   const beforeDelete = records.get(owner, 'videos', 'a');
   records.apply(owner, [mutation('videos', 'a', beforeDelete, null)]);
   assert.throws(() => records.apply(owner, [mutation('videos', 'a', beforeDelete, { ...beforeDelete, name: 'resurrection' })]), CloudConflict);
-  assert.equal(records.list(owner, 0)[0].value, null);
-  const revision = records.list(owner, 0)[0].revision;
+  const tombstone = records.list(owner, 0).find(r => r.table === 'videos' && r.key === 'a');
+  assert.equal(tombstone.value, null);
+  const revision = tombstone.revision;
   assert.throws(() => records.apply(owner, [mutation('videos', 'a', null, original)]), CloudConflict);
   records.apply(owner, [{ ...mutation('videos', 'a', null, original), baseRevision: revision }]);
   const day = { date: '2026-10-22', seconds: 5, updatedAt: 1 };

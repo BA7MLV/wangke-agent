@@ -1,0 +1,50 @@
+import { useId } from 'react';
+import './page-loader.css';
+
+const OUTER_PATH = 'M182 324.8C182 278.316 182 255.073 191.046 237.319C199.004 221.701 211.701 209.004 227.319 201.046C245.073 192 268.316 192 314.8 192H692.2C738.684 192 761.927 192 779.681 201.046C795.299 209.004 807.996 221.701 815.954 237.319C825 255.073 825 278.316 825 324.8V394C825 550.815 825 629.222 794.482 689.117C767.637 741.803 724.803 784.637 672.117 811.482C612.222 842 533.815 842 377 842H314.8C268.316 842 245.073 842 227.319 832.954C211.701 824.996 199.004 812.299 191.046 796.681C182 778.927 182 755.684 182 709.2V324.8Z';
+const INNER_PATH = 'M238 349.56C238 315.061 238 297.811 244.714 284.634C250.62 273.043 260.043 263.62 271.634 257.714C284.811 251 302.061 251 336.56 251H671.44C705.939 251 723.189 251 736.366 257.714C747.957 263.62 757.38 273.043 763.286 284.634C770 297.811 770 315.061 770 349.56V379.8C770 520.933 770 591.5 742.534 645.406C718.374 692.822 679.822 731.374 632.406 755.534C578.5 783 507.933 783 366.8 783H336.56C302.061 783 284.811 783 271.634 776.286C260.043 770.38 250.62 760.957 244.714 749.366C238 736.189 238 718.939 238 684.44V349.56Z';
+const MARK_PATH = 'M288.417 459.122C288.417 457.652 288.417 456.917 288.43 456.296C289.097 423.169 315.792 396.474 348.919 395.807C349.54 395.794 350.275 395.794 351.745 395.794H456.812C549.815 395.794 625.208 471.187 625.208 564.189C625.208 657.191 549.815 732.585 456.812 732.585H351.745C350.275 732.585 349.54 732.584 348.919 732.572C315.792 731.905 289.097 705.21 288.43 672.083C288.417 671.461 288.417 670.726 288.417 669.256V459.122Z';
+const EYE_PATH = 'M735.686 358.247C735.686 394.974 705.673 424.747 668.65 424.747C631.627 424.747 601.614 394.974 601.614 358.247C601.614 321.52 631.627 291.747 668.65 291.747C705.673 291.747 735.686 321.52 735.686 358.247Z';
+const PUPIL_PATH = 'M726.807 358.359C726.807 372.386 715.344 383.757 701.203 383.757C687.063 383.757 675.6 372.386 675.6 358.359C675.6 344.332 687.063 332.961 701.203 332.961C715.344 332.961 726.807 344.332 726.807 358.359Z';
+
+/** Full-page loading state: the brand mark stays still while a light band sweeps across it. */
+export function PageLoader({ label = '正在加载页面…' }: { label?: string }) {
+  const id = useId();
+  const gradientId = `page-loader-gradient-${id}`;
+  const maskId = `page-loader-mask-${id}`;
+
+  return (
+    <div className="page-loader" role="status" aria-label={label} aria-busy="true">
+      <svg className="page-loader__logo" viewBox="182 192 650 650" aria-hidden="true" focusable="false">
+        <defs>
+          <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
+            <stop offset="0" stopColor="var(--page-loader-highlight)" stopOpacity="0" />
+            <stop offset="0.5" stopColor="var(--page-loader-highlight)" stopOpacity="0.95" />
+            <stop offset="1" stopColor="var(--page-loader-highlight)" stopOpacity="0" />
+          </linearGradient>
+          <mask id={maskId} maskUnits="userSpaceOnUse" x="182" y="192" width="650" height="650">
+            <path d={OUTER_PATH} fill="white" />
+            <path d={INNER_PATH} fill="white" />
+            <path d={MARK_PATH} fill="white" />
+            <path d={EYE_PATH} fill="white" />
+            <path d={PUPIL_PATH} fill="white" />
+          </mask>
+        </defs>
+        <path d={OUTER_PATH} fill="var(--page-loader-outer)" />
+        <path d={INNER_PATH} fill="var(--page-loader-inner)" />
+        <path d={MARK_PATH} fill="var(--page-loader-outer)" />
+        <path d={EYE_PATH} fill="var(--page-loader-outer)" />
+        <path d={PUPIL_PATH} fill="var(--page-loader-inner)" />
+        <rect
+          className="page-loader__shine"
+          x="182"
+          y="192"
+          width="650"
+          height="650"
+          fill={`url(#${gradientId})`}
+          mask={`url(#${maskId})`}
+        />
+      </svg>
+    </div>
+  );
+}

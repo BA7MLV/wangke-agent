@@ -53,6 +53,12 @@ export function ensureBuiltinSkills(): Promise<void> {
 }
 
 async function doEnsureBuiltinSkills(): Promise<void> {
+  // In account mode the server materializes builtins once and projects the live
+  // package files. Re-upserting bundled text here would undo library/Shell edits.
+  if (cloud.enabled) {
+    await (await import('../cloud/sync')).flushCloud();
+    return;
+  }
   const now = Date.now();
   // 整体放进一个 rw 事务：IndexedDB 会把同库的 rw 事务串行化，
   // 于是「查—插」不会被另一个并发调用穿插（上面的闸门管同页并发，这层管跨调用/跨标签页）。

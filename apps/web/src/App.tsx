@@ -11,7 +11,7 @@ import { startStudyTracking } from './store/studyTime';
 import LiveShareBar from './components/LiveShareBar';
 import SettingsModal from './components/SettingsModal';
 import { preloadOnIdle } from './utils/preload';
-import { FeedbackHost } from './ui';
+import { FeedbackHost, PageLoader } from './ui';
 import { openSettingsFromHash } from './components/settingsDialogStore';
 import CloudActivity from './cloud/Activity';
 import { useBotPanel } from './store/botPanel';
@@ -118,7 +118,7 @@ export default function App() {
         {/* 设置是全局弹窗而不是路由：挂在 App 根部一次，任何页面都能唤起，
             且唤起时不会把用户当前位置顶掉（见 components/SettingsModal.tsx）。 */}
         <SettingsModal />
-        <Suspense fallback={<div className="route-fallback" aria-busy="true" />}>
+        <Suspense fallback={<PageLoader label="正在加载页面…" />}>
           <Routes>
             <Route element={<AppLayout />}>
               {/* 主页永远是对话；/chat、/course-chat 是旧地址，保留以免书签失效。 */}

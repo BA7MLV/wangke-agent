@@ -5,6 +5,7 @@ import { useCourseChat } from '../store/courseChat';
 import { useAppNav } from './appNav';
 import { useRecentChats } from './useRecentChats';
 import { SettingsButton } from './SettingsModal';
+import { PageLoader } from '../ui';
 
 /** 只让 Outlet 内的页面切换；导航和最近会话的查询始终保持同一份。 */
 export default function AppLayout() {
@@ -17,9 +18,7 @@ export default function AppLayout() {
 
   return (
     <NavigationShell rail={nav} recent={recent} railFooter={<SettingsButton variant="rail" testId="nav-rail-settings" />}>
-      <Suspense fallback={<PageShell title={pathname.startsWith('/library') ? '资源' : ''} fill>
-        <div className="route-fallback" aria-label="正在加载页面" aria-busy="true" />
-      </PageShell>}>
+      <Suspense fallback={<PageShell title={pathname.startsWith('/library') ? '资源' : ''} fill><PageLoader label="正在加载页面…" /></PageShell>}>
         <Outlet />
       </Suspense>
     </NavigationShell>

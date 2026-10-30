@@ -1,5 +1,6 @@
 import { lazy, Suspense, useEffect, useRef, useState, type ChangeEvent, type FormEvent } from 'react';
 import { Button, Input, Label, Spinner, TextField } from '@heroui/react';
+import { PageLoader } from '../ui';
 import { startAuthentication } from '@simplewebauthn/browser';
 import { useTranslation } from 'react-i18next';
 import { serverClient, ServerApiError } from '../api/serverClient';
@@ -118,7 +119,7 @@ export default function CloudGate({ initialized, authenticated, initialSecret = 
     event.target.value = '';
   };
 
-  if (ready && !setup) return <Suspense fallback={<div className="ob-loading" role="status"><Spinner aria-label={t('onboarding.loading')} /></div>}><App /></Suspense>;
+  if (ready && !setup) return <Suspense fallback={<PageLoader label={t('onboarding.loading')} />}><App /></Suspense>;
 
   const back = previousStep(step);
   const index = stepIndex(step);

@@ -31,7 +31,7 @@
     "test:bot": "tsx scripts/test-bot-runtime.mjs && tsx scripts/test-bot-conversation.mjs && tsx scripts/test-bot-permissions.mjs && tsx scripts/test-bot-workspace-files.mjs && tsx scripts/test-bot-default-workspace.mjs && tsx scripts/test-bot-network.mjs",
     "test:file-names": "tsx --test scripts/test-file-names.mjs scripts/test-image-upload.mjs && python3 -B scripts/test-save-file.py",
     "test:tool-parallel": "npm run build -w @wangke/study-core && tsx --test scripts/test-tool-parallel.mjs scripts/test-bot-parallel.mjs && node scripts/test-agent-loop.mjs",
-    "test:system-files": "tsx scripts/test-system-files.mjs && tsx scripts/test-notebook-tools.mjs && tsx scripts/test-agent-instructions.mjs",
+    "test:system-files": "tsx scripts/test-system-files.mjs && tsx scripts/test-skill-files.mjs && tsx scripts/test-notebook-tools.mjs && tsx scripts/test-agent-instructions.mjs",
     "test:memory-context": "tsx scripts/test-memory-context.mjs",
     "test:system-files:e2e": "tsx scripts/e2e-system-files.mjs",
     "test:projects": "tsx scripts/test-projects.mjs",

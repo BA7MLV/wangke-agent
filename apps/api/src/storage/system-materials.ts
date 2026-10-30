@@ -34,7 +34,10 @@ export class SystemMaterials {
       const row = this.store.db.prepare("SELECT revision FROM cloud_records WHERE owner_id=? AND table_name='preferences' AND record_key=?").get(owner, JSON.stringify('agentInstructions')) as { revision: number } | undefined;
       return { path, name: 'AGENTS.md', content, revision: row?.revision ?? 0, updatedAt: null };
     }
-    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.readFile(owner, path);
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) {
+      this.store.skillRecords.sync(owner);
+      return this.store.systemSkills.readFile(owner, path);
+    }
     if (!memoryName(path)) throw new Error('invalid_system_path');
     this.memory.sync(owner, path);
     const id = this.store.systemFiles.entry(owner, path)?.memory_id ?? memoryId(path);
@@ -51,7 +54,10 @@ export class SystemMaterials {
       const matches = (value: string) => !query || value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
       return { files: offset === 0 ? files.filter(file => matches(file.name)) : [], directories: offset === 0 ? [MEMORY_PATH, SKILLS_PATH].filter(matches) : [], nextOffset: null };
     }
-    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.listDirectory(owner, path, offset, query);
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) {
+      this.store.skillRecords.sync(owner);
+      return this.store.systemSkills.listDirectory(owner, path, offset, query);
+    }
     if (path !== MEMORY_PATH) throw new Error('invalid_system_path');
     const rows = this.memory.list(owner, query, offset);
     return { files: rows.map(row => { const { content: _content, ...file } = this.document(row); return file; }), nextOffset: rows.length === 50 ? offset + 50 : null };
@@ -68,7 +74,12 @@ export class SystemMaterials {
   save(owner: string, path: string, content: string, expected: string, revision: number, source = 'user:notebook') {
     if (typeof content !== 'string' || typeof expected !== 'string' || !Number.isSafeInteger(revision) || revision < 0 || content.length > 100000) throw new Error('invalid_system_document');
     if (path === MCP_PATH) return this.store.systemMcp.save(owner, content, expected, revision);
-    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) return this.store.systemSkills.saveFile(owner, path, content, expected, revision);
+    if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) {
+      this.store.skillRecords.sync(owner);
+      const saved = this.store.systemSkills.saveFile(owner, path, content, expected, revision);
+      this.store.skillRecords.sync(owner);
+      return saved;
+    }
     if (memoryName(path)) {
       this.memory.sync(owner, path);
       if (!this.store.systemFiles.entry(owner, path)) {

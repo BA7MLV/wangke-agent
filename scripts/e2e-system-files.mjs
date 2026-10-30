@@ -50,7 +50,7 @@ try {
     projectListRequests++;
     return route.fulfill({ status: 500, json: { error: 'project_list_unavailable' } });
   });
-  for (const width of [1440, 390]) {
+  for (const width of process.env.SKILLS_ONLY ? [] : [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     await page.goto(`${origin}/#/library`);
     const open = item => width < 600 ? item.click() : item.dblclick();
@@ -181,6 +181,68 @@ try {
     await file.waitFor();
     await page.getByRole('navigation', { name: '资料路径' }).getByRole('button', { name: '全部资料', exact: true }).click();
   }
+  await page.setViewportSize({ width: 1440, height: 900 });
+  await page.goto(`${origin}/#/settings/skills`);
+  await page.getByTestId('card-skills').waitFor();
+  const builtinRow = page.getByTestId('skill-row').filter({ hasText: '课程讲义' });
+  await builtinRow.waitFor();
+  await page.getByTestId('btn-skill-new').click();
+  await page.getByTestId('skill-name').locator('input').fill('Library Sync Skill');
+  await page.getByTestId('skill-desc').locator('input').fill('设置创建的测试技能');
+  await page.getByTestId('skill-body').locator('textarea').fill('设置创建的技能正文');
+  await page.getByTestId('skill-dialog').locator('input[type=file]').setInputFiles({ name: 'guide.md', mimeType: 'text/markdown', buffer: Buffer.from('# 参考指南\n\n设置添加的参考文件') });
+  await page.getByText('references/guide.md', { exact: true }).waitFor();
+  await page.getByTestId('skill-save').click();
+  await page.getByTestId('skill-dialog').waitFor({ state: 'hidden' });
+  const settingsSkill = page.getByTestId('skill-row').filter({ hasText: 'Library Sync Skill' });
+  await settingsSkill.waitFor();
+  await page.keyboard.press('Escape');
+  await page.goto(`${origin}/#/library`);
+  await page.getByTestId('system-folder').dblclick();
+  await page.getByTestId('system-skill-folder').filter({ has: page.locator('[title="/system/skills"]') }).dblclick();
+  await page.getByTestId('system-skill-folder').filter({ hasText: 'course-handout' }).waitFor();
+  await page.getByTestId('system-skill-folder').filter({ hasText: 'library-sync-skill-' }).dblclick();
+  const skillFile = page.getByTestId('skill-file').filter({ hasText: 'SKILL.md' });
+  const skillPath = await skillFile.getAttribute('data-system-file');
+  await skillFile.dblclick();
+  const skillReader = page.getByTestId('material-reader'), skillEdit = page.getByTestId('md-edit-toggle');
+  await skillReader.getByText('设置创建的技能正文', { exact: true }).waitFor();
+  await skillEdit.click();
+  const skillEditor = page.getByTestId('md-editor').locator('.cm-content');
+  await skillEditor.fill('---\nname: Library Sync Skill\ndescription: 资料库更新的描述\n---\n\n资料库更新的正文');
+  await skillEdit.click();
+  await skillEditor.waitFor({ state: 'hidden' });
+  await skillReader.getByText('资料库更新的正文', { exact: true }).waitFor();
+  await page.getByTestId('nav-back').click();
+  await page.getByTestId('system-skill-folder').filter({ hasText: 'references' }).dblclick();
+  await page.getByTestId('skill-file').filter({ hasText: 'guide.md' }).dblclick();
+  await skillReader.getByText('设置添加的参考文件', { exact: true }).waitFor();
+  await page.goto(`${origin}/#/settings/skills`);
+  await settingsSkill.getByText('资料库更新的描述', { exact: true }).waitFor();
+  await settingsSkill.getByTestId('skill-edit').click();
+  assert.equal(await page.getByTestId('skill-body').locator('textarea').inputValue(), '资料库更新的正文');
+  await page.getByTestId('skill-body').locator('textarea').fill('设置再次修改的正文');
+  await page.getByTestId('skill-save').click();
+  await page.getByTestId('skill-dialog').waitFor({ state: 'hidden' });
+  await page.keyboard.press('Escape');
+  await page.goto(`${origin}/#/library?file=${skillPath}`);
+  await skillReader.getByText('设置再次修改的正文', { exact: true }).waitFor();
+  // Builtins have the same editable file source and are not reset by opening Settings.
+  await page.goto(`${origin}/#/library?file=/system/skills/course-handout/SKILL.md`);
+  await skillReader.waitFor();
+  const builtinText = (await (await context.request.get(`${origin}/api/v1/system/file?path=/system/skills/course-handout/SKILL.md`)).json()).content;
+  await skillEdit.click();
+  await skillEditor.fill(`${builtinText}\n\n用户的内置技能修改`);
+  await skillEdit.click();
+  await skillEditor.waitFor({ state: 'hidden' });
+  await page.goto(`${origin}/#/settings/skills`);
+  await builtinRow.getByTestId('skill-edit').click();
+  assert.match(await page.getByTestId('skill-body').locator('textarea').inputValue(), /用户的内置技能修改/);
+  await page.getByTestId('skill-cancel').click();
+  await page.reload();
+  await builtinRow.getByTestId('skill-edit').click();
+  assert.match(await page.getByTestId('skill-body').locator('textarea').inputValue(), /用户的内置技能修改/);
+  console.log('Skill UI: settings create → actual library folders/references → library edit → settings update → builtin edit survives reload passed');
   assert.deepEqual(errors, []);
   console.log(`Screenshots: ${output}`);
 } catch (error) {

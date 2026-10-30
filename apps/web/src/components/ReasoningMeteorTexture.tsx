@@ -78,7 +78,9 @@ export default function ReasoningMeteorTexture({ intensity, active = true }: { i
         depth = targetDepth.current;
         paint();
       }
-      playback();
+      // Continuous dragging changes the target every pointer event. Keep an
+      // already-running frame loop instead of repeatedly cancelling its next frame.
+      if (targetDepth.current === 0 || !frame) playback();
     };
     syncDepth.current = updateDepth;
     const resize = () => {

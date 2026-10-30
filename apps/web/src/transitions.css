@@ -875,10 +875,14 @@ html.dark {
   --matrix-ease: ease-in-out;
 }
 .t-matrix {
+  /* 图标内部不套布局的 4px 网格：4 × 2px 点 + 3 × 2px 间距 = 14px。 */
   display: grid;
+  flex: none;
+  width: 14px;
+  height: 14px;
   grid-template-columns: repeat(4, 2px);
   grid-auto-rows: 2px;
-  gap: 4px;
+  gap: 2px;
 }
 .t-matrix i {
   display: block;

@@ -34,7 +34,7 @@ const systemRequest = <T>(path: string, init: RequestInit = {}) => request<T>(pa
 
 function remember(document: SystemDocument) {
   const previous = useSystemDocuments.getState().documents[document.path];
-  if (previous && (previous.revision > document.revision || previous.revision === document.revision && previous.status === 'stale' && document.status === 'active')) return previous;
+  if (previous && document.kind !== 'skill' && (previous.revision > document.revision || previous.revision === document.revision && previous.status === 'stale' && document.status === 'active')) return previous;
   if (previous && JSON.stringify(previous) === JSON.stringify(document)) return previous;
   useSystemDocuments.setState(state => ({ documents: { ...state.documents, [document.path]: document } }));
   return document;
@@ -42,7 +42,7 @@ function remember(document: SystemDocument) {
 
 export async function readSystemDocument(path: string): Promise<SystemDocument> {
   if (!cloud.enabled && path === AGENTS_PATH) return { path, name: 'AGENTS.md', content: useSettings.getState().agentInstructions, revision: 0, updatedAt: null };
-  if (path === AGENTS_PATH) await (await import('../cloud/sync')).flushCloud();
+  if (path === AGENTS_PATH || path.startsWith(`${SKILLS_PATH}/`)) await (await import('../cloud/sync')).flushCloud();
   return remember(await systemRequest<SystemDocument>(`/system/file?path=${encodeURIComponent(path)}`));
 }
 
@@ -52,6 +52,7 @@ export async function listSystemMemory(offset = 0, query = ''): Promise<SystemDi
 
 export async function listSystemDirectory(path: string, offset = 0, query = ''): Promise<SystemDirectory> {
   if (!cloud.enabled) return { files: [], nextOffset: null };
+  if (path === SKILLS_PATH || path.startsWith(`${SKILLS_PATH}/`)) await (await import('../cloud/sync')).flushCloud();
   return systemRequest<SystemDirectory>(`/system/files?path=${encodeURIComponent(path)}&offset=${offset}&query=${encodeURIComponent(query)}`);
 }
 

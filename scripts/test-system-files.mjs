@@ -42,7 +42,9 @@ try {
   fs.writeFileSync(path.join(skillRoot, 'demo', 'SKILL.md'), '---\nname: Demo Skill\ndescription: A test skill\n---\n\nUse the installed skill.');
   fs.writeFileSync(path.join(skillRoot, 'demo', '.wangke-skill.json'), JSON.stringify({ sourceUrl: 'https://example.invalid/demo.zip', version: '1.0.0' }));
   fs.writeFileSync(path.join(skillRoot, 'demo', 'references', 'guide.md'), '# Guide');
-  assert.deepEqual((await get('/system/files?path=/system/skills')).json().directories, ['/system/skills/demo']);
+  const skillDirectories = (await get('/system/files?path=/system/skills')).json().directories;
+  assert.ok(skillDirectories.includes('/system/skills/demo'));
+  assert.ok(skillDirectories.includes('/system/skills/course-handout'), 'builtins are real library folders too');
   assert.deepEqual((await get('/system/files?path=/system/skills/demo')).json().files.map(file => file.path), ['/system/skills/demo/SKILL.md']);
   const demoDocument = await read('/system/skills/demo/SKILL.md');
   assert.equal(demoDocument.content, '---\nname: Demo Skill\ndescription: A test skill\n---\n\nUse the installed skill.');

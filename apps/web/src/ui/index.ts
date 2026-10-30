@@ -60,6 +60,7 @@ export {
 export { Sym, type SymProps } from './icons';
 export { SYMBOL_NAMES, type SymbolName } from './icons';
 export { LoadingButton, type LoadingButtonProps } from './loading-button';
+export { PageLoader } from './page-loader';
 export {
   SkeletonReveal,
   useSkeletonGate,

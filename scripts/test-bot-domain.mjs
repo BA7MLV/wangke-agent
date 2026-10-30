@@ -14,7 +14,7 @@ import { receiveFile } from '../apps/api/src/cloud/files.ts';
 
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'bot-domain-'));
 const store = new DatabaseStore(path.join(root, 'db.sqlite'));
-const link = path.resolve('packages/study-core/assets/builtin/course-handout/references/review-probe.md');
+let link;
 try {
   const owner = 'domain-owner', other = 'domain-other', at = new Date().toISOString();
   for (const id of [owner, other]) store.db.prepare('INSERT INTO users VALUES(?,?,?)').run(id, id, at);
@@ -129,13 +129,14 @@ try {
   const skills = new BotSkills(store);
   assert.ok(skills.catalog(owner, thread.id).length >= 6, 'malformed one does not break catalog');
   assert.throws(() => skills.load(owner, thread.id, 99, 'references/probe.md'), /not_found/);
-  assert.equal(skills.load(owner, thread.id, 99).source, 'synced');
+  assert.equal(skills.load(owner, thread.id, 99).source, 'system');
   assert.equal(skills.load(owner, thread.id, 99, 'references/good.md').body, 'synced reference');
-  assert.equal(skills.load(owner, thread.id, -4, 'references/writing.md').source, 'builtin');
+  assert.equal(skills.load(owner, thread.id, -4, 'references/writing.md').source, 'system');
+  link = path.join(store.systemSkills.directory(owner), 'course-handout/references/review-probe.md');
   fs.symlinkSync(path.join(root, 'host', 'references', 'probe.md'), link);
-  assert.throws(() => skills.load(owner, thread.id, -4, 'references/review-probe.md'), /invalid_skill_reference/);
+  assert.throws(() => skills.load(owner, thread.id, -4, 'references/review-probe.md'), /not_available/, 'unsafe packages cannot enter the catalog');
   store.db.prepare("UPDATE threads SET skill_ids='[]' WHERE id=?").run(thread.id);
   assert.equal(skills.catalog(owner, thread.id).length, 0);
   assert.throws(() => skills.load(owner, thread.id, 99, 'references/good.md'), /not_available/);
   console.log('Bot domain: owned tool CRUD, zero-write invalid schemas, optimistic merge, source freshness and skill filesystem isolation passed');
-} finally { if (fs.existsSync(link) || fs.lstatSync(link, { throwIfNoEntry: false })) fs.unlinkSync(link); store.close(); fs.rmSync(root, { recursive: true, force: true }); }
+} finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }

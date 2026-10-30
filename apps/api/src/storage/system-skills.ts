@@ -137,7 +137,8 @@ export class SystemSkills {
     const metadata = this.sidecar(directory);
     const index = this.indexed(owner, slug, { ...metadata, version: metadata.version ?? frontmatterVersion(text) }, sha256, revision);
     const updatedAt = Math.max(stat.mtimeMs, fs.statSync(directory).mtimeMs);
-    return { id: skillId(owner, slug), slug, name: parsed.name || slug, description: parsed.description, body: parsed.body,
+    const binding = this.db.prepare('SELECT skill_id FROM system_skill_bindings WHERE owner_id=? AND slug=?').get(owner, slug) as { skill_id: number } | undefined;
+    return { id: binding?.skill_id ?? skillId(owner, slug), slug, name: parsed.name || slug, description: parsed.description, body: parsed.body,
       enabled: index.enabled, sha256, revision, version: index.version ?? undefined, sourceUrl: index.source_url ?? undefined,
       updatedAt: Number.isFinite(updatedAt) ? updatedAt : revision, ...(parsed.mcpRequired ? { mcpRequired: parsed.mcpRequired } : {}) };
   }
@@ -158,6 +159,7 @@ export class SystemSkills {
     const directory = this.package(owner, skill.slug);
     const root = fs.realpathSync(directory);
     const filename = path.resolve(directory, reference);
+    if (!fs.existsSync(filename)) throw new Error('skill_reference_not_found');
     const real = fs.realpathSync(filename);
     if (!real.startsWith(`${root}${path.sep}`)) throw new Error('invalid_skill_reference');
     const stat = fs.lstatSync(real);
@@ -252,7 +254,8 @@ export class SystemSkills {
       const stat = fs.lstatSync(base);
       if (!stat.isDirectory() || stat.isSymbolicLink()) throw new Error('invalid_system_path');
     }
-    const entries = fs.readdirSync(base).filter(name => !name.startsWith('.') && (!query || name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))).sort();
+    const packages = resource === SKILLS_PATH ? new Set(this.list(owner).map(skill => skill.slug)) : undefined;
+    const entries = fs.readdirSync(base).filter(name => !name.startsWith('.') && (!packages || packages.has(name)) && (!query || name.toLocaleLowerCase().includes(query.toLocaleLowerCase()))).sort();
     const page = entries.slice(offset, offset + 50);
     const files: Omit<SystemDocument, 'content'>[] = [];
     const directories: string[] = [];

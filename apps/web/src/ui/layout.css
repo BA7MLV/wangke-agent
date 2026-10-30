@@ -630,8 +630,9 @@
   }
 }
 
-/* ── 侧栏 Recent 行标题：长标题 hover 时横向滚动，并在两端渐进淡化。 ─────── */
+/* ── 侧栏 Recent 行标题：hover 即滚动，边缘以主题表面色渐进模糊。 ─────── */
 .recent-title {
+  --recent-edge-color: var(--surface);
   display: block;
   flex: 1 1 0%;
   min-width: 0;
@@ -655,20 +656,7 @@
 @media (hover: hover) and (pointer: fine) {
   .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true'],
   .recent-item:focus-within .recent-title[data-overflow='true'] {
-    -webkit-mask-image: linear-gradient(
-      to right,
-      transparent,
-      #000 14px,
-      #000 calc(100% - 14px),
-      transparent
-    );
-    mask-image: linear-gradient(
-      to right,
-      transparent,
-      #000 14px,
-      #000 calc(100% - 14px),
-      transparent
-    );
+    text-overflow: clip;
   }
 
   .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::before,
@@ -682,6 +670,7 @@
     width: 14px;
     content: '';
     pointer-events: none;
+    background: var(--recent-edge-color);
     -webkit-backdrop-filter: blur(4px);
     backdrop-filter: blur(4px);
   }
@@ -689,26 +678,31 @@
   .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::before,
   .recent-item:focus-within .recent-title[data-overflow='true']::before {
     left: 0;
+    -webkit-mask-image: linear-gradient(to right, #000, transparent);
+    mask-image: linear-gradient(to right, #000, transparent);
   }
 
   .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true']::after,
   .recent-item:focus-within .recent-title[data-overflow='true']::after {
     right: 0;
+    -webkit-mask-image: linear-gradient(to left, #000, transparent);
+    mask-image: linear-gradient(to left, #000, transparent);
   }
+}
 
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
   .recent-item:is(:hover, [data-hovered='true']) .recent-title[data-overflow='true'] > span,
   .recent-item:focus-within .recent-title[data-overflow='true'] > span {
-    animation: recent-title-marquee var(--recent-duration, 5s) var(--ease-in-out, ease-in-out) infinite alternate;
+    animation: recent-title-marquee var(--recent-duration, 5s) var(--ease-linear, linear) infinite alternate;
   }
 }
 
 @keyframes recent-title-marquee {
-  0%,
-  18% {
+  0% {
     transform: translateX(0);
   }
 
-  82%,
+  94%,
   100% {
     transform: translateX(var(--recent-shift, 0px));
   }

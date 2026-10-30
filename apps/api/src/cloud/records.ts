@@ -37,6 +37,7 @@ export class CloudRecords {
   ownedFile(owner: string, id: string) { return !!this.store.db.prepare('SELECT 1 FROM files WHERE id=? AND owner_id=?').get(id, owner); }
 
   get(owner: string, table: string, key: string | number): Record<string, any> | null {
+    if ((table === 'skills' || table === 'skillRefs') && !this.store.db.inTransaction) this.store.skillRecords.sync(owner);
     const row = this.store.db.prepare('SELECT value FROM cloud_records WHERE owner_id=? AND table_name=? AND record_key=?')
       .get(owner, table, JSON.stringify(key)) as { value: string | null } | undefined;
     return row?.value ? JSON.parse(row.value) : null;
@@ -44,15 +45,19 @@ export class CloudRecords {
 
   list(owner: string, after: number, limit = 200): CloudRecord[] {
     this.agentInstructions(owner);
+    this.store.skillRecords.sync(owner);
     const rows = this.store.db.prepare('SELECT revision,table_name,record_key,value FROM cloud_records WHERE owner_id=? AND revision>? ORDER BY revision LIMIT ?')
       .all(owner, after, limit) as Array<{ revision: number; table_name: string; record_key: string; value: string | null }>;
     return rows.map(r => ({ revision: r.revision, table: r.table_name, key: JSON.parse(r.record_key), value: r.value ? JSON.parse(r.value) : null }));
   }
 
   apply(owner: string, mutations: CloudMutation[], validate?: (table: string, key: string | number, current: Record<string, unknown> | null, value: Record<string, unknown> | null) => void) {
+    const skills = mutations.some(op => op?.table === 'skills' || op?.table === 'skillRefs');
+    if (skills) this.store.skillRecords.sync(owner);
     const instructions = mutations.some(op => op?.table === 'preferences' && op.key === 'agentInstructions');
     if (instructions && !this.indexingInstructions) this.agentInstructions(owner);
     const result = this.store.transaction(() => {
+      const skillBefore = skills ? this.store.skillRecords.snapshot(owner) : undefined;
       const nameBefore = this.get(owner, 'preferences', 'userName')?.value;
       const instructionBefore = instructions ? this.get(owner, 'preferences', 'agentInstructions')?.value ?? '' : '';
       const deletedHere = new Set<string>();
@@ -114,6 +119,7 @@ export class CloudRecords {
         this.store.db.prepare('INSERT INTO cloud_operations(owner_id,id) VALUES(?,?)').run(owner, op.id);
       }
       if (instructions && !this.indexingInstructions) this.store.systemFiles.write(owner, AGENTS_PATH, this.get(owner, 'preferences', 'agentInstructions')?.value ?? '', instructionBefore);
+      if (skillBefore) this.store.skillRecords.writeChanges(owner, skillBefore);
       const nameAfter = this.get(owner, 'preferences', 'userName')?.value;
       if (nameAfter !== nameBefore) {
         const name = typeof nameAfter === 'string' ? nameAfter.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 40) : '';

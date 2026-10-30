@@ -5,13 +5,14 @@
   --reasoning-track-size: 36px;
   --reasoning-rail-inset: 10px;
   --reasoning-ring: color-mix(in oklch, var(--accent) 28%, transparent);
-  --reasoning-rest: color-mix(in oklch, var(--accent) 10%, var(--surface));
+  --reasoning-rest: color-mix(in oklab, var(--accent) 10%, var(--surface));
   --reasoning-ink: color-mix(in oklch, var(--accent) 80%, var(--foreground));
   --reasoning-streak: color-mix(in srgb, var(--accent) 18%, white);
   display: flex;
   flex-direction: column;
   flex: none;
   width: 280px;
+  max-width: 100%;
   min-width: 0;
   gap: 8px;
   padding-block: 4px;
@@ -40,10 +41,19 @@
   background: var(--reasoning-rest);
   pointer-events: none;
 }
+/* Clip only the painted rail, not the larger thumb or its keyboard focus ring. */
+.reasoning-slider__rail-clip {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  border-radius: inherit;
+  corner-shape: round;
+}
 .reasoning-slider__fill {
   position: absolute;
   inset-block: 0;
   left: 0;
+  max-width: 100%;
   border-radius: inherit;
   corner-shape: round;
   background: linear-gradient(105deg, color-mix(in oklch, var(--accent) 92%, white), var(--accent));
@@ -74,6 +84,27 @@
   transition: opacity var(--duration-quick) var(--ease-in-out);
 }
 .reasoning-slider__tick[data-filled='1'] { background: var(--accent-foreground); opacity: 0.65; }
+.reasoning-slider__thumb {
+  position: absolute;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  box-sizing: border-box;
+  width: var(--reasoning-thumb-size);
+  height: var(--reasoning-thumb-size);
+  border: 2px solid color-mix(in oklch, var(--accent) 12%, var(--border));
+  border-radius: 50%;
+  corner-shape: round;
+  background: #fff;
+  box-shadow: 0 2px 5px rgb(0 0 0 / 0.09);
+  pointer-events: none;
+  transition: left var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out);
+}
+/* No easing while held: thumb, fill and light-flow mask track the pointer together.
+   The same short transition on release gently attracts them to the nearest stop. */
+.reasoning-slider[data-dragging='true'] :is(.reasoning-slider__thumb, .reasoning-slider__fill, .reasoning-slider__meteors) { transition: none; }
+.reasoning-slider__control:has(.reasoning-slider__input:enabled:hover) .reasoning-slider__thumb { box-shadow: 0 3px 8px rgb(0 0 0 / 0.14); }
+.reasoning-slider[data-dragging='true'] .reasoning-slider__thumb { box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
+.reasoning-slider__control:has(.reasoning-slider__input:focus-visible) .reasoning-slider__thumb { outline: 2px solid var(--reasoning-ink); outline-offset: 3px; }
 
 .reasoning-slider__input {
   -webkit-appearance: none;
@@ -89,6 +120,7 @@
   background: transparent;
   outline: none;
   cursor: pointer;
+  touch-action: pan-y;
 }
 .reasoning-slider__input:disabled { cursor: not-allowed; }
 .reasoning-slider__input::-webkit-slider-runnable-track { height: var(--reasoning-track-size); background: transparent; }
@@ -99,32 +131,21 @@
   width: var(--reasoning-thumb-size);
   height: var(--reasoning-thumb-size);
   margin-top: calc((var(--reasoning-track-size) - var(--reasoning-thumb-size)) / 2);
-  border: 2px solid color-mix(in oklch, var(--accent) 12%, var(--border));
+  border: 0;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 5px rgb(0 0 0 / 0.09);
-  transition: box-shadow var(--duration-quick) var(--ease-smooth-out);
+  background: transparent;
 }
-.reasoning-slider__input:enabled:hover::-webkit-slider-thumb { box-shadow: 0 3px 8px rgb(0 0 0 / 0.14); }
-.reasoning-slider__input:enabled:active::-webkit-slider-thumb { box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
-.reasoning-slider__input:focus-visible::-webkit-slider-thumb { outline: 2px solid var(--reasoning-ink); outline-offset: 3px; }
 .reasoning-slider__input::-moz-range-track { height: var(--reasoning-track-size); background: transparent; border: 0; }
+.reasoning-slider__input::-moz-range-progress { background: transparent; }
 .reasoning-slider__input::-moz-range-thumb {
   box-sizing: border-box;
   width: var(--reasoning-thumb-size);
   height: var(--reasoning-thumb-size);
-  border: 2px solid color-mix(in oklch, var(--accent) 12%, var(--border));
+  border: 0;
   border-radius: 50%;
-  background: #fff;
-  box-shadow: 0 2px 5px rgb(0 0 0 / 0.09);
-  transition: box-shadow var(--duration-quick) var(--ease-smooth-out);
+  background: transparent;
 }
-.reasoning-slider__input:enabled:hover::-moz-range-thumb { box-shadow: 0 3px 8px rgb(0 0 0 / 0.14); }
-.reasoning-slider__input:enabled:active::-moz-range-thumb { box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
-.reasoning-slider__input:focus-visible::-moz-range-thumb { outline: 2px solid var(--reasoning-ink); outline-offset: 3px; }
 
 @media (prefers-reduced-motion: reduce) {
-  .reasoning-slider__fill, .reasoning-slider__tick, .reasoning-slider__meteors { transition: none; }
-  .reasoning-slider__input::-webkit-slider-thumb { transition: none; }
-  .reasoning-slider__input::-moz-range-thumb { transition: none; }
+  .reasoning-slider__fill, .reasoning-slider__tick, .reasoning-slider__meteors, .reasoning-slider__thumb { transition: none; }
 }

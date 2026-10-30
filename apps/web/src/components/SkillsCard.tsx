@@ -5,6 +5,7 @@ import { db, type SkillRow, type SkillRefRow } from '../store/db';
 import { ensureBuiltinSkills, importSkillFile } from '../skills/store';
 import { BUILTIN_SKILLS, LEGACY_HANDOUT_SKILLS } from '../skills/builtin';
 import { isLegacyHandoutSkill } from '../skills/catalog';
+import { liveQuery } from 'dexie';
 
 interface Draft {
   mcpRequired?: string[];
@@ -69,8 +70,18 @@ export default function SkillsCard() {
   }, []);
 
   useEffect(() => {
-    void reload();
-  }, [reload]);
+    void ensureBuiltinSkills().catch(() => toast.error('读取技能失败，请重试'));
+    const subscription = liveQuery(() => Promise.all([db.skills.orderBy('id').toArray(), db.skillRefs.toArray()])).subscribe({
+      next: ([rows, refs]) => {
+        setSkills(rows);
+        const counts: Record<number, number> = {};
+        for (const ref of refs) counts[ref.skillId] = (counts[ref.skillId] ?? 0) + 1;
+        setRefCounts(counts);
+      },
+      error: () => toast.error('读取技能失败，请重试'),
+    });
+    return () => subscription.unsubscribe();
+  }, []);
 
   const toggle = async (skill: SkillRow, enabled: boolean) => {
     await db.skills.update(skill.id!, { enabled: enabled ? 1 : 0 });
