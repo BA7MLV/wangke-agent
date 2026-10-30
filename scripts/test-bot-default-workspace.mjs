@@ -120,15 +120,15 @@ try {
   assert.equal(projects.authorize(other, otherBot, newAgent, 'manage').id, otherBot);
   assert.equal(projects.get(other, existingBotName.id).grants.length, 0);
   projects.grant(owner, root, agent, null);
-  assert.throws(() => execute('workspace', { action: 'list', projectId: root, path: '' }), /project_access_denied/);
-  assert.ok(!execute('projects', { action: 'list' }).some(p => p.id === root), 'listing never restores a revoked root grant');
+  assert.doesNotThrow(() => execute('workspace', { action: 'list', projectId: root, path: '' }));
+  assert.ok(execute('projects', { action: 'list' }).some(p => p.id === root), 'Bot lists every owner project without per-project grants');
   projects.update(owner, bot, { name: 'Bot 工作文件' });
   assert.equal(projects.botWorkspace(owner), bot);
   assert.equal(execute('workspace', { action: 'read', path: 'input.txt' }).text, 'Bot input');
   projects.grant(owner, bot, agent, 'read');
-  assert.throws(() => execute('projects', { action: 'create', name: 'forbidden' }), /project_access_denied/);
+  assert.doesNotThrow(() => execute('projects', { action: 'create', name: 'available-with-read-grant' }));
   projects.grant(owner, bot, agent, null);
-  assert.throws(() => execute('workspace', { action: 'list', path: '' }), /project_access_denied/);
+  assert.doesNotThrow(() => execute('workspace', { action: 'list', path: '' }));
   assert.equal(projects.get(owner, bot).grants.length, 0, 'default resolution never restores revoked grants');
   projects.grant(owner, bot, agent, 'manage');
 
@@ -143,7 +143,7 @@ try {
   const scoped = crypto.randomUUID();
   store.db.prepare("INSERT INTO threads(id,owner_id,project_id,agent_id,mode,created_at,updated_at) VALUES(?,?,?,?,'bot',?,?)").run(scoped, owner, bot, agent, at, at);
   const scopedContext = projects.thread(scoped);
-  assert.throws(() => execute('workspace', { action: 'list', projectId: root, path: '' }, scopedContext), /project_access_denied/, 'explicit folder conversations stay scoped');
+  assert.doesNotThrow(() => execute('workspace', { action: 'list', projectId: root, path: '' }, scopedContext), 'Bot project conversations can access the owner resource library');
   const runs = [thread.id, legacy.id, scoped].map(id => {
     const message = service.send(owner, id, { clientNonce: crypto.randomUUID(), content: 'run shell' });
     return store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(message.id).id;

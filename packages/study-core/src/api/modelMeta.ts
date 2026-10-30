@@ -1,7 +1,7 @@
 /**
  * models.dev 提供供应商目录和模型能力；它不决定用户实际可用的连接凭据或
  * `/models` 返回的可用模型列表。
- * 保留供应商作用域以避免串用；未指定供应商时仅自动采用全目录唯一的精确 ID。
+ * 优先使用当前供应商的精确条目；第三方连接缺失条目时自动匹配常用模型的官方目录。
  * 未知模型默认文本输入/输出、开启工具调用（与 OpenChamber 接入行为一致）。
  */
 
@@ -251,23 +251,64 @@ export interface ModelMetaMatch {
 
 let indexedModels: MetaCache['models'] | undefined;
 let byModelId = new Map<string, ModelMetaMatch['candidates']>();
+let byNormalizedModelId = new Map<string, ModelMetaMatch['candidates']>();
 
-/** 不归一化或模糊猜测模型名；多供应商同名条目必须由用户确认来源。 */
+/** 只认已知模型家族及其官方命名空间，不删除版本、日期或服务商自定义后缀。 */
+const OFFICIAL_MODEL_FAMILIES = [
+  { model: /^(?:gpt-|chatgpt-|o\d+(?:-|$)|whisper-|text-embedding-|tts-|dall-e-|sora-)/, catalogs: ['openai'], namespaces: ['openai'] },
+  { model: /^claude-/, catalogs: ['anthropic'], namespaces: ['anthropic'] },
+  { model: /^(?:gemini-|gemma(?:-|\d))/, catalogs: ['google'], namespaces: ['google', 'models'] },
+  { model: /^deepseek(?:-|$)/, catalogs: ['deepseek'], namespaces: ['deepseek', 'deepseek-ai'] },
+  { model: /^(?:qwen(?:[\d.-]|$)|qwq-|qvq-)/, catalogs: ['alibaba', 'alibaba-cn'], namespaces: ['qwen', 'alibaba'] },
+  { model: /^(?:kimi-|moonshot-)/, catalogs: ['moonshotai', 'moonshotai-cn'], namespaces: ['moonshotai', 'moonshot'] },
+  { model: /^(?:glm-|chatglm-)/, catalogs: ['zhipuai', 'zai'], namespaces: ['z-ai', 'zai', 'zhipuai', 'thudm'] },
+  { model: /^(?:minimax-|abab)/, catalogs: ['minimax', 'minimax-cn'], namespaces: ['minimax', 'minimaxai'] },
+  { model: /^grok-/, catalogs: ['xai'], namespaces: ['xai', 'x-ai'] },
+  { model: /^(?:mistral|ministral|magistral|codestral|devstral|pixtral|voxtral|mathstral|mixtral|open-mistral|open-mixtral)(?:-|$)/, catalogs: ['mistral'], namespaces: ['mistral', 'mistralai'] },
+  { model: /^(?:command(?:-|$)|embed-|rerank-)/, catalogs: ['cohere'], namespaces: ['cohere'] },
+  { model: /^(?:step-|stepaudio-)/, catalogs: ['stepfun'], namespaces: ['stepfun', 'stepfun-ai'] },
+] as const;
+
+function officialModelCandidate(modelId: string): ModelMetaMatch['candidates'][number] | undefined {
+  const normalized = modelId.toLowerCase();
+  const slash = normalized.indexOf('/');
+  const namespace = slash < 0 ? '' : normalized.slice(0, slash);
+  const bareId = slash < 0 ? normalized : normalized.slice(slash + 1);
+  for (const family of OFFICIAL_MODEL_FAMILIES) {
+    if (!family.model.test(bareId) || (namespace && !family.namespaces.some((value) => value === namespace))) continue;
+    // Claude 的部分兼容接口用 4.6，官方目录用 4-6；仅归一化这一已知版本写法。
+    const officialId = family.catalogs[0] === 'anthropic' ? bareId.replace(/(\d)\.(?=\d)/g, '$1-') : bareId;
+    const candidates = byNormalizedModelId.get(officialId) ?? [];
+    for (const catalog of family.catalogs) {
+      const candidate = candidates.find((entry) => entry.catalogId === catalog);
+      if (candidate) return candidate;
+    }
+  }
+}
+
+/** 当前连接的精确声明优先，其次官方家族匹配，最后采用全目录唯一的精确 ID。 */
 export function matchModelMeta(catalogId: string, modelId: string): ModelMetaMatch {
   const models = load()?.models;
   if (models !== indexedModels) {
     indexedModels = models;
     byModelId = new Map();
+    byNormalizedModelId = new Map();
     for (const [key, meta] of Object.entries(models ?? {})) {
       const [catalog, id] = key.split('\0');
       if (!id) continue;
       const entries = byModelId.get(id) ?? [];
       entries.push({ catalogId: catalog, modelId: id, meta });
       byModelId.set(id, entries);
+      const normalized = id.toLowerCase();
+      const normalizedEntries = byNormalizedModelId.get(normalized) ?? [];
+      normalizedEntries.push({ catalogId: catalog, modelId: id, meta });
+      byNormalizedModelId.set(normalized, normalizedEntries);
     }
   }
   const scoped = catalogId ? models?.[metaKey(catalogId, modelId)] : undefined;
   if (scoped) return { status: 'exact', candidates: [{ catalogId, modelId, meta: scoped }] };
+  const official = officialModelCandidate(modelId);
+  if (official) return { status: 'exact', candidates: [official] };
   const candidates = byModelId.get(modelId) ?? [];
   return { status: candidates.length === 1 ? 'exact' : candidates.length ? 'ambiguous' : 'none', candidates };
 }

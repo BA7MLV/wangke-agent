@@ -63,7 +63,9 @@ export class IlinkPlugin implements ChannelPlugin {
     loginPublicFields: ['status', 'qrcode', 'qrDataUrl', 'redirectHost'],
     loginConfigFields: ['botToken', 'botId', 'baseUrl'],
     management: ['configure', 'pair', 'revoke', 'login', 'retry', 'discard', 'remove'],
-    capabilities: { direct: true, groups: false, images: true, files: true, proactive: 'context-dependent', deduplicationWindowMs: 0 },
+    // ClawBot/iLink renders Markdown text, including fenced code blocks. It
+    // does not expose an edit/stream transport, so replies are sent whole.
+    capabilities: { direct: true, groups: false, images: true, files: true, markdown: true, streaming: false, maxMessageLength: 1500, proactive: 'context-dependent', deduplicationWindowMs: 0 },
   };
   private expired = false;
   private readonly runtime: IlinkRuntime;

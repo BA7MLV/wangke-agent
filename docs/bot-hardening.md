@@ -186,8 +186,12 @@ as a **new** revision. Optimistic revision checks prevent lost updates. Deletion
 clears active content and retains a tombstone plus audit history, not secure
 erasure of historical versions. Automatic consolidation is **off by default**.
 When enabled, configure its frequency and token budget; it reads completed
-checkpoints and may write learning preferences only. Cursor and all writes
-commit together. Source lineage uses the originating message/run, so another
+checkpoints and saves explicit learning preferences directly without per-item
+approval, even with read/write `ask` policies. Owner-system reads/creates/edits
+are autonomous; deletion still needs one-shot approval even for trusted Bots.
+Memory writes and the cursor commit atomically. Source changes, cancellation,
+disabled jobs and explicit current permission denials prevent late publication.
+The completed source run is never requeued. Source lineage uses the originating message/run, so another
 checkpoint of that same old source cannot resurrect deleted memory. Explicit
 user save/restore remains possible. Disable aborts an active job and prevents
 late publication. Consolidation also consumes the owner and source-run budgets.

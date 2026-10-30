@@ -7,7 +7,7 @@ export interface GatewayManifest {
   /** Login result fields persisted as encrypted config, never public by default. */
   loginConfigFields?: string[];
   management?: Array<'configure' | 'pair' | 'revoke' | 'login' | 'retry' | 'discard' | 'remove'>;
-  capabilities: { direct: true; groups: false; images: boolean; files: boolean; proactive: 'yes' | 'context-dependent'; deduplicationWindowMs: number };
+  capabilities: { direct: true; groups: false; images: boolean; files: boolean; markdown?: boolean; streaming?: boolean; maxMessageLength?: number; proactive: 'yes' | 'context-dependent'; deduplicationWindowMs: number };
 }
 export interface GatewayEnvelope {
   messageId: string; tenant: string; peer: string; chat: string; topic: string;

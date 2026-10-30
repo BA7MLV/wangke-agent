@@ -7,7 +7,7 @@
   --reasoning-ring: color-mix(in oklch, var(--accent) 28%, transparent);
   --reasoning-rest: color-mix(in oklab, var(--accent) 10%, var(--surface));
   --reasoning-ink: color-mix(in oklch, var(--accent) 80%, var(--foreground));
-  --reasoning-streak: color-mix(in srgb, var(--accent) 18%, white);
+  --reasoning-texture-ink: color-mix(in srgb, var(--accent) 58%, #10121b);
   display: flex;
   flex-direction: column;
   flex: none;
@@ -56,20 +56,20 @@
   max-width: 100%;
   border-radius: inherit;
   corner-shape: round;
-  background: linear-gradient(105deg, color-mix(in oklch, var(--accent) 92%, white), var(--accent));
-  transition: width var(--duration-quick) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-in-out);
+  background-color: var(--accent);
+  background-image: linear-gradient(105deg, rgb(255 255 255 / 0.07), transparent);
+  transition: width var(--duration-quick) var(--ease-smooth-out), background-color var(--duration-quick) var(--ease-in-out);
 }
-.reasoning-slider__meteors {
+.reasoning-slider__texture {
   position: absolute;
   inset: 0;
   overflow: hidden;
   border-radius: inherit;
   corner-shape: round;
   pointer-events: none;
-  mask-image: linear-gradient(transparent, #000 15%, #000 85%, transparent);
   transition: clip-path var(--duration-quick) var(--ease-smooth-out), opacity var(--duration-quick) var(--ease-in-out);
 }
-.reasoning-slider__meteor-canvas { display: block; width: 100%; height: 100%; color: var(--reasoning-streak); pointer-events: none; }
+.reasoning-slider__texture-canvas { display: block; width: 100%; height: 100%; color: var(--reasoning-texture-ink); pointer-events: none; }
 .reasoning-slider__ticks { position: absolute; inset: 0; pointer-events: none; }
 .reasoning-slider__tick {
   position: absolute;
@@ -95,15 +95,15 @@
   border-radius: 50%;
   corner-shape: round;
   background: #fff;
-  box-shadow: 0 2px 5px rgb(0 0 0 / 0.09);
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.06);
   pointer-events: none;
   transition: left var(--duration-quick) var(--ease-smooth-out), box-shadow var(--duration-quick) var(--ease-smooth-out);
 }
-/* No easing while held: thumb, fill and light-flow mask track the pointer together.
+/* No easing while held: thumb, fill and texture mask track the pointer together.
    The same short transition on release gently attracts them to the nearest stop. */
-.reasoning-slider[data-dragging='true'] :is(.reasoning-slider__thumb, .reasoning-slider__fill, .reasoning-slider__meteors) { transition: none; }
-.reasoning-slider__control:has(.reasoning-slider__input:enabled:hover) .reasoning-slider__thumb { box-shadow: 0 3px 8px rgb(0 0 0 / 0.14); }
-.reasoning-slider[data-dragging='true'] .reasoning-slider__thumb { box-shadow: 0 1px 3px rgb(0 0 0 / 0.12); }
+.reasoning-slider[data-dragging='true'] :is(.reasoning-slider__thumb, .reasoning-slider__fill, .reasoning-slider__texture) { transition: none; }
+.reasoning-slider__control:has(.reasoning-slider__input:enabled:hover) .reasoning-slider__thumb { box-shadow: 0 1px 3px rgb(0 0 0 / 0.09); }
+.reasoning-slider[data-dragging='true'] .reasoning-slider__thumb { box-shadow: 0 1px 2px rgb(0 0 0 / 0.06); }
 .reasoning-slider__control:has(.reasoning-slider__input:focus-visible) .reasoning-slider__thumb { outline: 2px solid var(--reasoning-ink); outline-offset: 3px; }
 
 .reasoning-slider__input {
@@ -147,5 +147,5 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .reasoning-slider__fill, .reasoning-slider__tick, .reasoning-slider__meteors, .reasoning-slider__thumb { transition: none; }
+  .reasoning-slider__fill, .reasoning-slider__tick, .reasoning-slider__texture, .reasoning-slider__thumb { transition: none; }
 }

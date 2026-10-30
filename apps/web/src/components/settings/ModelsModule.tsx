@@ -871,6 +871,8 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
 
   useEffect(() => {
     if (!focusIssue) return;
+    // 默认模型只在总览显示；从供应商详情定位错误时先返回总览。
+    setSelectedProviderId(null);
     const frame = requestAnimationFrame(() => {
       const element = document.querySelector(`[data-model-field="${issues[0]?.path}"]`);
       element?.scrollIntoView({ block: 'center' });
@@ -1210,6 +1212,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         </div>
         {metaError && <p role="alert" className="mt-1 text-xs text-pretty text-danger">{metaError}</p>}
       </SectionCard>
+      {!selectedProvider && !draftProvider && <>
       <SectionCard
         title="选择模型"
         testId="card-models"
@@ -1233,7 +1236,6 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         </div>
        </SectionCard>
 
-       {!selectedProvider && !draftProvider && <>
        <SectionCard
         title="运行参数"
         testId="card-tuning"

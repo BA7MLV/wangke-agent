@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import { THINKING_LEVELS } from '../api/modelCaps';
 import type { ThinkingLevel } from '../api/siliconflow';
-import ReasoningMeteorTexture from './ReasoningMeteorTexture';
-import { meteorProfile } from './reasoning-meteors';
+import ReasoningTexture from './ReasoningTexture';
+import { textureProfile } from './reasoning-texture';
 import './reasoning-effort-slider.css';
 
 interface Props {
@@ -47,6 +47,7 @@ export default function ReasoningEffortSlider({ value, onChange, disabled, fluid
   const visualIndex = clampIndex(draft ?? index);
   const nearestIndex = Math.round(visualIndex);
   const depth = visualIndex / max;
+  const profile = textureProfile(depth);
   const remaining = depth === 0 ? '100%' : depth === 1 ? '0%' : position(max - visualIndex);
   const cancelDrag = useCallback(() => {
     pointerId.current = null;
@@ -104,10 +105,10 @@ export default function ReasoningEffortSlider({ value, onChange, disabled, fluid
           <div className="reasoning-slider__rail-clip">
             <div
               className="reasoning-slider__fill"
-              style={{ width: depth === 0 ? '0%' : depth === 1 ? '100%' : position(visualIndex), opacity: 0.65 + depth * 0.35 }}
+              style={{ width: depth === 0 ? '0%' : depth === 1 ? '100%' : position(visualIndex), backgroundColor: profile.fillColor }}
             />
-            <div className="reasoning-slider__meteors" style={{ clipPath: `inset(0 ${remaining} 0 0 round 999px)`, opacity: meteorProfile(depth).opacity }}>
-              <ReasoningMeteorTexture intensity={depth} active={!disabled} />
+            <div className="reasoning-slider__texture" style={{ clipPath: `inset(0 ${remaining} 0 0 round 999px)`, opacity: profile.opacity }}>
+              <ReasoningTexture intensity={depth} active={!disabled} />
             </div>
             <div className="reasoning-slider__ticks">
               {THINKING_LEVELS.map((s, i) => (

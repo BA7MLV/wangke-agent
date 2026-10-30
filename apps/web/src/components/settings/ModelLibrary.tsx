@@ -4,7 +4,7 @@ import { catalogOf, SLOT_LABEL, type ModelSlot, type SavedModel } from '../../st
 import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
 import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { Collapse } from '../motion';
-import { getModelMeta, matchModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
+import { getModelMeta, MODEL_OVERRIDE_FIELDS } from '../../api/modelMeta';
 import type { DiscoveredModel } from '../../api/modelDiscoveryData';
 import { ModelMetadataDetails } from '../ModelCapabilities';
 import { useModelMetaRevision } from '../../utils/useModelMeta';
@@ -58,8 +58,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
     setEditor({ ...editor, draft: { ...editor.draft, [field]: on ? [...new Set([...current, value])] : current.filter((x) => x !== value) } });
   };
 
-  const catalogMeta = editor ? getModelMeta(editor.draft.metadataCatalogId ?? catalogId, editor.draft.model) : null;
-  const match = editor ? matchModelMeta(catalogId, editor.draft.model) : null;
+  const catalogMeta = editor ? getModelMeta(catalogId, editor.draft.model, { metadataCatalogId: editor.draft.metadataCatalogId }) : null;
   const selectedSlots = (editor && !editor.original && !editor.slotsEdited
     ? suggestedModelSlots(catalogId, editor.draft.model, editor.draft)
     : editor?.draft.slots ?? []).filter((slot) => allowDecision || slot !== 'decision');
@@ -91,12 +90,6 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
           <Field label="上下文窗口"><Input type="number" min={1} aria-label="上下文窗口" placeholder={catalogMeta?.declaredContext?.toString() ?? '未提供'} value={editor.draft.contextWindowText} onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, contextWindowText: e.target.value } })} /></Field>
           <Field label="最大输出令牌数"><Input type="number" min={selectedSlots.includes('decision') ? 0 : 1} aria-label="最大输出令牌数" placeholder={catalogMeta?.declaredOutput?.toString() ?? '未提供'} value={editor.draft.maxOutputTokensText} onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, maxOutputTokensText: e.target.value } })} /></Field>
         </div>
-        {match?.status === 'ambiguous' && <Field label="确认能力来源" hint="同名模型可能有不同的服务能力。仅改变能力来源，不改变请求地址或模型 ID。">
-          <Select aria-label="模型能力来源" placeholder="请选择目录供应商（可选）" selectedKey={editor.draft.metadataCatalogId ?? null} onSelectionChange={(key) => setEditor({ ...editor, draft: { ...editor.draft, metadataCatalogId: key ? String(key) : undefined } })}>
-            <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
-            <Select.Popover><ListBox>{match.candidates.map((candidate) => <ListBox.Item key={candidate.catalogId} id={candidate.catalogId} textValue={candidate.catalogId}>{candidate.catalogId}</ListBox.Item>)}</ListBox></Select.Popover>
-          </Select>
-        </Field>}
         <Checkbox aria-label="自定义推理等级" isSelected={editor.draft.reasoningEffort !== undefined} onChange={(on) => setEditor({ ...editor, draft: { ...editor.draft, reasoningEffort: on ? catalogMeta?.thinking?.effort?.join(', ') ?? '' : undefined } })}><Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>自定义推理等级</Checkbox.Content></Checkbox>
         {editor.draft.reasoningEffort !== undefined && <Field label="推理等级" hint="填写该接口接受的 reasoning_effort 档位，用英文逗号分隔；留空表示不支持推理。"><Input aria-label="推理等级" placeholder="low, medium, high" value={editor.draft.reasoningEffort} onChange={(e) => setEditor({ ...editor, draft: { ...editor.draft, reasoningEffort: e.target.value } })} /></Field>}
         {(['inputCapabilities', 'outputCapabilities'] as const).map((field) => <Field key={field} label={field === 'inputCapabilities' ? '输入能力' : '输出能力'}>

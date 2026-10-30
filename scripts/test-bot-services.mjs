@@ -144,13 +144,70 @@ try {
   store.db.prepare('INSERT INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds) VALUES(?,1,10000,60)').run(owner);
   const cursor = () => store.db.prepare('SELECT cursor FROM bot_memory_jobs WHERE owner_id=?').get(owner).cursor;
   const worker = new MemoryWorker(store, configuration, async () => Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'consolidate_memory', arguments: '{"preferences":["Worker preference"]}' } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
-  await worker.tick(); assert.ok(cursor()); assert.ok(memory.list(owner).some(m => m.content === 'Worker preference')); await worker.close();
+  configuration.save(owner, { ...configuration.get(owner, true), policy: { ...configuration.get(owner).policy, read: 'allow', write: 'allow' } });
+  configuration.save(owner, { ...configuration.get(owner, true), policy: { ...configuration.get(owner).policy, read: 'ask', write: 'ask' } });
+  const approvalCount = store.db.prepare('SELECT COUNT(*) n FROM approvals').get().n;
+  await worker.tick(); assert.ok(cursor()); assert.ok(memory.list(owner).some(m => m.content === 'Worker preference'));
+  assert.equal(store.db.prepare('SELECT COUNT(*) n FROM approvals').get().n, approvalCount, 'opt-in consolidation writes without approval, even with ask policies');
+  assert.equal(store.db.prepare("SELECT 1 FROM cloud_permissions WHERE json_extract(arguments,'$.tool')='consolidate_memory'").get(), undefined);
+  store.db.prepare('INSERT INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds) VALUES(?,1,10000,60)').run(other);
+  await worker.tick();
+  assert.ok(store.db.prepare('SELECT next_at FROM bot_memory_jobs WHERE owner_id=?').get(other).next_at > 0, 'consolidation does not starve another owner');
+  store.db.prepare('UPDATE bot_memory_jobs SET enabled=0 WHERE owner_id=?').run(other);
+  assert.equal(store.db.prepare('SELECT status FROM runs WHERE id=?').get(run).status, 'completed', 'background writes do not replay their completed source run');
+  await worker.close();
+  const restartedWorker = new MemoryWorker(store, configuration, async () => { throw new Error('committed cursor must survive restart'); });
+  store.db.prepare('UPDATE bot_memory_jobs SET next_at=0 WHERE owner_id=?').run(owner);
+  await restartedWorker.tick(); assert.ok(cursor()); assert.ok(memory.list(owner).some(m => m.content === 'Worker preference'));
+  await restartedWorker.close();
+  store.db.prepare('UPDATE bot_memory_jobs SET cursor=NULL,next_at=0 WHERE owner_id=?').run(owner);
+  const committedCount = memory.list(owner).length;
+  const replayWorker = new MemoryWorker(store, configuration, async () => Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'consolidate_memory', arguments: '{"preferences":["Worker preference"]}' } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
+  await replayWorker.tick(); await replayWorker.close();
+  assert.equal(memory.list(owner).length, committedCount, 'reprocessing the same source does not duplicate memories');
+  const resetJob = () => {
+    store.db.prepare('UPDATE bot_memory_jobs SET cursor=NULL,next_at=0,enabled=1 WHERE owner_id=?').run(owner);
+  };
+  resetJob();
+  const atomicWorker = new MemoryWorker(store, configuration, async () => Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'consolidate_memory', arguments: '{"preferences":["First atomic preference","Second atomic preference"]}' } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
+  const atomicCount = memory.list(owner).length;
+  const write = store.systemFiles.write;
+  store.systemFiles.write = function (owner, resource, content, expected) { if (content === 'Second atomic preference') throw new Error('simulated_memory_write'); return write.call(this, owner, resource, content, expected); };
+  try { await atomicWorker.tick(); } finally { store.systemFiles.write = write; }
+  assert.equal(cursor(), null, 'failed batches roll back the cursor');
+  assert.equal(memory.list(owner).length, atomicCount, 'failed batches have no partial memory writes');
+  store.db.prepare('UPDATE bot_memory_jobs SET next_at=0 WHERE owner_id=?').run(owner);
+  await atomicWorker.tick(); await atomicWorker.close();
+  assert.equal(memory.list(owner).length, atomicCount + 2);
+  resetJob();
+  for (const mode of ['revoke', 'read_revoke', 'source_change', 'disable', 'archive', 'tombstone', 'cancel']) {
+    const content = `Must not save ${mode}`, count = memory.list(owner).length;
+    const summaryId = store.db.prepare('SELECT id FROM bot_summaries WHERE run_id=? ORDER BY rowid LIMIT 1').get(run).id;
+    const original = store.db.prepare('SELECT content FROM bot_summaries WHERE id=?').get(summaryId).content;
+    const guarded = new MemoryWorker(store, configuration, async () => {
+      await Promise.resolve();
+      if (mode === 'revoke' || mode === 'read_revoke') configuration.save(owner, { ...configuration.get(owner, true), policy: { ...configuration.get(owner).policy, [mode === 'revoke' ? 'write' : 'read']: 'deny' } });
+      if (mode === 'source_change') store.db.prepare('UPDATE bot_summaries SET content=? WHERE id=?').run(`${original} changed`, summaryId);
+      if (mode === 'disable') store.db.prepare('UPDATE bot_memory_jobs SET enabled=0 WHERE owner_id=?').run(owner);
+      if (mode === 'archive') store.db.prepare('UPDATE threads SET archived=1 WHERE id=?').run(thread.id);
+      if (mode === 'tombstone') { const m = memory.save(owner, { scope: 'owner', scopeId: '', kind: 'preference', content, source: `message:${message.id}` }); memory.remove(owner, m.id, m.revision); }
+      if (mode === 'cancel') guarded.cancel(owner);
+      return Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'consolidate_memory', arguments: JSON.stringify({ preferences: [content] }) } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } });
+    });
+    await guarded.tick(); await guarded.close();
+    assert.equal(memory.list(owner).length, count, `${mode} prevents background system writes`);
+    if (mode !== 'tombstone') assert.equal(cursor(), null, `${mode} does not advance the cursor`);
+    configuration.save(owner, { ...configuration.get(owner, true), policy: { ...configuration.get(owner).policy, read: 'allow', write: 'allow' } });
+    store.db.prepare('UPDATE threads SET archived=0 WHERE id=?').run(thread.id);
+    if (mode === 'source_change') store.db.prepare('UPDATE bot_summaries SET content=? WHERE id=?').run(original, summaryId);
+    resetJob();
+  }
   store.db.prepare('UPDATE bot_memory_jobs SET cursor=NULL,next_at=0 WHERE owner_id=?').run(owner);
   const countBefore = memory.list(owner).length;
   const failingWorker = new MemoryWorker(store, configuration, async () => Response.json({ choices: [{ message: { tool_calls: [{ function: { name: 'consolidate_memory', arguments: '{"preferences":["must roll back",""]}' } }] } }], usage: { prompt_tokens: 10, completion_tokens: 10 } }));
   await failingWorker.tick(); await failingWorker.close();
-  assert.equal(cursor(), null, 'consolidation cursor rolls back with failed memory writes');
-  assert.equal(memory.list(owner).length, countBefore, 'partial consolidation write rolled back');
+  assert.equal(cursor(), null, 'invalid proposals do not advance the consolidation cursor');
+  assert.equal(memory.list(owner).length, countBefore, 'invalid proposals have zero memory writes');
   const files = path.join(root, 'files'); fs.mkdirSync(files);
   const operation = '12345678-1234-1234-1234-123456789abc';
   const stream = new PassThrough();
@@ -166,5 +223,5 @@ try {
   recoveredService.append(thread.id, 'assistant', 'text', 'stable message', 'stable-operation');
   recoveredService.append(thread.id, 'assistant', 'text', 'stable message', 'stable-operation');
   assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE client_nonce='stable-operation'").get().n, 1);
-  console.log('Bot services passed: durable/unknown ledger, prices, three protocols/retries/cancellation, SSE, artifacts, context pairs, skill scope, memory revisions/tombstone/stale and consolidation cursor.');
+  console.log('Bot services passed: durable/unknown ledger, prices, protocols/retries/cancellation, SSE, artifacts, context pairs, skill scope, memory revisions/tombstones, autonomous opt-in consolidation, restart/revocation/source/cancellation checks and atomic consolidation cursor.');
 } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }

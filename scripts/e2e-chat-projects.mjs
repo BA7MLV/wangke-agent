@@ -121,6 +121,18 @@ try {
     const localPage = await local.newPage();
     localPage.on('pageerror', error => errors.push(error.message));
     await localPage.goto(origin);
+    await localPage.getByTestId('chat-go-import').waitFor();
+    for (const width of [360, 390, 760]) {
+      await localPage.setViewportSize({ width, height: 844 });
+      const strip = await localPage.getByTestId('chat-import-strip').boundingBox();
+      const composer = await localPage.locator('.course-chat__composer').boundingBox();
+      const label = await localPage.getByTestId('chat-go-import').boundingBox();
+      const close = await localPage.getByTestId('chat-import-close').boundingBox();
+      assert.equal(composer.y - strip.y, 44, 'mobile project strip exposes only the touch row');
+      assert.equal(label.height, 44, 'project selection keeps its full touch target');
+      assert.equal(close.height, 44, 'dismiss keeps its full touch target');
+    }
+    await localPage.setViewportSize({ width: 390, height: 844 });
     await localPage.getByTestId('chat-go-import').click();
     const localPicker = localPage.getByTestId('chat-project-picker');
     await localPicker.getByRole('textbox', { name: '项目名称', exact: true }).fill('本地学习');

@@ -23,10 +23,10 @@ try {
   await depth.focus(); await depth.press('Home');
   for (let i = 0; i < 6; i++) {
     if (i) await depth.press('ArrowRight');
-    states.push(await page.locator('.reasoning-slider__fill').evaluate(el => ({ opacity: +el.style.opacity, width: el.style.width })));
+    states.push(await page.locator('.reasoning-slider__fill').evaluate(el => ({ color: el.style.backgroundColor, width: el.style.width })));
   }
   assert.equal(await depth.inputValue(), '5');
-  assert.ok(states.every((s, i) => i === 0 || s.opacity > states[i - 1].opacity));
+  assert.equal(new Set(states.map(s => s.color)).size, 6);
   assert.equal(states[0].width, '0%');
   assert.equal(states[5].width, '100%');
   assert.equal(await page.locator('.reasoning-slider__track').evaluate(el => el.getBoundingClientRect().height), 36);
@@ -34,10 +34,10 @@ try {
   assert.equal(inputBox.height, 64, 'large, comfortable click/touch area');
   assert.ok(inputBox.width >= 280, 'rail uses the full panel width');
   assert.equal(await page.locator('.reasoning-slider__labels').count(), 0, 'no extra text row');
-  const texture = page.getByTestId('reasoning-meteor-texture');
-  await page.waitForFunction(() => document.querySelector('[data-testid="reasoning-meteor-texture"]')?.width > 100);
+  const texture = page.getByTestId('reasoning-texture');
+  await page.waitForFunction(() => document.querySelector('[data-testid="reasoning-texture"]')?.width > 100);
   const before = await texture.evaluate(el => el.toDataURL());
-  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-meteor-texture"]').toDataURL() !== image, before);
+  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-texture"]').toDataURL() !== image, before);
   assert.equal(await page.locator('.reasoning-slider__header label').count(), 1);
   const ticks = await page.locator('.reasoning-slider__tick').evaluateAll(elements => elements.map(el => {
     const box = el.getBoundingClientRect(); return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
@@ -62,9 +62,39 @@ try {
   }
   await page.emulateMedia({ reducedMotion: 'reduce' });
   assert.equal(await page.locator('.reasoning-slider__fill').evaluate(el => getComputedStyle(el).transitionDuration), '0s');
+  // Compare the entire canvas, not the growing fill, to verify depth changes the
+  // texture itself. Fixed masks must not become a stronger dark overlay.
+  const coverage = [];
+  for (const theme of ['light', 'dark']) {
+    await page.evaluate(theme => document.documentElement.classList.toggle('dark', theme === 'dark'), theme);
+    await depth.focus(); await depth.press('Home');
+    for (let level = 0; level < 6; level++) {
+      if (level) await depth.press('ArrowRight');
+      const sample = await texture.evaluate(el => {
+        const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+        let count = 0, max = 0;
+        for (let i = 3; i < pixels.length; i += 4) {
+          if (pixels[i] > 0) count++;
+          max = Math.max(max, pixels[i]);
+        }
+        return { count, max };
+      });
+      if (theme === 'light') coverage.push(sample.count);
+      assert.ok(sample.max <= 54, 'texture keeps its original masked opacity at every depth');
+      assert.equal(await page.locator('.reasoning-slider__texture').evaluate(el => +el.style.opacity), level ? 1 : 0);
+      await depth.evaluate(el => el.blur());
+      await page.getByTestId('chat-effort-slider').screenshot({ path: `${output}/level-${level}-${theme}.png`, animations: 'disabled' });
+    }
+  }
+  assert.equal(coverage[0], 0);
+  assert.ok(coverage.every((value, i) => i === 0 || value > coverage[i - 1]), 'each depth adds visible structure even without fill growth');
   const paused = await texture.evaluate(el => el.toDataURL());
   await page.waitForTimeout(400);
-  assert.equal(await texture.evaluate(el => el.toDataURL()), paused, 'reduced motion freezes the meteor texture');
+  assert.equal(await texture.evaluate(el => el.toDataURL()), paused, 'reduced motion freezes the sampled texture');
+  assert.equal(await texture.evaluate(el => {
+    const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
+    return Math.max(...pixels.filter((_, i) => i % 4 === 3));
+  }) <= 54, true, '88/90 masks keep even overlapping texture pixels below 22% opacity');
   const originalAccent = await page.evaluate(() => ({
     accent: document.documentElement.style.getPropertyValue('--accent'),
     foreground: document.documentElement.style.getPropertyValue('--accent-foreground'),
@@ -77,17 +107,36 @@ try {
         const { applyAccentColor } = await import('/src/ui/theme.ts');
         applyAccentColor(accent);
       }, accent);
+      const luminances = [];
+      await depth.focus(); await depth.press('Home');
+      for (let level = 1; level < 6; level++) {
+        await depth.press('ArrowRight');
+        luminances.push(await page.locator('.reasoning-slider__fill').evaluate(el => {
+          const canvas = document.createElement('canvas');
+          canvas.width = canvas.height = 1;
+          const ctx = canvas.getContext('2d');
+          ctx.fillStyle = getComputedStyle(el).backgroundColor;
+          ctx.fillRect(0, 0, 1, 1);
+          const rgb = Array.from(ctx.getImageData(0, 0, 1, 1).data).slice(0, 3).map(value => {
+            const channel = value / 255;
+            return channel <= 0.04045 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+          });
+          return rgb[0] * 0.2126 + rgb[1] * 0.7152 + rgb[2] * 0.0722;
+        }));
+      }
+      assert.ok(luminances.every((value, i) => i === 0 || value < luminances[i - 1] - 0.005), `${theme}/${accent}: every deeper level has visibly lower fill luminance`);
+      await depth.evaluate(el => el.blur());
       palettes.push(await page.getByTestId('chat-effort-slider').evaluate(el => ({
-        fill: getComputedStyle(el.querySelector('.reasoning-slider__fill')).backgroundImage,
+        fill: getComputedStyle(el.querySelector('.reasoning-slider__fill')).backgroundColor,
         ring: getComputedStyle(el.querySelector('.reasoning-slider__control')).boxShadow,
         rest: getComputedStyle(el.querySelector('.reasoning-slider__track')).backgroundColor,
         ink: getComputedStyle(el.querySelector('.reasoning-slider__value')).color,
-        streak: getComputedStyle(el.querySelector('canvas')).color,
+        texture: getComputedStyle(el.querySelector('canvas')).color,
       })));
       images.push(await texture.evaluate(el => el.toDataURL()));
       await page.getByTestId('chat-effort-slider').screenshot({ path: `${output}/slider-${theme}-${accent}.png`, animations: 'disabled' });
     }
-    for (const key of ['fill', 'ring', 'rest', 'ink', 'streak']) {
+    for (const key of ['fill', 'ring', 'rest', 'ink', 'texture']) {
       assert.equal(new Set(palettes.map(p => p[key])).size, 6, `${theme}: ${key} follows all six theme accents`);
     }
     assert.equal(new Set(images).size, 6, `${theme}: frozen canvas repaints to match each accent`);
@@ -99,13 +148,13 @@ try {
   }, originalAccent);
   await page.emulateMedia({ reducedMotion: 'no-preference' });
   const resumed = await texture.evaluate(el => el.toDataURL());
-  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-meteor-texture"]').toDataURL() !== image, resumed);
-  await page.locator('.reasoning-slider__meteors').evaluate(el => el.style.display = 'none');
+  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-texture"]').toDataURL() !== image, resumed);
+  await page.locator('.reasoning-slider__texture').evaluate(el => el.style.display = 'none');
   await page.waitForTimeout(100); // IntersectionObserver delivers asynchronously.
   const offscreen = await texture.evaluate(el => el.toDataURL());
   await page.waitForTimeout(400);
   assert.equal(await texture.evaluate(el => el.toDataURL()), offscreen, 'invisible texture stops drawing');
-  await page.locator('.reasoning-slider__meteors').evaluate(el => el.style.display = '');
+  await page.locator('.reasoning-slider__texture').evaluate(el => el.style.display = '');
   await page.setViewportSize({ width: 390, height: 844 });
   await page.locator('.model-picker__panel').screenshot({ path: `${output}/mobile-dark.png`, animations: 'disabled' });
   const box = await page.locator('.model-picker__panel').boundingBox();
@@ -116,14 +165,14 @@ try {
   assert.ok(smallBox.x >= 0 && smallBox.x + smallBox.width <= 320 && smallBox.y + smallBox.height <= 568);
   await depth.focus(); await depth.press('Home');
   assert.equal(await depth.getAttribute('aria-valuetext'), '不思考');
-  assert.equal(await page.locator('.reasoning-slider__meteors').evaluate(el => el.style.opacity), '0');
+  assert.equal(await page.locator('.reasoning-slider__texture').evaluate(el => el.style.opacity), '0');
   const idle = await texture.evaluate(el => el.toDataURL());
   assert.equal(await texture.evaluate(el => {
     const pixels = el.getContext('2d').getImageData(0, 0, el.width, el.height).data;
     return pixels.some((value, i) => i % 4 === 3 && value !== 0);
-  }), false, 'off clears all remaining light trails');
+  }), false, 'off clears all remaining sampled texture');
   await page.waitForTimeout(400);
   assert.equal(await texture.evaluate(el => el.toDataURL()), idle, 'no-thinking is still');
   assert.deepEqual(errors, []);
-  console.log('PASS: six accents × light/dark; theme-colored rail/ring/label/trails; paused canvas recolors; six levels; warp motion; reduced-motion/offscreen pause; mobile; no settings UI.');
+  console.log('PASS: progressively deeper fill colors across six accents × light/dark; masked Bayer/ASCII; paused canvas recolors; six levels; subtle flow; reduced-motion/offscreen pause; mobile; no settings UI.');
 } finally { await browser.close(); }

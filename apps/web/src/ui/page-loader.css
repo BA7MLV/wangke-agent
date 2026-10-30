@@ -1,10 +1,3 @@
-:root {
-  --page-loader-sweep: 1800ms;
-  --page-loader-outer: var(--foreground);
-  --page-loader-inner: var(--background);
-  --page-loader-highlight: var(--accent);
-}
-
 .page-loader {
   display: grid;
   min-height: var(--vvh, 100dvh);
@@ -16,35 +9,25 @@
   display: block;
   width: clamp(52px, 8vw, 76px);
   height: auto;
-  overflow: visible;
 }
 
 .page-loader__shine {
-  transform: translateX(-110%);
+  /* 400% gradient width, matching transitions.dev's shimmer band. */
+  transform: translateX(-75%);
   transform-box: fill-box;
   transform-origin: center;
-  animation: page-loader-sweep var(--page-loader-sweep) var(--ease-linear) infinite;
-  will-change: transform, opacity;
+  animation: page-loader-shimmer var(--shimmer-dur) var(--shimmer-ease) infinite;
+  will-change: transform;
 }
 
-@keyframes page-loader-sweep {
-  0%, 12% {
-    opacity: 0;
-    transform: translateX(-110%);
-  }
-  34%, 64% {
-    opacity: 1;
-  }
-  88%, 100% {
-    opacity: 0;
-    transform: translateX(110%);
-  }
+@keyframes page-loader-shimmer {
+  0% { transform: translateX(-75%); }
+  100% { transform: translateX(0); }
 }
 
 @media (prefers-reduced-motion: reduce) {
   .page-loader__shine {
-    animation: none;
-    opacity: 0.35;
-    transform: translateX(0);
+    animation: none !important;
+    opacity: 0;
   }
 }

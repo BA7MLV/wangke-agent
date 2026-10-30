@@ -309,6 +309,12 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     const down = (event: PointerEvent) => handlers.current.down(event);
     const move = (event: PointerEvent) => handlers.current.move(event);
     const end = (event: PointerEvent) => handlers.current.end(event);
+    const touchMove = (event: TouchEvent) => {
+      // Do not block ordinary textarea scrolling. Once the hold gesture has
+      // started, keep the same vertical slide-to-cancel interaction on iOS,
+      // where touch-action was already resolved at pointerdown time.
+      if (held.current && event.cancelable) event.preventDefault();
+    };
     const context = (event: Event) => { if (gesture.current || held.current) event.preventDefault(); };
     const click = (event: MouseEvent) => {
       if (!suppressPress.current) return;
@@ -320,6 +326,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     window.addEventListener('pointermove', move, { passive: false });
     window.addEventListener('pointerup', end, true);
     window.addEventListener('pointercancel', end, true);
+    target.addEventListener('touchmove', touchMove, { passive: false });
     target.addEventListener('lostpointercapture', end);
     target.addEventListener('contextmenu', context);
     target.addEventListener('click', click, true);
@@ -329,6 +336,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', end, true);
       window.removeEventListener('pointercancel', end, true);
+      target.removeEventListener('touchmove', touchMove);
       target.removeEventListener('lostpointercapture', end);
       target.removeEventListener('contextmenu', context);
       target.removeEventListener('click', click, true);

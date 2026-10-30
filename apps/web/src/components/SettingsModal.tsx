@@ -31,6 +31,7 @@ const ALL_MODULES: Module[] = [
   // Bot 与消息渠道只在连着自己服务器时存在：本机模式没有 Bot 运行时，也就没有这两屏。
   { key: 'bot', icon: 'smart_toy', tint: '#5856d6', Component: lazy(() => import('../cloud/BotSettings')), cloudOnly: true },
   { key: 'gateway', icon: 'forum', tint: '#34c759', Component: lazy(() => import('../cloud/GatewaySettings')), cloudOnly: true },
+  { key: 'usage', icon: 'bar_chart', tint: '#30b0c7', Component: lazy(() => import('./settings/UsageModule')), cloudOnly: true },
   { key: 'appearance', icon: 'style', tint: '#ff9f0a', Component: lazy(() => import('./settings/AppearanceModule')) },
   { key: 'sources', icon: 'cloud_upload', tint: '#30b0c7', Component: lazy(() => import('./settings/SourcesModule')) },
   { key: 'live', icon: 'link', tint: '#34c759', Component: lazy(() => import('./settings/LiveModule')) },

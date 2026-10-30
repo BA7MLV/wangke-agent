@@ -7,7 +7,7 @@ const MARK_PATH = 'M288.417 459.122C288.417 457.652 288.417 456.917 288.43 456.2
 const EYE_PATH = 'M735.686 358.247C735.686 394.974 705.673 424.747 668.65 424.747C631.627 424.747 601.614 394.974 601.614 358.247C601.614 321.52 631.627 291.747 668.65 291.747C705.673 291.747 735.686 321.52 735.686 358.247Z';
 const PUPIL_PATH = 'M726.807 358.359C726.807 372.386 715.344 383.757 701.203 383.757C687.063 383.757 675.6 372.386 675.6 358.359C675.6 344.332 687.063 332.961 701.203 332.961C715.344 332.961 726.807 344.332 726.807 358.359Z';
 
-/** Full-page loading state: the brand mark stays still while a light band sweeps across it. */
+/** SVG adaptation of transitions.dev shimmer: a fixed logo mask over two monochrome layers. */
 export function PageLoader({ label = '正在加载页面…' }: { label?: string }) {
   const id = useId();
   const gradientId = `page-loader-gradient-${id}`;
@@ -18,32 +18,29 @@ export function PageLoader({ label = '正在加载页面…' }: { label?: string
       <svg className="page-loader__logo" viewBox="182 192 650 650" aria-hidden="true" focusable="false">
         <defs>
           <linearGradient id={gradientId} x1="0" y1="0" x2="1" y2="0">
-            <stop offset="0" stopColor="var(--page-loader-highlight)" stopOpacity="0" />
-            <stop offset="0.5" stopColor="var(--page-loader-highlight)" stopOpacity="0.95" />
-            <stop offset="1" stopColor="var(--page-loader-highlight)" stopOpacity="0" />
+            <stop offset="0.4" stopColor="var(--shimmer-highlight)" stopOpacity="0" />
+            <stop offset="0.5" stopColor="var(--shimmer-highlight)" />
+            <stop offset="0.6" stopColor="var(--shimmer-highlight)" stopOpacity="0" />
           </linearGradient>
           <mask id={maskId} maskUnits="userSpaceOnUse" x="182" y="192" width="650" height="650">
             <path d={OUTER_PATH} fill="white" />
-            <path d={INNER_PATH} fill="white" />
+            <path d={INNER_PATH} fill="black" />
             <path d={MARK_PATH} fill="white" />
             <path d={EYE_PATH} fill="white" />
-            <path d={PUPIL_PATH} fill="white" />
+            <path d={PUPIL_PATH} fill="black" />
           </mask>
         </defs>
-        <path d={OUTER_PATH} fill="var(--page-loader-outer)" />
-        <path d={INNER_PATH} fill="var(--page-loader-inner)" />
-        <path d={MARK_PATH} fill="var(--page-loader-outer)" />
-        <path d={EYE_PATH} fill="var(--page-loader-outer)" />
-        <path d={PUPIL_PATH} fill="var(--page-loader-inner)" />
-        <rect
-          className="page-loader__shine"
-          x="182"
-          y="192"
-          width="650"
-          height="650"
-          fill={`url(#${gradientId})`}
-          mask={`url(#${maskId})`}
-        />
+        <g mask={`url(#${maskId})`}>
+          <rect x="182" y="192" width="650" height="650" fill="var(--shimmer-base)" />
+          <rect
+            className="page-loader__shine"
+            x="182"
+            y="192"
+            width="2600"
+            height="650"
+            fill={`url(#${gradientId})`}
+          />
+        </g>
       </svg>
     </div>
   );

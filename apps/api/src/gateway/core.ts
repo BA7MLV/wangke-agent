@@ -8,6 +8,7 @@ import { DeliveryError, type ChannelPlugin, type GatewayEnvelope, type GatewayPa
 import { cleanupGateway, gatewayLimits } from './retention.js';
 import { publishBotEvent } from '../agent/events.js';
 import { GATEWAY_CONNECTION_ERRORS, type GatewayConnectionDiagnostics, type GatewayReadiness } from '@wangke/contracts/gateway';
+import { splitGatewayMarkdown } from './chunk.js';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -504,8 +505,9 @@ export class GatewayCore {
               }
               text = approvalPrompt(text, a.seq);
             }
-            const chars = Array.from(String(text));
-            for (let i = 0; i < Math.max(1, Math.ceil(chars.length / 1500)); i++) this.enqueue(b.id, `event:${event.event_id}:${i}`, { text: chars.slice(i * 1500, (i + 1) * 1500).join(''), ...(i === 0 && fileId ? { fileId } : {}) });
+            const maxMessageLength = this.live.get(b.account_id)?.plugin.manifest.capabilities.maxMessageLength ?? 1500;
+            const parts = splitGatewayMarkdown(String(text), maxMessageLength);
+            for (let i = 0; i < parts.length; i++) this.enqueue(b.id, `event:${event.event_id}:${i}`, { text: parts[i], ...(i === 0 && fileId ? { fileId } : {}) });
           }
           this.store.db.prepare('UPDATE gateway_bindings SET checkpoint=? WHERE id=?').run(event.event_id, b.id);
           this.store.db.prepare('DELETE FROM gateway_projection_failures WHERE binding_id=? AND event_id=?').run(b.id, event.event_id);

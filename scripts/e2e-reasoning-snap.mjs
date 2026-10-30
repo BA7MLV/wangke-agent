@@ -76,9 +76,9 @@ try {
   assert.ok(samples.every(s => Math.abs(s.x - s.fill) < 1 && s.transition === '0s' && s.dragging === 'true'), 'thumb and fill stay aligned without transitions while held');
   assert.ok(Math.abs(Number(await input.inputValue()) - 2.37) < 0.03);
   assert.equal(await page.evaluate(() => window.reasoningCommits.length), 0, 'dragging never writes global settings');
-  const texture = page.getByTestId('reasoning-meteor-texture');
+  const texture = page.getByTestId('reasoning-texture');
   const moving = await texture.evaluate(el => el.toDataURL());
-  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-meteor-texture"]').toDataURL() !== image, moving);
+  await page.waitForFunction(image => document.querySelector('[data-testid="reasoning-texture"]').toDataURL() !== image, moving);
   await page.getByTestId('chat-effort-slider').screenshot({ path: `${output}/dragging.png` });
   await page.mouse.up();
   assert.equal(await input.inputValue(), '2', 'release selects the nearest stop');

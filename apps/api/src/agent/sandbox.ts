@@ -1,6 +1,6 @@
 import { agentHttpInit } from './http.js';
 
-export type SandboxRequest = { owner: string; threadId: string; projectId?: string; executionId: string; command: string; network?: boolean; timeoutSeconds?: number };
+export type SandboxRequest = { owner: string; threadId: string; projectId?: string; executionId: string; command: string; network?: boolean; timeoutSeconds?: number; systemWrite?: boolean };
 export function shellTimeoutSeconds(value?: number) {
   if (value === undefined) return 120;
   if (!Number.isInteger(value) || value < 1 || value > 600) throw new Error('invalid_shell_timeout');

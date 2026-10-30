@@ -15,6 +15,7 @@ export type SettingsModule =
   | 'agent'
   | 'bot'
   | 'gateway'
+  | 'usage'
   | 'appearance'
   | 'sources'
   | 'live'
@@ -69,7 +70,7 @@ export function closeSettings(): void {
   emit();
 }
 
-const VALID_MODULES: readonly SettingsModule[] = ['models', 'agent', 'bot', 'gateway', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data'];
+const VALID_MODULES: readonly SettingsModule[] = ['models', 'agent', 'bot', 'gateway', 'usage', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data'];
 
 /** 根据当前 URL hash 打开设置弹窗（#/settings 或 #/settings/<module>） */
 export function openSettingsFromHash(): void {

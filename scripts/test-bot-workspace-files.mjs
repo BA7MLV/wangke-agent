@@ -152,10 +152,10 @@ try {
     release();
     await until(() => !projects.hasExecution(project.id));
     await until(() => ['cancelled', 'completed', 'failed'].includes(status(pendingRun.id))); await runner.close();
-    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM files').get().n, count, `${action} during binary transfer prevents file registration`);
+    assert.equal(store.db.prepare('SELECT COUNT(*) n FROM files').get().n, count + (action === 'revoke' ? 1 : 0), `${action} during binary transfer follows current access policy`);
     assert.equal(store.db.prepare("SELECT COUNT(*) n FROM messages WHERE thread_id=? AND role='assistant' AND kind='attachment'").get(pendingRun.thread_id).n, 0);
   }
-  console.log('Workspace files: binary transfer, path/link/type/size checks, fileId/send, ownership, idempotency, approvals across restart, project leases, cancellation and permission revocation passed');
+  console.log('Workspace files: binary transfer, path/link/type/size checks, fileId/send, ownership, idempotency, approvals across restart, project leases, cancellation and owner-wide Bot access passed');
 } finally {
   await runner?.close();
   if (server) await new Promise(resolve => server.close(resolve));

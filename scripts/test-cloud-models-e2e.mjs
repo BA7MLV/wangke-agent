@@ -13,7 +13,7 @@ const app = buildServer({ dbPath: path.join(directory, 'db.sqlite'), fetch: asyn
   upstream.push({ url, headers: init.headers });
   if (upstreamStatus !== 200) return Response.json({ error: 'not-supported' }, { status: upstreamStatus });
   return String(url).includes('after_id=')
-    ? Response.json({ data: [{ id: 'api-only-model' }], has_more: false })
+    ? Response.json({ data: [{ id: 'openai/gpt-4o' }], has_more: false })
     : Response.json({ data: [{ id: 'catalog-model', context_window: 64000 }], has_more: true, last_id: 'page/1' });
 } });
 let browser, web;
@@ -28,6 +28,8 @@ try {
   const errors = [];
   page.on('pageerror', e => errors.push(e.message));
   await page.route('https://models.dev/api.json*', route => route.fulfill({ json: {
+    openai: { models: { 'gpt-4o': { modalities: { input: ['text', 'image'], output: ['text'] }, tool_call: true, limit: { context: 128000, output: 8192 } } } },
+    reseller: { models: { 'gpt-4o': { modalities: { input: ['text'], output: ['text'] }, limit: { context: 32000 } } } },
     fixture: { name: 'Fixture Provider', api: 'https://fixture.example/v1', npm: '@ai-sdk/openai-compatible', models: {
       'catalog-model': { name: 'Catalog Model', modalities: { input: ['text', 'image'], output: ['text'] }, tool_call: true, reasoning: true, limit: { context: 128000, output: 8192 } },
       'catalog-only-model': { name: 'Catalog only', modalities: { input: ['text'], output: ['text'] } },
@@ -87,11 +89,13 @@ try {
   assert.ok(await page.getByTestId('card-api').evaluate(element => element.getBoundingClientRect().right <= innerWidth), 'onboarding cards are not clipped by the outer grid');
   await page.screenshot({ path: path.join(os.tmpdir(), 'opencode/onboarding-models-mobile.png') });
   await page.setViewportSize({ width: 1280, height: 1000 });
+  await page.getByTestId('provider-preset-search').evaluate(element => element.scrollIntoView({ block: 'center' }));
   await page.getByTestId('provider-preset-search').fill('Fixture Provider');
   await page.getByRole('option').filter({ hasText: 'Fixture Provider' }).click();
   await page.getByTestId('api-key-draft').fill('secret-for-server-only');
   await page.getByTestId('provider-draft-save').click();
   await page.getByTestId('provider-back').waitFor();
+  assert.equal(await page.getByTestId('card-models').count(), 0, 'provider details do not show the default-model picker');
   await assertDesktopSetupLayout();
   const noBrowserKey = async () => assert.ok(!(await page.evaluate(() => JSON.stringify(localStorage))).includes('secret-for-server-only'));
   await noBrowserKey();
@@ -123,15 +127,20 @@ try {
   assert.equal(upstream[0].headers.authorization, 'Bearer secret-for-server-only');
   assert.equal(await page.getByTestId('saved-models').getByRole('button', { name: /^编辑 / }).count(), 1, 'discovery does not automatically add models');
   await page.getByTestId('discovered-model-select').click();
-  await page.getByRole('button', { name: '添加 api-only-model', exact: true }).click();
+  await page.getByRole('button', { name: '添加 openai/gpt-4o', exact: true }).click();
+  assert.equal(await page.getByRole('spinbutton', { name: '上下文窗口', exact: true }).getAttribute('placeholder'), '128000');
+  assert.match(await page.getByTestId('model-metadata-details').innerText(), /能力来源 openai/);
+  assert.equal(await page.getByRole('button', { name: /模型能力来源/ }).count(), 0, 'common models need no manual source selection');
+  assert.equal(await page.getByRole('checkbox', { name: '图片理解', exact: true }).isChecked(), true, 'official vision capability preselects the model use');
   await page.getByRole('button', { name: '添加模型', exact: true }).click();
-  await page.getByTestId('saved-models').getByText('api-only-model', { exact: true }).waitFor();
+  await page.getByTestId('saved-models').getByText('openai/gpt-4o', { exact: true }).waitFor();
   await page.getByRole('button', { name: '编辑 Catalog Model', exact: true }).click();
   assert.equal(await page.getByRole('spinbutton', { name: '上下文窗口', exact: true }).inputValue(), '96000');
   await page.getByTestId('model-editor').getByRole('button', { name: '取消', exact: true }).click();
   await page.mouse.move(0, 0);
   await page.waitForFunction(() => !document.querySelector('[data-slot="toast"]'));
   await page.getByTestId('provider-back').click();
+  await page.getByTestId('card-models').waitFor();
   await page.getByTestId('model-button-llmModel').evaluate(element => element.scrollIntoView({ block: 'center' }));
   await page.getByTestId('model-button-llmModel').click();
   await page.waitForFunction(() => {
@@ -156,7 +165,7 @@ try {
   await page.getByTestId(`provider-summary-${id}`).click();
   await page.getByTestId(`provider-name-${id}`).fill('Renamed connection');
   assert.equal(await page.getByTestId('btn-check-models').innerText(), '保存连接并获取模型', 'display name changes are not mistaken for a saved connection');
-  await page.getByTestId('saved-models').getByText('api-only-model', { exact: true }).waitFor();
+  await page.getByTestId('saved-models').getByText('openai/gpt-4o', { exact: true }).waitFor();
   await page.getByRole('button', { name: '编辑 Catalog Model', exact: true }).click();
   assert.equal(await page.getByRole('spinbutton', { name: '上下文窗口', exact: true }).inputValue(), '96000', 'onboarding capabilities survive reload in settings');
   await page.getByTestId('model-editor').getByRole('button', { name: '取消', exact: true }).click();
@@ -221,6 +230,7 @@ try {
   await page.goto(`${origin}/#/setup`);
   await page.reload();
   await page.getByTestId('provider-add-card').click();
+  assert.equal(await page.getByTestId('card-models').count(), 0, 'new connections do not show default-model selection');
   await page.getByTestId('provider-name-draft').fill('Discarded provider');
   await page.getByTestId('base-url-draft').fill('https://discard.example/v1');
   await page.getByTestId('api-key-draft').fill('discard-this-secret');

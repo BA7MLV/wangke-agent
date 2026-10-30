@@ -61,6 +61,7 @@ const server = http.createServer(async (req, res) => {
     body = JSON.parse(Buffer.concat(chunks).toString());
     if (!body || !uuid.test(body.executionId)) throw new Error();
     if (req.url !== '/cancel' && (!uuid.test(body.threadId) || (body.projectId !== undefined && !uuid.test(body.projectId)))) throw new Error();
+    if ((body.systemWrite !== undefined && typeof body.systemWrite !== 'boolean') || (readingFile && body.systemWrite === true)) throw new Error();
     if (readingFile) body = { threadId: body.threadId, projectId: body.projectId, executionId: body.executionId, filePath: workspacePath(body.path) };
     else if (req.url === '/execute') {
       if (!uuid.test(body.owner) || (body.network !== undefined && typeof body.network !== 'boolean') || typeof body.command !== 'string' || !body.command.trim() || body.command.length > 16_000 || body.filePath !== undefined) throw new Error();
@@ -125,7 +126,7 @@ const server = http.createServer(async (req, res) => {
     } catch { finish(); reply(503, { error: 'sandbox_cleanup_pending' }); }
   });
 });
-server.listen(3001, process.env.HOST || '0.0.0.0');
+server.listen(Number(process.env.PORT ?? 3001), process.env.HOST || '0.0.0.0');
 process.on('SIGTERM', async () => {
   server.close();
   await Promise.all([...active.values()].map(async execution => { execution.cancelled = true; execution.stop?.(); await execution.done; }));

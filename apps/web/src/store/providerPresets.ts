@@ -111,7 +111,7 @@ export function matchesProviderPreset(provider: Pick<Provider, 'baseUrl'>, prese
   return endpointKey(provider.baseUrl) === endpointKey(preset.baseUrl);
 }
 
-/** 常用端点的目录由地址确定；自定义连接保留兼容的历史提示，歧义可在模型上确认。 */
+/** 常用端点的目录由地址确定；自定义连接保留历史提示，缺失条目时自动匹配官方模型。 */
 export function providerCatalogId(provider: Provider): string {
   return getProviderPresets().find((preset) => matchesProviderPreset(provider, preset))?.catalogId ?? provider.catalogId ?? '';
 }

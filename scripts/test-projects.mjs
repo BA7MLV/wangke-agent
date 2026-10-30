@@ -34,7 +34,7 @@ const fetcher = async (_url, init) => {
   const toolNames = body.tools.map(t => t.function.name);
   if (body.messages[0].content.includes('Current project:')) {
     assert.ok(toolNames.includes('workspace'));
-    assert.ok(!toolNames.includes('projects'));
+    assert.ok(toolNames.includes('projects'));
     assert.ok(!toolNames.some(name => name.startsWith('mcp_')));
   }
   if (!afterTool) {
@@ -200,7 +200,8 @@ try {
   await finish(db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(projectAttachment.id).id);
   for (const command of ['cross-project', 'forge-scope']) {
     const id = await send(sibling.id, command); await finish(id);
-    assert.match(db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool!='send_message'").get(id).result, /denied|invalid_project_tool_arguments/);
+    const result = db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool!='send_message'").get(id).result;
+    assert.match(result, command === 'cross-project' ? /denied|invalid_project_tool_arguments/ : /project_file_not_found/);
   }
   assert.equal((await json('GET', `/projects/${second.id}`)).name, '课程 B');
 
@@ -213,9 +214,13 @@ try {
   assert.equal(fs.existsSync(path.join(workspace, 'revoked.md')), false);
   await json('POST', '/runs', { threadId: thread.id }, 403);
   await json('PUT', `/projects/${first.id}/agents/${agentId}`, { role: 'read' });
-  const readonlyRun = await send(thread.id, 'read-only-write'); await finish(readonlyRun);
-  assert.equal(fs.existsSync(path.join(workspace, 'forbidden.md')), false);
-  assert.match(db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool='workspace'").get(readonlyRun).result, /project_access_denied/);
+  const readonlyRun = await send(thread.id, 'read-only-write');
+  await until(() => state(readonlyRun).status === 'waiting_user');
+  const readonlyApproval = db.prepare('SELECT id FROM approvals WHERE run_id=?').get(readonlyRun);
+  await json('POST', `/approvals/${readonlyApproval.id}/resolve`, { approved: true });
+  await finish(readonlyRun);
+  assert.equal(fs.existsSync(path.join(workspace, 'forbidden.md')), true);
+  assert.doesNotMatch(db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool='workspace'").get(readonlyRun).result, /project_access_denied/);
 
   // Cross-project management is a separate grant and never leaks into a project session.
   const config = await json('GET', '/cloud/config');

@@ -88,11 +88,17 @@ test('shell deadlines are validated independently at the API and broker', () => 
   }
 });
 
-test('shell mounts only the owner-scoped real Skill directory', () => {
+test('all owner system files are read-only unless the command requests a writable mount', () => {
   const owner = '33333333-3333-3333-3333-333333333333';
   const args = sandboxArgs({ owner, threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', command: 'pwd' }, undefined, '/host/data/files/system-files');
   const mounts = args.flatMap((value, index) => value === '--mount' ? [args[index + 1]] : []);
-  assert.ok(mounts.some(mount => mount.includes('/host/data/files/system-files/') && mount.endsWith('/system/skills,target=/system/skills')));
+  assert.ok(mounts.some(mount => mount.includes('/host/data/files/system-files/') && mount.endsWith('/system,target=/system,readonly')));
+  assert.ok(!mounts.some(mount => mount.includes('target=/system/skills')));
+  const writable = sandboxArgs({ owner, threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', command: 'pwd', systemWrite: true }, undefined, '/host/data/files/system-files');
+  assert.ok(writable.some(mount => mount.endsWith('/system,target=/system')));
+  for (const systemWrite of [null, 1, 'true']) assert.throws(() => sandboxArgs({ owner, threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', command: 'pwd', systemWrite }, undefined, '/host/data/files/system-files'), /invalid_system_write/);
+  assert.throws(() => sandboxArgs({ owner, threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', command: 'pwd', systemWrite: true }), /system_mount_not_configured/);
+  assert.throws(() => sandboxArgs({ owner, threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', filePath: 'result.zip', systemWrite: true }, undefined, '/host/data/files/system-files'), /invalid_system_write/);
   assert.throws(() => sandboxArgs({ owner: 'not-an-owner', threadId: '11111111-1111-1111-1111-111111111111', executionId: '22222222-2222-2222-2222-222222222222', command: 'pwd' }, undefined, '/host/data/files/system-files'), /system_mount_not_configured/);
 });
 

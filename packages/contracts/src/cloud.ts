@@ -1,4 +1,6 @@
 /** Shared cloud protocol. Table names are an allowlist, never SQL identifiers. */
+export type { ModelUsageSource, ModelUsageCounts, ModelUsageReport } from './model-usage.js';
+
 export const CLOUD_TABLES: Record<string, string> = {
   videos: 'id', files: 'id', segments: 'id', frames: 'id', handouts: 'id',
   chats: 'id', chatSessions: 'id', skills: 'id', skillRefs: 'id', danmakus: 'id',

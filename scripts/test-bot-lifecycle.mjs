@@ -166,6 +166,7 @@ await fixture(async ({ root, store, config, configure, owner, run, state, start,
     }
   } });
   await until(() => state().status === 'completed'); await close();
+  assert.equal(store.db.prepare('SELECT 1 FROM approvals WHERE run_id=?').get(run), undefined, 'source-grounded memory saves do not require approval');
   assert.equal(turn, 6); assert.equal(records.get(owner, 'segments', 2), null);
   assert.equal(store.db.prepare('SELECT status FROM bot_memories WHERE owner_id=?').get(owner).status, 'stale');
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM bot_requests WHERE run_id=?').get(run).n, 6);

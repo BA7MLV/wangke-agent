@@ -4,9 +4,23 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import net from 'node:net';
 import { spawn, execFileSync } from 'node:child_process';
+const image = process.env.SANDBOX_IMAGE || 'wangke-sandbox:0.1.0';
+try {
+  execFileSync('docker', ['info', '--format', '{{.ServerVersion}}'], { stdio: 'pipe' });
+  execFileSync('docker', ['image', 'inspect', image], { stdio: 'pipe' });
+} catch (error) {
+  console.error(`Sandbox integration needs a running Docker daemon and built ${image} image.\n${error.stderr?.toString().trim() || error.message}`);
+  process.exit(1);
+}
+// Never stop a user's broker or assume the production port is free.
+const reservation = net.createServer();
+await new Promise(resolve => reservation.listen(0, '127.0.0.1', resolve));
+const port = reservation.address().port, baseUrl = `http://127.0.0.1:${port}`;
+await new Promise(resolve => reservation.close(resolve));
 const token = crypto.randomBytes(32).toString('hex');
-const owner = crypto.randomUUID();
+const owner = crypto.randomUUID(), other = crypto.randomUUID();
 const threadId = crypto.randomUUID();
 const projectId = crypto.randomUUID(), secondProjectId = crypto.randomUUID();
 const dataRoot = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'wangke-sandbox-')));
@@ -15,17 +29,30 @@ fs.mkdirSync(projectsRoot, { recursive: true });
 const projectUid = process.platform === 'linux' ? process.getuid() || 1000 : 1000;
 const projectGid = process.platform === 'linux' ? process.getgid() || 1000 : 1000;
 fs.chmodSync(projectsRoot, 0o755);
-const systemSkillsRoot = path.join(path.dirname(projectsRoot), 'system-files', crypto.createHash('sha256').update(owner).digest('hex'), 'system', 'skills');
-fs.mkdirSync(systemSkillsRoot, { recursive: true, mode: 0o700 });
+const systemRootFor = who => path.join(path.dirname(projectsRoot), 'system-files', crypto.createHash('sha256').update(who).digest('hex'), 'system');
+const systemRoot = systemRootFor(owner), systemSkillsRoot = path.join(systemRoot, 'skills');
+for (const who of [owner, other]) {
+  const system = systemRootFor(who);
+  fs.mkdirSync(path.join(system, 'skills'), { recursive: true, mode: 0o700 });
+  fs.mkdirSync(path.join(system, 'memory'), { mode: 0o700 });
+  fs.writeFileSync(path.join(system, 'AGENTS.md'), who === owner ? 'Owner instructions' : 'Other private instructions');
+  fs.writeFileSync(path.join(system, 'memory', 'preferences.md'), 'Original note');
+  fs.writeFileSync(path.join(system, 'mcp.json'), '{"version":1,"servers":[]}');
+  const assign = filename => {
+    if (process.platform === 'linux' && process.getuid() === 0) fs.chownSync(filename, projectUid, projectGid);
+    if (fs.lstatSync(filename).isDirectory()) for (const name of fs.readdirSync(filename)) assign(path.join(filename, name));
+  };
+  assign(system);
+}
 for (const id of [projectId, secondProjectId]) {
   fs.mkdirSync(path.join(projectsRoot, id), { mode: 0o700 });
   if (process.platform === 'linux' && process.getuid() === 0) fs.chownSync(path.join(projectsRoot, id), projectUid, projectGid);
 }
 const broker = spawn(process.execPath, ['infra/sandbox/broker.mjs'], {
-  env: { ...process.env, HOST: '127.0.0.1', SANDBOX_TOKEN: token, SANDBOX_NETWORK: 'none', SANDBOX_PROJECTS_DIR: projectsRoot, SANDBOX_PROJECTS_HOST_DIR: projectsRoot, SANDBOX_UID: String(projectUid), SANDBOX_GID: String(projectGid) }, stdio: 'inherit',
+  env: { ...process.env, HOST: '127.0.0.1', PORT: String(port), SANDBOX_TOKEN: token, SANDBOX_IMAGE: image, SANDBOX_NETWORK: 'none', SANDBOX_PROJECTS_DIR: projectsRoot, SANDBOX_PROJECTS_HOST_DIR: projectsRoot, SANDBOX_UID: String(projectUid), SANDBOX_GID: String(projectGid) }, stdio: 'inherit',
 });
 const call = async (command, scope = {}) => {
-  const r = await fetch('http://127.0.0.1:3001/execute', { method: 'POST',
+  const r = await fetch(`${baseUrl}/execute`, { method: 'POST',
     headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
   body: JSON.stringify({ owner, threadId, executionId: crypto.randomUUID(), command, ...scope }),
   });
@@ -35,16 +62,37 @@ try {
   let ready = false;
   for (let i = 0; i < 50; i++) {
     if (broker.exitCode !== null) throw new Error('Broker exited');
-    try { ready = (await fetch('http://127.0.0.1:3001/health')).ok; } catch {}
+    try { ready = (await fetch(`${baseUrl}/health`)).ok; } catch {}
     if (ready) break;
     await new Promise(r => setTimeout(r, 100));
   }
   assert.ok(ready);
-  assert.equal((await fetch('http://127.0.0.1:3001/execute', { method: 'POST' })).status, 401);
-  const skillInstall = await call("mkdir -p /system/skills/demo && printf '---\\nname: Demo\\ndescription: sandbox\\n---\\n\\nInstalled' > /system/skills/demo/SKILL.md");
+  assert.equal((await fetch(`${baseUrl}/execute`, { method: 'POST' })).status, 401);
+  const systemRead = await call('cat /system/AGENTS.md /system/memory/preferences.md /system/mcp.json');
+  assert.equal(systemRead.exitCode, 0, systemRead.stderr); assert.match(systemRead.stdout, /Owner instructions/);
+  for (const filename of ['/system/AGENTS.md', '/system/memory/preferences.md', '/system/mcp.json', '/system/skills/readonly.txt']) {
+    const denied = await call(`python3 -c ${JSON.stringify(`from pathlib import Path; Path('${filename}').write_text('Read-only')`)}`);
+    assert.notEqual(denied.exitCode, 0, 'all system writes, including skills, require a writable step mount');
+  }
+  const systemWrite = await call("set -e; printf 'Writable instructions' > /system/AGENTS.md; printf 'Writable note' > /system/memory/preferences.md; printf '{\"version\":1,\"servers\":[]}' > /system/mcp.json; mkdir -p /system/custom/nested; printf 'Any system file' > /system/custom/nested/config.txt; test ! -e /var/run/docker.sock; ! touch /outside-workspace", { systemWrite: true });
+  assert.equal(systemWrite.exitCode, 0, systemWrite.stderr);
+  assert.equal(fs.readFileSync(path.join(systemRoot, 'AGENTS.md'), 'utf8'), 'Writable instructions');
+  assert.equal(fs.readFileSync(path.join(systemRoot, 'memory', 'preferences.md'), 'utf8'), 'Writable note');
+  assert.equal(fs.readFileSync(path.join(systemRoot, 'custom', 'nested', 'config.txt'), 'utf8'), 'Any system file');
+  assert.notEqual((await call("printf 'Must not inherit' > /system/AGENTS.md")).exitCode, 0);
+  assert.equal(fs.readFileSync(path.join(systemRoot, 'AGENTS.md'), 'utf8'), 'Writable instructions');
+  const otherRead = await call('cat /system/AGENTS.md; test ! -e /system/custom', { owner: other });
+  assert.equal(otherRead.exitCode, 0); assert.match(otherRead.stdout, /Other private instructions/); assert.doesNotMatch(otherRead.stdout, /Writable instructions/);
+  assert.equal((await call("printf 'Other writable instructions' > /system/AGENTS.md", { owner: other, systemWrite: true })).exitCode, 0);
+  assert.equal(fs.readFileSync(path.join(systemRoot, 'AGENTS.md'), 'utf8'), 'Writable instructions');
+  // Direct broker requests represent the trusted API. Deletion approval is
+  // tested at Bot dispatch, not enforced by the writable Docker mount itself.
+  const systemDelete = await call('rm /system/custom/nested/config.txt && rmdir /system/custom/nested /system/custom', { systemWrite: true });
+  assert.equal(systemDelete.exitCode, 0); assert.equal(fs.existsSync(path.join(systemRoot, 'custom')), false);
+  const skillInstall = await call("mkdir -p /system/skills/demo && printf '%s\\n' '---' 'name: Demo' 'description: sandbox' '---' '' 'Installed' > /system/skills/demo/SKILL.md", { systemWrite: true });
   assert.equal(skillInstall.exitCode, 0, skillInstall.stderr);
   assert.match(fs.readFileSync(path.join(systemSkillsRoot, 'demo', 'SKILL.md'), 'utf8'), /Installed/);
-  const zipInstall = await call("set -e; rm -rf /tmp/zip-skill /system/skills/zip-demo; mkdir -p /tmp/zip-skill/references /system/skills/zip-demo; printf '%s\\n' '---' 'name: Zip Demo' 'description: sandbox zip' '---' '' 'Unpacked' > /tmp/zip-skill/SKILL.md; printf 'Reference' > /tmp/zip-skill/references/guide.md; (cd /tmp/zip-skill && zip -qr /tmp/zip-demo.zip .); unzip -q /tmp/zip-demo.zip -d /system/skills/zip-demo; test -f /system/skills/zip-demo/SKILL.md && test -f /system/skills/zip-demo/references/guide.md");
+  const zipInstall = await call("set -e; mkdir -p /tmp/zip-skill/references /system/skills/zip-demo; printf '%s\\n' '---' 'name: Zip Demo' 'description: sandbox zip' '---' '' 'Unpacked' > /tmp/zip-skill/SKILL.md; printf 'Reference' > /tmp/zip-skill/references/guide.md; (cd /tmp/zip-skill && zip -qr /tmp/zip-demo.zip .); unzip -q /tmp/zip-demo.zip -d /system/skills/zip-demo; test -f /system/skills/zip-demo/SKILL.md && test -f /system/skills/zip-demo/references/guide.md", { systemWrite: true });
   assert.equal(zipInstall.exitCode, 0, zipInstall.stderr);
   assert.match(fs.readFileSync(path.join(systemSkillsRoot, 'zip-demo', 'SKILL.md'), 'utf8'), /Unpacked/);
   assert.equal(fs.readFileSync(path.join(systemSkillsRoot, 'zip-demo', 'references', 'guide.md'), 'utf8'), 'Reference');
@@ -58,7 +106,8 @@ try {
   assert.equal(saveRetry.exitCode, 0, saveRetry.stderr); assert.equal(JSON.parse(saveRetry.stdout).reused, true);
   const saveNew = await call("printf 'new artifact content' > /tmp/staged.txt && wangke-save /tmp/staged.txt '分析报告/计算结果.txt'");
   assert.equal(saveNew.exitCode, 0, saveNew.stderr); assert.equal(JSON.parse(saveNew.stdout).path, '分析报告/计算结果 (2).txt');
-  const readFile = (filePath, scope = {}) => fetch('http://127.0.0.1:3001/files/read', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), path: filePath, ...scope }) });
+  const readFile = (filePath, scope = {}) => fetch(`${baseUrl}/files/read`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), path: filePath, ...scope }) });
+  assert.equal((await readFile('missing.pdf', { systemWrite: true })).status, 400);
   assert.equal((await readFile('../etc/passwd')).status, 400);
   assert.equal((await readFile('/etc/passwd')).status, 400);
   assert.equal((await readFile('missing.pdf')).status, 404);
@@ -82,7 +131,7 @@ try {
   const running = call('touch started; sleep 60; touch must-not-exist', { projectId, executionId });
   for (let i = 0; i < 100 && !fs.existsSync(path.join(projectsRoot, projectId, 'started')); i++) await new Promise(resolve => setTimeout(resolve, 100));
   assert.ok(fs.existsSync(path.join(projectsRoot, projectId, 'started')));
-  const cancel = await fetch('http://127.0.0.1:3001/cancel', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ executionId }) });
+  const cancel = await fetch(`${baseUrl}/cancel`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ executionId }) });
   assert.equal(cancel.status, 200);
   await running;
   assert.equal(fs.existsSync(path.join(projectsRoot, projectId, 'must-not-exist')), false);
@@ -94,10 +143,14 @@ try {
   assert.equal(fs.existsSync(path.join(projectsRoot, projectId, 'must-not-complete')), false);
   assert.throws(() => execFileSync('docker', ['inspect', `wangke-exec-${timedExecution}`], { stdio: 'pipe' }));
   for (const timeoutSeconds of [0, 601, '600', null]) {
-    const invalid = await fetch('http://127.0.0.1:3001/execute', { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ threadId, executionId: crypto.randomUUID(), command: 'true', timeoutSeconds }) });
+    const invalid = await fetch(`${baseUrl}/execute`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner, threadId, executionId: crypto.randomUUID(), command: 'true', timeoutSeconds }) });
     assert.equal(invalid.status, 400, 'broker independently rejects invalid deadlines');
   }
-  console.log('Real sandbox: owner Skill mount, legacy persistence, shared project mount, project isolation, non-root, cancellation cleanup passed');
+  for (const systemWrite of [null, 1, 'true']) {
+    const invalid = await fetch(`${baseUrl}/execute`, { method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' }, body: JSON.stringify({ owner, threadId, executionId: crypto.randomUUID(), command: 'true', systemWrite }) });
+    assert.equal(invalid.status, 400, 'broker independently validates the system-write flag');
+  }
+  console.log('Real sandbox: whole-system read-only/default and one-step writable mounts, arbitrary files/delete/Skills, owner isolation, legacy/project persistence, binary transfers, non-root and cancellation cleanup passed');
 } finally {
   broker.kill('SIGTERM');
   await new Promise(resolve => { if (broker.exitCode !== null) resolve(); else broker.once('exit', resolve); });

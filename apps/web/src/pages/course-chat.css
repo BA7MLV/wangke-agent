@@ -1352,7 +1352,8 @@
 
   .course-chat__composer-wrap .course-chat__import {
     width: calc(100% - 24px);
-    padding-inline: 16px;
+    /* 44px 触控行直接贴住输入卡；底部 16px 仍藏在卡片后，不再叠加可见留白。 */
+    padding: 0 16px 16px;
     gap: 8px;
     border-radius: var(--radius-2xl) var(--radius-2xl) 0 0;
   }

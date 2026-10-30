@@ -9,6 +9,22 @@
 - 服务端任务、`modelOnce` 和浏览器云代理均从实际返回的数据采集。不要把客户端报告和云端报告相加，同一次请求可能同时出现在两边。
 - Bot 管理接口保留逐请求明细，并提供 UTC 当日的缓存统计。
 
+### 设置 → 用量（服务器模式）
+
+连接服务器后可进入独立的「用量」模块（深链 `#/settings/usage`）。默认显示最近 7 个 UTC 自然日，可选 1–90 天、全部 / Chat / Bot，以及按来源、供应商/模型或日期汇总。浏览器直连模式不显示此模块，原有本地缓存基线入口保持不变。
+
+复用 `GET /api/v1/cloud/model-usage`，按登录用户隔离：
+
+- 兼容原有 `?days=1`（最近 24 小时，默认 1，最大 90）。
+- 自然日范围：`?start=2026-10-01&end=2026-10-30&source=all`。起止日期均为严格的 `YYYY-MM-DD`，包含结束日；不得与 `days` 混用。`source` 可为 `all`（默认）、`chat`、`bot`。
+- 返回 `since`（含）、`until`（不含）、`timeZone: UTC` 和 `generatedAt`；按请求的 `started_at` 归属日期，而非完成时间。
+- 保留 `total` 和跨来源合并的 `byModel`；新增 `bySource`、`bySourceModel`、`byDay`（日期 + 来源）和 `byDayModel`（日期 + 来源 + provider/model）。无请求的组不返回记录。
+- 来源由 SQLite 表确定：`model_observations` 为 `chat`（包含普通模型请求），`bot_requests` 为 `bot`（含子任务）。不复制账本，不使用 JSON 作为主存储，不需要迁移或历史回填。
+- `inputTokens` / `outputTokens` / `totalTokens` 是已知值的小计；`measuredRequests` 仅计算输入、输出均非 NULL 的请求，另有输入、输出、缓存读、缓存写和 reasoning 各自的覆盖计数。NULL 不等于测量为 0；全无测量时 UI 显示「未知」。失败、取消和未结算请求仍计入请求数，预留 token 不作为实际消耗。
+- 缓存读写已计入归一化输入、reasoning 已计入输出，不重复相加。缓存命中率仅用同时有缓存读和输入测量的请求计算，分母为 0 时返回 NULL。这里展示 token 而非估算费用。
+
+未接入账本的历史流量不会回填；历史数据的缺失字段继续显示未知。服务重启后仍标为 `inflight` 的请求不会被报告查询擅自结算。查询复用两张表现有的 `(owner_id, started_at)` 索引。
+
 输入/输出 token 采用供应商报告值。OpenAI 的 cached/reasoning token 是总数的子集；Anthropic 的 `input_tokens` 不包含缓存读写，归一化时补入。流式 usage 是累计快照，不逐事件相加。缺失字段保持未知，不伪装成 0。
 
 ```text
@@ -49,6 +65,8 @@
 
 ```sh
 npm run build
+npm run test:usage
+npm run test:usage:e2e
 node --import tsx scripts/test-prompt-cache.mjs
 node scripts/test-qa-runner.mjs
 node scripts/test-agent-loop.mjs

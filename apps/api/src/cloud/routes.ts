@@ -48,11 +48,28 @@ export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
     const user = authorize(request, reply); if (!user) return;
     return configuration.get(user.id);
   });
-  app.get<{ Querystring: { days?: string } }>('/api/v1/cloud/model-usage', async (request, reply) => {
+  app.get<{ Querystring: { days?: string; start?: string; end?: string; source?: string } }>('/api/v1/cloud/model-usage', async (request, reply) => {
     const user = authorize(request, reply); if (!user) return;
-    const days = Number(request.query.days ?? 1);
-    if (!Number.isInteger(days) || days < 1 || days > 90) return fail(reply, 400, 'invalid_usage_window');
-    return modelUsageReport(store, user.id, new Date(Date.now() - days * 86400000).toISOString());
+    const { start, end, days, source = 'all' } = request.query;
+    if (source !== 'all' && source !== 'chat' && source !== 'bot') return fail(reply, 400, 'invalid_usage_source');
+    const now = new Date(Date.now() + 1).toISOString(); // exclusive bound, includes this millisecond
+    let since: string, until = now;
+    if (start !== undefined || end !== undefined) {
+      const validDate = (value: unknown): value is string => typeof value === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value)
+        && Number.isFinite(Date.parse(value)) && new Date(value).toISOString().slice(0, 10) === value;
+      if (days !== undefined || !validDate(start) || !validDate(end)) return fail(reply, 400, 'invalid_usage_window');
+      const span = (Date.parse(end) - Date.parse(start)) / 86400000 + 1;
+      if (span < 1 || span > 90) return fail(reply, 400, 'invalid_usage_window');
+      since = new Date(start).toISOString();
+      until = new Date(Date.parse(end) + 86400000).toISOString();
+    } else {
+      if (days !== undefined && (typeof days !== 'string' || !/^\d+$/.test(days))) return fail(reply, 400, 'invalid_usage_window');
+      const count = Number(days ?? 1);
+      if (!Number.isInteger(count) || count < 1 || count > 90) return fail(reply, 400, 'invalid_usage_window');
+      since = new Date(Date.parse(now) - count * 86400000).toISOString();
+    }
+    reply.header('cache-control', 'no-store');
+    return modelUsageReport(store, user.id, since, { until, source });
   });
   app.put<{ Body: CloudConfig }>('/api/v1/cloud/config', async (request, reply) => {
     const user = authorize(request, reply, true); if (!user) return;

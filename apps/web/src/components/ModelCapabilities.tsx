@@ -40,12 +40,12 @@ export function ModelMetadataDetails({ catalogId, model, overrides }: ModelMetad
     ['结构化输出', capabilityLabel(meta?.structuredOutput)],
   ];
   return <div className="flex flex-col gap-3 rounded-lg bg-background-secondary p-3" data-testid="model-metadata-details">
-    <div className="flex flex-wrap items-center justify-between gap-2"><ModelCapabilities catalogId={catalogId} model={model} overrides={overrides} compact /><a href="https://models.dev" target="_blank" rel="noreferrer" className="text-xs text-accent underline">默认来源 models.dev</a></div>
+    <div className="flex flex-wrap items-center justify-between gap-2"><ModelCapabilities catalogId={catalogId} model={model} overrides={overrides} compact /><a href="https://models.dev" target="_blank" rel="noreferrer" className="text-xs text-accent underline">{match.status === 'exact' ? `能力来源 ${match.candidates[0].catalogId} · models.dev` : '默认来源 models.dev'}</a></div>
     {meta ? <>
       <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">{rows.map(([label, value]) => <div key={label}><dt className="text-xs text-muted">{label}</dt><dd className="mt-1 text-sm tabular-nums">{value}</dd></div>)}</dl>
       <p className="text-xs text-muted">窗口单位为 tokens。{updatedAt ? ` 同步于 ${new Date(updatedAt).toLocaleString()}。` : ''}{meta.lastUpdated ? ` 条目更新：${meta.lastUpdated}。` : ''}</p>
     </> : null}
-    {match.status !== 'exact' && <p className="text-xs text-muted">{match.status === 'ambiguous' ? '目录有多个同名模型，请确认能力来源或手动配置；不会自动套用其他供应商的能力。' : '目录未匹配此模型，仍可直接接入。'} 未声明的输入/输出默认文本，工具调用默认开启；默认值不代表接口验证通过。</p>}
+    {match.status !== 'exact' && <p className="text-xs text-muted">{match.status === 'ambiguous' ? '目录有多个同名模型，且未找到可匹配的官方条目，暂用默认能力，可按实际接口自定义。' : '目录未匹配此模型，仍可直接接入。'} 未声明的输入/输出默认文本，工具调用默认开启；默认值不代表接口验证通过。</p>}
     <p className="text-xs text-muted">手动配置优先，接口声明其次，models.dev 只补全能力。刷新目录不会覆盖已保存配置。音频能力不代表兼容语音转写接口；用途由你确认。</p>
   </div>;
 }

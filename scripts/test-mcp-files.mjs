@@ -88,21 +88,24 @@ try {
   assert.equal(files.read(owner, resource).revision, beforeRollback.revision);
   console.log('MCP files: migration, two-way CRUD, secrets, CAS, validation, defaults, isolation, external edits/deletion and explicit recovery passed');
 
-  // Bot's standard read/grep/edit tools can maintain the file, but never bypass one-shot approval.
+  // Owner system reads/edits need no approval, while CAS and denials still apply.
   config.save(owner, { ...config.get(owner), providers: [{ id: 'mock', name: 'Mock', baseUrl: 'https://model.invalid', apiKey: 'model-secret', protocol: 'openai-chat', catalogId: '', serves: ['chat'] }], llmModel: { providerId: 'mock', model: 'test' }, policy: { ...config.get(owner).policy, read: 'allow', write: 'allow' } });
   const study = new StudyTools(store, config, dir);
   const edit = study.plugins.get('edit');
-  assert.equal(edit.requiresApproval({ path: resource }), true);
+  assert.equal(edit.systemResource, true);
+  assert.equal(edit.requiresApproval?.({ path: resource }) ?? false, false);
   const thread = crypto.randomUUID();
   store.db.prepare("INSERT INTO threads(id,owner_id,mode,title,created_at,updated_at) VALUES(?,?,'bot','MCP editing',?,?)").run(thread, owner, at, at);
   const context = { owner, thread, run: 'not-approved', step: 'not-approved', signal: new AbortController().signal, checkActive() {}, append() {} };
-  await assert.rejects(edit.execute({ path: resource, revision: document.revision, edits: [{ old_string: 'Bot target', new_string: 'No approval' }] }, context), /approval_required/);
+  await edit.execute({ path: resource, revision: document.revision, edits: [{ old_string: 'Bot target', new_string: 'No approval needed' }] }, context);
+  assert.match(files.read(owner, resource).content, /No approval needed/);
   const listing = await study.plugins.get('read').execute({ path: '/system' }, context);
   assert.ok(listing.files.some(file => file.path === resource));
-  const grep = await study.plugins.get('grep').execute({ path: resource, query: 'Bot target' }, context);
-  assert.match(JSON.stringify(grep), /Bot target/);
+  const grep = await study.plugins.get('grep').execute({ path: resource, query: 'No approval needed' }, context);
+  assert.match(JSON.stringify(grep), /No approval needed/);
 
-  for (const scenario of ['approved', 'rejected', 'stale', 'denied-after-approval']) {
+  for (const scenario of ['automatic', 'stale', 'denied']) {
+    config.save(owner, { ...config.get(owner), policy: { ...config.get(owner).policy, read: 'ask', write: 'ask' } });
     const run = crypto.randomUUID(), before = files.read(owner, resource);
     const original = JSON.parse(before.content).servers[0].name, replacement = `Bot ${scenario}`;
     let turn = 0;
@@ -116,26 +119,23 @@ try {
       }
       if (turn === 2) {
         assert.ok(request.messages.some(message => message.role === 'tool' && message.content.includes('"kind":"mcp"')));
+        if (scenario === 'stale') repository.save(owner, { ...repository.public(repository.list(owner)[0]), name: 'Concurrent edit' }, repository.list(owner)[0].id);
+        if (scenario === 'denied') config.save(owner, { ...config.get(owner), policy: { ...config.get(owner).policy, write: 'deny' } });
         return call('edit', { path: resource, revision: before.revision, edits: [{ old_string: original, new_string: replacement }] });
       }
       const result = request.messages.filter(message => message.role === 'tool').at(-1).content;
-      assert.match(result, scenario === 'approved' ? /"saved":true/ : scenario === 'stale' ? /revision_conflict/ : /denied/i);
+      assert.match(result, scenario === 'automatic' ? /"saved":true/ : scenario === 'stale' ? /revision_conflict/ : /denied/i);
       return call('send_message', { kind: 'text', text: `Verified ${scenario}` });
     } });
     const status = () => store.db.prepare('SELECT status FROM runs WHERE id=?').get(run).status;
     const wait = async target => { for (let i = 0; i < 200 && status() !== target; i++) await new Promise(resolve => setTimeout(resolve, 20)); assert.equal(status(), target); };
     bot.start();
-    await wait('waiting_user');
-    assert.equal(files.read(owner, resource).content, before.content, 'write=allow is not permission to self-authorize MCP');
-    if (scenario === 'stale') repository.save(owner, { ...repository.public(repository.list(owner)[0]), name: 'Concurrent edit' }, repository.list(owner)[0].id);
-    if (scenario === 'denied-after-approval') config.save(owner, { ...config.get(owner), policy: { ...config.get(owner).policy, write: 'deny' } });
-    store.db.prepare('UPDATE approvals SET status=? WHERE run_id=?').run(scenario === 'rejected' ? 'rejected' : 'approved', run);
-    store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(run);
-    bot.enqueue(); await wait('completed');
-    assert.equal(repository.list(owner)[0].name, scenario === 'approved' ? replacement : scenario === 'stale' ? 'Concurrent edit' : original);
+    await wait('completed');
+    assert.equal(store.db.prepare('SELECT 1 FROM approvals WHERE run_id=?').get(run), undefined);
+    assert.equal(repository.list(owner)[0].name, scenario === 'automatic' ? replacement : scenario === 'stale' ? 'Concurrent edit' : original);
     await bot.close(); bot = undefined;
   }
-  console.log('Bot MCP editing: basic read/grep/edit, explicit approval despite write=allow, approval resume, rejection, concurrent changes and live policy revocation passed');
+  console.log('Bot MCP editing: autonomous read/grep/edit despite ask policies, concurrent changes and live policy denials passed');
 } finally {
   await bot?.close(); await manager.close(); store.close(); fs.rmSync(dir, { recursive: true, force: true });
 }

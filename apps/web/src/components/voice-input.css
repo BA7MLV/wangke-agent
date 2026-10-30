@@ -1,8 +1,11 @@
 .voice-input { display: inline-flex; flex: none; touch-action: none; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .voice-input__button { min-width: 36px; min-height: 36px; }
 .voice-input__button[aria-pressed='true'] { color: var(--accent); background: var(--accent-soft); }
-.voice-input-target { touch-action: none; -webkit-touch-callout: none; }
-.voice-input-target textarea { touch-action: none; -webkit-touch-callout: none; }
+/* 普通触摸要留给多行输入框原生上下滚动；语音按住期间由 VoiceInput 的
+   非 passive touchmove 监听器接管手势。若这里一直是 none，iOS Safari 会
+   把长草稿锁死，用户只能看到输入框当前的一小段内容。 */
+.voice-input-target { touch-action: pan-y; -webkit-touch-callout: none; }
+.voice-input-target textarea { touch-action: pan-y; -webkit-touch-callout: none; }
 .voice-input__hold {
   position: absolute;
   bottom: calc(100% + 16px);

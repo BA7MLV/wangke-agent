@@ -112,7 +112,7 @@ try {
   assert.equal(recovered.read(owner, '/system/memory/race.md').content, '外部更新优先');
   console.log('Notebook durability: outer transaction rollback, crash replay and no clobber of newer external files passed');
 
-  // Exercise real Bot dispatch, then approval resume with a concurrent disk edit.
+  // Exercise autonomous system editing, including with ask policies and CAS.
   const runtimeConfig = new CloudConfiguration(store, path.join(root, 'config'));
   const runtimeTools = new StudyTools(store, runtimeConfig, path.join(root, 'files'));
   let turn = 0;
@@ -127,10 +127,12 @@ try {
   } });
   const until = async check => { for (let i = 0; i < 500; i++) { if (check()) return; await new Promise(resolve => setTimeout(resolve, 10)); } throw new Error('runtime timeout'); };
   const state = () => store.db.prepare('SELECT status,error_code FROM runs WHERE id=?').get(run);
-  runner.start(); await until(() => ['completed', 'failed', 'paused'].includes(state().status));
+  runner.start();
+  await until(() => ['completed', 'failed', 'paused'].includes(state().status));
   assert.equal(state().status, 'completed', JSON.stringify(state()));
   await runner.close(); runner = undefined;
   assert.match(recovered.read(owner, diary).content, /Bot 工具实际记录/);
+  assert.equal(store.db.prepare('SELECT 1 FROM approvals WHERE run_id=?').get(run), undefined);
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM bot_memory_jobs WHERE enabled=1').get().n, 0, 'no automatic journaling is enabled');
 
   runtimeConfig.save(owner, { ...runtimeConfig.get(owner, true), policy: { ...runtimeConfig.get(owner).policy, write: 'ask' } });
@@ -139,18 +141,20 @@ try {
   const approvalRun = store.db.prepare('SELECT id FROM runs WHERE trigger_message_id=?').get(requested.id).id;
   const before = recovered.read(owner, diary);
   turn = 0;
-  runner = new BotRunner(store, { configuration: runtimeConfig, study: runtimeTools, fetch: async () => ++turn === 1 ? response('edit', { path: diary, revision: before.revision, append: '不得覆盖并发修改' }) : response('send_message', { kind: 'text', text: '文件已变化，请重新读取。' }) });
+  runner = new BotRunner(store, { configuration: runtimeConfig, study: runtimeTools, fetch: async () => {
+    if (++turn === 1) {
+      fs.writeFileSync(physical(diary), `${before.content}\n\n用户在工具调用前修改。`);
+      return response('edit', { path: diary, revision: before.revision, append: '不得覆盖并发修改' });
+    }
+    return response('send_message', { kind: 'text', text: '文件已变化，请重新读取。' });
+  } });
   runner.start();
-  await until(() => store.db.prepare('SELECT status FROM runs WHERE id=?').get(approvalRun).status === 'waiting_user');
-  fs.writeFileSync(physical(diary), `${before.content}\n\n用户在审批期间修改。`);
-  store.db.prepare("UPDATE approvals SET status='approved' WHERE run_id=?").run(approvalRun);
-  store.db.prepare("UPDATE runs SET status='queued' WHERE id=?").run(approvalRun);
-  runner.enqueue();
   await until(() => store.db.prepare('SELECT status FROM runs WHERE id=?').get(approvalRun).status === 'completed');
-  assert.match(fs.readFileSync(physical(diary), 'utf8'), /用户在审批期间修改/);
+  assert.match(fs.readFileSync(physical(diary), 'utf8'), /用户在工具调用前修改/);
   assert.doesNotMatch(fs.readFileSync(physical(diary), 'utf8'), /不得覆盖并发修改/);
   assert.match(store.db.prepare("SELECT result FROM run_steps WHERE run_id=? AND tool='edit'").get(approvalRun).result, /system_revision_conflict/);
-  console.log('Bot notebook dispatch: basic tools, on-demand retrieval, exact approval resume/CAS and no automatic diary scheduling passed');
+  assert.equal(store.db.prepare('SELECT 1 FROM approvals WHERE run_id=?').get(approvalRun), undefined);
+  console.log('Bot notebook dispatch: basic tools, on-demand retrieval, autonomous writes despite ask policies, CAS and no automatic diary scheduling passed');
 } finally {
   await runner?.close();
   store.close();

@@ -71,7 +71,7 @@ npm start
 
 ## 微信 iLink 配置
 
-协议参考腾讯官方 `Tencent/openclaw-weixin` v2.4.10、快照 `874637a0dbc24050f72d1385add4fc6170a2d726`，独立实现，未加载 OpenClaw。
+协议参考腾讯官方 `Tencent/openclaw-weixin` v2.4.10、快照 `874637a0dbc24050f72d1385add4fc6170a2d726`，独立实现，未加载 OpenClaw。微信 ClawBot/iLink 的出站文本支持 Markdown 展示（包括 fenced code block）；腾讯插件的 `StreamingMarkdownFilter` 也会保留和过滤这类结构。本实现因此原样保留 Markdown 文本，不把普通 Markdown 或代码块默认转图片；仍按渠道上限做结构安全分片。LaTeX 数学公式不等同于 Markdown 能力，暂不宣称由微信原生排版。
 
 1. 新增微信 iLink 账号并保存，在管理页获取二维码，用有资格的本人微信扫码。
 2. 保持轮询；等待、已扫码、确认、过期、验证码、官方重定向按平台状态处理。验证码须点击提交，每次只发送一次；错误后等待重新输入，`verify_code_blocked` 停止该轮并允许稍后刷新，`binded_redirect` 结束该轮并提示返回查看连接。验证码不写入模型上下文。过期后重新取码。
@@ -119,7 +119,7 @@ npm start
 - 崩溃时 `sending` 恢复为 `uncertain`。同会话的后续消息会等待前序不确定/失败消息处理，避免倒序。飞书未知结果在有效去重窗口内可固定 UUID 自动重试，微信未知结果**不会自动重放**。
 - 人工重试 `uncertain` 必须确认重复风险；它只重投结果，绝不重新执行学习任务。先检查远端是否已收到。旧飞书 UUID 超出平台窗口同样可能重复。
 - 无法重发或不再需要的 `pending` / `failed` / `uncertain` 可在管理页选择**放弃投递**，或本人调用 `POST /api/v1/gateway/deliveries/:id/discard`，标记 `cancelled` 并放行后续消息。它不撤回平台可能已收到的消息，未知投递可能早已送达；Web 结果仍保留。`sending` / `sent` 不允许放弃，以免与在途请求竞态。
-- `rate_limited`：iLink 解析 Retry-After 的秒数和 HTTP 日期，轮询按其等待下限与带随机抖动的指数退避重试（普通退避上限 60 秒）；异常 Retry-After 使用有限默认值。长文本按 1500 个 Unicode 码点分片。媒体上限保守设为 20 MiB，真实平台可能更低；文件名/格式/权限也可能导致拒绝。
+- `rate_limited`：iLink 解析 Retry-After 的秒数和 HTTP 日期，轮询按其等待下限与带随机抖动的指数退避重试（普通退避上限 60 秒）；异常 Retry-After 使用有限默认值。长文本按渠道限制做 Markdown-aware 分片：优先段落、换行、句子和空白边界，保护代码围栏、公式、链接等结构；iLink 的单片上限为 1500 个 Unicode 码点。媒体上限保守设为 20 MiB，真实平台可能更低；文件名/格式/权限也可能导致拒绝。
 - 入站批次和 iLink 游标同事务提交；消息去重、Bot client nonce、outbox/checkpoint 保证本地不会因重放重复创建 run。网络投递仍受平台契约限制，不声称端到端 exactly-once。
 - 停用取消连接及在途 I/O，保留历史和未发送队列供重新启用；撤销绑定取消其待发队列和提醒。在途远端操作已被接受时无法撤回，标为不确定。停服保留数据以便恢复。
 - `connection_failed` / `reconnecting`：管理页和 `GET /api/v1/gateway` 的账号 `connection` 显示错误分类、HTTP/平台数字错误码、连续失败次数、下次重试和最近成功同步时间。诊断仅存当前进程内存，重启后重新观测；`gateway_connection` 结构化日志在错误改变及第 1/2/4/8… 次失败时输出，保留诊断又避免日志洪泛。字段严格白名单，不包含平台 errmsg、异常正文、凭据、二维码、游标或消息内容。插件启动失败释放旧实例，30 秒后可自动重试；详情页「立即重连」或重新保存可立即重启。永久 HTTP 4xx（429/408 除外）停止自动轮询，修正配置后重连；`login_required` 须扫码。

@@ -1,6 +1,6 @@
 # 内置技能与讲义专题
 
-日常对话和设置页默认提供五个任务入口：课程讲义、讲解配图、交互式讲解、原题题库、资料整理。用户自定义技能另计。Bot 也支持通过现有 shell 从链接下载并安装到 owner-scoped `/system/skills/<skill-id>/`，无需新增 `skill_install` 工具。
+日常对话和设置页默认提供五个任务入口：课程讲义、讲解配图、交互式讲解、原题题库、资料整理。用户自定义技能另计。Bot 也支持通过现有 shell 从链接下载并安装到 owner-scoped `/system/skills/<skill-id>/`，无需新增 `skill_install` 工具。整个 `/system`（包括 skills）默认只读；安装／修改时传 `systemWrite=true` 即可为该命令开启写入，无需人工审批。`edit` 修改现有技能文本也不用审批。只有删除仍需一次性确认，包括脚本内删除；显式禁用与账户隔离保持不变。命令文本检查不构成任意程序的强防删边界，详见 [工作区权限](project-workspaces.md#system-高权限与删除审批)。
 
 ## 合并内容
 

@@ -128,6 +128,16 @@ export class ProjectRepository {
     return project;
   }
 
+  /** Autonomous Bots can access every project owned by the current user.
+   * Project grants remain the UI sharing/management boundary. Writes still
+   * reject archived projects and callers apply the global Bot policy. */
+  authorizeBot(owner: string, id: string, agentId: string | null, capability: 'read' | 'write' = 'read') {
+    const project = capability === 'write' ? this.writable(owner, id) : this.get(owner, id);
+    if (!agentId) throw new ProjectError('project_access_denied', 403);
+    this.agent(owner, agentId);
+    return project;
+  }
+
   thread(id: string): ProjectThread {
     const thread = this.store.db.prepare(`SELECT id,owner_id,project_id,
       COALESCE(agent_id,(SELECT agent_id FROM thread_participants WHERE thread_id=threads.id ORDER BY joined_at,agent_id LIMIT 1)) AS agent_id,archived FROM threads WHERE id=?`).get(id) as ProjectThread | undefined;

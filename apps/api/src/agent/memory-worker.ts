@@ -6,8 +6,8 @@ import { ModelClient } from './model-client.js';
 import { botRequest, botCalls } from './model.js';
 import { boundedRequest } from './request-budget.js';
 
-/** Opt-in consolidation consumes only completed checkpoints. Cursor and all
- * revisions commit together; a deletion tombstone wins over old sources. */
+/** Opt-in consolidation saves without approval; source/policy checks and the
+ * cursor commit atomically with revisions. Deletion tombstones always win. */
 export class MemoryWorker {
   private timer?: ReturnType<typeof setInterval>;
   private active?: { owner: string; controller: AbortController; task: Promise<void> };
@@ -32,8 +32,14 @@ export class MemoryWorker {
     try { await task; } finally { this.active = undefined; }
   }
   private async execute(job: { owner_id: string; cursor: string | null; token_budget: number; interval_seconds: number }, signal: AbortSignal) {
-    const summary = this.store.db.prepare(`SELECT s.rowid AS cursor,s.id,s.content,s.run_id,r.trigger_message_id FROM bot_summaries s JOIN runs r ON r.id=s.run_id JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND r.status='completed' AND s.rowid>? ORDER BY s.rowid LIMIT 1`).get(job.owner_id, Number(job.cursor) || 0) as { cursor: number; id: string; content: string; run_id: string; trigger_message_id: string | null } | undefined;
+    const summary = this.store.db.prepare(`SELECT s.rowid AS cursor,s.id,s.content,s.run_id,r.thread_id,r.trigger_message_id FROM bot_summaries s JOIN runs r ON r.id=s.run_id JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND t.archived=0 AND r.status='completed' AND s.rowid>? ORDER BY s.rowid LIMIT 1`).get(job.owner_id, Number(job.cursor) || 0) as { cursor: number; id: string; content: string; run_id: string; thread_id: string; trigger_message_id: string | null } | undefined;
     if (!summary) { this.store.db.prepare('UPDATE bot_memory_jobs SET next_at=? WHERE owner_id=?').run(Date.now() + job.interval_seconds * 1000, job.owner_id); return; }
+    const advance = () => this.store.db.prepare('UPDATE bot_memory_jobs SET cursor=?,next_at=? WHERE owner_id=?').run(String(summary.cursor), Date.now() + job.interval_seconds * 1000, job.owner_id);
+    const policy = this.configuration.policy(job.owner_id, summary.thread_id);
+    if (policy.read === 'deny' || policy.write === 'deny') {
+      this.store.db.prepare('UPDATE bot_memory_jobs SET next_at=? WHERE owner_id=?').run(Date.now() + job.interval_seconds * 1000, job.owner_id);
+      return;
+    }
     const config = this.configuration.get(job.owner_id, true), provider = config.providers.find(p => p.id === config.llmModel.providerId);
     if (!provider) throw new Error('model_not_configured');
     const definition = { type: 'function', function: { name: 'consolidate_memory', description: 'Extract only explicit learning preferences; empty when uncertain.', parameters: { type: 'object', additionalProperties: false, properties: { preferences: { type: 'array', maxItems: 5, items: { type: 'string', maxLength: 1000 } } }, required: ['preferences'] } } };
@@ -44,19 +50,19 @@ export class MemoryWorker {
     const calls = botCalls(provider.protocol, body);
     if (calls?.length !== 1 || calls[0].function.name !== 'consolidate_memory') throw new Error('memory_invalid_result');
     const result = JSON.parse(calls[0].function.arguments) as { preferences?: unknown };
-    if (!Array.isArray(result.preferences) || result.preferences.length > 5 || result.preferences.some(p => typeof p !== 'string' || p.length > 1000)) throw new Error('memory_invalid_result');
+    if (!Array.isArray(result.preferences) || result.preferences.length > 5 || result.preferences.some(p => typeof p !== 'string' || !p.trim() || p.length > 1000)) throw new Error('memory_invalid_result');
     signal.throwIfAborted();
     this.store.transaction(() => {
       const enabled = this.store.db.prepare('SELECT enabled FROM bot_memory_jobs WHERE owner_id=?').get(job.owner_id) as { enabled: number };
-      if (!enabled.enabled || this.closed) throw new Error('memory_job_cancelled');
-      for (const preference of result.preferences as string[]) {
-        // All checkpoints of a run share a source lineage. A later compaction
-        // of the same old user message must not resurrect a deleted preference.
-        const source = summary.trigger_message_id ? `message:${summary.trigger_message_id}` : `run:${summary.run_id}`;
-        if (this.store.db.prepare('SELECT 1 FROM bot_memories WHERE owner_id=? AND source=? AND (content=? OR status=?)').get(job.owner_id, source, preference, 'deleted')) continue;
-        new BotMemory(this.store).save(job.owner_id, { scope: 'owner', scopeId: '', kind: 'preference', content: preference, source, sourceRevision: `summary:${summary.id}` }, { origin: 'consolidated' });
-      }
-      this.store.db.prepare('UPDATE bot_memory_jobs SET cursor=?,next_at=? WHERE owner_id=?').run(String(summary.cursor), Date.now() + job.interval_seconds * 1000, job.owner_id);
+      if (!enabled?.enabled || this.closed) throw new Error('memory_job_cancelled');
+      const current = this.store.db.prepare(`SELECT s.content FROM bot_summaries s JOIN runs r ON r.id=s.run_id JOIN threads t ON t.id=r.thread_id
+        WHERE s.id=? AND t.owner_id=? AND t.archived=0 AND r.status='completed'`).get(summary.id, job.owner_id) as { content: string } | undefined;
+      const currentPolicy = this.configuration.policy(job.owner_id, summary.thread_id);
+      if (current?.content !== summary.content || currentPolicy.read === 'deny' || currentPolicy.write === 'deny') throw new Error('memory_source_or_permission_changed');
+      const source = summary.trigger_message_id ? `message:${summary.trigger_message_id}` : `run:${summary.run_id}`;
+      const preferences = [...new Set(result.preferences as string[])].filter(preference => !this.store.db.prepare('SELECT 1 FROM bot_memories WHERE owner_id=? AND source=? AND (content=? OR status=?)').get(job.owner_id, source, preference, 'deleted'));
+      for (const content of preferences) new BotMemory(this.store).save(job.owner_id, { scope: 'owner', scopeId: '', kind: 'preference', content, source }, { origin: 'consolidated' });
+      advance();
     });
   }
 }

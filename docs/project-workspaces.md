@@ -22,9 +22,21 @@
 
 普通 Web／IM Bot 会话共用当前用户的 `Bot` 文件夹：新接收的附件、导出的文本默认归入这里，`workspace` 文件工具与 shell 的 `/workspace` 指向同一个真实目录。Bot 在开始处理附件前完成归档，无需先打开资源页面。已存在同名文件夹时创建 `Bot (2)` 等独立目录，默认身份由 `bot_workspaces` 保存，不按名称猜测或接管用户目录。
 
-`workspace` 未传 `projectId` 时只访问默认目录，`path=""` 表示 Bot 文件夹；`mkdir` 可以逐层创建任务子目录，`projects create` 也在 Bot 内新建子目录。访问根目录或其他资源文件夹时，先用 `projects list` 获取已授权的准确 ID，再显式传入 `projectId`。查询失败不会自动转到其他目录。返回值携带实际 `projectId` 和相对路径，文件夹改名不改变默认身份。已有工作区文件通过 `study_upload_file` 登记后发送，不会再在 Bot 顶层生成一份附件副本。
+`workspace` 未传 `projectId` 时只访问默认目录，`path=""` 表示 Bot 文件夹；`mkdir` 可以逐层创建任务子目录，`projects create` 也在 Bot 内新建子目录。Bot 可访问当前用户的全部资源项目（归档项目可读但不能修改或执行）；先用 `projects list` 获取准确 ID，再显式传入 `projectId`。查询失败不会自动转到其他目录。返回值携带实际 `projectId` 和相对路径，文件夹改名不改变默认身份。`/system` 通过系统工具和 shell 访问；整个目录的读取、新建、修改和技能安装不用审批，删除仍需审批，详见下节。已有工作区文件通过 `study_upload_file` 登记后发送，不会再在 Bot 顶层生成一份附件副本。
 
-首次建立默认目录时给现有启用 Bot 管理授权，新建 Bot 同样获得该目录授权；之后读取默认目录不会恢复被撤销的授权。默认目录的 shell/network 策略允许沿用全局策略，仍以全局开关和部署设置为准。根目录及其他目录继续按各自授权检查。从指定文件夹创建的会话仍只访问该文件夹。
+首次建立默认目录时给现有启用 Bot 管理授权，新建 Bot 同样获得该目录授权；Bot 访问用户自己的其他资源项目不依赖逐项目 grant，仍受全局 Bot 策略、项目 shell/network 策略和归档状态约束。默认目录的 shell/network 策略允许沿用全局策略，仍以全局开关和部署设置为准。用户与其他账户的资源继续隔离。从指定文件夹创建的会话也可按准确 projectId 访问同一用户的其他项目。
+
+shell 与文件工具使用相同的用户资源边界，不再因旧的只读 grant 单独拒绝命令。跨项目 shell 按目标项目的 shell/network 策略执行，而非会话默认目录的策略；审批持久保存目标 projectId，重启恢复后仍重新校验该目标的当前策略，不能用旧审批覆盖新禁用。二进制文件通过 `study_upload_file` 的 projectId 选择资源项目，归档项目仍可只读登记文件。
+
+### `/system` 高权限与删除审批
+
+- Bot 可修改当前账户整个 `/system`，包括 `AGENTS.md`、`memory/`、`mcp.json`、`skills/` 及其他自建文件／目录，不涉及其他账户或宿主机系统目录。普通会话与项目会话适用同一规则。
+- `read`、`grep`、`skill_load`、`edit` 的创建／追加／替换，以及旧 `study_memory` 的读取／保存直接执行，不因 `read/write=ask` 再次询问，也不要求先信任 Bot。文档修改仍检查 revision，并发编辑会返回冲突。删除文件、目录或记忆始终需要一次性人工审批，信任 Bot 或 `remove=allow` 不能跳过。
+- shell 默认将**整个** `/system` 只读挂载，`skills` 不例外。修改、安装技能或新建文件／目录时传 `systemWrite=true`，无需审批，仅该命令获得可写挂载（不因 shell/read/write 的 `ask` 阻塞）；后续命令恢复只读。删除必须同时传 `requiresApproval=true`，运行时也对 `rm/rmdir/unlink`、`find -delete`、`rsync --delete` 及常见 Python／Node 删除调用强制确认。涉及 `/system` 的审批显示全目录写权限及完整命令；普通 shell 审批不隐含此权限。
+- **删除检查不是任意脚本的文件系统安全边界**：可写挂载允许程序调用删除 API，无法仅靠命令文本完整识别间接执行、动态拼接或混淆代码。Bot 工具契约要求所有删除主动申请审批，不得伪装成修改；当前不承诺对任意恶意程序实现“可修改但绝不能删除”。
+- API 在执行前校验持久化步骤、账户、目标项目、命令、网络和超时；删除／外部影响等需要确认的操作仍校验精确审批。显式 read/write/remove/shell 禁用、目标项目禁用、归档只读及网络限制仍优先，旧审批不覆盖撤权。其他设置／外部工具的审批规则不变。broker 仅接受可信 API 请求，不向公网或命令容器开放。
+- 自动记忆整理仍默认关闭；用户启用后直接保存明确的学习偏好，不逐条审批，不重跑原已完成任务。记忆写入与游标原子提交，重启和重试不重复保存，删除墓碑防止复活。来源变化、关闭整理、取消或当前权限禁用阻止写入。
+- 生效需要更新并重启 **API 和 sandbox broker**，不能只改提示词或只发布 Web；不需要数据库迁移。真实挂载验证见 `npm run test:sandbox`。
 
 ### Python 执行、文件命名与重名
 
@@ -69,10 +81,10 @@ DATA_DIR/
 
 ## 权限与一致性
 
-- 用户只能管理自己拥有的项目；BOT 每次文件/命令调用重新校验该项目授权。
-- 项目会话的 `project_id` 创建后不可迁移。指定文件夹会话的文件工具拒绝其他项目 ID；普通 Bot 可显式访问其他已授权范围。shell 始终由后端注入当前工作区 ID。
-- 读取授权禁止写入和 shell；读写/管理授权仍受全局 read/write/remove/shell 策略及项目 shell/network 策略约束。审批绑定持久化工具参数，执行前再次校验权限。
-- 项目会话不继承全局 MCP 连接器，也不能通过项目管理工具越出当前项目。独立 BOT 可列出并按明确 ID 访问自己已获授权的项目，重命名还需要管理授权。
+- 用户只能管理自己拥有的项目；BOT 每次文件/命令调用重新校验项目归属、归档状态及当前策略。
+- 项目会话的 `project_id` 创建后不可迁移，但 Bot 可显式访问同一用户的其他项目；shell 和二进制文件读取可用准确 projectId 选择挂载到 `/workspace` 的项目。
+- 用户自己的资源项目不再依赖逐项目 grant；读写/管理授权仍受全局 read/write/remove/shell 策略及项目 shell/network 策略约束，归档项目只读。审批绑定持久化工具参数，执行前再次校验权限。
+- 项目会话不继承全局 MCP 连接器，也不能通过项目管理工具越出当前用户。Bot 可列出并按明确 ID 访问用户自己的全部项目，重命名仍需要管理授权。
 - 同项目运行任务串行，不同项目按 `BOT_CONCURRENCY` 并发。等待审批/定时唤醒时释放运行槽；继续执行时重新校验文件 revision 与授权。
 - 浏览器写入与运行中的项目任务互斥，返回 409 `project_busy`；上传先写入不挂载到沙盒的暂存目录，提交时再次检查项目状态和锁。
 - shell 执行登记持久化租约。取消/重启后，只有 broker 确认旧容器已移除才释放租约；broker 不可达时保留锁并重试，避免旧命令与新写入重叠。
@@ -124,6 +136,8 @@ POST           /resources/courses/:id/text       { text, expected }
 验证命令及 Docker 挂载环境变量见 [运行时部署](agent-runtime.md)。
 
 资源专项验证：`npm run test:resources`、`npm run test:resources:e2e`。后者覆盖桌面／手机、真实 mkdir／上传／课程导入、机器直接创建文件、Markdown 阅读／保存／索引／并发保护、返回原目录、B 站入口及旧链接。截图保存在 `test-results/resource-folders`。
+
+Bot 全资源访问回归：`npx tsx scripts/test-bot-resource-access.mjs`（也包含在 `npm run test:bot`），覆盖无逐项目授权、项目会话跨目录、嵌套文本／二进制文件、system 指令／笔记／技能／MCP／旧记忆免审批读写、删除强制审批、只读／可写挂载参数、归档只读、账户隔离、拒绝／重启／并发冲突／撤权及目标项目审批恢复。`npx tsx scripts/test-bot-services.mjs` 另覆盖后台记忆自动保存、来源／权限／取消检查及原子回滚；真实 Docker 挂载另用 `npm run test:sandbox` 验证。
 
 聊天项目验证：`npm run test:chat-projects`、`npm run test:chat-projects:e2e`，覆盖本地／服务端创建、会话归属、发送后收起、子目录检索及桌面／手机文件夹颜色。截图在 `test-results/chat-projects`。
 
