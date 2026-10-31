@@ -327,7 +327,7 @@ const MIGRATIONS: Array<[number, string]> = [
       created_at TEXT NOT NULL, PRIMARY KEY(memory_id,revision)
     );
     CREATE TABLE bot_memory_jobs (
-      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 1,
+      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 0,
       cursor TEXT, token_budget INTEGER NOT NULL DEFAULT 10000, interval_seconds INTEGER NOT NULL DEFAULT 86400,
       next_at INTEGER NOT NULL DEFAULT 0
     );
