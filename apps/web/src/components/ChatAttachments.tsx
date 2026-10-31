@@ -6,6 +6,7 @@ import { downloadAttachment, readAttachmentBlob } from '../chat/prepareAttachmen
 import { Sym, toast } from '../ui';
 import { prefersReducedMotion } from '../utils/motion';
 import ImagePreview from './ImagePreview';
+import ImageGallery from './ImageGallery';
 import './chat-attachments.css';
 
 /** The same accessible viewer serves composer thumbnails and persisted messages. */
@@ -30,8 +31,9 @@ function ChatImage({ file, images, draft = false }: { file: ChatAttachment; imag
   }, [open, current]);
   const source = open && original?.id === current.id ? original.url : current.dataUrl;
   const navigate = (next: number) => { setIndex(next); setFailed(false); setOriginal(undefined); };
+  const stacked = !draft && images.length > 1;
   return <>
-    <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={`预览图片 ${file.name}`}
+    <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={stacked ? `查看 ${images.length} 张图片` : `预览图片 ${file.name}`}
       onPress={() => { navigate(Math.max(0, images.findIndex((image) => image.id === file.id))); setOpen(true); }}>
       <img src={file.dataUrl} alt={file.name} loading={draft ? 'eager' : 'lazy'} decoding="async" />
     </Button>
@@ -121,7 +123,7 @@ export function ChatMessageAttachments({ files }: { files?: ChatAttachment[] }) 
   if (!files?.length) return null;
   const images = files.filter((file) => file.dataUrl);
   return <div className="chat-attachments" data-testid="chat-message-attachments">
-    {images.length > 0 && <div className="chat-image-gallery" data-count={images.length}>{images.map((file) => <ChatImage key={file.id} file={file} images={images} />)}</div>}
+    {images.length > 0 && <ImageGallery count={images.length}><ChatImage file={images[0]} images={images} /></ImageGallery>}
     {files.filter((file) => !file.dataUrl).map((file) => <button type="button" key={file.id} className="chat-attachments__item" aria-label={`下载附件 ${file.name}`}
       onClick={() => void downloadAttachment(file).catch((error: Error) => toast.error(error.message))}>
       {file.dataUrl ? <img className="chat-attachments__thumb" src={file.dataUrl} alt={file.name} loading="lazy" /> : <Sym name="description" />}

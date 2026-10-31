@@ -1,15 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS } from '../packages/contracts/src/bot-attachments.ts';
+import { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_MESSAGE_ATTACHMENTS } from '../packages/contracts/src/bot-attachments.ts';
 
 const file = { fileId: '18468d54-6475-45b3-90f3-da74adfcf799', originalName: 'image.jpg', mimeType: 'image/jpeg', sizeBytes: 123 };
 test('single and batched attachments retain caption and all files', () => {
   assert.deepEqual(parseBotAttachments(JSON.stringify(file)), { files: [file], text: '' });
   const files = [file, { projectId: 'project', projectPath: 'notes.md' }];
   assert.deepEqual(parseBotAttachments(JSON.stringify({ attachments: files, caption: '解释这些附件' })), { files, text: '解释这些附件' });
+  const album = Array.from({ length: 99 }, (_, i) => ({ ...file, fileId: `image-${i}` }));
+  assert.deepEqual(parseBotAttachments(JSON.stringify({ attachments: album })), { files: album, text: '' });
 });
 test('invalid envelopes and unsafe metadata fail closed', () => {
-  for (const value of [null, [], 'plain text', {}, { attachments: [] }, { attachments: Array(MAX_BOT_ATTACHMENTS + 1).fill(file) },
+  for (const value of [null, [], 'plain text', {}, { attachments: [] }, { attachments: Array(MAX_BOT_MESSAGE_ATTACHMENTS + 1).fill(file) },
     { ...file, name: {} }, { ...file, mimeType: [] }, { ...file, sizeBytes: -1 }, { attachments: [file, { fileId: '' }] }]) {
     assert.equal(parseBotAttachments(JSON.stringify(value)), null);
   }

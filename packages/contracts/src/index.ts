@@ -1,6 +1,6 @@
 export type ConversationMode = 'chat' | 'bot';
 export type { ServerStorageStats, StorageCategoryId } from './storage.js';
-export { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS, type BotAttachment } from './bot-attachments.js';
+export { parseBotAttachments, parseLegacyBotAttachments, MAX_BOT_ATTACHMENTS, MAX_BOT_MESSAGE_ATTACHMENTS, type BotAttachment } from './bot-attachments.js';
 export type MessageRole = 'user' | 'assistant' | 'system' | 'tool';
 
 export interface ThreadDto {
@@ -32,7 +32,7 @@ export interface MessageDto {
   clientNonce: string | null;
   seq: number;
   role: MessageRole;
-  kind: 'text' | 'progress' | 'attachment' | 'widget' | 'question' | 'approval';
+  kind: 'text' | 'progress' | 'attachment' | 'widget' | 'question' | 'approval' | 'web_sources';
   content: string;
   createdAt: string;
   replyTo: string | null;

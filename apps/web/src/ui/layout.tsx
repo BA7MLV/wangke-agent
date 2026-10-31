@@ -502,7 +502,12 @@ function Sidebar({
   );
 }
 
-const NavigationContext = createContext<{ isNarrow: boolean; open: () => void } | null>(null);
+const NavigationContext = createContext<{
+  isNarrow: boolean;
+  isOpen: boolean;
+  drawerId: string;
+  open: () => void;
+} | null>(null);
 
 /** 挂在布局路由上一次；子页面加载或切换时，导航、Recent 滚动和账号区不卸载。 */
 export function NavigationShell({
@@ -525,8 +530,10 @@ export function NavigationShell({
   const isNarrow = useIsNarrow();
   const [railCollapsed, toggleRail] = useRailCollapsed();
   const navigationId = useId();
+  const drawerId = `${navigationId}-drawer`;
+  const navOpen = isNarrow && drawerOpen && !settingsOpen;
   const open = useCallback(() => setDrawerOpen(true), []);
-  const navigation = useMemo(() => ({ isNarrow, open }), [isNarrow, open]);
+  const navigation = useMemo(() => ({ isNarrow, isOpen: navOpen, drawerId, open }), [isNarrow, navOpen, drawerId, open]);
 
   // 抽屉展开时锁住背景滚动，否则手指在遮罩边缘滑动会连带滚背后的内容
   useEffect(() => {
@@ -555,7 +562,8 @@ export function NavigationShell({
 
   return (
     <NavigationContext.Provider value={navigation}>
-      <div className="app-navigation-shell flex h-[var(--vvh,100%)] min-h-0 overflow-hidden bg-background-secondary text-foreground">
+      <div className="app-navigation-shell flex h-[var(--vvh,100%)] min-h-0 overflow-hidden bg-background-secondary text-foreground"
+        data-nav-open={navOpen}>
         {!isNarrow && (
           <nav className={`page-shell__rail t-resize${railCollapsed ? ' page-shell__compact-rail' : ''}`}
             aria-label="主导航" data-testid={railCollapsed ? 'nav-rail-compact' : 'nav-rail'}>
@@ -577,12 +585,20 @@ export function NavigationShell({
             </div>}
           </nav>
         )}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</div>
+        {/* 保持同一份页面和布局宽度，只移动画布；抽屉管理焦点，inert 阻止背景交互。 */}
+        <div className="app-navigation-workspace flex min-h-0 min-w-0 flex-1 flex-col" inert={navOpen}>
+          {children}
+          <div className="app-navigation-blur" aria-hidden="true">
+            <span /><span /><span /><span />
+          </div>
+        </div>
         {isNarrow && (
-          <Drawer.Root isOpen={drawerOpen} onOpenChange={setDrawerOpen}>
-            <Drawer.Backdrop variant="opaque" className="app-nav-backdrop">
-              <Drawer.Content placement="left">
-                <Drawer.Dialog className="app-nav-drawer" aria-label="DeepStudent Go">
+          <Drawer.Root isOpen={navOpen} onOpenChange={setDrawerOpen}>
+            <Drawer.Backdrop variant="transparent" className="app-nav-backdrop">
+              <Drawer.Content placement="left" className="app-nav-content">
+                <Drawer.Dialog id={drawerId} className="app-nav-drawer" aria-label="DeepStudent Go"
+                  // 不让 Drawer 单独拖走侧栏；正文与导航只由同一个开关驱动。
+                  onPointerDown={event => event.stopPropagation()} style={{ touchAction: 'pan-y' }}>
                   <Drawer.Header className="mb-4 flex flex-row items-center justify-between p-0">
                     <Drawer.Heading className="page-shell__brand" aria-label="DeepStudent Go" data-testid="app-brand"><BrandLogo /></Drawer.Heading>
                     <Drawer.CloseTrigger aria-label="关闭导航"><Sym name="close" /></Drawer.CloseTrigger>
@@ -736,6 +752,9 @@ export function PageShell({
                 className="page-shell__toolbar-button relative shrink-0 rounded-full"
                 data-testid="nav-rail-open"
                 aria-label="打开导航"
+                aria-haspopup="dialog"
+                aria-expanded={navigation?.isOpen}
+                aria-controls={navigation?.isOpen ? navigation.drawerId : undefined}
                 onPress={navigation?.open}
               >
                 <Sym name="menu" />

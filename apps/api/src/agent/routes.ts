@@ -2,7 +2,7 @@ import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from '../cloud/config.js';
 import type { BotRunner } from './runner.js';
-import type { MemoryWorker } from './memory-worker.js';
+import { DEFAULT_MEMORY_JOB, ensureMemoryJob, type MemoryWorker } from './memory-worker.js';
 import { BotMemory, type MemoryInput } from './memory.js';
 import { BotArtifacts } from './artifacts.js';
 import { BotSkills } from './skills.js';
@@ -18,7 +18,7 @@ export function registerBotManagement(app: FastifyInstance, store: DatabaseStore
     const offset = Math.max(0, Number(r.query.offset) || 0);
     return {
       budget: new UsageLedger(store, configuration).limits(u.id), timezone: 'UTC',
-      memoryJob: store.db.prepare('SELECT enabled,cursor,token_budget AS tokenBudget,interval_seconds AS intervalSeconds,next_at AS nextAt FROM bot_memory_jobs WHERE owner_id=?').get(u.id) ?? { enabled: 0, cursor: null, tokenBudget: 10000, intervalSeconds: 86400 },
+      memoryJob: { ...ensureMemoryJob(store, u.id), cursor: (store.db.prepare('SELECT cursor FROM bot_memory_jobs WHERE owner_id=?').get(u.id) as { cursor: string | null }).cursor },
       runs: store.db.prepare('SELECT r.id,r.thread_id AS threadId,t.title,r.status,r.error_code AS errorCode,r.step_count AS steps,r.active_ms AS activeMs,r.created_at AS createdAt FROM runs r JOIN threads t ON t.id=r.thread_id WHERE t.owner_id=? AND r.mode=? ORDER BY r.created_at DESC LIMIT 50 OFFSET ?').all(u.id, 'bot', offset),
       usage: store.db.prepare(`SELECT COUNT(*) AS requests,COALESCE(SUM(input_tokens+output_tokens),0) AS knownTokens,
         COALESCE(SUM(input_tokens),0) AS inputTokens,COALESCE(SUM(output_tokens),0) AS outputTokens,
@@ -59,10 +59,11 @@ export function registerBotManagement(app: FastifyInstance, store: DatabaseStore
   app.post<{ Params: { id: string }; Body: { revision: number } }>('/api/v1/bot/memories/:id/delete', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => memory.remove(u.id, r.params.id, r.body.revision)); });
   app.get<{ Params: { id: string }; Querystring: { offset?: string } }>('/api/v1/bot/memories/:id/versions', async (r, p) => { const u = auth(r, p); if (!u) return; return safe(p, () => ({ versions: memory.versions(u.id, r.params.id, Number(r.query.offset) || 0) })); });
   app.post<{ Params: { id: string }; Body: { revision: number; expected: number } }>('/api/v1/bot/memories/:id/restore', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => memory.restore(u.id, r.params.id, r.body.revision, r.body.expected)); });
-  app.post<{ Body: { enabled: boolean; tokenBudget: number; intervalSeconds: number } }>('/api/v1/bot/memory-job', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => {
+  app.post<{ Body: { enabled: boolean; tokenBudget?: number; intervalSeconds?: number } }>('/api/v1/bot/memory-job', async (r, p) => { const u = write(r, p); if (!u) return; return safe(p, () => {
     const v = r.body;
-    if (typeof v.enabled !== 'boolean' || !Number.isSafeInteger(v.tokenBudget) || v.tokenBudget < 100 || v.tokenBudget > 100000 || !Number.isSafeInteger(v.intervalSeconds) || v.intervalSeconds < 60 || v.intervalSeconds > 31536000) throw new Error('invalid_memory_job');
-    store.db.prepare('INSERT INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds) VALUES(?,?,?,?) ON CONFLICT(owner_id) DO UPDATE SET enabled=excluded.enabled,token_budget=excluded.token_budget,interval_seconds=excluded.interval_seconds').run(u.id, Number(v.enabled), v.tokenBudget, v.intervalSeconds);
+    if (typeof v.enabled !== 'boolean' || v.tokenBudget !== undefined && (!Number.isSafeInteger(v.tokenBudget) || v.tokenBudget < 100 || v.tokenBudget > 100000) || v.intervalSeconds !== undefined && (!Number.isSafeInteger(v.intervalSeconds) || v.intervalSeconds < 60 || v.intervalSeconds > 31536000)) throw new Error('invalid_memory_job');
+    const current = ensureMemoryJob(store, u.id);
+    store.db.prepare('UPDATE bot_memory_jobs SET enabled=?,token_budget=?,interval_seconds=? WHERE owner_id=?').run(Number(v.enabled), v.tokenBudget ?? current.tokenBudget ?? DEFAULT_MEMORY_JOB.tokenBudget, v.intervalSeconds ?? current.intervalSeconds ?? DEFAULT_MEMORY_JOB.intervalSeconds, u.id);
     if (!v.enabled) worker.cancel(u.id); return { saved: true };
   }); });
   app.get<{ Params: { id: string } }>('/api/v1/bot/threads/:id/skills', async (r, p) => { const u = auth(r, p); if (!u) return; return safe(p, () => ({ skills: new BotSkills(store).catalog(u.id, r.params.id), scope: (store.db.prepare('SELECT skill_ids FROM threads WHERE id=? AND owner_id=?').get(r.params.id, u.id) as { skill_ids: string | null }).skill_ids })); });

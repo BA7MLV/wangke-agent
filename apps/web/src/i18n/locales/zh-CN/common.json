@@ -138,6 +138,12 @@
     "sending": "发送中",
     "close": "关闭",
     "history": "会话",
-    "open": "Bot"
+    "open": "Bot",
+    "activity": {
+      "scanning": "正在翻工具箱…",
+      "connecting": "正在把线索串起来…",
+      "checking": "正在核对关键细节…",
+      "composing": "正在整理成答案…"
+    }
   }
 }

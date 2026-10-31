@@ -1,11 +1,12 @@
 import { useState } from 'react';
 import { Button, Chip, Input } from '@heroui/react';
+import { useTranslation } from 'react-i18next';
 import { useSettings } from '../../store/settings';
 import { MAX_RATE, MIN_RATE, PRESET_RATES, formatRate, normalizeRate, sameRate } from '../../utils/rate';
 import { Field, SectionCard, Sym, toast } from '../../ui';
 
 /** 自定义倍速的一个档位：可删除 chip */
-function RateChip({ rate, onDelete }: { rate: number; onDelete: () => void }) {
+function RateChip({ rate, onDelete, removeLabel }: { rate: number; onDelete: () => void; removeLabel: string }) {
   const label = formatRate(rate);
   return (
     <Chip data-testid={`rate-chip-${label}`}>
@@ -14,7 +15,7 @@ function RateChip({ rate, onDelete }: { rate: number; onDelete: () => void }) {
         isIconOnly
         variant="tertiary"
         size="sm"
-        aria-label={`删除倍速 ${label}`}
+        aria-label={removeLabel}
         onPress={onDelete}
       >
         <Sym name="close" />
@@ -31,6 +32,7 @@ function RateChip({ rate, onDelete }: { rate: number; onDelete: () => void }) {
  */
 export default function PlaybackModule() {
   const settings = useSettings();
+  const { t } = useTranslation('settings');
   /** 自定义倍速的输入草稿（null = 输入框为空，「添加」按钮置灰） */
   const [rateDraft, setRateDraft] = useState<number | null>(null);
 
@@ -39,7 +41,7 @@ export default function PlaybackModule() {
     if (rateDraft == null || !Number.isFinite(rateDraft)) return;
     const next = normalizeRate(rateDraft);
     if ([...PRESET_RATES, ...settings.customRates].some((r) => sameRate(r, next))) {
-      toast.info(`${formatRate(next)} 已经在档位里了`);
+      toast.info(t('playback.exists', { rate: formatRate(next) }));
     } else {
       settings.update({ customRates: [...settings.customRates, next].sort((a, b) => a - b) });
     }
@@ -52,24 +54,24 @@ export default function PlaybackModule() {
 
   return (
     <SectionCard
-      title="播放"
+      title={t('modules.playback')}
       testId="card-rates"
     >
-      <Field label="自定义倍速" testId="field-custom-rates">
+      <Field label={t('playback.customRates')} testId="field-custom-rates">
         <div className="flex flex-col gap-3">
           <div className="flex flex-wrap items-center gap-2" data-testid="rate-chips">
             {settings.customRates.length === 0 ? (
-              <span className="text-muted">暂未添加</span>
+              <span className="text-muted">{t('playback.empty')}</span>
             ) : (
               settings.customRates.map((r) => (
-                <RateChip key={r} rate={r} onDelete={() => removeCustomRate(r)} />
+                <RateChip key={r} rate={r} onDelete={() => removeCustomRate(r)} removeLabel={t('playback.remove', { rate: formatRate(r) })} />
               ))
             )}
           </div>
           <div className="flex flex-nowrap items-center gap-2">
             <Input
               data-testid="rate-input"
-              aria-label="添加自定义播放倍速"
+              aria-label={t('playback.inputLabel')}
               type="number"
               min={MIN_RATE}
               max={MAX_RATE}
@@ -82,7 +84,7 @@ export default function PlaybackModule() {
               }}
             />
             <Button variant="secondary" data-testid="rate-add" isDisabled={rateDraft == null} onPress={addCustomRate}>
-              添加
+              {t('playback.add')}
             </Button>
           </div>
         </div>

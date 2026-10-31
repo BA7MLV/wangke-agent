@@ -6,14 +6,24 @@ import { ModelClient } from './model-client.js';
 import { botRequest, botCalls } from './model.js';
 import { boundedRequest } from './request-budget.js';
 
-/** Opt-in consolidation saves without approval; source/policy checks and the
- * cursor commit atomically with revisions. Deletion tombstones always win. */
+export const DEFAULT_MEMORY_JOB = { tokenBudget: 10000, intervalSeconds: 86400 } as const;
+
+export function ensureMemoryJob(store: DatabaseStore, owner: string) {
+  store.db.prepare(`INSERT OR IGNORE INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds,next_at)
+    VALUES(?,1,?,?,0)`).run(owner, DEFAULT_MEMORY_JOB.tokenBudget, DEFAULT_MEMORY_JOB.intervalSeconds);
+  return store.db.prepare('SELECT enabled,token_budget AS tokenBudget,interval_seconds AS intervalSeconds,next_at AS nextAt FROM bot_memory_jobs WHERE owner_id=?').get(owner) as { enabled: number; tokenBudget: number; intervalSeconds: number; nextAt: number };
+}
+
+/** Background consolidation is on by default. The agent decides what is
+ * worth remembering; the user only controls whether memory is enabled. */
 export class MemoryWorker {
   private timer?: ReturnType<typeof setInterval>;
   private active?: { owner: string; controller: AbortController; task: Promise<void> };
   private closed = false;
   constructor(readonly store: DatabaseStore, readonly configuration: CloudConfiguration, readonly fetcher: typeof fetch = fetch) {}
   start() {
+    this.store.db.prepare(`INSERT OR IGNORE INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds,next_at)
+      SELECT id,1,?,?,0 FROM users`).run(DEFAULT_MEMORY_JOB.tokenBudget, DEFAULT_MEMORY_JOB.intervalSeconds);
     this.timer = setInterval(() => { void this.tick().catch(() => console.error('bot_memory_worker_unavailable')); }, 30000);
     this.timer.unref();
   }
@@ -21,6 +31,8 @@ export class MemoryWorker {
   async close() { this.closed = true; clearInterval(this.timer); this.active?.controller.abort(); await this.active?.task.catch(() => {}); }
   async tick() {
     if (this.closed || this.active) return;
+    this.store.db.prepare(`INSERT OR IGNORE INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds,next_at)
+      SELECT id,1,?,?,0 FROM users`).run(DEFAULT_MEMORY_JOB.tokenBudget, DEFAULT_MEMORY_JOB.intervalSeconds);
     const job = this.store.db.prepare('SELECT * FROM bot_memory_jobs WHERE enabled=1 AND next_at<=? ORDER BY next_at LIMIT 1').get(Date.now()) as { owner_id: string; cursor: string | null; token_budget: number; interval_seconds: number } | undefined;
     if (!job) return;
     const controller = new AbortController();

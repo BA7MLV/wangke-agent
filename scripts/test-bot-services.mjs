@@ -148,9 +148,13 @@ try {
   configuration.save(owner, { ...configuration.get(owner, true), policy: { ...configuration.get(owner).policy, read: 'ask', write: 'ask' } });
   const approvalCount = store.db.prepare('SELECT COUNT(*) n FROM approvals').get().n;
   await worker.tick(); assert.ok(cursor()); assert.ok(memory.list(owner).some(m => m.content === 'Worker preference'));
+  store.db.prepare('UPDATE bot_memory_jobs SET enabled=0 WHERE owner_id=?').run(owner);
+  assert.deepEqual(memory.context(owner, thread.id), [], 'disabled memory is not injected into Bot context');
+  store.db.prepare('UPDATE bot_memory_jobs SET enabled=1 WHERE owner_id=?').run(owner);
   assert.equal(store.db.prepare('SELECT COUNT(*) n FROM approvals').get().n, approvalCount, 'opt-in consolidation writes without approval, even with ask policies');
   assert.equal(store.db.prepare("SELECT 1 FROM cloud_permissions WHERE json_extract(arguments,'$.tool')='consolidate_memory'").get(), undefined);
-  store.db.prepare('INSERT INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds) VALUES(?,1,10000,60)').run(other);
+  assert.equal(store.db.prepare('SELECT enabled FROM bot_memory_jobs WHERE owner_id=?').get(other)?.enabled, 1, 'new owners receive enabled memory by default');
+  store.db.prepare('INSERT OR IGNORE INTO bot_memory_jobs(owner_id,enabled,token_budget,interval_seconds) VALUES(?,1,10000,60)').run(other);
   await worker.tick();
   assert.ok(store.db.prepare('SELECT next_at FROM bot_memory_jobs WHERE owner_id=?').get(other).next_at > 0, 'consolidation does not starve another owner');
   store.db.prepare('UPDATE bot_memory_jobs SET enabled=0 WHERE owner_id=?').run(other);
@@ -223,5 +227,5 @@ try {
   recoveredService.append(thread.id, 'assistant', 'text', 'stable message', 'stable-operation');
   recoveredService.append(thread.id, 'assistant', 'text', 'stable message', 'stable-operation');
   assert.equal(store.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE client_nonce='stable-operation'").get().n, 1);
-  console.log('Bot services passed: durable/unknown ledger, prices, protocols/retries/cancellation, SSE, artifacts, context pairs, skill scope, memory revisions/tombstones, autonomous opt-in consolidation, restart/revocation/source/cancellation checks and atomic consolidation cursor.');
+  console.log('Bot services passed: durable/unknown ledger, prices, protocols/retries/cancellation, SSE, artifacts, context pairs, skill scope, memory revisions/tombstones, default-on autonomous consolidation, restart/revocation/source/cancellation checks and atomic consolidation cursor.');
 } finally { store.close(); fs.rmSync(root, { recursive: true, force: true }); }

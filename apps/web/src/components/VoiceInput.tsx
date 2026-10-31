@@ -21,8 +21,26 @@ interface LiveRecognition {
   abort(): void;
 }
 
+/**
+ * 进行中的一次语音输入，交给输入卡渲染：左侧取消键、中间音量条。
+ * `level` 是 0–1 的实时音量（Web Audio 测得），按帧读取，不经过 React 状态。
+ */
+export interface VoiceSession {
+  phase: 'permission' | 'recording' | 'transcribing';
+  /** true = 浏览器实时识别；false = 录完再转写 */
+  live: boolean;
+  level: { readonly current: number };
+  /** 放弃本次语音，草稿恢复到开始前（由 onCancel 负责恢复） */
+  cancel: () => void;
+  /** 结束录音，保留已识别的内容 */
+  finish: () => void;
+}
+
+/** dB → 0–1：-55 dB 以下算安静，-15 dB 以上算满格 */
+const levelOf = (rms: number) => Math.min(1, Math.max(0, (20 * Math.log10(rms || 1e-8) + 55) / 40));
+
 /** One stable action slot: microphone when empty, send when populated. Never auto-send. */
-export default function VoiceInput({ onText, onStart, disabled, hasText = false, onSend, sendLabel = '发送', editVersion = 0, holdTargetRef }: {
+export default function VoiceInput({ onText, onStart, disabled, hasText = false, onSend, sendLabel = '发送', editVersion = 0, holdTargetRef, onSession, onCancel }: {
   onText: (text: string) => void;
   onStart?: () => void;
   disabled?: boolean;
@@ -31,6 +49,8 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
   sendLabel?: string;
   editVersion?: number;
   holdTargetRef?: RefObject<HTMLDivElement | null>;
+  onSession?: (session: VoiceSession | null) => void;
+  onCancel?: () => void;
 }) {
   const [phase, setPhase] = useState<'idle' | 'permission' | 'recording' | 'transcribing'>('idle');
   const [error, setError] = useState('');
@@ -54,10 +74,82 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
   const onTextRef = useRef(onText);
   const previousEdit = useRef(editVersion);
   onTextRef.current = onText;
+  const onSessionRef = useRef(onSession);
+  onSessionRef.current = onSession;
+  const onCancelRef = useRef(onCancel);
+  onCancelRef.current = onCancel;
+  const level = useRef(0);
+  const meter = useRef<{ context: AudioContext; owned?: MediaStream; frame: number } | null>(null);
+  const meterToken = useRef(0);
+
+  const stopMeter = () => {
+    meterToken.current++;
+    const current = meter.current;
+    meter.current = null;
+    level.current = 0;
+    if (!current) return;
+    cancelAnimationFrame(current.frame);
+    current.owned?.getTracks().forEach((track) => track.stop());
+    void current.context.close().catch(() => {});
+  };
+
+  /**
+   * 实时音量。录音转写路径直接复用录音流；浏览器实时识别不暴露音频，
+   * 只能另开一条仅用于测音量的麦克风流（权限已在识别开始时授予）。
+   * Android Chrome 上两路同时占用麦克风可能让识别报 audio-capture，那里不另开，音量条保持灰点。
+   * 测量失败只影响动画，不影响语音输入本身。
+   */
+  const startMeter = async (source?: MediaStream) => {
+    stopMeter();
+    const token = meterToken.current;
+    if (typeof AudioContext === 'undefined') return;
+    let owned: MediaStream | undefined;
+    try {
+      if (!source) {
+        if (!navigator.mediaDevices?.getUserMedia || /Android/i.test(navigator.userAgent)) return;
+        owned = await navigator.mediaDevices.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true } });
+        if (token !== meterToken.current) { owned.getTracks().forEach((track) => track.stop()); return; }
+      }
+      const context = new AudioContext();
+      const analyser = context.createAnalyser();
+      analyser.fftSize = 1024;
+      context.createMediaStreamSource(source ?? owned!).connect(analyser);
+      void context.resume().catch(() => {});
+      const samples = new Float32Array(analyser.fftSize);
+      const entry = { context, owned, frame: 0 };
+      meter.current = entry;
+      const tick = () => {
+        if (meter.current !== entry) return;
+        analyser.getFloatTimeDomainData(samples);
+        let sum = 0;
+        for (let i = 0; i < samples.length; i++) sum += samples[i] * samples[i];
+        const target = levelOf(Math.sqrt(sum / samples.length));
+        // 起音快、回落慢，避免音量条跟着每个音节闪烁
+        level.current += (target - level.current) * (target > level.current ? 0.5 : 0.12);
+        entry.frame = requestAnimationFrame(tick);
+      };
+      tick();
+    } catch {
+      owned?.getTracks().forEach((track) => track.stop());
+    }
+  };
+
+  /** 通知输入卡当前语音状态；null = 回到空闲 */
+  const report = (next: Pick<VoiceSession, 'phase' | 'live'> | null) => {
+    onSessionRef.current?.(next && { ...next, level, cancel: cancelSession, finish: () => stop() });
+  };
+  /** 输入卡上的「取消」：中止识别/转写，草稿由 onCancel 恢复 */
+  const cancelSession = () => {
+    stop(true);
+    setError('');
+    onCancelRef.current?.();
+  };
 
   const stop = (cancel = false) => {
+    stopMeter();
     if (timer.current) clearTimeout(timer.current);
     if (limit.current) clearTimeout(limit.current);
+    report(null);
     if (cancel) {
       held.current = false;
       gesture.current = null;
@@ -95,6 +187,9 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     previousEdit.current = editVersion;
   }, [editVersion, disabled]);
 
+  // 卸载（换会话、开始生成）时释放测音量的麦克风，并让输入卡退出语音态
+  useEffect(() => () => { stopMeter(); onSessionRef.current?.(null); }, []);
+
   useEffect(() => {
     const onHidden = () => { if (document.hidden) stop(true); };
     document.addEventListener('visibilitychange', onHidden);
@@ -125,6 +220,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       recognition.current = live;
       busy.current = true;
       setPhase('permission');
+      report({ phase: 'permission', live: true });
       onStart?.();
       // 界面语言不是输入语种：保留既有中文识别，不随 <html lang> 的 i18n 切换改变。
       live.lang = 'zh-CN';
@@ -134,6 +230,8 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
         if (id !== generation.current) return;
         liveStarted.current = true;
         setPhase('recording');
+        report({ phase: 'recording', live: true });
+        void startMeter();
         limit.current = setTimeout(() => stop(), 60_000);
       };
       // Results contain the whole session, including revisions of interim words.
@@ -158,6 +256,8 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
         if (limit.current) clearTimeout(limit.current);
         recognition.current = null;
         busy.current = false;
+        stopMeter();
+        report(null);
         setPhase('idle');
         if (holdSession.current && holdTranscript.current) onTextRef.current(holdTranscript.current);
         holdSession.current = false;
@@ -165,6 +265,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
       try { live.start(); } catch {
         recognition.current = null;
         busy.current = false;
+        report(null);
         setPhase('idle');
         setError('无法启动实时语音识别，请检查浏览器权限。');
       }
@@ -184,6 +285,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
     onStart?.();
     const id = ++generation.current;
     setPhase('permission');
+    report({ phase: 'permission', live: false });
     try {
       const audio = await navigator.mediaDevices.getUserMedia({ audio: true });
       if (id !== generation.current) {
@@ -204,6 +306,7 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
         recorder.current = null;
         if (id !== generation.current) return;
         setPhase('transcribing');
+        report({ phase: 'transcribing', live: false });
         void (async () => {
           // Normalize browser-specific WebM/MP4 recording to the ASR slot's WAV input.
           const context = new AudioContext({ sampleRate: 16000 });
@@ -228,16 +331,19 @@ export default function VoiceInput({ onText, onStart, disabled, hasText = false,
         })().catch((reason: unknown) => {
           if (id === generation.current) setError(reason instanceof Error ? reason.message : '语音识别失败，请重试。');
         }).finally(() => {
-          if (id === generation.current) { busy.current = false; setPhase('idle'); }
+          if (id === generation.current) { busy.current = false; report(null); setPhase('idle'); }
         });
       };
       recording.start();
       setPhase('recording');
+      report({ phase: 'recording', live: false });
+      void startMeter(audio);
       limit.current = setTimeout(() => stop(), 60_000);
     } catch (reason) {
       if (id !== generation.current) return;
       stream.current?.getTracks().forEach((track) => track.stop());
       busy.current = false;
+      report(null);
       setPhase('idle');
       setError(reason instanceof DOMException && reason.name === 'NotAllowedError'
         ? '麦克风权限未开启，请在浏览器设置中允许录音。'

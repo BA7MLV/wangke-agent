@@ -15,6 +15,7 @@
  */
 
 import type { ChatToolCall } from '../store/db';
+import { parseWebSearchResult } from '@wangke/contracts/web-search';
 
 /** Track invocations rather than tool names: identical tools may finish out of order. */
 export class ToolTraceLedger {
@@ -28,7 +29,8 @@ export class ToolTraceLedger {
   finish(id: string, result: string): void {
     const entry = this.active.get(id);
     if (!entry) return;
-    this.calls[entry.index] = { ...this.calls[entry.index], status: isToolFailure(result) ? 'error' : 'done', result: summarizeToolResult(result), ms: Date.now() - entry.started };
+    const webSearch = this.calls[entry.index].name === 'websearch' ? parseWebSearchResult(result) : null;
+    this.calls[entry.index] = { ...this.calls[entry.index], status: isToolFailure(result) ? 'error' : 'done', result: webSearch ? `${webSearch.sources.length} · ${webSearch.provider}` : summarizeToolResult(result), ...(webSearch ? { webSearch } : {}), ms: Date.now() - entry.started };
     this.active.delete(id);
   }
   get running(): number { return this.active.size; }
@@ -40,6 +42,8 @@ export class ToolTraceLedger {
 
 /** 工具名 → 动作短语。全部来自 `harness/tools.ts` 与 `harness/libraryAssistant.ts` 的工具注册表 */
 const TOOL_LABELS: Record<string, string> = {
+  websearch: '搜索网页',
+  webfetch: '读取网页',
   grep: '检索正文',
   read: '读取资源',
   edit: '修改材料正文',
@@ -73,6 +77,8 @@ const TOOL_LABELS: Record<string, string> = {
  * 没登记的（`list_frames` / `present_quiz` 这类无参数工具）就没有detail，标题只报动作。
  */
 const DETAIL_KEYS: Record<string, string> = {
+  websearch: 'query',
+  webfetch: 'url',
   grep: 'query',
   read: 'path',
   edit: 'path',

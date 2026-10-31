@@ -8,6 +8,7 @@ import { executorFor, recordMutation, type TaskContext, type TaskExecutor } from
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 import { accountedFetch } from '../agent/accounted-fetch.js';
 import { settleWithin } from '../lifecycle.js';
+import type { WebSearchService } from '../web-search/service.js';
 export { workerIdentity } from './workerAuth.js';
 
 export const TASK_KINDS: CloudTaskKind[] = ['chat', 'qa', 'transcribe', 'handout', 'cards', 'comments', 'danmaku', 'material', 'cover', 'artifactEdit', 'handoutEdit', 'modelOnce'];
@@ -26,6 +27,7 @@ const executeNodeTask: TaskExecutor = async context => {
 };
 
 interface RunnerOptions {
+  webSearch?: WebSearchService;
   records?: CloudRecords;
   configuration?: CloudConfiguration;
   filesDir?: string;
@@ -146,6 +148,7 @@ export class CloudTaskRunner {
       const directory = process.env.DATA_DIR ?? path.resolve('data');
       const context: TaskContext = {
         task, owner: row.owner_id, store: this.store, records: this.records,
+        webSearch: this.options.webSearch,
         configuration: this.options.configuration ?? new CloudConfiguration(this.store, path.join(directory, 'config')),
         filesDir: this.options.filesDir ?? process.env.FILES_DIR ?? path.join(directory, 'files'),
         signal, fetch: async (url, init) => {

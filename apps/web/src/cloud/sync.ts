@@ -6,6 +6,7 @@ import { CLOUD_TABLES, type CloudRecord, type CloudConfig } from '@wangke/contra
 import { useSettings } from '../store/settings';
 import { flushPreferences, loadPreferences, startPreferences } from './preferences';
 import { apiUrl } from '../api/base';
+import { cloudTransaction, isLostCloudTransaction } from './transactions';
 
 export const useCloudSync = create<{ pending: number; error: string; syncedAt: number }>()(() => ({ pending: 0, error: '', syncedAt: 0 }));
 let timer: ReturnType<typeof setInterval> | undefined;
@@ -84,13 +85,14 @@ async function decode(value: any): Promise<any> {
 }
 
 async function syncCycle() {
+  const database = db;
   if (!cloud.worker && Date.now() - configCheckedAt > 15000) {
     const config = await cloudRequest<CloudConfig>('/config');
     configCheckedAt = Date.now();
     if (JSON.stringify(config) !== configSignature) applyCloudConfig(config);
   }
   let changed = false;
-  const outbox = db.table<OutboxRow>('_cloudOutbox');
+  const outbox = database.table<OutboxRow>('_cloudOutbox');
   // One original transaction per POST; acknowledged operations are removed only after commit.
   for (;;) {
     const first = await outbox.orderBy('sequence').first();
@@ -99,34 +101,33 @@ async function syncCycle() {
     useCloudSync.setState({ pending: await outbox.count() });
     const mutations = [];
     for (const row of rows) mutations.push({ id: row.id, table: row.table, key: row.key, permissionId: row.permissionId,
-      baseRevision: (await db.table('_cloudMeta').get(`revision:${row.table}:${JSON.stringify(row.key)}`))?.value,
+      baseRevision: (await database.table('_cloudMeta').get(`revision:${row.table}:${JSON.stringify(row.key)}`))?.value,
       before: await encode(row.before), after: await encode(row.after) });
     const result = await cloudRequest<{ versions: Array<{ table: string; key: string | number; revision: number }> }>('/records', { method: 'POST', body: JSON.stringify({ mutations }) });
-    await db.transaction('rw', outbox, db.table('_cloudMeta'), async () => {
+    await cloudTransaction(database, [outbox, database.table('_cloudMeta')], async () => {
       await outbox.bulkDelete(rows.map(r => r.sequence!));
-      await db.table('_cloudMeta').bulkPut(result.versions.map(r => ({ id: `revision:${r.table}:${JSON.stringify(r.key)}`, value: r.revision })));
+      await database.table('_cloudMeta').bulkPut(result.versions.map(r => ({ id: `revision:${r.table}:${JSON.stringify(r.key)}`, value: r.revision })));
     });
   }
-  let cursor = (await db.table('_cloudMeta').get('cursor'))?.value ?? 0;
+  let cursor = (await database.table('_cloudMeta').get('cursor'))?.value ?? 0;
   for (;;) {
     const page = await cloudRequest<{ records: CloudRecord[]; cursor: number; more: boolean }>(`/records?after=${cursor}`);
     if (page.records.length) changed = true;
     const decoded: CloudRecord[] = [];
     for (const record of page.records) decoded.push({ ...record, value: await decode(record.value) });
-    let applied = false;
-    await db.transaction('rw', db.tables, async () => {
+    const applied = await cloudTransaction(database, database.tables, async () => {
       markCloudApply();
       // A UI write during network I/O must be pushed before applying its remote echo.
-      if (await outbox.count()) return;
+      if (await outbox.count()) return false;
       for (const record of decoded) {
         if (!Object.hasOwn(CLOUD_TABLES, record.table)) throw new Error('服务器返回了未知数据表');
-        const table = db.table(record.table);
+        const table = database.table(record.table);
         if (record.value === null) await table.delete(record.key);
         else await table.put(record.value);
-        await db.table('_cloudMeta').put({ id: `revision:${record.table}:${JSON.stringify(record.key)}`, value: record.revision });
+        await database.table('_cloudMeta').put({ id: `revision:${record.table}:${JSON.stringify(record.key)}`, value: record.revision });
       }
-      await db.table('_cloudMeta').put({ id: 'cursor', value: page.cursor });
-      applied = true;
+      await database.table('_cloudMeta').put({ id: 'cursor', value: page.cursor });
+      return true;
     });
     if (!applied) return;
     cursor = page.cursor;
@@ -150,7 +151,9 @@ export function flushCloud(): Promise<void> {
     const detail = (error as { detail?: { table?: string; key?: unknown } }).detail;
     useCloudSync.setState({ error: (error as Error).message === 'sync_conflict'
       ? `同步冲突：${detail?.table}/${String(detail?.key)}。本机修改已保留，请在云端管理中处理。`
-      : (error as Error).message });
+      : isLostCloudTransaction(error)
+        ? '浏览器本地数据库事务异常，同步尚未完成。请关闭其他同站点标签页后刷新重试，不要清除网站数据。'
+        : (error as Error).message });
     throw error;
   }).finally(() => { flight = undefined; });
   return flight;

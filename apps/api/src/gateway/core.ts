@@ -9,6 +9,8 @@ import { cleanupGateway, gatewayLimits } from './retention.js';
 import { publishBotEvent } from '../agent/events.js';
 import { GATEWAY_CONNECTION_ERRORS, type GatewayConnectionDiagnostics, type GatewayReadiness } from '@wangke/contracts/gateway';
 import { splitGatewayMarkdown } from './chunk.js';
+import { photoBatch, type PhotoInboxItem } from './photo-batch.js';
+import { MAX_BOT_MESSAGE_ATTACHMENTS } from '@wangke/contracts';
 
 const stamp = () => new Date().toISOString();
 const hash = (s: string) => crypto.createHash('sha256').update(s).digest('hex');
@@ -69,13 +71,24 @@ export class GatewayCore {
     const inbox = this.store.db.prepare("SELECT MAX(received_at) lastInboundAt,COUNT(CASE WHEN status='failed' THEN 1 END) failures FROM gateway_inbox WHERE account_id=?").get(a.id) as any;
     const outbox = this.store.db.prepare("SELECT COUNT(*) failures FROM gateway_outbox o JOIN gateway_bindings b ON b.id=o.binding_id WHERE b.account_id=? AND b.revoked=0 AND o.status IN ('failed','uncertain')").get(a.id) as any;
     const projection = this.store.db.prepare('SELECT COUNT(*) n FROM gateway_projection_failures f JOIN gateway_bindings b ON b.id=f.binding_id WHERE b.account_id=? AND b.revoked=0').get(a.id) as any;
-    const latestRun = this.store.db.prepare('SELECT r.status,r.error_code AS errorCode FROM runs r JOIN gateway_bindings b ON b.thread_id=r.thread_id WHERE b.account_id=? AND b.revoked=0 ORDER BY r.created_at DESC,r.rowid DESC LIMIT 1').get(a.id) as GatewayReadiness['latestRun'] | undefined;
+    const latestRun = this.store.db.prepare('SELECT r.id,r.status,r.error_code AS errorCode FROM runs r JOIN gateway_bindings b ON b.thread_id=r.thread_id WHERE b.account_id=? AND b.revoked=0 ORDER BY r.created_at DESC,r.rowid DESC LIMIT 1').get(a.id) as (GatewayReadiness['latestRun'] & { id: string }) | undefined;
+    const pending = this.store.db.prepare("SELECT envelope FROM gateway_inbox WHERE account_id=? AND status='pending' ORDER BY id LIMIT 1").get(a.id) as { envelope: string } | undefined;
+    let processingStatus: GatewayReadiness['processingStatus'] = null;
+    if (pending) {
+      try { processingStatus = JSON.parse(this.secrets.open(pending.envelope))?.attachments?.some((x: any) => String(x.mime ?? '').startsWith('image/')) ? 'collecting' : null; } catch { /* malformed inbox is reported separately */ }
+    }
+    if (!processingStatus && latestRun) {
+      const readStep = this.store.db.prepare("SELECT 1 FROM run_steps WHERE run_id=? AND tool='study_file' AND status IN ('queued','running') LIMIT 1").get(latestRun.id);
+      processingStatus = latestRun.status === 'queued' ? 'ready' : latestRun.status === 'running' ? (readStep ? 'reading' : 'running')
+        : latestRun.status === 'waiting_user' || latestRun.status === 'paused' ? 'waiting' : latestRun.status === 'completed' ? 'completed'
+          : latestRun.status === 'failed' ? 'failed' : latestRun.status === 'cancelled' ? 'cancelled' : null;
+    }
     const connected = a.health === 'connected', botEnabled = Boolean(agent?.enabled);
     const state: GatewayReadiness['state'] = !a.enabled ? 'disabled' : a.health === 'login_required' ? 'login_required' : !connected ? 'connection_required'
       : !bound ? 'binding_required' : !botEnabled ? 'bot_required' : !modelConfigured ? 'model_required'
       : outbox.failures || inbox.failures || projection.n || latestRun && ['failed', 'waiting_user', 'paused'].includes(latestRun.status) ? 'attention' : 'ready';
     return { state, connected, bound, botEnabled, modelConfigured, botName: agent?.name ?? '', lastInboundAt: inbox.lastInboundAt,
-      deliveryFailures: outbox.failures, inboxFailures: inbox.failures, projectionFailures: projection.n, latestRun: latestRun ?? null };
+      deliveryFailures: outbox.failures, inboxFailures: inbox.failures, projectionFailures: projection.n, latestRun: latestRun ? { status: latestRun.status, errorCode: latestRun.errorCode } : null, processingStatus };
   }
   /** One platform identity, one consumer; checking all owners also avoids cross-owner event theft. */
   private assertUnique(channel: string, config: Record<string, string>, except?: string) {
@@ -377,7 +390,7 @@ export class GatewayCore {
     }
     this.reminders();
     // Small bounded batch; network has a timeout and stop/revoke aborts it.
-    const rows = this.store.db.prepare("SELECT * FROM (SELECT i.*,a.owner_id,a.agent_id,a.enabled,ROW_NUMBER() OVER(PARTITION BY i.account_id ORDER BY i.id) AS position FROM gateway_inbox i JOIN gateway_accounts a ON a.id=i.account_id WHERE i.status='pending' AND a.enabled=1 AND i.account_id NOT IN (SELECT value FROM json_each(?))) WHERE position<=10 ORDER BY id LIMIT 40").all(JSON.stringify([...this.processingAccounts])) as any[];
+    const rows = this.store.db.prepare("SELECT * FROM (SELECT i.*,a.owner_id,a.agent_id,a.enabled,a.channel,ROW_NUMBER() OVER(PARTITION BY i.account_id ORDER BY i.id) AS position FROM gateway_inbox i JOIN gateway_accounts a ON a.id=i.account_id WHERE i.status='pending' AND a.enabled=1 AND i.account_id NOT IN (SELECT value FROM json_each(?))) WHERE position<=10 ORDER BY id LIMIT 40").all(JSON.stringify([...this.processingAccounts])) as any[];
     const groups = new Map<string, any[]>();
     for (const row of rows) { const group = groups.get(row.account_id) ?? []; group.push(row); groups.set(row.account_id, group); }
     const tasks: Promise<void>[] = [];
@@ -401,11 +414,23 @@ export class GatewayCore {
     this.project();
     await this.deliver();
   }
+  private incomingPhotos(row: { id: number; account_id: string; received_at: number }, message: InboundEnvelope) {
+    const items: PhotoInboxItem[] = [{ id: row.id, received_at: row.received_at, message }];
+    // Include terminal rows as boundaries: a cancelled/failed/control item must
+    // not disappear from ordering merely because only pending work is runnable.
+    for (const next of this.store.db.prepare('SELECT id,received_at,status,envelope FROM gateway_inbox WHERE account_id=? AND id>? ORDER BY id LIMIT ?').all(row.account_id, row.id, MAX_BOT_MESSAGE_ATTACHMENTS + 1) as any[]) {
+      if (next.status !== 'pending') return { ...photoBatch(items), ready: true };
+      try { items.push({ id: next.id, received_at: next.received_at, message: JSON.parse(this.secrets.open(next.envelope)) }); }
+      catch { return { ...photoBatch(items), ready: true }; }
+    }
+    return photoBatch(items);
+  }
   private async processInbox(rows: any[]) {
     for (const row of rows) {
       if (this.stopped) return;
       const live = this.live.get(row.account_id); if (!live) continue;
       const controller = new AbortController();
+      let selected: PhotoInboxItem[] = [];
       try {
         const m: InboundEnvelope = JSON.parse(this.secrets.open(row.envelope));
         let b = this.binding(row.account_id, m);
@@ -446,32 +471,60 @@ export class GatewayCore {
                WHERE a.thread_id=? AND a.status='pending' ORDER BY m.seq LIMIT 10`).all(b.thread_id) as { seq: number; content: string }[];
              if (pending.length) this.bot.append(b.thread_id, 'assistant', 'text', `待确认（最多显示 10 项）：\n${pending.map(a => `${a.seq}：${a.content.startsWith('请求执行命令') ? '在工作区运行程序' : a.content.split('\n')[0].slice(0, 160)}`).join('\n')}\n回复“同意 编号”或“拒绝 编号”。`);
           } else {
+            const batch = row.channel === 'ilink' ? this.incomingPhotos(row, m) : { items: [{ id: row.id, received_at: row.received_at, message: m }], ready: true };
+            // No sleeps and no model run while the user is still sending a
+            // multimodal/text burst.
+            // The scheduler can continue processing other accounts immediately.
+            if (!batch.ready) {
+              if (batch.items.some(item => item.message.attachments?.some(attachment => typeof attachment.mime === 'string' && attachment.mime.startsWith('image/')))) {
+                // A durable Web-only status makes the quiet collection phase
+                // visible without interrupting the user's WeChat input flow.
+                this.bot.append(b.thread_id, 'assistant', 'progress', '正在收集图片，可以继续发送。', `web:status:collecting:${row.account_id}:${row.id}`);
+              }
+              return;
+            }
+            selected = batch.items;
+            for (const item of selected) this.inbound.set(item.id, { binding: b.id, controller });
+            const checkActive = () => {
+              controller.signal.throwIfAborted(); live.controller.signal.throwIfAborted();
+              const current = this.binding(row.account_id, m);
+              if (!current || current.revoked || current.id !== b.id) throw new Error('binding_revoked');
+              for (const item of selected) if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(item.id) as any)?.status !== 'pending') throw new Error('inbound_cancelled');
+            };
+            if (selected.some(item => item.message.attachments?.some(attachment => typeof attachment.mime === 'string' && attachment.mime.startsWith('image/')))) {
+              this.bot.append(b.thread_id, 'assistant', 'progress', '图片已就绪，正在准备读取。', `web:status:ready:${row.account_id}:${row.id}`);
+            }
             const attachments: { fileId: string; originalName: string; mimeType: string; sizeBytes: number }[] = [];
-            for (const [index, attachment] of (m.attachments ?? []).entries()) {
+            for (const item of selected) for (const [index, attachment] of (item.message.attachments ?? []).entries()) {
+              checkActive();
               if (!live.plugin.download) throw new Error('media_not_supported');
               const a = this.account(row.owner_id, row.account_id);
-              const id = fileOperationId(row.owner_id, `${row.account_id}:${row.id}`, `gateway:${index}`);
+              // Always use the original inbox identity, even if the batch grows
+              // during I/O or is reconstructed after a restart.
+              const id = fileOperationId(row.owner_id, `${row.account_id}:${item.id}`, `gateway:${index}`);
               const saved = this.store.db.prepare('SELECT id,original_name AS originalName,mime_type AS mimeType,size_bytes AS sizeBytes FROM files WHERE id=? AND owner_id=?').get(id, row.owner_id) as { id: string; originalName: string; mimeType: string; sizeBytes: number } | undefined;
               if (saved) { attachments.push({ fileId: saved.id, originalName: saved.originalName, mimeType: saved.mimeType, sizeBytes: saved.sizeBytes }); continue; }
-              const media = await live.plugin.download(this.config(a), m, attachment, AbortSignal.any([controller.signal, live.controller.signal, AbortSignal.timeout(30_000)]));
-              const checkActive = () => {
-                controller.signal.throwIfAborted(); live.controller.signal.throwIfAborted();
-                if (!this.binding(row.account_id, m) || this.binding(row.account_id, m).revoked) throw new Error('binding_revoked');
-                if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(row.id) as any)?.status !== 'pending') throw new Error('inbound_cancelled');
-              };
+              const media = await live.plugin.download(this.config(a), item.message, attachment, AbortSignal.any([controller.signal, live.controller.signal, AbortSignal.timeout(30_000)]));
               checkActive();
-              const date = new Date(row.received_at).toISOString().slice(0, 10).replace(/-/g, '');
+              const date = new Date(item.received_at).toISOString().slice(0, 10).replace(/-/g, '');
               const fallback = `${a.channel === 'ilink' ? '微信' : '飞书'}${media.mime.startsWith('image/') ? '图片' : '附件'}_${date}_${id.slice(0, 8)}`;
               const f = await receiveFile(this.store, this.filesDir, row.owner_id, Readable.from([media.bytes]), media.name || fallback, media.mime, 20 * 1024 * 1024, undefined, checkActive, id);
               attachments.push({ fileId: f.id, originalName: f.originalName, mimeType: f.mimeType, sizeBytes: f.sizeBytes });
             }
+            checkActive();
+            if (row.channel === 'ilink') {
+              const latest = this.incomingPhotos(row, m);
+              // Photos may arrive while a preceding image is downloading. Keep
+              // saved blobs, but defer publication until the new batch is ready.
+              if (!latest.ready || latest.items.map(i => i.id).join(',') !== selected.map(i => i.id).join(',')) return;
+            }
             this.store.transaction(() => {
-              controller.signal.throwIfAborted();
-              live.controller.signal.throwIfAborted();
-              const current = this.binding(row.account_id, m); if (!current || current.revoked) throw new Error('binding_revoked');
-              if ((this.store.db.prepare('SELECT status FROM gateway_inbox WHERE id=?').get(row.id) as any)?.status !== 'pending') throw new Error('inbound_cancelled');
-              this.bot.send(row.owner_id, b.thread_id, { clientNonce: `im:${row.id}`, ...(attachments.length ? { kind: 'attachment' } : {}), content: attachments.length ? JSON.stringify({ ...attachments[0], attachments, caption: m.text }) : m.text });
-              this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
+              checkActive();
+              const caption = selected.map(i => i.message.text).filter(Boolean).join('\n');
+              const context = [...selected].reverse().find(i => i.message.context)?.message.context;
+              if (context) this.store.db.prepare('UPDATE gateway_bindings SET context=? WHERE id=?').run(this.secrets.seal(context), b.id);
+              this.bot.send(row.owner_id, b.thread_id, { clientNonce: `im:${row.id}`, ...(attachments.length ? { kind: 'attachment' } : {}), content: attachments.length ? JSON.stringify({ ...attachments[0], attachments, caption }) : caption });
+              for (const item of selected) this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(item.id);
             });
           }
         }
@@ -479,12 +532,15 @@ export class GatewayCore {
           this.store.db.prepare("UPDATE gateway_inbox SET status='done',error='binding_required' WHERE id=?").run(row.id);
         } else this.store.db.prepare("UPDATE gateway_inbox SET status='done' WHERE id=?").run(row.id);
       } catch {
-        this.store.db.prepare("UPDATE gateway_inbox SET status='failed',error='inbound_processing_failed' WHERE id=? AND status='pending'").run(row.id);
-      } finally { this.inbound.delete(row.id); }
+        this.store.transaction(() => {
+          for (const id of selected.length ? selected.map(i => i.id) : [row.id]) this.store.db.prepare("UPDATE gateway_inbox SET status='failed',error='inbound_processing_failed' WHERE id=? AND status='pending'").run(id);
+        });
+      } finally { this.inbound.delete(row.id); for (const item of selected) this.inbound.delete(item.id); }
     }
   }
   project() {
       for (const b of this.store.db.prepare('SELECT * FROM gateway_bindings WHERE revoked=0').all() as any[]) {
+        const account = this.store.db.prepare('SELECT channel FROM gateway_accounts WHERE id=?').get(b.account_id) as { channel: string } | undefined;
         const events = this.store.db.prepare('SELECT * FROM message_events WHERE thread_id=? AND event_id>? ORDER BY event_id LIMIT 200').all(b.thread_id, b.checkpoint) as any[];
         for (const event of events) {
           const failed = this.store.db.prepare('SELECT next_at FROM gateway_projection_failures WHERE binding_id=? AND event_id=?').get(b.id, event.event_id) as any;
@@ -492,8 +548,14 @@ export class GatewayCore {
           try { this.store.transaction(() => {
           const m = JSON.parse(event.payload);
           if (!m || typeof m !== 'object' || (event.type === 'message.accepted' && (typeof m.content !== 'string' || typeof m.role !== 'string'))) throw new Error('invalid_projection');
-          if (event.type === 'message.accepted' && m.role === 'assistant' && ['text', 'question', 'approval', 'attachment'].includes(m.kind)) {
-            let text = m.content;
+           const finalMessage = event.type === 'message.accepted' && m.role === 'assistant' && ['text', 'question', 'approval', 'attachment'].includes(m.kind);
+           // Routine progress remains Web-only. Only the two runtime image
+           // milestones explicitly marked with im:status are projected to
+           // WeChat, and never to Feishu or from arbitrary model tool calls.
+           const channelStatus = event.type === 'message.accepted' && m.role === 'assistant' && m.kind === 'progress'
+             && account?.channel === 'ilink' && typeof m.clientNonce === 'string' && m.clientNonce.startsWith('im:status:');
+           if (finalMessage || channelStatus) {
+             let text = m.content;
             let fileId: string | undefined;
             if (m.kind === 'attachment') { try { const f = JSON.parse(text); if (f.fileId) { fileId = f.fileId; text = f.caption ?? f.name ?? '文件'; } } catch { /* legacy plain text */ } }
             if (m.kind === 'approval') {

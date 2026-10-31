@@ -43,4 +43,6 @@ export interface GatewayReadiness {
   inboxFailures: number;
   projectionFailures: number;
   latestRun: { status: string; errorCode: string | null } | null;
+  /** User-safe phase for the latest multimodal turn, without tool internals. */
+  processingStatus: 'collecting' | 'ready' | 'reading' | 'running' | 'waiting' | 'completed' | 'failed' | 'cancelled' | null;
 }

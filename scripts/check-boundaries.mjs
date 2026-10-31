@@ -1,7 +1,10 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import ts from 'typescript';
+// TypeScript 7 intentionally does not expose the legacy JavaScript compiler API.
+// This repository's boundary audit needs that API, so keep the audit on the
+// official TypeScript 6 compatibility package while project builds use tsc 7.
+import ts from '@typescript/typescript6';
 
 const repository = path.resolve(fileURLToPath(new URL('..', import.meta.url)));
 const posix = value => value.split(path.sep).join('/');

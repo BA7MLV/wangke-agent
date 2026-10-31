@@ -65,6 +65,7 @@ import WidgetMessage from './WidgetMessage';
 import StreamingHtmlPreview from './StreamingHtmlPreview';
 import { ArtifactEditProvider } from './ArtifactEditor';
 import AssistantContent from './AssistantContent';
+import ChatScreenshots from './ChatScreenshots';
 import { useResolvedDark } from '../ui/theme';
 import type { WidgetPayload } from '../harness/widgetRuntime';
 import { persistAssistantSnapshot } from '../store/assistantSnapshot';
@@ -1836,30 +1837,8 @@ export default function ChatPanel({
             >
               {isUser ? (
                 <>
-                  {m.images && m.images.length > 0 && (
-                    <div className="chat-shots">
-                      {m.images.map((img, i) => (
-                        <span key={i} className="chat-shot">
-                          {/* 材料的截图锚点是页/段号：点击滚到那一页，标签也写「第 N 页」而不是时间 */}
-                          <img
-                            src={img.thumb}
-                            alt=""
-                            onClick={() =>
-                              img.kind === 'page-selection'
-                                ? readerRef?.current?.scrollToUnit(img.ts)
-                                : seekTo(img.ts)
-                            }
-                            className="chat-shot__img"
-                          />
-                          <span className="chat-ts-chip">
-                            {img.kind === 'page-selection' && materialKind
-                              ? fmtUnitRef(materialKind, img.ts)
-                              : fmtTime(img.ts)}
-                          </span>
-                        </span>
-                      ))}
-                    </div>
-                  )}
+                  {m.images && m.images.length > 0 && <ChatScreenshots images={m.images} materialKind={materialKind}
+                    onSource={image => image.kind === 'page-selection' ? readerRef?.current?.scrollToUnit(image.ts) : seekTo(image.ts)} />}
                   <UserMessageBubble
                     message={m}
                     busy={loading || deleting}

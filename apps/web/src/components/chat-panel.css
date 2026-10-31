@@ -306,6 +306,9 @@
   display: inline-block;
 }
 
+.chat-shot__open { display: block; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; }
+.chat-shot__open:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+
 .chat-shot__img {
   display: block;
   height: 56px;

@@ -48,5 +48,5 @@
   },
   "scripts": { "typecheck": "tsc --noEmit -p tsconfig.json", "build": "tsc -p tsconfig.json" },
   "dependencies": { "fflate": "^0.8.3" },
-  "devDependencies": { "typescript": "^5.9.3" }
+  "devDependencies": { "typescript": "^7.0.2" }
 }

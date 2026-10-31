@@ -51,10 +51,12 @@ try {
   page.on('pageerror', error => errors.push(error.message));
   await page.goto(`${origin}/`);
   const open = async id => {
-    await page.evaluate(async id => {
+    await page.evaluate(async () => {
       const { applyLocale } = await import('/src/i18n/index.ts'); applyLocale('zh-CN');
-      const { useBotPanel } = await import('/src/store/botPanel.ts'); useBotPanel.getState().openThread(id);
-    }, id);
+      const { useBotPanel } = await import('/src/store/botPanel.ts'); useBotPanel.getState().setOpen(true);
+    });
+    await page.getByTestId('bot-panel-history').click();
+    await page.getByRole('menu').getByText(id === thread.id ? thread.title : other.title, { exact: true }).click();
     await page.getByTestId('bot-panel-history').filter({ hasText: id === thread.id ? thread.title : other.title }).waitFor();
   };
   await open(thread.id);
@@ -175,7 +177,9 @@ try {
   await open(other.id);
   const album = panel.getByRole('button', { name: '查看 2 张图片', exact: true });
   await album.waitFor();
-  assert.equal(await panel.locator('.bot-image-stack').count(), 1, 'a file breaks consecutive image grouping');
+  assert.equal(await panel.locator('.chat-image-stack').count(), 1, 'a file breaks consecutive image grouping');
+  assert.equal(await panel.locator('.chat-image-stack img').count(), 1, 'an album renders only its cover');
+  assert.equal(await panel.locator('.chat-image-stack__count').innerText(), '2');
   await panel.getByRole('button', { name: '预览图片 third.png', exact: true }).waitFor();
   await album.click();
   const viewer = page.getByTestId('bot-image-viewer');

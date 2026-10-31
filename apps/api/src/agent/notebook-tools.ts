@@ -69,6 +69,7 @@ export function notebookTools(store: DatabaseStore): StudyToolPlugin[] {
       if (!a.create && (!current || current.revision !== a.revision)) throw new Error('system_revision_conflict');
       const content = a.create ? date ? `# ${date}\n\n## ${time}\n\n${a.content}` : a.content
         : a.append !== undefined ? `${current!.content}\n\n${date ? `## ${time}\n\n` : ''}${a.append}` : replace(current!.content, a.edits);
+      if (memoryName(a.path) && !files.memory.isEnabled(c.owner)) throw new Error('memory_disabled');
       const run = store.db.prepare('SELECT trigger_message_id FROM runs WHERE id=? AND thread_id=?').get(c.run, c.thread) as { trigger_message_id: string | null } | undefined;
       c.checkActive();
       const saved = files.save(c.owner, a.path, content, current?.content ?? '', a.revision, run?.trigger_message_id ? `message:${run.trigger_message_id}` : `run:${c.run}`);

@@ -30,6 +30,9 @@ import { workerTokens } from './cloud/workerAuth.js';
 import { McpRepository } from './mcp/repository.js';
 import { McpManager } from './mcp/manager.js';
 import { registerMcpRoutes } from './mcp/routes.js';
+import { WebSearchConfiguration } from './web-search/config.js';
+import { WebSearchService } from './web-search/service.js';
+import { registerWebSearchRoutes } from './web-search/routes.js';
 import { ProjectRepository } from './projects/repository.js';
 import { ProjectError } from './projects/files.js';
 import { registerProjectRoutes } from './projects/routes.js';
@@ -116,10 +119,11 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
   const cloudConfig = new CloudConfiguration(store, path.dirname(secretFile));
   const repo = new BootstrapRepository(store);
   const mcp = new McpManager(new McpRepository(store, cloudConfig));
+  const webSearch = new WebSearchService(new WebSearchConfiguration(store, cloudConfig), options.fetch);
   const projects = new ProjectRepository(store, path.join(filesDir, 'projects'));
   const resources = new ResourceFiles(projects, filesDir);
   const study = new StudyTools(store, cloudConfig, filesDir, options.fetch);
-  const runner = new BotRunner(store, { fetch: options.fetch, sandbox: options.sandbox, sandboxCleanup: options.sandboxCleanup, configuration: cloudConfig, mcp, projects, study });
+  const runner = new BotRunner(store, { fetch: options.fetch, sandbox: options.sandbox, sandboxCleanup: options.sandboxCleanup, configuration: cloudConfig, mcp, projects, study, webSearch });
   projects.isActive = id => runner.isProjectActive(id);
   const memoryWorker = new MemoryWorker(store, cloudConfig, options.fetch);
   const botService = new BotApplicationService(store, runner, projects);
@@ -246,12 +250,13 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
   const bad = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const pruneAttempts = () => { const cutoff = Date.now() - 15 * 60_000; for (const [ip, value] of attempts) if (value.until < cutoff && value.seen < cutoff) attempts.delete(ip); while (attempts.size > 10_000) attempts.delete(attempts.keys().next().value!); };
 
-   const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch,
+   const cloudRunner = registerCloudRoutes(app, { store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin, filesDir, maxFileBytes, fetch: options.fetch, webSearch,
      canStart: () => !held && !draining,
      syncResources: owner => { if (store.db.prepare('SELECT 1 FROM resource_roots WHERE owner_id=?').get(owner)) resources.migrate(owner); } });
    registerResourceRoutes(app, resources, requireAuth, checkOrigin);
    registerSystemRoutes(app, systemMaterials, cloudConfig, requireAuth, checkOrigin);
    registerMcpRoutes(app, { manager: mcp, store, records: cloudRecords, requireAuth, checkOrigin });
+   registerWebSearchRoutes(app, { service: webSearch, store, records: cloudRecords, configuration: cloudConfig, requireAuth, checkOrigin });
    registerProjectRoutes(app, { projects, requireAuth, checkOrigin, maxFileBytes, stopProject: (id) => {
      const runs = store.db.prepare(`SELECT r.id FROM runs r JOIN threads t ON t.id=r.thread_id
        LEFT JOIN bot_workspaces b ON b.owner_id=t.owner_id AND t.mode='bot'
@@ -311,7 +316,7 @@ export function buildServer(options: { dbPath?: string; fetch?: typeof fetch; sa
     if (worker && request.url.startsWith('/api/')) {
       const url = request.url.split('?')[0];
        const read = request.method === 'GET' && (['/api/v1/cloud/status', '/api/v1/cloud/config', '/api/v1/cloud/records', '/api/v1/auth/session', '/api/v1/bootstrap/status', '/api/v1/system/file', '/api/v1/system/files'].includes(url) || /^\/api\/v1\/(files|resources\/courses)\/[^/]+$/.test(url));
-       const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call', '/api/v1/system/file'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/complete`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
+        const write = request.method === 'POST' && (['/api/v1/cloud/records', '/api/v1/files', '/api/v1/cloud/mcp/catalog', '/api/v1/cloud/mcp/call', '/api/v1/cloud/web-search/catalog', '/api/v1/cloud/web-search/call', '/api/v1/system/file'].includes(url) || url.startsWith('/api/v1/cloud/models/') || [`/api/v1/cloud/tasks/${worker.taskId}/report`, `/api/v1/cloud/tasks/${worker.taskId}/complete`, `/api/v1/cloud/tasks/${worker.taskId}/authorize`, `/api/v1/cloud/tasks/${worker.taskId}/authorize/finish`, `/api/v1/cloud/tasks/${worker.taskId}/commands/claim`].includes(url));
       if (!read && !write) return reply.code(403).send({ error: 'worker_scope_denied' });
       const task = store.db.prepare('SELECT status FROM cloud_tasks WHERE id=? AND owner_id=?').get(worker.taskId, worker.id) as { status: string } | undefined;
       if (!task || !['running', 'waiting_user'].includes(task.status)) return reply.code(403).send({ error: 'worker_task_inactive' });

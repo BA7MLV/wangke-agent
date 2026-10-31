@@ -1157,7 +1157,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
               <ModelLibrary
                 key={selectedProvider.id}
                 providerId={selectedProvider.id}
-                allowDecision={!serverManaged}
+                allowDecision
                 discovered={discoveredModels[selectedProvider.id]}
                 checking={checking || providerSaving}
                 refreshLabel={serverManaged && providerNeedsSave?.(selectedProvider) ? '保存连接并获取模型' : '获取模型列表'}
@@ -1189,7 +1189,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
                 }}
                 onRemove={() => void confirmRemove(p)}
               >
-                <ModelLibrary key={p.id} providerId={p.id} allowDecision={!serverManaged} checking={checking} onRefresh={() => void handleCheck(p.id)} />
+                <ModelLibrary key={p.id} providerId={p.id} allowDecision checking={checking} onRefresh={() => void handleCheck(p.id)} />
               </ProviderRow>
             )}
           />
@@ -1218,7 +1218,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
         testId="card-models"
       >
         <div className="flex flex-col gap-3">
-          {SLOT_ORDER.filter((slot) => !serverManaged || slot !== 'decision' || Boolean(settings.decisionModel.model)).map((slot) => {
+          {SLOT_ORDER.map((slot) => {
             const name = (
               { chat: 'llmModel', vision: 'visionModel', asr: 'asrModel', decision: 'decisionModel' } as const
             )[slot];
@@ -1292,7 +1292,7 @@ export default function ModelsModule({ serverManaged = false, discoveryProviders
       </SectionCard>
 
        {!standalone && <PromptCacheUsage serverManaged={serverManaged} />}
-       {!serverManaged && <JevCard />}
+       <JevCard />
        </>}
     </>
   );

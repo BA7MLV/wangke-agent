@@ -368,6 +368,7 @@ const META = {
   // 自播种 videos（原生 IndexedDB），不需要 key，也不需要测试视频。
   'e2e-library-progress': { service: 'preview', antd: false, base: true, timeout: 180 },
   'e2e-mobile': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
+  'e2e-mobile-navigation-reveal': { service: 'dev', antd: false, base: true, timeout: 180 },
   'e2e-player-enhance': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-quiz': { service: 'preview', antd: true, key: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },
   'e2e-resume': { service: 'preview', antd: true, testFile: true, timeout: 300, video: '/tmp/wangke-test.mp4' },

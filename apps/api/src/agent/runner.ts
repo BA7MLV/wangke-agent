@@ -7,6 +7,8 @@ import { DEFAULT_AGENT_POLICY, type AgentPolicy } from '@wangke/contracts/cloud'
 import { botRequest, botReply, responseContinuation, type ModelMessage as Message, type ModelCall as Call } from './model.js';
 import type { StudyTools } from './study.js';
 import { McpManager, mcpError } from '../mcp/manager.js';
+import { WebSearchService, webError } from '../web-search/service.js';
+import { parseWebSearchResult } from '@wangke/contracts/web-search';
 import { mcpToolDefinition } from '@wangke/contracts/mcp';
 import { ToolRegistry } from './tools/registry.js';
 import { BudgetBlocked, UsageLedger } from './budget.js';
@@ -26,6 +28,8 @@ import { BotSettingsTools } from './settings.js';
 import { shellDecision } from './permissions.js';
 import { CloudRecords } from '../cloud/records.js';
 import { settleWithin } from '../lifecycle.js';
+import { hasWechatLatex, wechatToolHasLatex, WECHAT_REPLY_POLICY, WECHAT_FORMAT_REPAIR } from './wechat-replies.js';
+import { imageInputReads, ImageInputFailure, IMAGE_INPUT_POLICY } from './image-input.js';
 import { executeToolBatch, recordToolResult, TOOL_BATCH_GUIDANCE } from '@wangke/study-core/tool-batch';
 
 type Run = { id: string; thread_id: string; context_json: string | null; step_count: number; trigger_message_id: string | null };
@@ -39,7 +43,7 @@ Use tools when you need to act or look something up. Keep Python/shell commands,
 const artifactSaving = 'Artifact saving: preserve user-provided filenames. Use meaningful task folders and descriptive final names (for example 函数分析/正弦函数对比.png), not output.png or UUID-only display names. For NEW binary artifacts, first generate a staged file, then use wangke-save SOURCE TARGET in the SAME shell command. It atomically avoids overwrites, corrects supported raster extensions from file signatures, and reuses identical output at the requested/numbered path on retries. Use its returned path for study_upload_file. /tmp staging disappears after each command. If wangke-save is unavailable on an older sandbox image, use exclusive creation (Python open(..., "xb")), never check-exists-then-write. Never overwrite an existing user file unless the user explicitly requested an edit; text updates use workspace write with its current expectedRevision. Before retrying an interrupted generation, inspect existing outputs and reuse verified finished artifacts instead of blindly regenerating or adding suffixes.';
 const tool = (name: string, description: string, properties: object, required: string[]) => ({ type: 'function', function: { name, description, parameters: { type: 'object', additionalProperties: false, properties, required } } });
 const tools = [
-  tool('send_message', 'Deliver one concise, natural message to the current conversation. Keep simple replies together; split fuller answers into a few meaningful parts, not a wall of text or one bubble per sentence. Send useful answers, verified results or necessary questions, not plans, routine status or tool narration. For conversational text, set complete=false for a part when more messages or work follow; complete=true ends the turn (default for legacy callers). Ready parts may be sent in one ordered batch with only the last part completing the turn. Do not repeat the answer in plain assistant text alongside this call. progress is internal only, hidden in Web/IM, and always continues; question ends the turn; approval waits for a button or IM text reply. Send actual images/files with study_send_file, not attachment JSON.', { kind: { type: 'string', enum: ['text', 'progress', 'question', 'approval', 'attachment'] }, text: { type: 'string', minLength: 1, maxLength: 12000 }, complete: { type: 'boolean', description: 'For text/legacy attachment messages: false continues the task, true finishes. Defaults to true.' } }, ['kind', 'text']),
+  tool('send_message', 'Deliver one concise, natural message to the current conversation. Keep simple replies together; split fuller answers into a few meaningful parts, not a wall of text or one bubble per sentence. Send useful answers, verified results or necessary questions, not plans, routine status or tool narration. For conversational text, set complete=false for a part when more messages or work follow; complete=true ends the turn (default for legacy callers). Ready parts may be sent in one ordered batch with only the last part completing the turn. Do not repeat the answer in plain assistant text alongside this call. progress is internal and normally hidden; the runtime may project only selected channel-safe milestones. question ends the turn; approval waits for a button or IM text reply. Send actual images/files with study_send_file, not attachment JSON.', { kind: { type: 'string', enum: ['text', 'progress', 'question', 'approval', 'attachment'] }, text: { type: 'string', minLength: 1, maxLength: 12000 }, complete: { type: 'boolean', description: 'For text/legacy attachment messages: false continues the task, true finishes. Defaults to true.' } }, ['kind', 'text']),
   tool('finish_turn', 'Finish after your messages or files have already been sent. Emits no extra message: do not repeat delivered content in a final summary.', {}, []),
   tool('shell', 'Execute bash privately in your isolated Linux workspace. Read/write files, run Python/Node, test programs. Files in /workspace persist across commands. For another owner resource project, pass its exact projectId from projects list; it is mounted at /workspace for this command. Set systemWrite=true to create/modify ANY owner /system files or install Skills without human approval; this grants a writable mount only for this command, otherwise all /system is read-only. Explicit policy denials still apply. Deleting files/directories ALWAYS requires one-shot approval, even for trusted Bots: set requiresApproval=true for deletions, including those hidden in scripts. Common destructive commands are also detected by the runtime, not a complete shell security boundary. Prefer edit for revision-checked changes to system documents; MCP credentials stay human-managed in Settings. Each command starts a fresh container; keep dependencies in /workspace (venv, node_modules). No other host access. Default deadline 120 seconds; set timeoutSeconds up to 600 for builds, installs or large conversions. All child processes stop with the container; wait cannot resume a killed command. Inspect partial outputs before retrying an interrupted command. Set requiresApproval=true for destructive work or consequential external changes such as publishing, sending to third parties or purchases. Routine web searches/downloads, reading data, creating/editing system files, generating workspace files and local computation do not need this flag merely because they use network or shell. Call this tool directly; the runtime requests approval when needed, so never ask for the same permission with send_message first. Give description as a short user-facing purpose (including important effects), never code. To deliver a generated binary file use study_upload_file then study_send_file.', { command: { type: 'string' }, description: { type: 'string', maxLength: 300 }, projectId: { type: 'string', description: 'Exact owner resource projectId from projects list; defaults to the current/default project.' }, systemWrite: { type: 'boolean', description: 'Writable access to all owner /system files for this command, without approval for creates/edits/installs. Deletion still requires approval. Defaults to false (all /system is read-only).' }, requiresApproval: { type: 'boolean' }, timeoutSeconds: { type: 'integer', minimum: 1, maximum: 600, description: 'Command deadline in seconds; set up to 600 for builds, installs or large conversions.' } }, ['command']),
   tool('wait', 'Persist this task and wake it later, without keeping a model request or browser open.', { seconds: { type: 'integer', minimum: 1, maximum: 86400 }, reason: { type: 'string' } }, ['seconds', 'reason']),
@@ -65,7 +69,7 @@ export class BotRunner {
   private readonly projects?: ProjectRepository;
   private readonly projectTools?: ProjectTools;
   private readonly settingsTools?: BotSettingsTools;
-  constructor(private readonly store: DatabaseStore, private readonly options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxFile?: SandboxFileReader; sandboxCleanup?: SandboxCleanup; configuration?: CloudConfiguration; study?: StudyTools; mcp?: McpManager; projects?: ProjectRepository; onEvent?: BotEventHook } = {}) {
+  constructor(private readonly store: DatabaseStore, private readonly options: { fetch?: typeof fetch; sandbox?: SandboxExecutor; sandboxFile?: SandboxFileReader; sandboxCleanup?: SandboxCleanup; configuration?: CloudConfiguration; study?: StudyTools; mcp?: McpManager; webSearch?: WebSearchService; projects?: ProjectRepository; onEvent?: BotEventHook } = {}) {
     this.mcp = options.mcp;
     this.configuration = options.configuration;
     this.fetcher = options.fetch ?? fetch;
@@ -306,6 +310,8 @@ export class BotRunner {
     const started = Date.now();
     const externalSignal = signal;
     const lifecycle = new AbortController();
+    let imageProgressTimer: ReturnType<typeof setTimeout> | undefined;
+    let imageProgressSent = false;
     const checkActive = () => {
       signal.throwIfAborted();
       if ((this.store.db.prepare('SELECT status FROM runs WHERE id=?').get(run.id) as { status: string } | undefined)?.status !== 'running') {
@@ -478,6 +484,7 @@ export class BotRunner {
         checkActive();
         if (catalog?.warnings.length) appendActive('progress', `MCP: ${catalog.warnings.join('; ')}`);
         const registry = new ToolRegistry();
+        for (const definition of this.options.webSearch?.definitions(owner, this.policy(thread).network === 'allow') ?? []) registry.register(definition, 'read', 30000);
         for (const definition of [...tools, ...(this.options.study?.definitions() ?? []), ...(this.projectTools?.definitions(thread) ?? []), ...(this.settingsTools?.definitions(thread) ?? [])]) registry.register(definition, ['read', 'grep', 'checkpoint_read', 'study_read', 'workspace', 'settings'].includes(definition.function.name) ? 'read' : 'uncertain', definition.function.name === 'shell' ? shellToolTimeoutMs : 120000);
         for (const definition of catalog?.tools.map(mcpToolDefinition) ?? []) {
           try { registry.register(definition, 'uncertain'); }
@@ -491,8 +498,40 @@ export class BotRunner {
           context.push({ role: 'user', runtime_notice: true, content: metadata });
           this.save(run, context);
         }
+        // Resolve from the live binding, including resumed/old conversations.
+        // Never let stale saved prompts assume that ClawBot renders LaTeX.
+        const wechat = Boolean(this.store.db.prepare(`SELECT 1 FROM gateway_bindings b JOIN gateway_accounts a ON a.id=b.account_id
+          WHERE b.thread_id=? AND b.revoked=0 AND a.enabled=1 AND a.owner_id=? AND a.channel='ilink'`).get(run.thread_id, owner));
+        context = context.filter(m => !(m.role === 'system' && m.content?.startsWith('WeChat reply format:')));
+        if (wechat) {
+          const firstNonSystem = context.findIndex(m => m.role !== 'system');
+          context.splice(firstNonSystem < 0 ? context.length : firstNonSystem, 0, { role: 'system', content: WECHAT_REPLY_POLICY });
+        }
+        const images = wechat ? imageInputReads(this.store, run) : { hasImages: false, calls: [] };
+        context = context.filter(m => !(m.role === 'system' && m.content?.startsWith('WeChat image input:')));
+        if (images.hasImages) {
+          const firstNonSystem = context.findIndex(m => m.role !== 'system');
+          context.splice(firstNonSystem < 0 ? context.length : firstNonSystem, 0, { role: 'system', content: IMAGE_INPUT_POLICY });
+        }
+        // Do not acknowledge each attachment. Quick turns remain silent until
+        // the combined answer is ready. If vision reading is genuinely slow,
+        // publish one durable progress milestone; Web renders it in the live
+        // header and the WeChat gateway selectively projects only these
+        // channel-safe milestones.
+        if (images.calls.length && !imageProgressSent && !imageProgressTimer) {
+          imageProgressTimer = setTimeout(() => {
+            imageProgressTimer = undefined;
+            try { appendActive('progress', '正在读取这批图片，请稍候。', `im:status:${run.id}:image-reading`); imageProgressSent = true; } catch { /* cancelled or already finished */ }
+          }, 8000);
+          imageProgressTimer.unref?.();
+        }
+        if (images.calls.length && !this.options.study?.plugins.has('study_file')) throw new ImageInputFailure('当前图片读取服务不可用，暂时无法读完这批图片。请稍后重试。');
+        // Keep this derived view outside the replay history: original per-file
+        // results are durable. Include it in the estimate as well as the request
+        // so large batches cannot bypass context or usage limits.
+        const imageEvidence: Message[] = images.evidence ? [{ role: 'user', runtime_notice: true, content: images.evidence }] : [];
         let outputTokens = ledger.model(owner).outputTokens;
-        const estimate = (messages: Message[]) => { const r = botRequest(selected, model, messages, registry.definitions(), outputTokens, run.thread_id); return boundedRequest(r.body, r.path, outputTokens).total; };
+        const estimate = (messages: Message[]) => { const r = botRequest(selected, model, [...messages, ...imageEvidence], registry.definitions(), outputTokens, run.thread_id); return boundedRequest(r.body, r.path, outputTokens).total; };
         const governor = new ContextGovernor(this.store);
         const capacity = Math.min(ledger.model(owner).contextTokens, ledger.limits(owner, run.id).contextTokens);
         let governed: Message[];
@@ -504,15 +543,23 @@ export class BotRunner {
           outputTokens = 1024;
           governed = governor.view(owner, run.id, context, registry.definitions(), capacity, estimate);
         }
-        const modelView = governed;
+        const modelView = [...governed, ...imageEvidence];
         const request = botRequest(selected, model, modelView, registry.definitions(), outputTokens, run.thread_id);
-        const body = await client.request(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
+        // Prepare every image through the ordinary durable tool pipeline first.
+        // This preserves permissions, approvals, bounded concurrency, budgets
+        // and cancellation while preventing a model from answering after only
+        // the first image. Successful reads are reused after a restart.
+        const body = images.calls.length ? undefined : await client.request(`${provider?.baseUrl ?? process.env.MODEL_BASE_URL ?? 'https://api.openai.com/v1'}/${request.path}`, {
           method: 'POST', signal,
           headers: request.headers,
           redirect: 'error',
           body: JSON.stringify(request.body),
         }, { owner, run: run.id, purpose: 'bot', provider: provider?.id ?? 'server', model }, boundedRequest(request.body, request.path, outputTokens).total);
-        const { calls, text } = botReply(selected.protocol, body);
+        const { calls, text } = images.calls.length ? { calls: images.calls, text: '' } : botReply(selected.protocol, body);
+        if (images.hasImages && !calls.length) {
+          if (imageProgressTimer) { clearTimeout(imageProgressTimer); imageProgressTimer = undefined; }
+          if (imageProgressSent) appendActive('progress', '图片已读完，正在整理答复。', `im:status:${run.id}:image-ready`);
+        }
         checkActive();
         if (calls.length > 16 || calls.some(c => !c?.function || typeof c.function.name !== 'string' || typeof c.function.arguments !== 'string' || c.function.arguments.length > 128000)) throw new Error('invalid_structured_response');
         const batch: Call[] = calls.map(c => ({ id: crypto.randomUUID(), ...(c.id ? { provider_id: c.id } : {}), type: 'function', function: { ...c.function } }));
@@ -520,7 +567,25 @@ export class BotRunner {
         // Explicit message/file tools deliver parts; a lone finish_turn may accompany a direct reply.
         const directReply = !batch.length || batch.length === 1 && batch[0].function.name === 'finish_turn';
         signal.throwIfAborted();
-        context.push({ role: 'assistant', content: text || null, ...(batch.length ? { tool_calls: batch } : {}), response_items: responseContinuation(selected.protocol, body) });
+        context.push({ role: 'assistant', content: text || null, ...(batch.length ? { tool_calls: batch } : {}), response_items: body === undefined ? undefined : responseContinuation(selected.protocol, body) });
+        if (wechat && (directReply && hasWechatLatex(text) || batch.some(call => wechatToolHasLatex(call.function.name, call.function.arguments)))) {
+          // Reject before *any* effect in this batch. Return every tool result
+          // so Responses/Anthropic/Chat histories remain valid on retry/restart.
+          const repair = `${WECHAT_FORMAT_REPAIR}\nFormat check run: ${run.id}`;
+          for (const call of batch) context.push({ role: 'tool', tool_call_id: call.id, content: repair });
+          context.push({ role: 'user', runtime_notice: true, content: repair });
+          this.store.transaction(() => {
+            checkActive();
+            for (const call of batch) this.store.db.prepare('INSERT INTO run_steps(id,run_id,tool,arguments,status,result,created_at,completed_at) VALUES(?,?,?,?,?,?,?,?)')
+              .run(call.id, run.id, call.function.name, call.function.arguments, 'interrupted', repair, now(), now());
+            this.store.db.prepare('UPDATE runs SET step_count=step_count+? WHERE id=?').run(Math.max(1, batch.length), run.id);
+            run.step_count = (this.store.db.prepare('SELECT step_count FROM runs WHERE id=?').get(run.id) as { step_count: number }).step_count;
+            this.save(run, context);
+          });
+          // Two bounded repair attempts, charged to the normal model/step budgets.
+          if (context.filter(m => m.runtime_notice && m.content === repair).length >= 3) throw new Error('wechat_reply_format_failed');
+          continue;
+        }
         this.store.transaction(() => {
           checkActive();
           if (directReply && text.trim()) this.append(run.thread_id, 'text', text, `bot:${run.id}:reply:${context.length}`);
@@ -542,6 +607,7 @@ export class BotRunner {
               const name = call.function.name, args = JSON.parse(call.function.arguments);
               if (!registry.validate(name, args).ok) return false;
               const policy = this.policy(this.thread(run.thread_id));
+              if (['websearch', 'webfetch'].includes(name)) return policy.network === 'allow';
               const managed = this.managedTool(name);
               if (managed) return managed.parallelSafe(name, args) && managed.permission(name, args, thread, policy) === 'allow';
               const plugin = this.options.study?.plugins.get(name);
@@ -585,7 +651,12 @@ export class BotRunner {
         const signal = scoped.signal;
         const managed = this.managedTool(call.function.name);
         const studyPlugin = managed ? undefined : this.options.study?.plugins.get(call.function.name);
-        if (managed) {
+        if (['websearch', 'webfetch'].includes(call.function.name) && this.options.webSearch) {
+          try {
+            const response = await this.options.webSearch.call(owner, call.function.name, args, signal, () => this.policy(this.thread(run.thread_id)).network === 'allow');
+            result = JSON.stringify(response);
+          } catch (error) { signal.throwIfAborted(); result = `Error: ${webError(error).code}`; }
+        } else if (managed) {
           try {
             const permission = managed.permission(call.function.name, args, thread, this.policy(thread));
             if (permission === 'deny') result = 'Operation denied by current policy.';
@@ -705,6 +776,7 @@ export class BotRunner {
         this.store.transaction(() => {
           checkActive();
           this.store.db.prepare("UPDATE run_steps SET result=?,status='completed',completed_at=? WHERE id=?").run(result, now(), call.id);
+          if (call.function.name === 'websearch' && parseWebSearchResult(result)) this.append(run.thread_id, 'web_sources', result, `bot:${call.id}:sources`);
           this.save(run, context);
           if (state) this.store.db.prepare("UPDATE runs SET status=?,wake_at=?,completed_at=? WHERE id=? AND status='running'").run(state, wake, state === 'completed' ? now() : null, run.id);
           if (state === 'completed') new ContextGovernor(this.store).completed(run.id, context);
@@ -746,12 +818,15 @@ export class BotRunner {
         if (this.stopped) this.store.db.prepare("UPDATE runs SET status='queued' WHERE id=? AND status='running'").run(run.id);
         return;
       }
-      const code = error instanceof ModelFailure ? error.code : error instanceof Error && ['model_not_configured', 'sandbox_unavailable', 'invalid_structured_response', 'model_incomplete_or_refused'].includes(error.message) ? error.message : 'model_request_failed';
+      const code = error instanceof ImageInputFailure ? error.message : error instanceof ModelFailure ? error.code : error instanceof Error && ['model_not_configured', 'sandbox_unavailable', 'invalid_structured_response', 'model_incomplete_or_refused', 'wechat_reply_format_failed'].includes(error.message) ? error.message : 'model_request_failed';
       this.store.db.prepare("UPDATE run_steps SET status='failed',result=?,completed_at=? WHERE run_id=? AND status='running'").run(code, now(), run.id);
       this.store.db.prepare("UPDATE run_steps SET status='interrupted',result='Not executed: task failed.',completed_at=? WHERE run_id=? AND status='queued'").run(now(), run.id);
       if (code === 'sandbox_unavailable') this.append(run.thread_id, 'text', '暂时无法完成这次处理，执行服务当前不可用。');
+      if (code === 'wechat_reply_format_failed') this.append(run.thread_id, 'text', '这次回复的公式没能转换成微信可读的格式，请重试。');
+      if (error instanceof ImageInputFailure) this.append(run.thread_id, 'text', error.notice);
       this.store.db.prepare("UPDATE runs SET status='failed',completed_at=?,error_code=? WHERE id=? AND status='running'").run(now(), code, run.id);
     } finally {
+      if (imageProgressTimer) clearTimeout(imageProgressTimer);
       clearInterval(monitor);
       this.store.db.prepare('UPDATE runs SET active_ms=active_ms+? WHERE id=?').run(Date.now() - started, run.id);
     }

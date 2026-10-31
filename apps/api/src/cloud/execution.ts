@@ -6,6 +6,7 @@ import type { DatabaseStore } from '../storage/database.js';
 import type { CloudConfiguration } from './config.js';
 import type { CloudRecords } from './records.js';
 import { ProjectError, ProjectFiles } from '../projects/files.js';
+import type { WebSearchService } from '../web-search/service.js';
 
 export type ExecutorKind = 'node' | 'media' | 'browser';
 export interface TaskContext {
@@ -17,6 +18,7 @@ export interface TaskContext {
   filesDir: string;
   signal: AbortSignal;
   fetch: typeof fetch;
+  webSearch?: WebSearchService;
   checkActive(): void;
   report(progress: Record<string, unknown>): void;
 }

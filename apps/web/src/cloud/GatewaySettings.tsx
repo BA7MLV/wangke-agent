@@ -314,7 +314,8 @@ function AccountDetail({ account, agents, busy, startLogin, title, status, deliv
         {state === 'bot_required' && <Button variant="primary" onPress={() => openSettings('bot')}>{t('configureBot')}</Button>}
         {Boolean(readiness?.inboxFailures) && <p className="py-2 text-sm text-warning">{t('inboxFailureHint', { count: readiness?.inboxFailures })}</p>}
         {Boolean(readiness?.projectionFailures) && <p className="py-2 text-sm text-warning">{t('projectionFailureHint', { count: readiness?.projectionFailures })}</p>}
-        {readiness?.latestRun && ['failed', 'waiting_user', 'paused'].includes(readiness.latestRun.status) && <p className="py-2 text-sm text-warning">{t(`runState.${readiness.latestRun.status as 'failed' | 'waiting_user' | 'paused'}`)}{readiness.latestRun.errorCode && <code className="ml-1 break-all">{readiness.latestRun.errorCode}</code>}</p>}
+         {readiness?.processingStatus && <p className="py-2 text-sm" role="status">{t(`processing.${readiness.processingStatus}`)}</p>}
+         {readiness?.latestRun && ['failed', 'waiting_user', 'paused'].includes(readiness.latestRun.status) && <p className="py-2 text-sm text-warning">{t(`runState.${readiness.latestRun.status as 'failed' | 'waiting_user' | 'paused'}`)}{readiness.latestRun.errorCode && <code className="ml-1 break-all">{readiness.latestRun.errorCode}</code>}</p>}
         {readiness?.lastInboundAt != null && <p className="pt-2 text-xs text-muted">{t('lastInbound', { time: new Date(readiness.lastInboundAt).toLocaleString() })}</p>}
       </SectionCard>
 

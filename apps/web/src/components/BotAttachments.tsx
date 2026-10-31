@@ -5,6 +5,7 @@ import { serverClient } from '../api/serverClient';
 import { attachmentSize } from '../chat/attachments';
 import { Sym } from '../ui';
 import ImagePreview from './ImagePreview';
+import ImageGallery from './ImageGallery';
 import './chat-attachments.css';
 
 export interface BotDraftFile {
@@ -58,7 +59,6 @@ function AttachmentImage({ name, url, local, draft = false, images }: ImageItem 
     <Button variant="ghost" className={draft ? 'chat-image chat-image--draft' : 'chat-image'} aria-label={stacked ? `查看 ${images.length} 张图片` : `预览图片 ${name}`}
       onPress={() => { if (failed && !stacked) retry(); else setOpen(true); }}>
       {failed ? <span role="status">图片加载失败，点击重试</span> : source ? <img src={source} alt={name} decoding="async" onError={() => setFailed(true)} /> : <Spinner size="sm" aria-label="图片加载中" />}
-      {stacked && <span className="bot-image-stack__count" aria-hidden="true"><Sym name="photo_library" />{images.length}</span>}
     </Button>
     {open && <AttachmentImageViewer images={images ?? [{ name, url, local }]} onClose={() => setOpen(false)} />}
   </>;
@@ -94,9 +94,9 @@ export function BotMessageAttachments({ files, projectId }: { files: BotAttachme
     {groups.map((group, index) => {
       const file = group[0];
       const name = nameOf(file), url = urlOf(file, projectId);
-      return isImage(file) ? <div className={`chat-image-gallery${group.length > 1 ? ' bot-image-stack' : ''}`} data-count="1" key={`${file.fileId ?? file.projectPath ?? 'image'}:${index}`}>
+      return isImage(file) ? <ImageGallery count={group.length} key={`${file.fileId ?? file.projectPath ?? 'image'}:${index}`}>
         <AttachmentImage name={name} url={url} images={group.map(item => ({ name: nameOf(item), url: urlOf(item, projectId) }))} />
-      </div>
+      </ImageGallery>
         : <div className="imsg-bubble imsg-bubble--file" key={index}>
           <span className="imsg-file__icon" aria-hidden="true"><Sym name="description" /></span>
           {url ? <a className="imsg-file__name" href={url} download>{name}</a> : <span className="imsg-file__name">{name}</span>}

@@ -39,6 +39,7 @@
     "ready": "已完成连接、本人绑定和模型配置。可在平台私聊里发送问题；发送 /status 可先检查消息往返。模型服务可用性以实际回复为准。"
   },
   "runState": { "failed": "最近一次任务失败：", "waiting_user": "任务正在等待你的审批或回答，请打开对话。", "paused": "任务已暂停，请打开对话查看原因。" },
+  "processing": { "collecting": "正在收集图片（继续发送即可）", "ready": "图片已就绪，准备处理", "reading": "正在读取全部图片", "running": "正在生成合并答复", "waiting": "等待你的确认或回答", "completed": "已完成", "failed": "处理失败", "cancelled": "已取消" },
   "lastInbound": "最近收到消息：{{time}}",
   "deliveryProblems": "回复投递问题",
   "inboxFailureHint": "有 {{count}} 条消息处理失败。请打开对话核对，再从平台重新发送未处理的问题。",

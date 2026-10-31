@@ -170,6 +170,14 @@
   font-weight: 600;
 }
 
+.bot-panel__identity {
+  display: grid;
+  min-width: 0;
+  flex: 1;
+  align-content: center;
+  justify-items: start;
+}
+
 .bot-panel__switcher {
   height: 44px;
   padding: 0 8px 0 4px;
@@ -202,6 +210,33 @@
 .bot-panel__history {
   width: min(320px, calc(100vw - 32px));
   max-height: min(420px, 60dvh);
+}
+
+/* Web-only activity line: useful context without turning internal work into chat noise. */
+.bot-activity {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  max-width: min(48vw, 360px);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 400;
+  line-height: 1.25;
+}
+
+.bot-activity__spark {
+  flex: none;
+  color: var(--accent);
+  animation: bot-activity-spark 1.8s var(--ease-in-out) infinite;
+}
+
+.bot-activity__text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  animation: bot-activity-swap var(--duration-quick) var(--ease-in-out) both;
 }
 
 /* ── 项目工作区：左列会话，右列对话或文件 ───────────── */
@@ -374,6 +409,12 @@
   margin: 0;
   font-size: 0.9375rem;
   font-weight: 600;
+}
+
+.bh-chat__identity {
+  display: grid;
+  min-width: 0;
+  gap: 1px;
 }
 
 .bh-chat__name {
@@ -603,8 +644,8 @@
 .bot-message-attachments { width: min(320px, 100%); }
 .bot-attachment-message { display: flex; flex-direction: column; gap: 8px; min-width: 0; width: min(100%, 320px); }
 .bot-message-attachments .imsg-bubble--file { width: 100%; max-width: 100%; }
-.bot-message-attachments .chat-image-gallery { width: min(200px, 100%); }
-.bot-message-attachments .chat-image.chat-image {
+.bot-message-attachments .chat-image-gallery { width: 200px; max-width: 100%; }
+.bot-message-attachments .chat-image-gallery:not(.chat-image-stack) .chat-image {
   position: relative;
   height: 150px;
   overflow: visible;
@@ -613,7 +654,7 @@
   background: transparent;
   box-shadow: none;
 }
-.bot-message-attachments .chat-image-gallery .chat-image img {
+.bot-message-attachments .chat-image-gallery:not(.chat-image-stack) .chat-image img {
   width: auto;
   height: auto;
   max-width: 100%;
@@ -622,37 +663,6 @@
   border-radius: var(--radius-panel);
   box-shadow: 0 2px 6px rgb(0 0 0 / 10%), 0 6px 16px rgb(0 0 0 / 8%);
 }
-.bot-image-stack { position: relative; isolation: isolate; margin-block: 10px 4px; }
-.bot-image-stack::before,
-.bot-image-stack::after {
-  content: '';
-  position: absolute;
-  inset: 0;
-  z-index: -1;
-  border-radius: var(--radius-panel);
-  background: var(--surface);
-  box-shadow: 0 2px 6px rgb(0 0 0 / 12%);
-  pointer-events: none;
-}
-.bot-image-stack::before { transform: translateY(-8px) scale(0.9); }
-.bot-image-stack::after { transform: translateY(-4px) scale(0.95); }
-.bot-message-attachments .bot-image-stack .chat-image { background: var(--background); }
-.bot-message-attachments .bot-image-stack .chat-image img { width: 100%; height: 150px; object-fit: cover; }
-.bot-image-stack__count {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-  padding: 4px 8px;
-  border-radius: var(--radius-full);
-  background: rgb(0 0 0 / 65%);
-  color: #fff;
-  font-size: 0.75rem;
-  font-variant-numeric: tabular-nums;
-}
-.bot-image-stack__count .sym { font-size: 1rem; }
 .imsg-row--mine .bot-message-attachments { align-items: flex-end; }
 .imsg-row--mine .bot-attachment-message { align-items: flex-end; }
 
@@ -671,6 +681,16 @@
   30% { opacity: 0.9; transform: translateY(-3px); }
 }
 
+@keyframes bot-activity-spark {
+  0%, 100% { opacity: 0.45; transform: scale(0.85) rotate(0deg); }
+  50% { opacity: 1; transform: scale(1.15) rotate(12deg); }
+}
+
+@keyframes bot-activity-swap {
+  from { opacity: 0; transform: translateY(var(--distance-micro)); filter: blur(var(--blur-small)); }
+  to { opacity: 1; transform: none; filter: none; }
+}
+
 @keyframes bot-shake {
   0%, 100% { transform: none; }
   20% { transform: translateX(calc(var(--shake-distance) * -1)); }
@@ -687,6 +707,8 @@
 @media (prefers-reduced-motion: reduce) {
   .bot-access__form,
   .imsg-row[data-fresh] .imsg-bubble,
-  .bh[data-pane='chat'] .bh-chat { animation: none; }
+  .bh[data-pane='chat'] .bh-chat,
+  .bot-activity__spark,
+  .bot-activity__text { animation: none; }
   .imsg-typing i { animation-duration: 0s; }
 }

@@ -27,6 +27,8 @@ import '../projects/projects.css';
 
 /** 富内容渲染器（Markdown / 代码 / 表格 / HTML artifact）按需加载，纯文字聊天不下载它。 */
 const BotRich = lazy(() => import('./BotRich'));
+const WebSources = lazy(() => import('../web-search/WebSources'));
+import { parseWebSearchResult } from '@wangke/contracts/web-search';
 /** 看起来像 Markdown 的回复才走富渲染：普通聊天句子保持轻量的纯文本气泡。 */
 const looksRich = (text: string) => /(^|\n)\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>\s|\|.*\|)|```|\*\*|`[^`]+`|\[[^\]]+\]\([^)]+\)|\$\$?[^$]+\$/.test(text);
 
@@ -75,6 +77,23 @@ const BotAvatar = memo(function BotAvatar({ agent, size = 40, className }: { age
   );
 });
 
+const ACTIVITY_PHASES = ['scanning', 'connecting', 'checking', 'composing'] as const;
+
+/** Web live work label. Only selected runtime milestones are also projected to IM. */
+function BotActivity({ active, progress, beat }: { active: boolean; progress?: string; beat: number }) {
+  const { t, i18n } = useTranslation();
+  if (!active) return null;
+  const phase = ACTIVITY_PHASES[beat % ACTIVITY_PHASES.length];
+  const raw = progress ? botProgressText(progress, i18n.language) : t(`botHome.activity.${phase}`);
+  const text = raw.replace(/\s+/g, ' ').trim().slice(0, 120);
+  return (
+    <div className="bot-activity" role="status" aria-live="polite">
+      <span className="bot-activity__spark" aria-hidden="true">✦</span>
+      <span className="bot-activity__text" key={`${progress ?? phase}-${beat}`}>{text}</span>
+    </div>
+  );
+}
+
 /* ─────────────────────────── 单条气泡 ─────────────────────────── */
 
 const Bubble = memo(function Bubble({
@@ -111,6 +130,9 @@ const Bubble = memo(function Bubble({
         {progress && <span className="imsg-typing__text">{progress}</span>}
       </div>
     );
+  } else if (message.kind === 'web_sources') {
+    const result = parseWebSearchResult(message.content);
+    body = result ? <div className="imsg-bubble imsg-bubble--rich"><Suspense fallback={null}><WebSources result={result} /></Suspense></div> : null;
   } else if (attachment) {
     body = (
       <div className="bot-attachment-message">
@@ -261,6 +283,9 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const cursorRef = useRef(0);
   /** 每个线程有没有任务在跑：决定「正在输入」和已读。 */
   const [running, setRunning] = useState<Record<string, boolean>>({});
+  /** 最近一条内部进度用于 Web 顶栏；普通进度不会成为聊天或 IM 回复。 */
+  const [activity, setActivity] = useState<Record<string, string>>({});
+  const [activityBeat, setActivityBeat] = useState(0);
   const chatMode = !projectId;
 
   const active = activeId ? details[activeId] ?? null : null;
@@ -272,6 +297,7 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
   const canChat = !listLoading && !listError && !project?.archived && !activeSummary?.archived && availableAgents.some(a => a.id === currentAgentId);
   const messages = active?.messages ?? EMPTY;
   const activeRunning = Boolean(activeId && running[activeId]);
+  const activeProgress = activeId ? activity[activeId] : undefined;
   const rows = useMemo(() => {
     // Optimistic "running" only controls the stop/typing UI, not a read receipt.
     const grouped = groupMessages(messages, locale);
@@ -344,9 +370,13 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     let cancelled = false;
     setDetailError('');
     void serverClient.thread(activeId).then((detail) => {
-      if (cancelled) return;
-      setDetails((old) => ({ ...old, [activeId]: detail }));
-      setRunning(old => ({ ...old, [activeId]: Boolean(detail.running) }));
+       if (cancelled) return;
+       setDetails((old) => ({ ...old, [activeId]: detail }));
+       const lastProgress = [...detail.messages].reverse().find(message => message.role === 'assistant' && message.kind === 'progress');
+       const lastVisible = [...detail.messages].reverse().find(message => message.kind !== 'progress');
+       const progressIsCurrent = Boolean(lastProgress && (!lastVisible || lastProgress.createdAt > lastVisible.createdAt));
+       setRunning(old => ({ ...old, [activeId]: Boolean(detail.running) || progressIsCurrent }));
+       if (lastProgress?.content && progressIsCurrent) setActivity(old => ({ ...old, [activeId]: lastProgress.content }));
     }).catch(error => { if (!cancelled) setDetailError(projectError(error)); });
     return () => { cancelled = true; };
   }, [activeId, details, detailRevision]);
@@ -362,8 +392,15 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     const receive = (event: SseEvent, id: number) => {
       cursorRef.current = Math.max(cursorRef.current, id);
       if (!('message' in event)) return;
+      if (event.message.role === 'assistant' && event.message.kind === 'progress') {
+        setActivity(old => ({ ...old, [activeId]: event.message.content }));
+        setRunning(old => ({ ...old, [activeId]: true }));
+      }
       // 对面有了正式回应（回复、提问、审批），就不再显示「正在输入」。
-      if (event.message.role !== 'user' && event.message.kind !== 'progress') setRunning(old => ({ ...old, [activeId]: false }));
+      if (event.message.role !== 'user' && event.message.kind !== 'progress') {
+        setRunning(old => ({ ...old, [activeId]: false }));
+        setActivity(old => ({ ...old, [activeId]: '' }));
+      }
       patchActive(activeId, (thread) => thread.messages.some((message) => message.id === event.message.id)
         ? { ...thread, messages: thread.messages.map((message) => message.id === event.message.id ? event.message : message) }
         : { ...thread, messages: [...thread.messages, event.message].sort((a, b) => a.seq - b.seq) });
@@ -387,6 +424,15 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
       controller.abort();
     };
   }, [activeId, activeLoaded, session?.authenticated, patchActive, filesOpen]);
+
+  // A small rotating phrase keeps the header alive while a model/tool has not
+  // emitted a more specific progress update yet.
+  useEffect(() => {
+    if (!activeRunning) return;
+    setActivityBeat(0);
+    const timer = window.setInterval(() => setActivityBeat(value => value + 1), 2600);
+    return () => window.clearInterval(timer);
+  }, [activeRunning, activeId]);
 
   // 吸底：用户停在底部时，新消息和高度变化都把视图留在最新一条；往上翻了就不打扰。
   const followEnd = useCallback(() => {
@@ -464,6 +510,7 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
       const target = active ?? await create();
       if (!target) return;
       targetId = target.id;
+      setActivity(old => ({ ...old, [target.id]: '' }));
       // A first send creates a thread; move its draft without touching other conversations.
       if (sourceKey !== target.id) {
         setDrafts(old => { const next = { ...old, [target.id]: old[sourceKey] ?? '' }; delete next[sourceKey]; return next; });
@@ -733,12 +780,15 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
     return (
       <section className="bot-panel" data-landing={landing || undefined} aria-label="Bot" data-testid="bot-panel">
         <header className="bot-panel__bar">
-          {recentThreads.length > 0 ? historyMenu : (
-            <h2 className="bot-panel__switcher bot-panel__switcher--static">
-              <BotAvatar agent={currentAgent} size={28} />
-              <span className="bot-panel__switcher-name">{currentAgent?.name || 'Bot'}</span>
-            </h2>
-          )}
+          <div className="bot-panel__identity">
+            {recentThreads.length > 0 ? historyMenu : (
+              <h2 className="bot-panel__switcher bot-panel__switcher--static">
+                <BotAvatar agent={currentAgent} size={28} />
+                <span className="bot-panel__switcher-name">{currentAgent?.name || 'Bot'}</span>
+              </h2>
+            )}
+            <BotActivity active={activeRunning} progress={activeProgress} beat={activityBeat} />
+          </div>
           <div className="bot-panel__actions">
             <Button isIconOnly variant="ghost" className="rounded-full" aria-label={t('botHome.compose')} data-testid="bot-panel-new"
               isDisabled={landing || sendBusy} onPress={() => { newDraft(); }}>
@@ -828,7 +878,10 @@ function Workspace({ projectId, embedded = false, onClose }: { projectId?: strin
         <header className="bh-chat__bar">
           <h2 className="bh-chat__who">
             {!filesOpen && <BotAvatar agent={currentAgent} size={28} />}
-            <span className="bh-chat__name">{chatTitle}</span>
+            <span className="bh-chat__identity">
+              <span className="bh-chat__name">{chatTitle}</span>
+              <BotActivity active={activeRunning && !filesOpen} progress={activeProgress} beat={activityBeat} />
+            </span>
           </h2>
           {threadMenu.length > 0 && !filesOpen && <MoreMenu label={t('botHome.more')} actions={threadMenu} testId="bh-thread-more" />}
         </header>

@@ -26,6 +26,7 @@ import { Readable } from 'node:stream';
 import { SHOW_WIDGET_TOOL, SERVER_WIDGET_RULE } from '@wangke/study-core/widget-tool';
 import { readPartialWidgetArguments, widgetReference, type WidgetPayload } from '@wangke/study-core/widgets';
 import { executeServerWidget } from './widgets';
+import { parseWebSearchResult, type WebSearchResult } from '@wangke/contracts/web-search';
 
 /** Text-source handouts for Bot jobs. Existing video/slide Chromium workflow remains unchanged. */
 async function studyHandout(context: TaskContext) {
@@ -56,6 +57,7 @@ async function studyHandout(context: TaskContext) {
 const LIBRARY_ASSISTANT_ID = '__library_assistant__';
 
 type ServerToolTrace = {
+  webSearch?: WebSearchResult;
   name: string;
   detail?: string;
   result?: string;
@@ -279,7 +281,18 @@ async function runServerAgent(
   onSnapshot?: (result: ServerAgentResult) => { rowId: number; userRowId: number; widgets?: WidgetPayload[] },
 ): Promise<ServerAgentResult> {
   const out = [...messages];
-  tools = stableTools([...tools, SHOW_WIDGET_TOOL]);
+  const webPermitted = () => {
+    context.checkActive();
+    if (context.configuration.taskPolicy(context.owner, context.task.id).network !== 'allow') return false;
+    const project = context.store.db.prepare('SELECT p.network_policy,p.archived FROM cloud_tasks c JOIN runs r ON r.id=c.parent_run_id JOIN threads t ON t.id=r.thread_id JOIN projects p ON p.id=t.project_id AND p.owner_id=c.owner_id WHERE c.id=? AND c.owner_id=?').get(context.task.id, context.owner) as { network_policy: string; archived: number } | undefined;
+    return !project || !project.archived && project.network_policy === 'allow';
+  };
+  const webTools = context.webSearch?.definitions(context.owner, webPermitted()) ?? [];
+  const webNames = new Set(webTools.map(tool => tool.function.name));
+  const builtin = executeTool;
+  executeTool = async (name, args) => webNames.has(name) && context.webSearch
+    ? JSON.stringify(await context.webSearch.call(context.owner, name, args, context.signal, webPermitted)) : builtin(name, args);
+  tools = stableTools([...tools, ...webTools, SHOW_WIDGET_TOOL]);
   const requests: ModelRequestRecord[] = [];
   const cacheKey = `study:${context.owner}:${context.task.input.sessionId}`;
   const onRequest = (record: ModelRequestRecord) => { requests.push(record); };
@@ -427,6 +440,10 @@ async function runServerAgent(
         }
         trace.ms = Date.now() - started;
         trace.result = clip(result, 4_000);
+        if (call.function.name === 'websearch') {
+          const search = parseWebSearchResult(result);
+          if (search) { trace.webSearch = search; trace.result = `${search.sources.length} · ${search.provider}`; trace.detail = search.query; }
+        }
         out.push({ role: 'tool', tool_call_id: call.id, name: call.function.name, content: clip(result, 24_000) });
         report('tool', round + 1, true);
       }

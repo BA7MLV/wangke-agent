@@ -275,6 +275,7 @@ export interface QuizState {
  * 正常完成是 done / error；挂起或中止时可能保留 running，非流式回放显示为「未完成」。
  */
 export interface ChatToolCall {
+  webSearch?: import('@wangke/contracts/web-search').WebSearchResult;
   /** Invocation identity; optional for historical transcripts. */
   id?: string;
   /** 工具开始时累计的 reasoning 字符数，用于重建「分析 → 工具 → 继续分析」。旧记录没有此字段。 */

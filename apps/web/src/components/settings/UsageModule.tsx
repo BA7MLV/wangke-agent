@@ -7,6 +7,14 @@ import { cloudRequest } from '../../cloud/state';
 
 const day = (time: number) => new Date(time).toISOString().slice(0, 10);
 const control = 'min-w-0 rounded-lg border border-border bg-background px-3 py-2 text-sm text-foreground';
+const compactNumber = new Intl.NumberFormat('en-US', { maximumFractionDigits: 1, useGrouping: false });
+const tokenAmount = (value: number) => {
+  if (value < 1000) return String(value);
+  // Promote before rounding would render 1000K or 1000M.
+  if (value >= 999950000) return `${compactNumber.format(value / 1000000000)}B`;
+  const millions = value >= 999950;
+  return `${compactNumber.format(value / (millions ? 1000000 : 1000))}${millions ? 'M' : 'K'}`;
+};
 
 /** Server ledger only: browser chat history is not another bill to add to it. */
 export default function UsageModule() {
@@ -36,7 +44,7 @@ export default function UsageModule() {
   }, [query, valid, refresh]);
 
   const number = (value: number) => value.toLocaleString(i18n.language);
-  const amount = (value: number, measured: number, requests: number) => measured > 0 || requests === 0 ? number(value) : t('usage.unknown');
+  const amount = (value: number, measured: number, requests: number) => measured > 0 || requests === 0 ? tokenAmount(value) : t('usage.unknown');
   const rate = (value: number | null) => value === null ? t('usage.unknown') : new Intl.NumberFormat(i18n.language, { style: 'percent', maximumFractionDigits: 1 }).format(value);
   const total = (counts: ModelUsageCounts) => amount(counts.totalTokens, counts.inputMeasuredRequests + counts.outputMeasuredRequests, counts.requests);
   const coverage = (counts: ModelUsageCounts) => t('usage.coverage', { measured: number(counts.measuredRequests), requests: number(counts.requests), inflight: number(counts.inflightRequests) });

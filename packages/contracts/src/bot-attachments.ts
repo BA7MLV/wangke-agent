@@ -9,14 +9,18 @@ export interface BotAttachment {
   sizeBytes?: number;
 }
 
+/** Interactive Web upload budget; independent of the incoming message size. */
 export const MAX_BOT_ATTACHMENTS = 8;
+// A WeChat chat selection can contain up to 99 photos. Keep the persisted
+// envelope intact instead of turning one selection into multiple Bot turns.
+export const MAX_BOT_MESSAGE_ATTACHMENTS = 99;
 
 export function parseBotAttachments(content: string): { files: BotAttachment[]; text: string } | null {
   try {
     const value = JSON.parse(content);
     if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
     const files = value.attachments === undefined ? [value] : value.attachments;
-    if (!Array.isArray(files) || !files.length || files.length > MAX_BOT_ATTACHMENTS) return null;
+    if (!Array.isArray(files) || !files.length || files.length > MAX_BOT_MESSAGE_ATTACHMENTS) return null;
     if (!files.every(file => file && typeof file === 'object' && !Array.isArray(file) &&
       ['fileId', 'projectId', 'projectPath', 'originalName', 'name', 'mimeType'].every(key => file[key] === undefined || typeof file[key] === 'string') &&
       (file.sizeBytes === undefined || typeof file.sizeBytes === 'number' && Number.isFinite(file.sizeBytes) && file.sizeBytes >= 0) && (

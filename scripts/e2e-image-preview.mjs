@@ -131,9 +131,15 @@ try {
     assert.deepEqual(await page.evaluate(() => window.__playerKeys), [], 'No player shortcuts escape the viewer');
   };
 
-  const tallButton = page.getByRole('button', { name: '预览图片 长图.png', exact: true });
+  const tallButton = page.getByRole('button', { name: '查看 2 张图片', exact: true });
+  assert.equal(await page.locator('.chat-image-stack img').count(), 1, 'an album renders only its cover');
+  assert.equal(await page.locator('.chat-image-stack__count').innerText(), '2');
   for (const viewport of [{ width: 1280, height: 900 }, { width: 820, height: 1180 }, { width: 390, height: 844 }]) {
     await page.setViewportSize(viewport);
+    await tallButton.scrollIntoViewIfNeeded();
+    assert.equal(Math.round((await tallButton.boundingBox()).width), 200, 'tall covers must not collapse to the caption width');
+    await tallButton.evaluate(el => el.blur());
+    await page.screenshot({ path: `e2e-shots/chat-image-stack-${viewport.width}.png`, animations: 'disabled' });
     await tallButton.click();
     await settled();
     await page.waitForFunction(() => document.querySelector('.image-preview img')?.src.startsWith('blob:'));
@@ -211,6 +217,45 @@ try {
   // Dismiss by backdrop as well as Escape and the common close button.
   await page.mouse.click(5, 5);
   await dialog.waitFor({ state: 'hidden' });
+  await page.evaluate(async () => {
+    const { db } = await import('/src/store/db.ts');
+    const videoId = 'preview-material';
+    const row = await db.chats.filter(row => !!row.attachments?.length).first();
+    const images = Array.from({ length: 3 }, (_, i) => ({ ts: 1, thumb: row.attachments[i % 2].dataUrl, kind: 'page-selection', label: `第 1 段选区 ${i + 1}` }));
+    const sessionId = await db.chatSessions.add({ videoId, title: '截图叠放验收', createdAt: Date.now() });
+    await db.chats.bulkAdd([
+      { videoId, sessionId, role: 'user', content: '一起发送的三张截图', images, createdAt: Date.now() },
+      { videoId, sessionId, role: 'assistant', content: '已收到三张截图。', createdAt: Date.now() + 1 },
+      { videoId, sessionId, role: 'user', content: '单独发送的一张截图', images: [images[0]], createdAt: Date.now() + 2 },
+    ]);
+  });
+  await page.goto(`${base}/#/player/preview-material`);
+  await page.getByTestId('study-assistant-toggle').waitFor({ state: 'attached' });
+  const chatTab = page.getByTestId('panel-tab-chat');
+  if (!(await chatTab.isVisible())) await page.getByTestId('study-assistant-toggle').click();
+  await chatTab.click();
+  const screenshots = page.getByTestId('chat-message-screenshots');
+  await screenshots.getByRole('button', { name: '查看 3 张图片', exact: true }).waitFor();
+  assert.equal(await screenshots.locator('img').count(), 1);
+  assert.equal(await screenshots.locator('.chat-image-stack__count').innerText(), '3');
+  for (const viewport of [{ width: 1280, height: 900 }, { width: 390, height: 844 }]) {
+    await page.setViewportSize(viewport);
+    assert.equal(Math.round((await screenshots.locator('.chat-image-stack').boundingBox()).width), 200, 'course screenshot covers must not collapse in a flex row');
+    await screenshots.getByRole('button', { name: '查看 3 张图片', exact: true }).click();
+    await settled();
+    await dialog.getByRole('heading', { name: '第 1 段选区 1', exact: true }).waitFor();
+    await dialog.getByRole('button', { name: '下一张图片', exact: true }).click();
+    await dialog.getByRole('heading', { name: '第 1 段选区 2', exact: true }).waitFor();
+    await page.keyboard.press('ArrowRight');
+    await dialog.getByRole('heading', { name: '第 1 段选区 3', exact: true }).waitFor();
+    await dialog.getByRole('button', { name: /打开来源/ }).click();
+    await dialog.waitFor({ state: 'hidden' });
+    await page.getByRole('button', { name: /打开截图来源/ }).click();
+    assert.equal(await dialog.count(), 0, 'single screenshots retain direct source navigation');
+    await screenshots.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: `e2e-shots/course-screenshot-stack-${viewport.width}.png`, animations: 'disabled' });
+  }
+  console.log('✓ Course screenshot albums: one cover, count, desktop/mobile navigation, source links; single screenshots unchanged');
   assert.deepEqual(errors, []);
   console.log('✓ Material image and link use shared preview, source link, original download, reopen reset and backdrop dismissal; no page errors');
 } finally { await browser.close(); }

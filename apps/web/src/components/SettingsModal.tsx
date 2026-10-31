@@ -27,6 +27,7 @@ import SidebarAccount from './SidebarAccount';
 type Module = { key: SettingsModule; icon: string; tint: string; Component: LazyExoticComponent<ComponentType>; cloudOnly?: boolean };
 const ALL_MODULES: Module[] = [
   { key: 'models', icon: 'neurology', tint: '#5e5ce6', Component: lazy(() => import('./settings/ModelsModule')) },
+  { key: 'websearch', icon: 'search', tint: '#30b0c7', Component: lazy(() => import('../web-search/WebSearchSettings')), cloudOnly: true },
   { key: 'agent', icon: 'neurology', tint: '#0a84ff', Component: lazy(() => import('./settings/AgentModule')) },
   // Bot 与消息渠道只在连着自己服务器时存在：本机模式没有 Bot 运行时，也就没有这两屏。
   { key: 'bot', icon: 'smart_toy', tint: '#5856d6', Component: lazy(() => import('../cloud/BotSettings')), cloudOnly: true },

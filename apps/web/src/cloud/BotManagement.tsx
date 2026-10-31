@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Button, Input, Label, ListBox, Select, Switch, TextArea } from '@heroui/react';
+import { Button, Input, Label, Switch, TextArea } from '@heroui/react';
 import { useTranslation } from 'react-i18next';
 import { request } from '../api/serverClient';
 import { confirmDialog } from '../ui';
@@ -13,15 +13,6 @@ interface Overview { runs: Run[]; memoryJob: { enabled: number; tokenBudget: num
 interface Detail { requests: Array<{ id: string; purpose: string; status: string; input_tokens: number | null; output_tokens: number | null; reserved_tokens: number; started_at: string; ended_at: string | null }>; steps: Array<{ id: string; tool: string; status: string; preview: string; created_at: string; completed_at: string | null }>; summaries: Array<{ id: string; content: string }>; artifacts: Array<{ id: string; size_bytes: number }> }
 const emptyMemory = { id: '', path: '', revision: 0, scope: 'owner', scopeId: '', kind: 'preference', content: '', source: 'user:management', sourceRevision: '' };
 const memoryForm = (row: Memory) => ({ id: row.id, path: row.path ?? '', revision: row.revision, scope: row.scope, scopeId: row.scope_id, kind: row.kind, content: row.content, source: row.source, sourceRevision: row.source_revision ?? '' });
-/** HeroUI Select 的薄封装：一个标签、一组 [值, 文案]。 */
-function PlainSelect({ label, value, options, onChange }: { label: string; value: string; options: Array<[string, string]>; onChange: (value: string) => void }) {
-  return <Select className="w-full" selectedKey={value} onSelectionChange={key => { if (key != null) onChange(String(key)); }}>
-    <Label>{label}</Label>
-    <Select.Trigger><Select.Value /><Select.Indicator /></Select.Trigger>
-    <Select.Popover><ListBox>{options.map(([id, text]) => <ListBox.Item key={id} id={id} textValue={text}>{text}</ListBox.Item>)}</ListBox></Select.Popover>
-  </Select>;
-}
-
 export default function BotManagement() {
   const { t, i18n } = useTranslation('bot');
   const navigate = useNavigate();
@@ -72,12 +63,11 @@ export default function BotManagement() {
     <Button variant="secondary" isDisabled={busy} onPress={() => void act(load)}>{t('refresh')}</Button>
     {overview ? <>
       <div className="rounded-xl bg-default p-4" data-testid="bot-model-settings"><p>{t('modelSettingsHint')}</p><Button variant="ghost" onPress={() => openSettings('models')}>{t('modelSettings')}</Button><Button variant="ghost" onPress={() => { closeSettingsAndClearHash(); navigate('/library'); }}>{t('resources')}</Button></div>
-      <details><summary>{t('consolidation')}</summary><fieldset className="flex flex-col gap-2 rounded-xl border border-border p-4">
-        <Switch isSelected={Boolean(overview.memoryJob.enabled)} onChange={on => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, enabled: Number(on) } })}><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control><Label>{t('enabled')}</Label></Switch.Content></Switch>
-        <label>{t('jobTokens')}<Input className="w-full" type="number" value={overview.memoryJob.tokenBudget} onChange={e => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, tokenBudget: Number(e.target.value) } })} /></label>
-        <label>{t('interval')}<Input className="w-full" type="number" value={overview.memoryJob.intervalSeconds} onChange={e => setOverview({ ...overview, memoryJob: { ...overview.memoryJob, intervalSeconds: Number(e.target.value) } })} /></label>
-        <Button isDisabled={busy} onPress={() => void act(() => post('/memory-job', { ...overview.memoryJob, enabled: Boolean(overview.memoryJob.enabled) }))}>{t('save')}</Button>
-      </fieldset></details>
+      <fieldset className="flex flex-col gap-2 rounded-xl border border-border p-4" data-testid="bot-memory-settings">
+        <legend>{t('memorySettings')}</legend>
+        <p className="text-sm text-muted">{t('memoryPolicy')}</p>
+        <Switch isSelected={Boolean(overview.memoryJob.enabled)} isDisabled={busy} onChange={on => void act(() => post('/memory-job', { enabled: on }))}><Switch.Content><Switch.Control><Switch.Thumb /></Switch.Control><Label>{t('enabled')}</Label></Switch.Content></Switch>
+      </fieldset>
       <details data-testid="bot-run-diagnostics"><summary>{t('runs')}</summary>
       {!overview.runs.length ? <p>{t('empty')}</p> : null}
       {overview.runs.map(run => <div key={run.id} data-testid={`bot-run-${run.id}`} className="flex flex-wrap items-center gap-2 rounded-lg bg-default p-3">{run.title ? <p className="w-full break-words font-medium">{run.title}</p> : null}<span className="min-w-0 break-words text-sm">{t(`runStatus.${run.status}`, { defaultValue: run.status })} · {t('runSteps', { count: run.steps })}</span>{run.status === 'paused' ? <p className="w-full text-sm">{botPauseMessage(run.errorCode ?? '', i18n.language)}</p> : null}<Button variant="secondary" isDisabled={busy} onPress={() => void act(() => openRun(run))}>{t('details')}</Button>{['queued', 'running', 'waiting_user', 'paused'].includes(run.status) ? <Button variant="secondary" isDisabled={busy} onPress={() => void act(() => request(`/runs/${run.id}/cancel`, { method: 'POST', body: '{}' }))}>{t('stop')}</Button> : null}</div>)}
@@ -99,13 +89,8 @@ export default function BotManagement() {
     {artifact ? <div><pre className="whitespace-pre-wrap break-all text-sm">{artifact.text}</pre>{artifact.nextOffset !== null ? <Button onPress={() => void act(async () => setArtifact(await request(`/bot/artifacts/${artifact.artifactId}?offset=${artifact.nextOffset}`)))}>{t('next')}</Button> : null}</div> : null}
     <h4>{t('memory')}</h4><label>{t('search')}<Input className="w-full" value={query} onChange={e => { setQuery(e.target.value); setOffset(0); }} /></label>
     <fieldset className="flex min-w-0 flex-col gap-3 rounded-xl border border-border p-4"><legend>{t('editMemory')}</legend>
-      <PlainSelect label={t('scope')} value={form.scope} onChange={scope => setForm({ ...form, scope })} options={[['owner', 'owner'], ['bot', 'bot'], ['course', 'course']]} />
-      <label>{t('scopeId')}<Input className="w-full" value={form.scopeId} onChange={e => setForm({ ...form, scopeId: e.target.value })} /></label>
-      <PlainSelect label={t('kind')} value={form.kind} onChange={kind => setForm({ ...form, kind })} options={[['preference', t('preference')], ['course_fact', t('courseFact')], ['note', t('note')], ['diary', t('diary')]]} />
-      {form.kind === 'note' || form.kind === 'diary' ? <label>{t('notebookPath')}<Input className="w-full font-mono" readOnly={Boolean(form.id)} value={form.path} placeholder={form.kind === 'diary' ? '/system/memory/YYYY-MM-DD.md' : '/system/memory/preferences.md'} onChange={e => setForm({ ...form, path: e.target.value })} /></label> : null}
+      <p className="text-sm text-muted">{form.id ? t('memoryEditHint') : t('memoryCreateHint')}</p>
       <label htmlFor="bot-memory-content">{t('content')}</label><TextArea id="bot-memory-content" className="w-full" rows={3} value={form.content} onChange={e => setForm({ ...form, content: e.target.value })} />
-      <label>{t('source')}<Input className="w-full" placeholder={'record:videos:"course-id"'} value={form.source} onChange={e => setForm({ ...form, source: e.target.value })} /></label>
-      <label>{t('sourceRevision')}<Input className="w-full" readOnly value={form.sourceRevision} /></label>
       <Button isDisabled={busy || !form.content.trim()} onPress={() => void act(async () => { await post('/memories', { ...form, path: form.path || undefined, id: form.id || undefined, revision: form.revision || undefined }); setForm(emptyMemory); setVersions([]); })}>{t('save')}</Button><Button variant="secondary" onPress={() => { setForm(emptyMemory); setVersions([]); }}>{t('new')}</Button>
     </fieldset>
     {!memories.length ? <p>{t('empty')}</p> : null}

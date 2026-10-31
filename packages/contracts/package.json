@@ -7,6 +7,7 @@
   "exports": {
     ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
     "./cloud": { "types": "./dist/cloud.d.ts", "default": "./dist/cloud.js" },
+    "./web-search": { "types": "./dist/web-search.d.ts", "default": "./dist/web-search.js" },
     "./gateway": { "types": "./dist/gateway.d.ts", "default": "./dist/gateway.js" },
     "./mcp": { "types": "./dist/mcp.d.ts", "default": "./dist/mcp.js" },
     "./projects": { "types": "./dist/projects.d.ts", "default": "./dist/projects.js" },
@@ -15,5 +16,5 @@
     "./model-settings": { "types": "./dist/model-settings.d.ts", "default": "./dist/model-settings.js" }
   },
   "scripts": { "build": "tsc -p tsconfig.json", "typecheck": "tsc --noEmit -p tsconfig.json" },
-  "devDependencies": { "typescript": "^5.9.3" }
+  "devDependencies": { "typescript": "^7.0.2" }
 }

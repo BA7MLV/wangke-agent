@@ -120,7 +120,8 @@ try {
       const store = new DatabaseStore(filename, path.join(root, name, 'system-files'));
       let manager, runner, gateway;
       try {
-        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 25);
+        assert.equal(store.db.prepare('SELECT MAX(version) AS v FROM schema_migrations').get().v, 26);
+        assert.ok(store.db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='web_search_config'").get());
         assert.deepEqual(store.db.pragma('foreign_key_check'), []);
         preserved(store.db, expected);
         const config = new CloudConfiguration(store, configDir);

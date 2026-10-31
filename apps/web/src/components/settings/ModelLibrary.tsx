@@ -1,6 +1,6 @@
 import { useId, useState } from 'react';
 import { Button, Checkbox, Input, ListBox, SearchField, Select } from '@heroui/react';
-import { catalogOf, SLOT_LABEL, type ModelSlot, type SavedModel } from '../../store/settings';
+import { catalogOf, SLOT_LABEL, type ModelSlot, type SavedModel, type Settings } from '../../store/settings';
 import { editModelPatch, modelKey, savedModelsOf, suggestedModelSlots } from '../../store/modelLibrary';
 import { Field, LoadingButton, SectionCard, Sym, toast } from '../../ui';
 import { Collapse } from '../motion';
@@ -34,6 +34,7 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
   const discoveryId = useId();
   const [editor, setEditor] = useState<{ original: SavedModel | null; draft: Draft; slotsEdited?: boolean } | null>(null);
   const [error, setError] = useState('');
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set());
   const filtered = saved.filter((m) => `${m.model} ${m.name}`.toLowerCase().includes(query.trim().toLowerCase()));
   const savedIds = new Set(saved.map((m) => m.model));
   // 只有当前连接的 /models 返回值才能成为候选；models.dev 只补全名称和能力。
@@ -50,6 +51,61 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
     };
     setError('');
     setEditor({ original: model, draft: { ...base, contextWindowText: base.contextWindow?.toString() ?? '', maxOutputTokensText: base.maxOutputTokens?.toString() ?? '' } });
+  };
+
+  /**
+   * 批量添加用的草稿：与单个「添加」打开编辑器时的初值一致（接口声明 + 按能力预选用途）。
+   * 预选不出用途的模型（嵌入、绘图、决策协议待确认等）返回 null，只能逐个手动配置。
+   */
+  const batchDraft = (found: DiscoveredModel): SavedModel | null => {
+    const { id, ...declared } = found;
+    // 决策模型必须先确认接口协议，不进批量添加。
+    const slots = suggestedModelSlots(catalogId, id, declared).filter((slot) => slot !== 'decision');
+    return slots.length ? { ...declared, providerId, model: id, name: found.name ?? '', slots } : null;
+  };
+  const batchable = new Set(available.filter((m) => batchDraft(m)).map((m) => m.id));
+  // 只保留仍可添加的勾选项：刷新列表或单个添加后，已消失的 id 不再计数。
+  const picked = [...selectedIds].filter((id) => batchable.has(id));
+  const visibleBatchable = discoveryResults.filter((m) => batchable.has(m.id));
+  const visiblePicked = visibleBatchable.filter((m) => selectedIds.has(m.id)).length;
+  const allVisiblePicked = visibleBatchable.length > 0 && visiblePicked === visibleBatchable.length;
+
+  const togglePick = (id: string, on: boolean) => setSelectedIds((current) => {
+    const next = new Set(current);
+    if (on) next.add(id); else next.delete(id);
+    return next;
+  });
+  /** 全选只作用于当前筛选结果，避免搜索后误把看不见的模型一起加进去 */
+  const toggleAllVisible = (on: boolean) => setSelectedIds((current) => {
+    const next = new Set(current);
+    for (const m of visibleBatchable) { if (on) next.add(m.id); else next.delete(m.id); }
+    return next;
+  });
+
+  const addPicked = () => {
+    setError('');
+    // 逐个走 editModelPatch，每一步基于上一步的结果，与单个添加的校验完全一致。
+    let state: Settings = settingsStore.getState();
+    const patch: Partial<Settings> = {};
+    const failed: string[] = [];
+    for (const found of available.filter((m) => picked.includes(m.id))) {
+      const draft = batchDraft(found);
+      if (!draft) continue;
+      try {
+        const step = editModelPatch(state, null, draft);
+        Object.assign(patch, step);
+        state = { ...state, ...step };
+      } catch {
+        failed.push(found.id);
+      }
+    }
+    const added = picked.length - failed.length;
+    if (added > 0) {
+      settings.update(patch);
+      toast.success(`已添加 ${added} 个模型，请保存模型设置`);
+    }
+    if (failed.length) setError(`${failed.length} 个模型未能添加（${failed.slice(0, 3).join('、')}${failed.length > 3 ? ' 等' : ''}），请逐个添加并检查用途。`);
+    setSelectedIds(new Set(failed));
   };
 
   const toggle = (field: 'inputCapabilities' | 'outputCapabilities', value: string, on: boolean) => {
@@ -147,16 +203,45 @@ export default function ModelLibrary({ providerId, discovered = [], checking, on
         </button>
         <Collapse open={discoveryOpen} id={discoveryId}>
           <div className="flex flex-col gap-3 border-t border-border p-3">
-          <p className="text-xs text-pretty text-muted">候选模型仅来自当前供应商的 /models 接口（含接口缓存），列表不代表调用测试通过。手动配置优先，接口声明其次，models.dev 仅补全缺失参数。</p>
+          <p className="text-xs text-pretty text-muted">来自当前供应商的 /models 接口，不代表调用测试通过。批量添加按模型能力预选用途，models.dev 仅补全缺失参数。</p>
           <SearchField aria-label="搜索接口模型" value={discoveryQuery} onChange={setDiscoveryQuery}><SearchField.Group><SearchField.SearchIcon /><SearchField.Input placeholder="搜索模型名称或 ID" /><SearchField.ClearButton /></SearchField.Group></SearchField>
-          <ul className="m-0 max-h-64 list-none divide-y divide-border overflow-y-auto p-0" aria-label="接口模型结果">
-            {discoveryResults.map((m) => <li key={m.id} className="flex items-center gap-3 py-2">
-              <div className="min-w-0 flex-1"><div className="truncate text-sm" title={m.name || m.id}>{m.name || m.id}</div>{m.name && m.name !== m.id && <div className="truncate text-xs text-muted" title={m.id}>{m.id}</div>}<span className="text-xs text-muted">供应商接口</span></div>
-              <Button size="sm" variant="secondary" aria-label={`添加 ${m.id}`} onPress={() => {
-                setDiscoveryOpen(false);
-                openEditor(null, m);
-              }}>添加</Button>
-            </li>)}
+          {/* 批量操作条：全选只作用于当前筛选结果；「添加所选」按预选用途直接入库，
+              需要改参数或用途的模型仍走右侧「添加」打开编辑器。 */}
+          <div className="flex min-h-9 items-center justify-between gap-3" data-testid="discovered-bulk-bar">
+            <Checkbox aria-label={discoveryNeedle ? '全选筛选结果' : '全选'} data-testid="discovered-select-all"
+              isDisabled={!visibleBatchable.length}
+              isSelected={allVisiblePicked}
+              isIndeterminate={visiblePicked > 0 && !allVisiblePicked}
+              onChange={toggleAllVisible}>
+              <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control>
+                <span className="text-sm tabular-nums">{discoveryNeedle ? '全选筛选结果' : '全选'}<span className="text-muted"> · {visibleBatchable.length}</span></span>
+              </Checkbox.Content>
+            </Checkbox>
+            <Button size="sm" variant={picked.length ? 'primary' : 'secondary'} isDisabled={!picked.length} data-testid="discovered-add-selected" onPress={addPicked}>
+              {picked.length ? `添加所选 · ${picked.length}` : '添加所选'}
+            </Button>
+          </div>
+          {error && !editor && <p role="alert" className="text-xs text-danger">{error}</p>}
+          <ul className="m-0 max-h-72 list-none divide-y divide-border overflow-y-auto overscroll-contain p-0" aria-label="接口模型结果">
+            {discoveryResults.map((m) => {
+              const draft = batchDraft(m);
+              const label = m.name || m.id;
+              return <li key={m.id} className="flex items-center gap-3 py-2" data-selected={selectedIds.has(m.id) || undefined}>
+                <Checkbox aria-label={`选择 ${m.id}`} isDisabled={!draft} isSelected={!!draft && selectedIds.has(m.id)} onChange={(on) => togglePick(m.id, on)}>
+                  <Checkbox.Content><Checkbox.Control><Checkbox.Indicator /></Checkbox.Control></Checkbox.Content>
+                </Checkbox>
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-sm" title={label}>{label}</div>
+                  <div className="truncate text-xs text-muted" title={m.id}>
+                    {label !== m.id && `${m.id} · `}{draft ? draft.slots.map((s) => SLOT_LABEL[s]).join(' / ') : '需手动选择用途'}
+                  </div>
+                </div>
+                <Button size="sm" variant="tertiary" aria-label={`添加 ${m.id}`} onPress={() => {
+                  setDiscoveryOpen(false);
+                  openEditor(null, m);
+                }}>添加</Button>
+              </li>;
+            })}
             {!discoveryResults.length && <li role="status" className="py-3 text-sm text-muted">没有匹配的模型</li>}
           </ul>
           </div>

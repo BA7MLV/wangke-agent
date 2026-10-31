@@ -39,6 +39,7 @@
     "ready": "Connection, account linking and model setup are complete. Send a question in the platform chat, or send /status to check the round trip first. Model availability is confirmed by an actual reply."
   },
   "runState": { "failed": "Latest task failed: ", "waiting_user": "A task is waiting for your approval or answer. Open the conversation.", "paused": "A task is paused. Open the conversation for details." },
+  "processing": { "collecting": "Collecting images (keep sending if needed)", "ready": "Images ready; preparing", "reading": "Reading all images", "running": "Generating one combined reply", "waiting": "Waiting for your confirmation or answer", "completed": "Completed", "failed": "Processing failed", "cancelled": "Cancelled" },
   "lastInbound": "Last message received: {{time}}",
   "deliveryProblems": "Reply delivery issues",
   "inboxFailureHint": "{{count}} incoming messages could not be processed. Check the conversation, then resend any unanswered questions from the platform.",

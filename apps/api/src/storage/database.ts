@@ -327,7 +327,7 @@ const MIGRATIONS: Array<[number, string]> = [
       created_at TEXT NOT NULL, PRIMARY KEY(memory_id,revision)
     );
     CREATE TABLE bot_memory_jobs (
-      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 0,
+      owner_id TEXT PRIMARY KEY REFERENCES users(id), enabled INTEGER NOT NULL DEFAULT 1,
       cursor TEXT, token_budget INTEGER NOT NULL DEFAULT 10000, interval_seconds INTEGER NOT NULL DEFAULT 86400,
       next_at INTEGER NOT NULL DEFAULT 0
     );
@@ -405,6 +405,7 @@ const MIGRATIONS: Array<[number, string]> = [
     );
     CREATE INDEX system_skills_owner_enabled ON system_skills(owner_id, enabled, updated_at);
   `],
+  [24, `CREATE TABLE web_search_config (owner_id TEXT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE, value TEXT NOT NULL, revision TEXT NOT NULL);`],
 ];
 
 // These two migrations were already numbered 14 and 15 on the main branch.
@@ -525,6 +526,7 @@ export class DatabaseStore {
           { version: 25, tables: ['system_skills'], extra: [], sql: MIGRATIONS.find(([v]) => v === 23)![1] },
           { version: 26, tables: ['system_mcp_files'], extra: [], sql: MCP_FILE_MIGRATION },
           { version: 27, tables: ['system_skill_bindings'], extra: [], sql: SKILL_RECORDS_MIGRATION },
+          { version: 28, tables: ['web_search_config'], extra: [], sql: MIGRATIONS.find(([v]) => v === 24)![1] },
         ];
         const present = groups.map(group => {
           const markers = [...group.tables.map(table => columns(this.db, table).length > 0), ...group.extra.map(([table, column]) => columns(this.db, table).some(c => c.name === column))];
@@ -571,6 +573,7 @@ export class DatabaseStore {
         apply(23, groups[11], 11);
         apply(24, groups[12], 12);
         apply(25, groups[13], 13);
+        apply(26, groups[14], 14);
       } finally { expected.close(); }
     })();
   }

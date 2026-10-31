@@ -5,7 +5,7 @@ import { cloud, cloudRequest } from './state';
 import { applyCloudConfig } from './sync';
 import { serverClient } from '../api/serverClient';
 import { SectionCard, toast } from '../ui';
-import { SettingNumber, SettingRow, SettingSelect, SettingSwitch } from '../components/settings/controls';
+import { SettingRow, SettingSelect, SettingSwitch } from '../components/settings/controls';
 import BotManagement from './BotManagement';
 
 type Policy = CloudConfig['policy'];
@@ -118,9 +118,7 @@ export default function BotSettings() {
         ))}
         <SettingSwitch label="命令可联网" isSelected={config.policy.network === 'allow'} onChange={(on) => setPolicy({ network: on ? 'allow' : 'deny' })} />
         <p className="text-xs text-muted-foreground">联网开关只决定命令能否访问网络，不会因联网额外询问。工作区也需允许联网。删除或破坏性命令、对外发布等影响、外部 MCP 工具，以及修改权限或服务连接、提高步数上限，仍需单独确认；确认消息会说明原因。</p>
-        <SettingNumber label="每个任务最多步数" min={1} max={1000} value={config.policy.maxSteps}
-          onChange={(value) => value && setPolicy({ maxSteps: Math.min(1000, Math.max(1, Math.round(value))) }, 600)} />
-      </SectionCard>
+       </SectionCard>
 
       {agents.length > 0 && (
         <SectionCard title="信任的 Bot" testId="bot-trusted">

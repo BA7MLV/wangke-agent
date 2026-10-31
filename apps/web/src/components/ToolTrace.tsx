@@ -6,6 +6,7 @@ import { IconSwap, Shimmer, TextSwap } from './motion';
 import type { ChatToolCall } from '../store/db';
 import { toolDisplay } from '../utils/toolTrace';
 import './tool-trace.css';
+import WebSources from '../web-search/WebSources';
 
 /** 单个工具的耗时：不到一秒报毫秒（「它卡了 800ms」看得见），过了就报秒 */
 function fmtMs(ms: number): string {
@@ -123,6 +124,7 @@ export default function ToolTrace({
                 </span>
                 {call.ms != null && <span className="tool-trace__ms">{fmtMs(call.ms)}</span>}
                 {call.result && <span className="tool-trace__result">{call.result}</span>}
+                {call.webSearch ? <div className="tool-trace__sources"><WebSources result={call.webSearch} /></div> : null}
               </li>
             ))}
           </ol>

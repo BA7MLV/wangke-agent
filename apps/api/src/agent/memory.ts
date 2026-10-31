@@ -7,6 +7,10 @@ export interface MemoryInput { scope: 'owner' | 'bot' | 'course'; scopeId: strin
 export type MemoryRow = { id: string; owner_id: string; scope: MemoryInput['scope']; scope_id: string; kind: MemoryInput['kind']; content: string; source: string; source_revision: string | null; revision: number; status: string; origin: string; created_at: string; updated_at: string };
 export class BotMemory {
   constructor(readonly store: DatabaseStore) {}
+  isEnabled(owner: string) {
+    const row = this.store.db.prepare('SELECT enabled FROM bot_memory_jobs WHERE owner_id=?').get(owner) as { enabled: number } | undefined;
+    return row ? Boolean(row.enabled) : true;
+  }
   /** A single explicit profile memory, updated only when the account name changes. */
   rememberUserName(owner: string, name: string) {
     const source = 'user:profile-name';
@@ -185,6 +189,7 @@ export class BotMemory {
     }
   }
   context(owner: string, thread: string) {
+    if (!this.isEnabled(owner)) return [];
     this.sync(owner);
     this.refreshStale(owner);
     if (!this.store.db.prepare('SELECT 1 FROM threads WHERE id=? AND owner_id=?').get(thread, owner)) throw new Error('thread_not_found');

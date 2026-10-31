@@ -11,6 +11,7 @@ import { useSyncExternalStore } from 'react';
  */
 
 export type SettingsModule =
+  | 'websearch'
   | 'models'
   | 'agent'
   | 'bot'
@@ -70,7 +71,7 @@ export function closeSettings(): void {
   emit();
 }
 
-const VALID_MODULES: readonly SettingsModule[] = ['models', 'agent', 'bot', 'gateway', 'usage', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data'];
+const VALID_MODULES: readonly SettingsModule[] = ['models', 'agent', 'bot', 'gateway', 'usage', 'appearance', 'sources', 'live', 'playback', 'shortcuts', 'study', 'skills', 'data', 'websearch'];
 
 /** 根据当前 URL hash 打开设置弹窗（#/settings 或 #/settings/<module>） */
 export function openSettingsFromHash(): void {

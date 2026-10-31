@@ -138,9 +138,28 @@ export async function runAgentLoop(
 ): Promise<ChatMessage[]> {
   const { cloud, withToolPermission } = await import('../cloud/state');
   const mcpNames = new Set<string>();
+  const webNames = new Set<string>();
   if (cloud.enabled && cb.mcpSessionId !== undefined) {
+    const sessionId = cb.mcpSessionId;
+    const [webResult, mcpResult] = await Promise.allSettled([
+      import('../web-search/client').then(module => module.loadWebTools(sessionId, cb.signal)),
+      import('../mcp/client').then(module => module.loadMcpTools({ sessionId }, cb.signal)),
+    ]);
     try {
-      const mcp = await (await import('../mcp/client')).loadMcpTools({ sessionId: cb.mcpSessionId }, cb.signal);
+      if (webResult.status === 'rejected') throw webResult.reason;
+      const web = webResult.value;
+      tools = [...tools, ...web.tools];
+      for (const name of web.names) webNames.add(name);
+      const builtin = executeTool;
+      executeTool = (name, args) => webNames.has(name) ? web.execute(name, args) : builtin(name, args);
+    } catch (error) {
+      cb.signal?.throwIfAborted();
+      cb.onToolStart?.('websearch', '{}', 'web:connection');
+      cb.onToolEnd?.('websearch', 'Error: web_request_failed', 'web:connection');
+    }
+    try {
+      if (mcpResult.status === 'rejected') throw mcpResult.reason;
+      const mcp = mcpResult.value;
       tools = [...tools, ...mcp.tools];
       for (const tool of mcp.tools) mcpNames.add(tool.function.name);
       const builtin = executeTool;
@@ -284,7 +303,7 @@ export async function runAgentLoop(
       signal: cb.signal,
       shouldStop: () => stopped !== null,
       // Background workers hold a single scoped permissionId; don't overlap permits.
-      canParallel: call => !cloud.worker && !mcpNames.has(call.function.name) && parallelReads.has(call.function.name),
+      canParallel: call => !cloud.worker && !mcpNames.has(call.function.name) && (parallelReads.has(call.function.name) || webNames.has(call.function.name)),
       execute: async call => {
       cb.signal?.throwIfAborted();
       // 原地打转：同样的工具 + 同样的参数，且期间没有成功写入改变读取结果。
@@ -302,7 +321,7 @@ export async function runAgentLoop(
         const args = JSON.parse(call.function.arguments || '{}') as Record<string, unknown>;
         const name = call.function.name;
         // MCP authorization is enforced by its server-side owner/session/tool scope.
-        if (mcpNames.has(name) || ['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
+        if (webNames.has(name) || mcpNames.has(name) || ['ask_user', 'propose_folder_plan', 'show_widget', 'present_quiz', 'set_course_context'].includes(name)) {
           result = await executeTool(name, args);
         } else {
           if (cloud.worker && !parallelReads.has(name) && !['edit', 'edit_markdown'].includes(name)) throw new Error(`未注册权限的工具：${name}`);

@@ -74,6 +74,7 @@ try {
           .course-chat__messages { background: repeating-linear-gradient(to right, #000 0 16px, #fff 16px 32px) !important; }
           .course-chat__messages > * { visibility: hidden !important; }
           .page-app-bar__blur::after { display: none !important; }
+          .app-navigation-blur { display: none !important; }
         ` });
         for (const safeArea of [0, 47]) {
           const safe = safeArea ? await page.addStyleTag({ content: `
@@ -98,7 +99,7 @@ try {
               clickable: !r || document.elementsFromPoint(r.x + r.width / 2, r.y + r.height / 2).some(el => el === control || control.contains(el)),
             };
           });
-          const sample = async suffix => {
+          const sample = async (suffix, sampleGeometry = geometry) => {
             const png = await page.screenshot({ path: `${out}/${width}-${theme}-safe${safeArea}-${suffix}.png` });
             return page.evaluate(async ({ data, geometry }) => {
               const image = new Image();
@@ -110,12 +111,12 @@ try {
               const ctx = canvas.getContext('2d');
               ctx.drawImage(image, 0, 0);
               const contrast = y => {
-                const pixels = ctx.getImageData(geometry.x, y, 64, 1).data;
-                const values = Array.from({ length: 64 }, (_, i) => pixels[i * 4]);
+                const pixels = ctx.getImageData(geometry.x, y, 48, 1).data;
+                const values = Array.from({ length: 48 }, (_, i) => pixels[i * 4]);
                 return Math.max(...values) - Math.min(...values);
               };
               return { levels: geometry.rows.map(contrast), seam: [geometry.edge - 2, geometry.edge - 1, geometry.edge, geometry.edge + 1].map(contrast) };
-            }, { data: png.toString('base64'), geometry });
+            }, { data: png.toString('base64'), geometry: sampleGeometry });
           };
           const blurred = await sample('blur');
           const disable = await page.addStyleTag({ content: '.page-app-bar__blur > span { backdrop-filter: none !important; -webkit-backdrop-filter: none !important; }' });
@@ -127,13 +128,36 @@ try {
           assert.ok(clear.levels.every(value => value === 255), 'the striped backdrop is actually present at every sample');
           assert.ok(blurred.levels[0] < 30, `strong blur must remain visible below the safe area: ${JSON.stringify(blurred)}`);
           assert.ok(blurred.levels[1] < 170, `the title region must blur, not merely fade the background: ${JSON.stringify(blurred)}`);
-          assert.ok(blurred.levels.every((value, i, all) => i === 0 || value > all[i - 1] + 5), 'blur strength must progressively decrease towards the content');
+          assert.ok(blurred.levels.every((value, i, all) => i === 0 || value > all[i - 1] + 5), `blur strength must progressively decrease towards the content: ${JSON.stringify(blurred)}`);
           assert.ok(blurred.levels[3] > 230, 'the reading area returns to sharp content');
           assert.ok(fine.levels[2] < blurred.levels[2] * 0.6, 'fine detail must blur before coarse detail; a uniform blur with an opacity fade is not sufficient');
           assert.ok(Math.max(...blurred.seam) - Math.min(...blurred.seam) <= 5, 'no hard contrast jump at the lower edge');
           assert.ok(geometry.edge >= geometry.headerBottom + 40, 'the transition continues below the toolbar');
           assert.ok(geometry.sampleTop >= geometry.headerTop + geometry.solid - 1, 'safe area must not consume the blur ramp');
           assert.ok(geometry.clickable, 'the blur overlay must not intercept toolbar buttons');
+          // A transformed page must still sample its own messages, not the revealed navigation.
+          await page.getByTestId('nav-rail-open').click();
+          await page.getByRole('dialog', { name: 'DeepStudent Go', exact: true }).waitFor();
+          const hideControls = await page.addStyleTag({ content: '.page-course-chat [data-testid="top-app-bar"] > :not(.page-app-bar__blur) { visibility: hidden !important; }' });
+          const shiftedGeometry = await page.evaluate(() => {
+            const span = document.querySelector('.page-app-bar__blur > span').getBoundingClientRect();
+            const main = document.querySelector('.course-chat__messages').getBoundingClientRect();
+            const edge = document.querySelector('.page-app-bar__blur').getBoundingClientRect().bottom;
+            return {
+              x: Math.ceil(main.left + 8),
+              rows: [0.15, 0.4, 0.65, 0.9].map(t => Math.round(span.top + span.height * t)),
+              edge: Math.round(edge),
+            };
+          });
+          const shifted = await sample('navigation-open', shiftedGeometry);
+          // Sampling near the rounded page's edge has less surrounding backdrop than its center.
+          assert.ok(shifted.levels[0] < 80 && shifted.levels[1] < 180, `blur survives the page transform: ${JSON.stringify(shifted)}`);
+          assert.ok(shifted.levels.every((value, i, all) => i === 0 || value > all[i - 1] + 5), 'the exposed page retains a progressive blur ramp');
+          assert.ok(shifted.levels[3] > 230, 'exposed page remains sharp below the blur ramp');
+          assert.ok(Math.max(...shifted.seam) - Math.min(...shifted.seam) <= 5, 'transform does not create a new blur seam');
+          await hideControls.evaluate(el => el.remove());
+          await page.getByRole('button', { name: '关闭导航', exact: true }).click();
+          await page.locator('.app-nav-backdrop').waitFor({ state: 'detached' });
           if (safe) await safe.evaluate(el => el.remove());
         }
         await optics.evaluate(el => el.remove());

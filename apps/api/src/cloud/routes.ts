@@ -12,8 +12,10 @@ import { accountedFetch } from '../agent/accounted-fetch.js';
 import { UsageLedger, BudgetBlocked } from '../agent/budget.js';
 import { applyPromptCache } from '@wangke/study-core/model/cache';
 import { modelUsageReport } from '../agent/model-observations.js';
+import type { WebSearchService } from '../web-search/service.js';
 
 interface Dependencies {
+  webSearch?: WebSearchService;
   store: DatabaseStore; records: CloudRecords; configuration: CloudConfiguration;
   requireAuth: (request: FastifyRequest, reply: FastifyReply) => any;
   checkOrigin: (request: FastifyRequest, reply: FastifyReply) => boolean;
@@ -24,7 +26,7 @@ interface Dependencies {
 
 export function registerCloudRoutes(app: FastifyInstance, deps: Dependencies) {
   const { store, records, configuration, requireAuth, checkOrigin } = deps;
-  const runner = new CloudTaskRunner(store, { records, configuration, filesDir: deps.filesDir, fetch: deps.fetch });
+  const runner = new CloudTaskRunner(store, { records, configuration, filesDir: deps.filesDir, fetch: deps.fetch, webSearch: deps.webSearch });
   const fail = (reply: FastifyReply, code: number, error: string) => reply.code(code).send({ error });
   const configurationError = (reply: FastifyReply, e: unknown) => e instanceof ModelConfigurationError
     ? reply.code(e.status).send({ error: e.message, issues: e.issues })

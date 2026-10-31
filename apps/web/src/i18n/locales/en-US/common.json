@@ -138,6 +138,12 @@
     "sending": "Sending",
     "close": "Close",
     "history": "Conversations",
-    "open": "Bot"
+    "open": "Bot",
+    "activity": {
+      "scanning": "Rummaging through the toolbox…",
+      "connecting": "Connecting the clues…",
+      "checking": "Checking the important details…",
+      "composing": "Shaping it into an answer…"
+    }
   }
 }
